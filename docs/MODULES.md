@@ -184,9 +184,15 @@
 | Output | Consumer |
 |--------|----------|
 | `da.assigned` event (DA ID, shipment ID, pickup ETA) | M4 (state update), DA app |
+| `da.en_route_to_pickup` event (DA ID, shipment ID, ETA to address) | M4 (state update), customer tracking |
+| `da.arrived_at_pickup` event (DA ID, shipment ID, timestamp) | M4 (state update) |
+| `da.pickup_completed` event (DA ID, shipment ID, timestamp) | M4 (state update), M8 (triggers barcode attach scan), M10 |
+| `da.pickup_failed` event (DA ID, shipment ID, reason code) | M4 (state update), M11 (failure flow) |
+| `da.cron_handoff_completed` event (DA ID, van ID, packet list, timestamp) | M4 (state update), M10 (SLA leg closed) |
+| `da.queue_reordered` event (DA ID, new queue snapshot) | DA app |
 | Updated DA priority queue | DA app |
 | Cron feasibility check result | Internal; if fail → alert to M10 |
-| No-DA alert for a tile | M10, station manager |
+| `no_da_for_tile` alert (tile ID, city) | M10, station manager |
 
 ---
 
@@ -250,6 +256,7 @@
 | Barcode scan events (packet arrival) | M8 |
 | Stand/sort plan (destination → stand mapping) | Admin-configured; updated by flight assignment |
 | Assigned flights per destination / time window | M9 |
+| `flight.status_changed` events (delay, cancellation, gate change) | M9 — hub must react: a delay shifts the cutoff, opening or closing the window for bag additions or reschedule; a cancellation forces re-bag onto the next available flight |
 | Parcel SLA commitment times | M4, M10 |
 | Stand capacity configuration | Physical hub config |
 
@@ -445,4 +452,55 @@ M1 (Auth)
 
 ---
 
-*Document version: 0.1 — derived from PRD v1.0 (2026-04-25). Next step: per-module technical design doc (data models, API contracts, algorithm specs).*
+## Event Architecture
+
+### What "event bus" means here
+
+An event bus is a mechanism that lets one module announce "this thing happened" without knowing or caring who reacts to it. The announcing module (producer) and the reacting modules (consumers) are decoupled — they don't call each other directly.
+
+### Concrete transport options
+
+| Option | How it works | Trade-offs |
+|--------|-------------|------------|
+| **Kafka / Pulsar** | Distributed, durable log. Producers write to named topics. Multiple consumers each read independently at their own pace. Messages are persisted and replayable. | Right choice at scale. Handles high throughput, supports replay for debugging, backbone of real logistics platforms. Operationally heavier to set up. |
+| **RabbitMQ / SQS** | Message queue. Messages are consumed and deleted (not a log). | Good for point-to-point task queues (e.g. "process this order"). Not ideal for fan-out or audit trails since the message disappears after consumption. |
+| **HTTP / REST** | Module A calls Module B's API synchronously and waits. | Simple and easy to understand. Creates tight coupling — if M4 is down, M5 fails. Cannot fan-out to multiple consumers cleanly. |
+| **Database polling** | Modules write state to a shared DB table; others poll for changes. | Works at very small scale. Degrades under load. An anti-pattern at production scale. |
+
+### Recommendation for this system
+
+- **Kafka** for all async, fan-out communication: scan events, state-change events, SLA triggers, flight status changes. These are the events documented in each module's Outputs table.
+- **Direct function call** (in-process) for synchronous, same-request operations: e.g. M4 calling M2 to compute a price quote at booking time — the result is needed immediately, in the same HTTP request.
+- **HTTP** only for cross-module queries where you need a real-time answer and latency is acceptable: e.g. M4 calling M3's serviceability check API at booking time.
+
+### Why this matters for the monolith
+
+Kafka is a network service — it does not care whether its producer and consumer are separate deployments or folders inside the same codebase. Using Kafka inside a monolith from day one means that when you eventually want to extract a module (e.g. M10 SLA Monitoring) into its own service, nothing changes in the code — M10 just starts running as a separate process consuming the same topics. The event contracts you define now become the migration path later.
+
+---
+
+## Module-to-Code Mapping
+
+How each module maps to an entity type within the codebase (assuming a **modular monolith** as the starting architecture — one deployable, clear internal boundaries per module folder):
+
+| Module | Entity type | Reasoning |
+|--------|-------------|-----------|
+| **M1 — Auth** | Middleware / library | Cross-cutting; every inbound request passes through it. Not a standalone feature with its own data flow — it wraps all other modules. |
+| **M2 — Pricing** | Service class / utility | Pure computation. Given inputs, returns a number. Stateless. No background process needed. Can be called synchronously from M4 at booking time. |
+| **M3 — Grid** | Domain service + admin UI | Owns its own data (tile definitions, pincode lists). Config-heavy. Driven by nightly batch jobs (replan) and approval workflows. |
+| **M4 — Orders** | Core API service | The primary customer-facing layer. Owns the canonical state machine. Accepts HTTP requests from customers and B2B users. All other modules feed state back into it via events. |
+| **M5 — DA Assignment** | Background worker / real-time engine | Reacts to incoming `shipment.created` events; latency-sensitive (assignment must be fast). Manages the in-memory or DB-backed priority queue per DA. Always running. |
+| **M6 — Van Routing** | Scheduled batch job (cron) | Runs once per night. Pure compute on graph data. Not latency-sensitive. Can be a standalone script triggered by a scheduler (e.g. cron, Celery beat). |
+| **M7 — Hub Ops** | Domain service + operator UI | Workflow-heavy for human operators. Owns stand and bag data. Reacts to scan events and flight status changes. Both an event consumer and a UI-backed workflow tool. |
+| **M8 — Barcode** | Utility library + append-only event store | Label generation is a pure function (shipment data in → printable label out). Scan events are an append-only ledger — never updated, only appended. |
+| **M9 — Airline** | Integration adapter / poller | Wraps external airline and GHA APIs. Translates their data model into internal events. Runs as a background poller (fetch flight status every N minutes) and publishes `flight.status_changed` events. |
+| **M10 — SLA Monitoring** | Streaming event consumer / background worker | Continuously consumes events from all other modules, computes per-leg SLA states, and fires escalation events when thresholds are crossed. Always running alongside the main app. |
+| **M11 — Exceptions** | Workflow orchestrator + call center UI | Manages multi-step failure resolution (failure → call center queue → reschedule → re-assign). Stateful workflows with human steps in the middle. |
+
+### Build order implication
+
+Modules that are pure utilities (M2, M8) can be written and tested in complete isolation. Modules that are background workers (M5, M6, M10) can be developed with mocked event inputs before the real producers exist. The API service (M4) and the integration adapter (M9) are the two modules most likely to block others, so they should be prototyped early with stub implementations.
+
+---
+
+*Document version: 0.2 — gaps from review incorporated: M5 full event list, M7 flight-status input from M9, event architecture section, module-to-code mapping.*
