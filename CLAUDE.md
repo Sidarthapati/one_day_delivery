@@ -8,7 +8,7 @@ An in-house one-day intercity parcel delivery platform (B2B + B2C) across 5 Indi
 
 Stack: **Java 21 + Spring Boot 3.2**, **Maven multi-module**, **PostgreSQL**, **Kafka**. Frontend (React) comes later.
 
-Design docs in `docs/`: `PRD-ONE-DAY-DELIVERY.md`, `MODULES.md`, `PRD-DISCOVERY-QUESTIONNAIRE.md`.
+Design docs in `docs/`: `PRD-ONE-DAY-DELIVERY.md`, `MODULES.md`, `PRD-DISCOVERY-QUESTIONNAIRE.md`, `M3-GRID-DESIGN.md`.
 
 ## Build Commands
 
@@ -63,7 +63,7 @@ com.oneday.{module}/
 ## Open Questions (block implementation of specific modules)
 
 See `docs/PRD-ONE-DAY-DELIVERY.md §20` for full list. Key blockers:
-- Grid vertex/tile rules (blocks M3) — G1–G4
+- Grid vertex/tile rules (partially resolved — see `M3-GRID-DESIGN.md`): G1 (cron-vertex meaning), G2 (UTM vs WGS84), G4 (approval SLA) still open; G3 (1 DA : N tiles and M DAs : 1 tile) resolved in design doc
 - DA assignment objective function (blocks M5) — A1–A4
 - Barcode standard + hub overload tactics (blocks M7, M8) — H1–H3
 - Airline AWB issuer + handover SLA in minutes (blocks M9) — L1–L3
