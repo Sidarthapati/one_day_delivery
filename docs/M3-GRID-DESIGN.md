@@ -10,7 +10,7 @@
 
 ---
 
-## 1. What M3 Does
+## 1. What M3 Does 
 
 M3 owns two distinct but related concerns:
 
