@@ -361,6 +361,45 @@ For each round r = 0, 1, 2, ...:
 
 **Convergence:** At our scale (≤200 tiles, ≤70 DAs), lazy cuts converge in 2–5 rounds. Each round adds at most K cuts (one per disconnected territory). Total solver time including cuts: under 30 seconds in the worst case.
 
+**Worked example — lazy cuts on a small grid:**
+
+Imagine a city with 6 tiles in a 2×3 grid and 2 DAs. Each tile has equal demand (1 unit). Each DA needs exactly 3 tiles, and those 3 tiles must form a connected block.
+
+```
+[1][2][3]
+[4][5][6]
+
+Road adjacency edges: 1↔2, 2↔3, 1↔4, 2↔5, 3↔6, 4↔5, 5↔6
+```
+
+*Round 0 — solve with load-balance only (no connectivity rule):*
+
+The solver finds a balanced split:
+- DA 1: tiles {1, 3, 5}
+- DA 2: tiles {2, 4, 6}
+
+Both groups have 3 tiles (load balanced). Now check connectivity.
+
+*BFS check for DA 1 ({1, 3, 5}):*
+Starting at tile 1: can we reach 3? Only via 2, but 2 belongs to DA 2 — blocked.
+Can we reach 5? Only via 2 or 4, both in DA 2 — blocked.
+Result: three isolated islands. Not valid.
+
+*Add cut:* "It is NOT allowed for tiles {1, 3, 5} to all be assigned to DA 1 simultaneously."
+
+*Round 1 — re-solve with the cut:*
+
+The solver can no longer use {1,3,5} for DA 1. It finds:
+- DA 1: tiles {1, 2, 3}
+- DA 2: tiles {4, 5, 6}
+
+*BFS check for DA 1 ({1, 2, 3}):* 1↔2↔3 — all reachable. ✓
+*BFS check for DA 2 ({4, 5, 6}):* 4↔5↔6 — all reachable. ✓
+
+No cuts needed. Done in 2 rounds.
+
+The key insight: encoding "connected" directly as a constraint requires dozens of extra variables and makes the model much harder to solve. Lazy cuts instead lets the solver find a good balanced answer first, then patches only the connectivity violations that actually appear — which in practice is a small fraction of territories.
+
 **Fallback to BFS:** If the CP-SAT solver fails (timeout > 60 seconds, OR-Tools not available, or unresolvable model), fall back to BFS region growing (the algorithm from the original v0.1 design doc). Log the fallback and flag the proposal with `solver = BFS_FALLBACK`. The station manager sees the flag during review.
 
 ---
@@ -391,7 +430,12 @@ Step 0: Pre-computation
 a. Load active tiles for city.
 b. Compute demand_minutes for each tile (Component B input, §5.2).
 c. Load road-adjacency graph from tile_travel_time (Component A output).
-   If OSRM unavailable → use geometric 4-connectivity with GEOMETRIC_FALLBACK flag.
+   This is a DB read — OSRM is not called at replan time. The matrix was
+   precomputed and stored during the last OSRM refresh (§9). If the stored
+   matrix is absent or stale (> 45 days old), fall back to geometric
+   4-connectivity with GEOMETRIC_FALLBACK flag. In steady-state this fallback
+   should never fire; it guards against a brand-new city before its first OSRM
+   refresh, or a failed monthly refresh.
 d. Pre-process multi-DA tiles (Component C).
 e. K_available = count of active DAs for city for tomorrow.
    K_needed    = ceil(Σ demand_minutes over all tiles / DA_target_load)
@@ -571,6 +615,7 @@ This table is recomputed on admin trigger (monthly, or after major road network 
 ```sql
 CREATE TABLE da_tile_assignment (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    proposal_id    UUID NOT NULL REFERENCES assignment_proposal(id),  -- which proposal this row belongs to
     da_id          UUID NOT NULL,
     tile_id        UUID NOT NULL REFERENCES tile(id),
     valid_date     DATE NOT NULL,
@@ -583,29 +628,49 @@ CREATE TABLE da_tile_assignment (
 );
 ```
 
-Append-only. Old rows are never deleted or mutated.
+Append-only. Old rows are never deleted or mutated. `proposal_id` links each assignment row back to the proposal it was generated from, allowing multiple proposals for the same date (e.g., after a rejection and re-run) without ambiguity.
 
 ### 6.7 Assignment proposal
 
 ```sql
 CREATE TABLE assignment_proposal (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    city_id             UUID NOT NULL,
-    valid_for_date      DATE NOT NULL,
-    status              VARCHAR(20) NOT NULL,  -- PROPOSED | APPROVED | REJECTED | SUPERSEDED
-    solver_type         VARCHAR(30) NOT NULL,  -- CP_SAT | BFS_FALLBACK
-    adjacency_source    VARCHAR(30) NOT NULL,  -- OSRM | GEOMETRIC_FALLBACK
-    optimality_gap_pct  DOUBLE PRECISION,      -- null for BFS_FALLBACK
-    total_das           INT NOT NULL,
-    coverage_pct        DOUBLE PRECISION,
-    proposed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    reviewed_by         UUID,
-    reviewed_at         TIMESTAMPTZ,
-    notes               TEXT
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    city_id               UUID NOT NULL,
+    valid_for_date        DATE NOT NULL,
+    status                VARCHAR(20) NOT NULL,  -- PROPOSED | APPROVED | REJECTED | SUPERSEDED
+    solver_type           VARCHAR(30) NOT NULL,  -- CP_SAT | BFS_FALLBACK
+    adjacency_source      VARCHAR(30) NOT NULL,  -- OSRM | GEOMETRIC_FALLBACK
+    optimality_gap_pct    DOUBLE PRECISION,      -- null for BFS_FALLBACK
+    total_das             INT NOT NULL,
+    coverage_pct          DOUBLE PRECISION,
+    understaffed_tile_ids JSONB,                 -- array of tile UUIDs where K_available < K_needed
+    proposed_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reviewed_by           UUID,
+    reviewed_at           TIMESTAMPTZ,
+    notes                 TEXT
 );
 ```
 
-### 6.8 Grid vertex
+### 6.8 Assignment proposal region
+
+Per-region detail for a proposal. One row per DA per proposal. Together with `da_tile_assignment` (filtered by `proposal_id` and `da_id`), this provides the full regions array shown in §5.4 Step 3.
+
+```sql
+CREATE TABLE assignment_proposal_region (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    proposal_id            UUID NOT NULL REFERENCES assignment_proposal(id),
+    da_id                  UUID NOT NULL,
+    n_das_required         INT NOT NULL DEFAULT 1,        -- > 1 for multi-DA tiles (Component C)
+    estimated_demand_min   DOUBLE PRECISION NOT NULL,     -- total demand_minutes for this territory
+    estimated_util_pct     DOUBLE PRECISION NOT NULL,     -- estimated_demand_min / (DA_target_load × n_das_required)
+    has_bootstrapped_tiles BOOLEAN NOT NULL DEFAULT false, -- true if any tile in territory used bootstrap defaults
+    UNIQUE(proposal_id, da_id)
+);
+```
+
+Tile IDs for a region are read from `da_tile_assignment WHERE proposal_id = ? AND da_id = ?`. Append-only.
+
+### 6.9 Grid vertex
 
 ```sql
 CREATE TABLE grid_vertex (
@@ -792,8 +857,13 @@ Nightly Grid Replan (runs at 01:00 local city time):
 4. Compute demand_score_minutes for each active tile. Write tile_demand_snapshot rows.
 
 5. Load road-adjacency graph from tile_travel_time.
+   This is a DB read — OSRM is not queried live at replan time. The matrix was
+   precomputed and stored during the last OSRM refresh (§9).
    If table is empty or stale (> 45 days) → attempt OSRM refresh before proceeding.
-   If OSRM unavailable → use geometric 4-connectivity, set adjacency_source = GEOMETRIC_FALLBACK.
+   If the refresh fails or OSRM is unreachable → use geometric 4-connectivity,
+   set adjacency_source = GEOMETRIC_FALLBACK.
+   In steady-state this branch only fires for a brand-new city (first replan
+   before OSRM has ever run) or after a failed monthly refresh.
 
 6. Pre-process multi-DA tiles (Component C, §5.4).
 
