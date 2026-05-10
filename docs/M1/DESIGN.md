@@ -1,6 +1,8 @@
 # M1 — Auth Module Design Document
 
 > **Module:** `auth` | **Status:** Design Complete | **Updated:** 2026-05-10 | **Depends on:** `common`
+>
+> **Related docs:** [SCENARIOS.md](./SCENARIOS.md) — narrative walkthrough of every auth flow | [OPEN-QUESTIONS.md](./OPEN-QUESTIONS.md) — open product decisions | [README.md](./README.md) — local setup
 
 ---
 
@@ -37,6 +39,8 @@
 - [Account Lifecycle](#account-lifecycle)
   - [Reactivation](#reactivation)
   - [API Keys on Deactivation](#api-keys-on-deactivation)
+  - [Account Lifecycle State Machine](#account-lifecycle-state-machine)
+  - [Who Can Manage Whom](#who-can-manage-whom)
 - [Authorization Edge Cases](#authorization-edge-cases)
   - [Station Manager Role-Change Restrictions](#station-manager-role-change-restrictions)
   - [City-Hijacking Prevention](#city-hijacking-prevention)
@@ -107,20 +111,41 @@ user:role:change:city    config:manage            flight:manage
 
 **Parcel journey through CRON_DRIVER:**
 
-*Cross-city delivery:*
+*✈️ Cross-city delivery:*
 ```
-Customer → DA (pickup) → CRON (grid edge collection) → HUB (sorting)
-  → CRON (hub→airport) → [FLIGHT] → CRON (airport→hub)
-  → HUB (sorting) → DA (delivery) → Customer
+Customer1
+   └─→ 🚴 DA (pickup)
+         └─→ 🌙 CRON (collects from DAs along grid edges)
+               └─→ 🏭 HUB (sorting)
+                     └─→ 🌙 CRON (drives to airport)
+                           └─→ ✈️ FLIGHT
+                                 └─→ 🌙 CRON (receives at destination airport)
+                                       └─→ 🏭 HUB (sorting)
+                                             └─→ 🚴 DA (delivery)
+                                                   └─→ Customer2
 ```
 
-*Same-city delivery:*
+*🏙️ Same-city delivery:*
 ```
-Customer → DA (pickup) → CRON (grid edge collection) → HUB (sorting)
-  → CRON (grid edge distribution) → DA (delivery) → Customer
+Customer1
+   └─→ 🚴 DA (pickup)
+         └─→ 🌙 CRON (collects from DAs along grid edges)
+               └─→ 🏭 HUB (sorting)
+                     └─→ 🌙 CRON (distributes to DAs along grid edges)
+                           └─→ 🚴 DA (delivery)
+                                 └─→ Customer2
 ```
 
 No parcel moves DA → HUB or HUB → DA without a CRON_DRIVER handoff. Their permissions cover accepting parcel handoffs from DAs on grid edges, dropping off to DAs, handing over at the hub inbound dock, receiving at the hub outbound dock, and logging airport handover/receipt events.
+
+**Who watches these flows and what they can see:**
+
+| Role | Visibility and responsibility |
+|---|---|
+| `SUPERVISOR` | Watches both flows in real time. Escalates if any leg goes RED on SLA. |
+| `CALL_CENTER_AGENT` | Steps in anywhere along the flow when a customer raises a complaint. |
+| `STATION_MANAGER` | Oversees the entire city flow. Approves any grid or route changes mid-operation. |
+| `ADMIN` | Sees both cities end to end — the only role with a full inter-city picture. |
 
 `VAN_DRIVER` vs `CRON_DRIVER`: `VAN_DRIVER` runs fixed planned routes between hub stops (M6 routing). `CRON_DRIVER` runs grid edges exchanging parcels with DAs (M5 dispatch). Different route logic, different scan events, different permissions — they must remain separate roles even though both drive vans.
 
@@ -147,6 +172,22 @@ Two credential modes are supported on every request. The `JwtAuthenticationFilte
 - Login validates email + BCrypt password, then issues a token
 - Token validation re-fetches the user from the DB on every request to catch deactivation in real time
 
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant L as POST /auth/login
+    participant DB as Database
+    participant J as JwtService
+
+    U->>L: { email, password }
+    L->>DB: fetch user by email (active=true only)
+    DB-->>L: user record
+    L->>L: BCrypt verify password
+    L->>J: createToken(user)
+    J-->>L: signed JWT (8 h)
+    L-->>U: { token, role, cityId, mustChangePassword }
+```
+
 **No refresh token.** Re-login is the intended UX. Sessions are short (8 h) by design — shift-end is a natural logout boundary. For long-running programmatic integrations, use API keys.
 
 **JWT secret rotation** is a hard cutover: rotating `jwt.secret` invalidates all outstanding tokens immediately. Users re-authenticate at their next request. Maximum blast radius is an 8-hour window; operations already tolerate shift-change re-logins. Plan rotation for a low-traffic maintenance window. Multi-key transition is not implemented in v1.
@@ -161,6 +202,21 @@ Two credential modes are supported on every request. The `JwtAuthenticationFilte
 - Only `B2B_USER` and `ADMIN` roles can create API keys
 - **No expiry in v1.** Key hygiene (rotation, revocation of unused keys) is the owner's responsibility.
 - **10-key cap per user.** A user may hold at most 10 active keys. Attempting to create an 11th returns HTTP 422. Revoking a key frees the slot.
+
+```mermaid
+sequenceDiagram
+    participant S as B2B System
+    participant F as Auth Filter
+    participant DB as Database
+
+    S->>F: X-Api-Key: <raw-key>
+    F->>F: SHA-256 hash the key
+    F->>DB: lookup hash in api_keys (active=true)
+    DB-->>F: key record + owner user_id
+    F->>DB: load owner user (active check)
+    DB-->>F: user record
+    F-->>S: authenticated as B2B_USER
+```
 
 ### Password Storage
 
@@ -525,6 +581,23 @@ POST /auth/register
 { "email": "...", "password": "...", "name": "..." }
 ```
 
+```mermaid
+sequenceDiagram
+    participant C as New Customer
+    participant R as POST /auth/register
+    participant DB as Database
+    participant K as Kafka
+
+    C->>R: { email, password, name }
+    R->>DB: check email uniqueness
+    DB-->>R: unique ✓
+    R->>DB: insert user (role=B2C_CUSTOMER, city_id=null)
+    R->>DB: insert audit log (action=CREATE, actor=self)
+    R->>K: USER_CREATED event
+    R-->>C: { token, role: "B2C_CUSTOMER", cityId: null }
+    Note over C,R: Auto-logged in — no separate login step needed
+```
+
 Behaviour:
 - Assigns `role = B2C_CUSTOMER`, `city_id = null`, `active = true`, `must_change_password = false`.
 - Email uniqueness enforced (same check as admin registration).
@@ -553,6 +626,36 @@ Sets `active = true`. The previous DEACTIVATE audit row is preserved; a new REAC
 ### API Keys on Deactivation
 
 When a user is deactivated (`active = false`), their API keys are **implicitly dead** — the filter loads the owning user and checks `user.isActive()` before setting the SecurityContext. No explicit key revocation is needed. When the account is reactivated, those keys immediately work again. If keys should stay dead after reactivation, the admin must explicitly revoke them via `DELETE /auth/api-keys/{keyId}`.
+
+### Account Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Active : ADMIN creates account\nor B2C self-registers
+
+    Active --> Active : changeRole\n(ADMIN or SM)\nold JWT valid until expiry
+
+    Active --> Deactivated : ADMIN deactivates\nAPI keys implicitly dead\nnext request blocked
+
+    Deactivated --> Active : ADMIN reactivates\nrole + city unchanged\nAPI keys live again
+```
+
+### Who Can Manage Whom
+
+| Action | Who can trigger | Scope |
+|--------|----------------|-------|
+| Create staff account | ADMIN | Any city |
+| Create staff account | STATION_MANAGER | Own city only |
+| Change role | ADMIN | Any user |
+| Change role | STATION_MANAGER | Own city only; cannot touch peer SM or grant ADMIN |
+| Reset password | ADMIN | Any user |
+| Reset password | STATION_MANAGER | Own city, not peer SM, not ADMIN |
+| Deactivate account | ADMIN | Any user |
+| **Reactivate account** | **ADMIN only** | Any user |
+| Move user between cities | **ADMIN only** | — |
+| Change own password | Any authenticated user | Self only |
+| Change own display name | Any authenticated user | Self only |
 
 ---
 
