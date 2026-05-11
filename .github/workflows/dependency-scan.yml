@@ -1,0 +1,60 @@
+name: Dependency Vulnerability Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan every Tuesday at 03:00 UTC — catches new CVEs against pinned deps
+    - cron: '0 3 * * 2'
+
+jobs:
+  trivy:
+    name: Trivy CVE Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload SARIF to Security tab (public repos: free; private: needs GHAS)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # Resolve dependencies so Trivy can scan the local Maven cache
+      - name: Resolve Maven dependencies
+        run: mvn dependency:resolve --batch-mode --no-transfer-progress -q
+
+      # Pass 1: upload HIGH + CRITICAL findings to the Security tab (non-blocking)
+      - name: Trivy scan — SARIF upload
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
+      - name: Upload Trivy SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-dependency-scan
+
+      # Pass 2: block the build only on CRITICAL findings
+      - name: Trivy scan — block on CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL
+          exit-code: '1'
