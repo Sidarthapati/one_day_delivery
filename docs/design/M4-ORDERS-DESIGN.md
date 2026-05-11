@@ -60,7 +60,7 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 | BlueDart | B2B-first, own airline | AWB-based booking, portal | ~8 customer-visible states | Credit dominant |
 | Shiprocket | B2C aggregator | Merchant-centric; multi-carrier | Varies by carrier | Prepaid, COD |
 | FedEx India | B2B + B2C | Global standards; AWB | ~15 states including customs | Prepaid + credit |
-| **1DD (ours)** | **B2B + B2C + C2C, own airline + DA** | **Single API; sub-2s booking** | **20 states; full operational visibility** | **Razorpay prepaid (B2C/C2C) + credit (B2B); no COD v1** |
+| **1DD (ours)** | **B2B + B2C + C2C; commercial airline cargo + own DA network** | **Single API; sub-2s booking** | **20 states; full operational visibility** | **Razorpay prepaid (B2C/C2C) + credit (B2B); no COD v1** |
 
 **Key differentiators to protect in this design:**
 - Booking-to-dispatch in under 2 seconds (synchronous M2 + M3 calls must stay under 500ms each)
@@ -137,13 +137,34 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 
 ---
 
-### KDD-4: ETA computation is entirely owned by M9
+### KDD-4: Two-stage ETA — estimate at booking, accurate ETA at origin hub
 
-**Decision:** M4's `EtaPort` interface has a single method: `predictEta(originCity, destCity, bookedAt, deliveryType)`. M9 implements it. M4 stores whatever M9 returns. If M9 is unavailable, `eta_promised` is `null`.
+**Decision:** ETA is provided in two stages:
 
-**Rationale:** ETA depends on flight schedules, buffer times, and DA availability windows — all information M9 owns. Any placeholder logic in M4 would become a maintenance burden and could mislead customers. A null ETA is an honest signal; a wrong ETA is worse.
+1. **Booking-time estimate (`eta_promised`):** A rule-based estimate computed by M4 and always returned — never null. Logic: if booked before the city's configured cutoff time (default 10:00 AM IST), delivery ETA = next day at 8:00 PM IST at destination; if after cutoff, ETA = day after next at 8:00 PM IST. This is shown to the customer on the quote API and on the booking confirmation (before and after payment).
 
-**Consequence:** The booking API can return `eta_promised: null` in early development. Client apps must handle null gracefully.
+2. **Accurate ETA (`eta_updated`):** Computed by M9 once the shipment reaches `AT_ORIGIN_HUB` and a flight is assigned. M9 uses the actual flight schedule (departure time + flight duration + dest hub processing buffer + last-mile buffer) to produce a precise delivery window. M4 stores this as `eta_updated` and sends a notification to the customer.
+
+**Rationale:** The customer needs a concrete delivery date at booking time to make the purchase decision — a null is not acceptable UX. However, the actual flight assignment only happens at the origin hub, so the booking estimate is intentionally approximate. M9 corrects it once the ground truth (assigned flight) is known.
+
+**EtaPort interface:**
+```java
+public interface EtaPort {
+    // Called at booking — M9 may not be live; M4 falls back to rule-based if null returned
+    Optional<Instant> estimateBookingEta(String originCity, String destCity,
+                                          Instant bookedAt, DeliveryType deliveryType);
+
+    // Called when shipment reaches AT_ORIGIN_HUB with a flight assigned — M9 computes precise ETA
+    Instant computeAccurateEta(UUID shipmentId, UUID flightId, String destCity);
+}
+```
+
+**Rule-based fallback (used at booking when M9 is unavailable or not yet live):**
+- If `bookedAt` is before cutoff (configurable, default 10:00 AM IST): `eta_promised = bookedAt.date + 1 day @ 20:00 IST`
+- If `bookedAt` is after cutoff: `eta_promised = bookedAt.date + 2 days @ 20:00 IST`
+- For `SAME_CITY` deliveries: `eta_promised = bookedAt.date @ 20:00 IST` (same day, regardless of cutoff)
+
+**Consequence:** `eta_promised` is always non-null. `eta_updated` is null until the shipment reaches `AT_ORIGIN_HUB` with a flight assigned.
 
 ---
 
@@ -533,6 +554,8 @@ PICKED_UP
 
 HANDED_TO_VAN
   → AT_ORIGIN_HUB             (M8: HUB_ORIGIN_IN scan)
+                               ↳ Side-effect: M4 calls EtaPort.computeAccurateEta() once flight is
+                                 assigned by M9; stores result in eta_updated; notifies customer
 
 AT_ORIGIN_HUB
   → HUB_PROCESSING            (M7: stand assignment event)
@@ -731,7 +754,10 @@ Validation failures return `400 Bad Request` with a structured error body:
      e. Store Idempotency-Key with response
     Commit.
 10. Call M8 BarcodePort.register(shipmentId) — async, best-effort
-11. Call EtaPort.predictEta(...) via M9 — async, non-blocking; update eta_promised if response arrives
+11. Compute eta_promised:
+     - Call EtaPort.estimateBookingEta(...) — if M9 returns a value, use it
+     - If M9 unavailable or returns empty: apply rule-based fallback (before/after cutoff → +1/+2 days @ 20:00 IST)
+     - eta_promised is always set and never null before returning to client
 12. Emit shipment.created Kafka event
 13. Trigger notifications asynchronously (SMS + Email + WhatsApp)
 14. Return 201 Created
@@ -803,7 +829,8 @@ Validation failures return `400 Bad Request` with a structured error body:
   "gst_paise": 8100,
   "total_price_paise": 53100,
   "currency": "INR",
-  "eta_window": "Next-day delivery if booked before 10:00 AM IST",
+  "eta_estimated": "2026-05-13T20:00:00+05:30",
+  "eta_note": "Estimated delivery date. Accurate ETA will be confirmed once parcel is at origin hub.",
   "rate_card_version": "v2026-04"
 }
 ```
@@ -1147,11 +1174,15 @@ public interface PricingPort {
     // QuoteRequest includes: customer_type, delivery_type, city_pair, chargeable_weight_grams
 }
 
-// M9 — ETA (async; M4 does NOT block on this)
+// M9 — two-stage ETA
 public interface EtaPort {
-    CompletableFuture<EtaResult> predictEta(String originCity, String destCity,
-                                             Instant bookedAt, DeliveryType deliveryType);
-    // Returns null if M9 unavailable; M4 stores null and updates later
+    // Stage 1: Called at booking. M4 falls back to rule-based if empty.
+    Optional<Instant> estimateBookingEta(String originCity, String destCity,
+                                          Instant bookedAt, DeliveryType deliveryType);
+
+    // Stage 2: Called when shipment reaches AT_ORIGIN_HUB with a flight assigned.
+    // Returns a precise ETA based on the actual flight schedule.
+    Instant computeAccurateEta(UUID shipmentId, UUID flightId, String destCity);
 }
 
 // M8 — barcode/label registration
@@ -1651,11 +1682,11 @@ All notifications dispatched **asynchronously** via `NotificationPort`. M4 does 
 
 | State Transition | SMS | Email | WhatsApp |
 |---|---|---|---|
-| `BOOKED` | Confirmation + tracking link | Full confirmation + GST breakdown | Booking summary |
+| `BOOKED` | Confirmation + estimated ETA + tracking link | Full confirmation + GST breakdown + estimated ETA | Booking summary with estimated ETA |
 | `PICKUP_ASSIGNED` | DA name + ETA window | — | DA assigned |
 | `PICKED_UP` | Parcel collected | — | Parcel collected |
 | `HANDED_TO_VAN` | In transit to hub | — | — |
-| `AT_ORIGIN_HUB` | At origin hub | — | — |
+| `AT_ORIGIN_HUB` | At origin hub | Accurate delivery ETA confirmed (once flight assigned) | Accurate ETA update |
 | `DEPARTED` | In transit by air | — | In transit |
 | `AT_DEST_HUB` | At destination hub | — | — |
 | `OUT_FOR_DELIVERY` | OFD + DA name + ETA | — | OFD + ETA |

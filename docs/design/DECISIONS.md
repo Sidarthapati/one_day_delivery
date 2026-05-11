@@ -62,6 +62,7 @@ Chronological log of every decision entry and update. Quick reference for "what 
 | 2026-05-10 | M4-D-012 | M4 | B2C refund on cancellation: initiate sync, confirm via webhook | OPEN |
 | 2026-05-11 | M4-D-006 | M4 | State machine revised: 5 states added, `IN_TRANSIT` removed, cron stages added | UPDATED |
 | 2026-05-11 | M4-D-005 | M4 | ETA computation delegated entirely to M9; null if M9 unavailable | DECIDED |
+| 2026-05-12 | M4-D-005 | M4 | ETA corrected to two-stage model: rule-based at booking (never null) + accurate ETA at origin hub | UPDATED |
 | 2026-05-11 | M4-D-007 | M4 | Order:Parcel cardinality confirmed as 1:1 in v1; upgrade path documented | DECIDED |
 | 2026-05-11 | M4-D-013 | M4 | C2C added as first-class customer_type; same payment flow as B2C, different rate card | DECIDED |
 | 2026-05-11 | M4-D-014 | M4 | delivery_type field added (INTERCITY / SAME_CITY); derived at booking from city comparison | DECIDED |
@@ -401,20 +402,27 @@ _(No changes yet)_
 | **Source** | docs/design/M4-ORDERS-DESIGN.md §4 (KDD-4) |
 
 **Decision:**  
-ETA computation is **entirely owned by M9** via the `EtaPort` interface. M4 calls `EtaPort.predictEta(originCity, destCity, bookedAt, deliveryType)` asynchronously at booking time. If M9 is unavailable, `eta_promised` is stored as `null`. M4 contains **no fallback ETA logic**.
+ETA is provided in **two stages**:
+
+1. **Booking-time estimate (`eta_promised`):** Rule-based, computed by M4. Always non-null. If booked before city cutoff time (default 10:00 AM IST) → next day at 20:00 IST; if after cutoff → day after at 20:00 IST; for SAME_CITY → same day at 20:00 IST. M9 may refine this if available, but M4 has a standalone rule-based fallback. Shown to customer on quote API (before payment) and booking confirmation (after payment).
+
+2. **Accurate ETA (`eta_updated`):** Computed by M9 once shipment reaches `AT_ORIGIN_HUB` and a flight is assigned. Uses actual flight schedule + processing buffers. M4 updates `eta_updated` and sends a customer notification.
 
 **Rationale:**  
-ETA depends on flight schedules, DA availability windows, and buffer times — all data owned by M9. A rule-based fallback in M4 would be misleading and would become a maintenance burden as M9 matures.
+Customer needs a concrete ETA at booking to make the purchase decision — null is not acceptable UX. However, the actual flight assignment only happens at the origin hub. Rule-based estimate at booking + M9-accurate ETA at hub is the correct two-stage model.
 
 **Implications:**
-- `EtaPort.predictEta()` returns `CompletableFuture<EtaResult>` — M4 does not block booking on ETA
-- Booking API can return `eta_promised: null` in early development; client apps must handle null gracefully
-- `sla_commitment_minutes` is also provided by M9 via `EtaResult`
-- No `RuleBasedEtaService` — stub in test sources only
+- `eta_promised` is always non-null at booking
+- `eta_updated` is null until `AT_ORIGIN_HUB` with a flight assigned
+- `EtaPort` has two methods: `estimateBookingEta()` (booking) and `computeAccurateEta()` (hub)
+- M4 owns the rule-based fallback for `estimateBookingEta()`; M9 implements the accurate version of both
+- Quote API response includes `eta_estimated` field
+- Notification sent to customer when `eta_updated` is set
 
 **Change log:**  
 - **2026-05-10** — Initially OPEN; placeholder rule-based logic considered
-- **2026-05-11** — DECIDED: delegate entirely to M9; no fallback; null is acceptable response
+- **2026-05-11** — DECIDED: delegate entirely to M9; no fallback; null acceptable *(incorrect)*
+- **2026-05-12** — UPDATED: Two-stage model. Booking ETA always non-null (rule-based M4 fallback); accurate ETA set at origin hub by M9. Null at booking is not acceptable.
 
 ---
 
