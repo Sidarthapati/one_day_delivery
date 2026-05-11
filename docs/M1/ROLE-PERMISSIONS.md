@@ -2,7 +2,9 @@
 
 > **This document is the design specification** for role–permission assignments. `Role.java` must implement it — if they conflict, fix the code.
 >
-> **12 roles:** ADMIN · STATION\_MANAGER · SUPERVISOR · HUB\_OPERATOR · DELIVERY\_ASSOCIATE · VAN\_DRIVER · CRON\_DRIVER · CALL\_CENTER\_AGENT · B2B\_USER · B2C\_CUSTOMER · C2C\_CUSTOMER · AIRLINE\_GHA
+> **12 built-in roles:** ADMIN · STATION\_MANAGER · SUPERVISOR · HUB\_OPERATOR · DELIVERY\_ASSOCIATE · VAN\_DRIVER · CRON\_DRIVER · CALL\_CENTER\_AGENT · B2B\_USER · B2C\_CUSTOMER · C2C\_CUSTOMER · AIRLINE\_GHA
+>
+> **Custom roles:** ADMIN can create additional roles at runtime by selecting any subset of the fixed permission strings below. No new permission strings can be invented without a code change.
 
 ---
 
@@ -22,10 +24,6 @@
 | `hub:stand:assign` | HUB\_OPERATOR |
 | `hub:bag:manage` | HUB\_OPERATOR |
 | `hub:manage` | ADMIN |
-| `grid:approve` | ADMIN |
-| `grid:approve:city` | STATION\_MANAGER |
-| `grid:override` | ADMIN |
-| `grid:override:city` | STATION\_MANAGER |
 | `route:view:assigned` | VAN\_DRIVER |
 | `route:stop:confirm` | VAN\_DRIVER |
 | `route:approve` | ADMIN |
@@ -66,8 +64,7 @@
 | `user:create` | Onboards all non-B2C staff; B2B requires contract review before account creation |
 | `user:deactivate` | Revocation must have global scope — SM cannot remove accounts they didn't create |
 | `user:role:change` | Global authority; SM delegation is the narrower `:city` variant |
-| `grid:approve` / `grid:override` | Cross-city demand events need platform-level authority |
-| `route:approve` / `route:override` | Nightly van routes are locked; intraday changes need senior sign-off |
+| `route:approve` / `route:override` | Nightly van routes are locked; intraday deviations need senior sign-off |
 | `shipment:view` | Full visibility for escalation triage and compliance audits |
 | `shipment:override` | Recovers stuck shipments (scan-ledger conflicts, manual state correction) |
 | `hub:manage` | Hub infrastructure config (stand layout, dock capacity) — infrequent, high-impact |
@@ -76,7 +73,7 @@
 | `audit:view` | Unrestricted audit access; SM gets the city-scoped variant only |
 | `api-key:manage` | Can revoke any B2B key regardless of owner — needed for security incidents |
 
-Not granted: `shipment:create`, `pricing:quote` (ADMIN is not a customer); `hub:scan`, `da:queue:view` (not an operator); `sla:red:action` (operational role — ADMIN acts via override, not the SLA workflow).
+Not granted: `shipment:create`, `pricing:quote` (ADMIN is not a customer); `hub:scan`, `da:queue:view` (not an operator); `sla:red:action` (ADMIN resolves issues via override, not the SLA escalation workflow).
 
 ---
 
@@ -88,13 +85,12 @@ Delegated ADMIN authority within one city. Hard limits: cannot modify peer SMs, 
 |---|---|
 | `user:create:city` | Creates city staff accounts without an ADMIN bottleneck; cannot create ADMIN or peer SM |
 | `user:role:change:city` | Changes roles for city staff; SM↔SM and SM→ADMIN blocked |
-| `grid:approve:city` / `grid:override:city` | Approves intraday grid rebalancing in their city |
 | `route:approve:city` / `route:override:city` | Approves DA route deviations (traffic, breakdown) in their city |
 | `shipment:view:city` | Full city shipment visibility needed for SLA oversight |
 | `sla:red:action` | First responder for RED SLA legs before escalating to ADMIN |
 | `audit:view:city` | City-scoped audit access for compliance and incident review |
 
-Not granted: `user:create` (global create is ADMIN only; SM's variant is scoped to their city); `shipment:override` (stuck-state recovery is ADMIN authority); `config:manage` (platform params are global); `audit:view` (cannot see other cities).
+Not granted: `user:create` (global create is ADMIN only; SM uses `user:create:city`); `shipment:override` (stuck-state recovery is ADMIN authority); `config:manage` (platform params are global); `audit:view` (cannot see other cities).
 
 ---
 
