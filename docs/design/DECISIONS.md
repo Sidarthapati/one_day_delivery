@@ -405,27 +405,27 @@ _(No changes yet)_
 | **Source** | docs/design/M4-ORDERS-DESIGN.md §4 (KDD-4) |
 
 **Decision:**  
-ETA is provided in **two stages**:
+All ETA logic is **entirely owned by M9**. M4 calls `EtaPort.fetchEta(shipmentId, state, context)` whenever it needs an ETA and stores the result as-is. M4 has no fallback, no cutoff-time config, and no ETA computation of any kind.
 
-1. **Booking-time estimate (`eta_promised`):** Rule-based, computed by M4. Always non-null. If booked before city cutoff time (default 10:00 AM IST) → next day at 20:00 IST; if after cutoff → day after at 20:00 IST; for SAME_CITY → same day at 20:00 IST. M9 may refine this if available, but M4 has a standalone rule-based fallback. Shown to customer on quote API (before payment) and booking confirmation (after payment).
+M4 calls EtaPort at:
+- Quote time (pre-booking context) — result shown in quote response
+- Booking confirmation (state=`BOOKED`) — result stored as `eta_promised`
+- `AT_ORIGIN_HUB` transition — result stored as `eta_updated`; customer notified
 
-2. **Accurate ETA (`eta_updated`):** Computed by M9 once shipment reaches `AT_ORIGIN_HUB` and a flight is assigned. Uses actual flight schedule + processing buffers. M4 updates `eta_updated` and sends a customer notification.
-
-**Rationale:**  
-Customer needs a concrete ETA at booking to make the purchase decision — null is not acceptable UX. However, the actual flight assignment only happens at the origin hub. Rule-based estimate at booking + M9-accurate ETA at hub is the correct two-stage model.
+All edge cases (M9 unavailability, missing flight data, same-city vs intercity differences) are handled by M9.
 
 **Implications:**
-- `eta_promised` is always non-null at booking
-- `eta_updated` is null until `AT_ORIGIN_HUB` with a flight assigned
-- `EtaPort` has two methods: `estimateBookingEta()` (booking) and `computeAccurateEta()` (hub)
-- M4 owns the rule-based fallback for `estimateBookingEta()`; M9 implements the accurate version of both
-- Quote API response includes `eta_estimated` field
-- Notification sent to customer when `eta_updated` is set
+- `EtaPort` has a single method: `fetchEta(shipmentId, state, context)`
+- M4 has no `cutoff-time-ist` config
+- M4 stores whatever M9 returns; no validation of the ETA value
+- Quote API response includes `eta_estimated` from M9
+- Notification sent when `eta_updated` is set
 
 **Change log:**  
 - **2026-05-10** — Initially OPEN; placeholder rule-based logic considered
-- **2026-05-11** — DECIDED: delegate entirely to M9; no fallback; null acceptable *(incorrect)*
-- **2026-05-12** — UPDATED: Two-stage model. Booking ETA always non-null (rule-based M4 fallback); accurate ETA set at origin hub by M9. Null at booking is not acceptable.
+- **2026-05-11** — DECIDED: delegate to M9; null acceptable if unavailable *(incorrect)*
+- **2026-05-12** — UPDATED: Two-stage model with M4 rule-based fallback *(also incorrect)*
+- **2026-05-12** — FINAL: M4 has zero ETA logic; single EtaPort.fetchEta() call; M9 owns everything
 
 ---
 
@@ -528,16 +528,18 @@ _(No changes yet)_
 | Field | Value |
 |---|---|
 | **Date** | 2026-05-10 |
-| **Status** | ASSUMED |
-| **Source** | docs/design/M4-ORDERS-DESIGN.md §6.3 |
+| **Last updated** | 2026-05-12 |
+| **Status** | SUPERSEDED |
+| **Superseded by** | M4-D-005 (ETA entirely owned by M9) |
 
-**Assumption:**  
-Default booking cutoff is **10:00 AM IST** per city. Parcels booked before this time qualify for same-day pickup and next-day delivery. This value is config-driven and can be set per city.
+**Original assumption:**  
+Default booking cutoff of 10:00 AM IST used as M4's rule-based ETA fallback.
 
-**Needs validation:** Confirm with ops before implementation.
+**Why superseded:**  
+M4 has no ETA logic at all. Cutoff time is an ETA input that M9 will manage internally. M4 does not need to know or configure it.
 
 **Change log:**  
-_(No changes yet)_
+- **2026-05-12** — Superseded: cutoff-time concept moved entirely into M9's domain
 
 ---
 
