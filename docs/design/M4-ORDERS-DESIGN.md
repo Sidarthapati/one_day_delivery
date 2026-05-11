@@ -167,83 +167,182 @@ Stored as JSONB for flexibility. `city_code` and `pincode` are also promoted to 
 
 ## 4. State Machine
 
-> **Status:** Draft based on MODULES.md. Requires sign-off from ops before implementation.
+> **Status:** Updated 2026-05-11 — 5 states added, `IN_TRANSIT` collapsed into `DEPARTED`. Requires ops sign-off before implementation.
 
-### 4.1 States
+### 4.1 Visual Flow
 
-| State | Meaning |
-|---|---|
-| `BOOKED` | Shipment created, payment captured (B2C) or invoiced (B2B) |
-| `PICKUP_ASSIGNED` | DA assigned by M5 |
-| `PICKED_UP` | DA confirmed physical pickup, barcode attached (M8) |
-| `AT_ORIGIN_HUB` | Scanned in at origin hub by M7/M8 |
-| `IN_BAG` | Parcel bagged for a specific flight by M7 |
-| `DEPARTED` | Bag departed airport (M9 flight event) |
-| `IN_TRANSIT` | In air |
-| `AT_DEST_HUB` | Scanned in at destination hub |
-| `OUT_FOR_DELIVERY` | Last-mile DA assigned and en route |
-| `DELIVERED` | Delivery confirmed by DA |
-| `PICKUP_FAILED` | DA could not pick up (max attempts exceeded → M11) |
-| `DELIVERY_FAILED` | DA could not deliver (max attempts exceeded → M11) |
-| `RTO_INITIATED` | Return-to-origin triggered by M11 |
-| `RTO_IN_TRANSIT` | Parcel on return flight |
-| `RTO_COMPLETED` | Returned to sender |
-| `CANCELLED` | Cancelled before PICKED_UP |
+```
+                         ┌─────────┐
+                         │ BOOKED  │
+                         └────┬────┘
+              ┌───────────────┼────────────────────┐
+              ▼               ▼                    │
+     ┌────────────────┐  ┌──────────┐              │
+     │PICKUP_ASSIGNED │  │CANCELLED │◄─────────────┤
+     └───────┬────────┘  └──────────┘              │
+      ┌──────┴──────┐                              │
+      ▼             ▼                              │
+┌───────────┐ ┌──────────────┐                    │
+│PICKUP_    │ │  PICKED_UP   │────────────────────►┘
+│FAILED     │ └──────┬───────┘
+└─────┬─────┘        │
+      │         ┌────▼──────────┐
+      │         │ HANDED_TO_VAN │   ← DA cron handoff; DA responsibility ends
+      │         └────┬──────────┘
+      │              │
+      │         ┌────▼──────────┐
+      │         │AT_ORIGIN_HUB  │   ← Hub in-scan (M8)
+      │         └────┬──────────┘
+      │              │
+      │         ┌────▼──────────┐
+      │         │HUB_PROCESSING │   ← Stand assigned; being sorted (M7)
+      │         └────┬──────────┘
+      │              │
+      │         ┌────▼──────────┐
+      │         │    IN_BAG     │   ← Bagged for specific flight (M7)
+      │         └────┬──────────┘
+      │              │
+      │         ┌────▼──────────────────┐
+      │         │DISPATCHED_TO_AIRPORT  │   ← Loaded on cron van; left hub (M6/M7)
+      │         └────┬──────────────────┘
+      │              │
+      │         ┌────▼──────────┐
+      │         │  AT_AIRPORT   │   ← GHA acceptance scan (M8); airline custody
+      │         └────┬──────────┘
+      │              │
+      │         ┌────▼──────────┐
+      │         │   DEPARTED    │   ← Flight departed (M9)
+      │         └────┬──────────┘
+      │              │
+      │         ┌────▼──────────┐
+      │         │ AT_DEST_HUB   │   ← Dest hub in-scan (M8)
+      │         └────┬──────────┘
+      │              │
+      │         ┌────▼──────────────┐
+      │         │DEST_HUB_PROCESSING│   ← Last-mile sort (M7)
+      │         └────┬──────────────┘
+      │              │
+      │         ┌────▼──────────────┐
+      │         │ OUT_FOR_DELIVERY  │
+      │         └────┬──────────────┘
+      │         ┌────┴─────────────┐
+      │         ▼                  ▼
+      │   ┌──────────┐    ┌─────────────────┐
+      │   │DELIVERED │    │ DELIVERY_FAILED  │
+      │   └──────────┘    └────────┬────────┘
+      │                  ┌─────────┴──────────────┐
+      │                  ▼                        ▼
+      │         ┌────────────────┐    ┌───────────────────┐
+      │         │  RTO_INITIATED │    │  OUT_FOR_DELIVERY  │ (rescheduled)
+      │         └───────┬────────┘    └───────────────────┘
+      │                 │
+      │         ┌───────▼────────┐
+      │         │ RTO_IN_TRANSIT │
+      │         └───────┬────────┘
+      │                 │
+      │         ┌───────▼────────┐
+      └────────►│ RTO_COMPLETED  │
+                └────────────────┘
+```
 
-### 4.2 Allowed Transitions
+---
+
+### 4.2 States
+
+| # | State | Meaning | Custody | Triggered by |
+|---|---|---|---|---|
+| 1 | `BOOKED` | Shipment created; payment captured (B2C) or invoiced (B2B) | Platform | M4 booking API |
+| 2 | `PICKUP_ASSIGNED` | DA assigned to collect parcel | DA | M5 `da.assigned` event |
+| 3 | `PICKED_UP` | DA confirmed physical pickup; barcode attached (M8) | DA | M5 `da.pickup_completed` event |
+| 4 | `HANDED_TO_VAN` | DA handed parcels to cron van at meeting point; DA responsibility ends | Cron van driver | M5 `da.cron_handoff_completed` event |
+| 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `HUB_ORIGIN_IN` scan |
+| 6 | `HUB_PROCESSING` | Stand assigned; parcel being physically sorted | Hub ops | M7 stand assignment event |
+| 7 | `IN_BAG` | Parcel bagged for a specific flight | Hub ops | M7 bag creation event |
+| 8 | `DISPATCHED_TO_AIRPORT` | Bag loaded onto cron van; has left the hub | Cron driver | M6/M7 cron departure confirmation |
+| 9 | `AT_AIRPORT` | Bag handed to GHA; airline has taken custody | GHA / Airline | M8 `GHA_ACCEPTANCE` scan |
+| 10 | `DEPARTED` | Flight departed airport | Airline | M9 `flight.departed` event |
+| 11 | `AT_DEST_HUB` | Scanned in at destination hub | Dest hub ops | M8 `HUB_DEST_IN` scan |
+| 12 | `DEST_HUB_PROCESSING` | Being sorted at destination hub for last-mile | Dest hub ops | M7 dest sort event |
+| 13 | `OUT_FOR_DELIVERY` | Last-mile DA assigned and en route | Last-mile DA | M5 last-mile assignment event |
+| 14 | `DELIVERED` | Delivery confirmed by DA | — (complete) | M5 `da.delivery_completed` event |
+| — | `PICKUP_FAILED` | DA could not pick up after max attempts | — | M5 `da.pickup_failed` event |
+| — | `DELIVERY_FAILED` | DA could not deliver after max attempts | — | M5 `da.delivery_failed` event |
+| — | `RTO_INITIATED` | Return-to-origin triggered by M11 | Platform | M11 after N failed delivery attempts |
+| — | `RTO_IN_TRANSIT` | Parcel on return flight to origin city | Airline | M9 return flight departed |
+| — | `RTO_COMPLETED` | Parcel returned to sender | — (complete) | M5 return delivery to sender confirmed |
+| — | `CANCELLED` | Cancelled by customer (allowed up to `PICKED_UP`) | — (complete) | M4 cancellation API |
+
+> **Note:** `IN_TRANSIT` (previously listed) has been removed. It represented the same physical reality as `DEPARTED` with no actionable operational difference. `DEPARTED` now covers the full air leg until landing.
+
+---
+
+### 4.3 Allowed Transitions
 
 ```
 BOOKED
-  → PICKUP_ASSIGNED       (M5: da.assigned event)
-  → CANCELLED             (API: customer cancels)
+  → PICKUP_ASSIGNED           (M5: da.assigned event)
+  → CANCELLED                 (API: customer cancels)
 
 PICKUP_ASSIGNED
-  → PICKED_UP             (M5: da.pickup_completed event)
-  → PICKUP_FAILED         (M5: da.pickup_failed event)
-  → CANCELLED             (API: customer cancels before pickup)
+  → PICKED_UP                 (M5: da.pickup_completed event)
+  → PICKUP_FAILED             (M5: da.pickup_failed event)
+  → CANCELLED                 (API: customer cancels before pickup)
 
 PICKED_UP
-  → AT_ORIGIN_HUB         (M8: scan event at origin hub)
+  → HANDED_TO_VAN             (M5: da.cron_handoff_completed event)
+  → CANCELLED                 (API: last state in which cancellation is allowed)
+
+HANDED_TO_VAN
+  → AT_ORIGIN_HUB             (M8: HUB_ORIGIN_IN scan)
 
 AT_ORIGIN_HUB
-  → IN_BAG                (M7: bag creation event)
+  → HUB_PROCESSING            (M7: stand assignment event)
+
+HUB_PROCESSING
+  → IN_BAG                    (M7: bag creation event)
 
 IN_BAG
-  → DEPARTED              (M9: flight.departed event)
+  → DISPATCHED_TO_AIRPORT     (M6/M7: cron departure confirmation)
+
+DISPATCHED_TO_AIRPORT
+  → AT_AIRPORT                (M8: GHA_ACCEPTANCE scan)
+
+AT_AIRPORT
+  → DEPARTED                  (M9: flight.departed event)
 
 DEPARTED
-  → IN_TRANSIT            (M9: flight.airborne event — or collapse with DEPARTED)
-
-IN_TRANSIT
-  → AT_DEST_HUB           (M9: flight.landed + M8: dest hub scan)
+  → AT_DEST_HUB               (M9: flight.landed + M8: HUB_DEST_IN scan)
 
 AT_DEST_HUB
-  → OUT_FOR_DELIVERY      (M5: last-mile DA assigned)
+  → DEST_HUB_PROCESSING       (M7: destination sort event)
+
+DEST_HUB_PROCESSING
+  → OUT_FOR_DELIVERY          (M5: last-mile DA assigned)
 
 OUT_FOR_DELIVERY
-  → DELIVERED             (M5: da.delivery_completed event)
-  → DELIVERY_FAILED       (M5: da.delivery_failed event)
+  → DELIVERED                 (M5: da.delivery_completed event)
+  → DELIVERY_FAILED           (M5: da.delivery_failed event)
 
 DELIVERY_FAILED
-  → RTO_INITIATED         (M11: after N failed attempts)
-  → OUT_FOR_DELIVERY      (M11: rescheduled attempt)
+  → RTO_INITIATED             (M11: after N failed delivery attempts)
+  → OUT_FOR_DELIVERY          (M11: rescheduled delivery attempt)
 
 PICKUP_FAILED
-  → PICKUP_ASSIGNED       (M11: rescheduled attempt)
-  → CANCELLED             (M11: no further attempts)
+  → PICKUP_ASSIGNED           (M11: rescheduled pickup attempt)
+  → CANCELLED                 (M11: no further attempts possible)
 
 RTO_INITIATED
-  → RTO_IN_TRANSIT        (reverse flight assigned by M9)
+  → RTO_IN_TRANSIT            (M9: return flight assigned and departed)
 
 RTO_IN_TRANSIT
-  → RTO_COMPLETED         (delivery to sender confirmed)
+  → RTO_COMPLETED             (M5: return delivery to sender confirmed)
 ```
 
-### 4.3 Illegal Transitions
+### 4.4 Illegal Transitions
 
 Any transition not listed above is **rejected** by the service layer with a `409 Conflict`. The state machine is the single authority — no module can skip a state.
 
-### 4.4 State Machine Implementation
+### 4.5 State Machine Implementation
 
 Use a `ShipmentStateMachine` service class with an explicit transition table (a `Map<State, Set<State>>`). Every transition is validated before write, and the result is written atomically with a `ShipmentStateHistory` row in the same DB transaction.
 
@@ -642,10 +741,16 @@ M4's `ShipmentEventConsumer` listens to these topics and calls `ShipmentStateMac
 | `oneday.da.assigned` | M5 | BOOKED → PICKUP_ASSIGNED |
 | `oneday.da.pickup_completed` | M5 | PICKUP_ASSIGNED → PICKED_UP |
 | `oneday.da.pickup_failed` | M5 | PICKUP_ASSIGNED → PICKUP_FAILED |
-| `oneday.scan.hub_in` | M8 | PICKED_UP → AT_ORIGIN_HUB |
-| `oneday.hub.bag_created` | M7 | AT_ORIGIN_HUB → IN_BAG |
-| `oneday.flight.departed` | M9 | IN_BAG → DEPARTED |
-| `oneday.flight.landed` | M9 | DEPARTED / IN_TRANSIT → AT_DEST_HUB |
+| `oneday.da.cron_handoff_completed` | M5 | PICKED_UP → HANDED_TO_VAN |
+| `oneday.scan.hub_origin_in` | M8 | HANDED_TO_VAN → AT_ORIGIN_HUB |
+| `oneday.hub.stand_assigned` | M7 | AT_ORIGIN_HUB → HUB_PROCESSING |
+| `oneday.hub.bag_created` | M7 | HUB_PROCESSING → IN_BAG |
+| `oneday.cron.departed_hub` | M6 | IN_BAG → DISPATCHED_TO_AIRPORT |
+| `oneday.scan.gha_acceptance` | M8 | DISPATCHED_TO_AIRPORT → AT_AIRPORT |
+| `oneday.flight.departed` | M9 | AT_AIRPORT → DEPARTED |
+| `oneday.scan.hub_dest_in` | M8 | DEPARTED → AT_DEST_HUB |
+| `oneday.hub.dest_sort_complete` | M7 | AT_DEST_HUB → DEST_HUB_PROCESSING |
+| `oneday.da.lastmile_assigned` | M5 | DEST_HUB_PROCESSING → OUT_FOR_DELIVERY |
 | `oneday.da.delivery_completed` | M5 | OUT_FOR_DELIVERY → DELIVERED |
 | `oneday.da.delivery_failed` | M5 | OUT_FOR_DELIVERY → DELIVERY_FAILED |
 | `oneday.rto.initiated` | M11 | DELIVERY_FAILED → RTO_INITIATED |
@@ -662,11 +767,27 @@ M4's `ShipmentEventConsumer` listens to these topics and calls `ShipmentStateMac
 
 ```sql
 CREATE TYPE shipment_state AS ENUM (
-  'BOOKED', 'PICKUP_ASSIGNED', 'PICKED_UP',
-  'AT_ORIGIN_HUB', 'IN_BAG', 'DEPARTED', 'IN_TRANSIT',
-  'AT_DEST_HUB', 'OUT_FOR_DELIVERY', 'DELIVERED',
-  'PICKUP_FAILED', 'DELIVERY_FAILED',
-  'RTO_INITIATED', 'RTO_IN_TRANSIT', 'RTO_COMPLETED',
+  -- Happy path (in order)
+  'BOOKED',
+  'PICKUP_ASSIGNED',
+  'PICKED_UP',
+  'HANDED_TO_VAN',
+  'AT_ORIGIN_HUB',
+  'HUB_PROCESSING',
+  'IN_BAG',
+  'DISPATCHED_TO_AIRPORT',
+  'AT_AIRPORT',
+  'DEPARTED',
+  'AT_DEST_HUB',
+  'DEST_HUB_PROCESSING',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+  -- Failure / terminal branches
+  'PICKUP_FAILED',
+  'DELIVERY_FAILED',
+  'RTO_INITIATED',
+  'RTO_IN_TRANSIT',
+  'RTO_COMPLETED',
   'CANCELLED'
 );
 
