@@ -71,6 +71,8 @@ Chronological log of every decision entry and update. Quick reference for "what 
 | 2026-05-11 | M4-D-017 | M4 | B2B credit check + booking are atomic via SELECT FOR UPDATE on b2b_accounts | DECIDED |
 | 2026-05-11 | M4-D-018 | M4 | Circuit breakers (Resilience4j) on M2, M3, and Razorpay calls | DECIDED |
 | 2026-05-11 | M4-D-019 | M4 | COD excluded from v1 and not planned without explicit business decision | DECIDED |
+| 2026-05-12 | M4-D-019 | M4 | Reversed: COD is in v1 for B2C and C2C; B2B is credit-only | UPDATED |
+| 2026-05-12 | M4-D-020 | Cross | International delivery not part of business plan; removed from out-of-scope list | UPDATED |
 | 2026-05-11 | M4-D-020 | M4 | GST 18% applied to all bookings; breakdown in all pricing responses | DECIDED |
 | 2026-05-12 | M4-D-020 | M4 | Corrected: all pricing + GST logic owned by M2; M4 stores and forwards only | UPDATED |
 | 2026-05-11 | M4-D-021 | M4 | B2B webhook delivery: HMAC-signed state events to registered URL | DECIDED |
@@ -722,22 +724,31 @@ _(First entry)_
 
 ---
 
-### M4-D-019 — No COD (Cash on Delivery) in v1
+### M4-D-019 — COD is a v1 Payment Option for B2C and C2C
 
 | Field | Value |
 |---|---|
-| **Date** | 2026-05-11 |
+| **Date** | 2026-05-12 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4-ORDERS-DESIGN.md §4 (KDD-9) |
+| **Source** | docs/design/M4-ORDERS-DESIGN.md §4 (KDD-10) |
 
 **Decision:**  
-COD is **explicitly excluded** from v1 and not even represented as a flag or enum value. Adding it requires a deliberate business decision and full engineering design for cash reconciliation and DA risk management.
+COD (Cash on Delivery) is supported in v1 for B2C and C2C shipments. B2B is credit-only; COD does not apply to B2B.
 
-**Rationale:**  
-COD requires: DA carries cash, reconciliation workflow, cash-on-hand risk, fraud controls. Introducing it as a disabled flag invites shortcuts. Clean exclusion is the safer design.
+**M4's scope for COD:**
+- `payment_mode ENUM('PREPAID', 'COD')` on `Shipment`
+- No Razorpay interaction at booking for COD orders
+- `payment_mode` included in `shipment.created` Kafka event — M5 instructs DA to collect cash at door
+- COD cancellation has no refund step (no payment collected)
+
+**Out of M4's scope for COD:**
+- Cash collection logic (M5/DA app)
+- Float reconciliation and remittance (M5/finance)
+- Fraud controls on COD orders (post-v1)
 
 **Change log:**  
-_(First entry)_
+- **2026-05-11** — Initially decided as excluded from v1
+- **2026-05-12** — Reversed: COD is in v1 for B2C and C2C per business requirement
 
 ---
 

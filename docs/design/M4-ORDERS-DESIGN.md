@@ -60,7 +60,7 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 | BlueDart | B2B-first, own airline | AWB-based booking, portal | ~8 customer-visible states | Credit dominant |
 | Shiprocket | B2C aggregator | Merchant-centric; multi-carrier | Varies by carrier | Prepaid, COD |
 | FedEx India | B2B + B2C | Global standards; AWB | ~15 states including customs | Prepaid + credit |
-| **1DD (ours)** | **B2B + B2C + C2C; commercial airline cargo + own DA network** | **Single API; sub-2s booking** | **20 states; full operational visibility** | **Razorpay prepaid (B2C/C2C) + credit (B2B); no COD v1** |
+| **1DD (ours)** | **B2B + B2C + C2C; commercial airline cargo + own DA network** | **Single API; sub-2s booking** | **20 states; full operational visibility** | **Razorpay prepaid or COD (B2C/C2C) + credit (B2B)** |
 
 **Key differentiators to protect in this design:**
 - Booking-to-dispatch in under 2 seconds (synchronous M2 + M3 calls must stay under 500ms each)
@@ -73,9 +73,9 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 
 ### 3.1 In Scope for v1
 
-- **B2C** single-shipment booking with Razorpay prepayment (individual consumers)
+- **B2C** single-shipment booking — Razorpay prepaid or COD (individual consumers)
 - **B2B** single-shipment booking with monthly invoice and credit-limit enforcement (business accounts)
-- **C2C** single-shipment booking — person-to-person, treated as B2C for payment flow, different rate card
+- **C2C** single-shipment booking — person-to-person; Razorpay prepaid or COD; different rate card from M2
 - Full 20-state shipment state machine covering both **INTERCITY** and **SAME_CITY** delivery paths
 - Cancellation up to and including the `PICKED_UP` state
 - Customer tracking API (state history + ETA)
@@ -93,16 +93,14 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 | Topic | Note |
 |---|---|
 | Bulk B2B booking | Multiple shipments in one API call; post-v1 |
-| COD (Cash on Delivery) | Explicitly excluded — increases DA risk, adds reconciliation complexity. **Not a future plan; requires business decision.** |
 | Address modification after booking | State would need to be BOOKED and un-assigned; post-v1 |
 | Delivery rescheduling API | Handled by M11; M4 only reacts to M11 events |
 | Reporting / invoice portal for B2B | Separate billing service; out of scope |
 | Multi-parcel shipments | v1 is 1 booking = 1 parcel; see §4.1 |
-| Customs / international shipping | Domestic only |
 | GST computation | All tax calculation is M2's responsibility; M4 stores and forwards M2's output |
 | GST invoice generation | Invoice PDF/XML generation is a billing service concern |
 | Weight reconciliation (post-pickup reweighing) | Post-v1; `final_price_paise` column is reserved for this |
-| Same-day delivery | Intercity only in v1; same-day is a separate product |
+| COD cash reconciliation | M4 records `payment_mode=COD`; DA cash collection and float reconciliation is M5/finance concern |
 
 ---
 
@@ -213,11 +211,22 @@ public interface EtaPort {
 
 ---
 
-### KDD-10: No COD in v1 — not even a flag
+### KDD-10: COD is a v1 payment option for B2C and C2C
 
-**Decision:** `payment_mode` will not include a COD option. No DB column, no API field.
+**Decision:** `payment_mode ENUM('PREPAID', 'COD')` on `Shipment`. B2C and C2C customers can choose COD at booking. B2B is credit-only (COD does not apply).
 
-**Rationale:** COD requires cash reconciliation with the DA, a separate collection workflow, and fraud controls. Introducing it even as a disabled flag invites future shortcuts that bypass proper implementation.
+**M4's responsibility for COD:**
+- Accept `payment_mode: COD` in the booking request (no Razorpay fields required)
+- Set `payment_mode = COD` on the Shipment; leave `payment_id` null
+- Include `payment_mode` in the `shipment.created` Kafka event so M5 knows the DA must collect cash at delivery
+- On cancellation of a COD shipment: no refund needed (no payment was collected); simpler than PREPAID cancellation
+
+**What M4 does NOT own for COD:**
+- Cash collection at the door (M5/DA app)
+- Float reconciliation and remittance (M5/finance)
+- Fraud detection on COD orders (future concern; out of scope v1)
+
+**Rationale:** The under-24h delivery promise works with both prepaid and COD. COD is standard in Indian logistics and necessary for customer segments that distrust online payment.
 
 ---
 
@@ -267,7 +276,8 @@ The canonical record for one shipment end-to-end.
 | `assigned_flight_id` | UUID (nullable) | Set by M9; null until flight assigned |
 | `origin_tile_id` | UUID (nullable) | Grid tile from M3; used by M5 for DA assignment |
 | `parcel_id` | VARCHAR(30) (nullable) | Assigned by M8 at label generation |
-| `payment_id` | UUID (nullable) | FK to `payment_transactions`; null for B2B |
+| `payment_mode` | ENUM(`PREPAID`, `COD`) | Set at booking; null for B2B (credit) |
+| `payment_id` | UUID (nullable) | FK to `payment_transactions`; null for B2B and COD-before-delivery |
 | `idempotency_key` | VARCHAR(100) (nullable) | Stored to support deduplication |
 | `cancelled_at` | TIMESTAMPTZ (nullable) | |
 | `cancellation_reason` | VARCHAR(500) (nullable) | |
@@ -735,12 +745,15 @@ Validation failures return `400 Bad Request` with a structured error body:
     "description": "Electronics — laptop",
     "declared_value_paise": 8000000
   },
+  "payment_mode": "PREPAID",
   "razorpay_payment_id": "pay_XXXXXXXXXXXXXXXX",
   "razorpay_order_id": "order_XXXXXXXXXXXXXXXX",
   "razorpay_signature": "abc123..."
 }
 ```
 
+> For COD: set `"payment_mode": "COD"` and omit all `razorpay_*` fields. Razorpay fields are required if and only if `payment_mode == "PREPAID"`.
+>
 > Set `customer_type: "C2C"` for person-to-person shipments. Same endpoint, same flow — different rate card from M2.
 
 **Booking flow (synchronous):**
@@ -753,13 +766,13 @@ Validation failures return `400 Bad Request` with a structured error body:
 5.  Call M2 PricingPort.computeQuote(request) [circuit breaker, 500ms timeout]
      → returns {base_amount_paise, tax_paise, total_paise, breakdown, rate_card_version}
      → 503 if circuit open
-6.  Verify Razorpay HMAC-SHA256 signature server-side
-     → 402 PAYMENT_VERIFICATION_FAILED if invalid
-8.  Capture payment via Razorpay API
-     → 402 PAYMENT_CAPTURE_FAILED if capture fails
-9.  Open DB transaction:
-     a. Insert PaymentTransaction (status=CAPTURED)
-     b. Insert Shipment (state=BOOKED)
+6.  Branch on payment_mode:
+     PREPAID → verify Razorpay HMAC-SHA256 signature → 402 PAYMENT_VERIFICATION_FAILED if invalid
+            → capture payment via Razorpay API → 402 PAYMENT_CAPTURE_FAILED if capture fails
+     COD    → skip; no payment interaction at booking time
+7.  Open DB transaction:
+     a. If PREPAID: Insert PaymentTransaction (status=CAPTURED)
+     b. Insert Shipment (state=BOOKED, payment_mode=PREPAID|COD)
      c. Insert ShipmentStateHistory (from_state=null, to_state=BOOKED, source=API)
      d. Increment ShipmentRefCounter (SELECT FOR UPDATE)
      e. Store Idempotency-Key with response
@@ -892,7 +905,8 @@ Validation failures return `400 Bad Request` with a structured error body:
 **Business rules:**
 - Allowed only in states: `BOOKED`, `PICKUP_ASSIGNED`, `PICKED_UP`
 - After `PICKED_UP`, returns `409 CANCELLATION_NOT_ALLOWED`
-- Refund is initiated synchronously to Razorpay; confirmation comes via webhook
+- PREPAID: refund initiated synchronously to Razorpay; confirmation comes via webhook
+- COD: no refund (no payment was collected); cancellation is immediate
 
 **Response `200 OK`:**
 ```json
@@ -1316,6 +1330,7 @@ All events share a common envelope:
 {
   "event_type": "shipment.created",
   "customer_type": "B2C",
+  "payment_mode": "COD",
   "delivery_type": "INTERCITY",
   "origin_city": "BLR",
   "origin_pincode": "560001",
@@ -1448,8 +1463,9 @@ CREATE TYPE shipment_state AS ENUM (
   'CANCELLED'
 );
 
-CREATE TYPE customer_type AS ENUM ('B2C', 'B2B', 'C2C');
+CREATE TYPE customer_type  AS ENUM ('B2C', 'B2B', 'C2C');
 CREATE TYPE delivery_type  AS ENUM ('INTERCITY', 'SAME_CITY');
+CREATE TYPE payment_mode   AS ENUM ('PREPAID', 'COD');
 
 -- Shipments
 CREATE TABLE shipments (
@@ -1489,6 +1505,7 @@ CREATE TABLE shipments (
   assigned_flight_id       UUID,
   origin_tile_id           UUID,
   parcel_id                VARCHAR(30),
+  payment_mode             payment_mode,
   payment_id               UUID,
   idempotency_key          VARCHAR(100),
   cancelled_at             TIMESTAMPTZ,
@@ -1929,6 +1946,8 @@ oneday:
 | E14 | GHA scan arrives before `DISPATCHED_TO_AIRPORT` | State machine rejects; DLQ; ops replays after hub departure event arrives |
 | E15 | RTO flight departed event arrives for INTERCITY shipment | `RTO_INITIATED → RTO_IN_TRANSIT` valid; same-city RTOs skip this state |
 | E16 | B2B webhook endpoint is down during state change | Retry 5 times with backoff; then suspend webhook and alert; does not affect state transitions |
+| E17 | COD shipment cancelled before pickup | No refund step; Shipment transitions to CANCELLED; `shipment.cancelled` event emitted with `refund_initiated: false` |
+| E18 | B2B customer sends `payment_mode: COD` | Rejected with `400 COD_NOT_AVAILABLE_FOR_B2B`; B2B is credit-only |
 
 ---
 
