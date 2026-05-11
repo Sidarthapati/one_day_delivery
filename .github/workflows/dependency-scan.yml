@@ -33,7 +33,7 @@ jobs:
 
       # Pass 1: upload HIGH + CRITICAL findings to the Security tab (non-blocking)
       - name: Trivy scan — SARIF upload
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
@@ -51,7 +51,7 @@ jobs:
 
       # Pass 2: block the build only on CRITICAL findings
       - name: Trivy scan — block on CRITICAL
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           scan-ref: .
