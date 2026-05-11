@@ -99,7 +99,8 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 | Reporting / invoice portal for B2B | Separate billing service; out of scope |
 | Multi-parcel shipments | v1 is 1 booking = 1 parcel; see §4.1 |
 | Customs / international shipping | Domestic only |
-| GST invoice generation | Invoice PDF/XML generation is a billing service concern; M4 provides the data |
+| GST computation | All tax calculation is M2's responsibility; M4 stores and forwards M2's output |
+| GST invoice generation | Invoice PDF/XML generation is a billing service concern |
 | Weight reconciliation (post-pickup reweighing) | Post-v1; `final_price_paise` column is reserved for this |
 | Same-day delivery | Intercity only in v1; same-day is a separate product |
 
@@ -202,7 +203,17 @@ public interface EtaPort {
 
 ---
 
-### KDD-9: No COD in v1 — not even a flag
+### KDD-9: M4 owns no pricing or tax logic — M2 is the single source
+
+**Decision:** M4 passes the full pricing context to M2 and stores whatever M2 returns. M4 has no knowledge of GST rate, volumetric weight divisor, rate card structure, or surcharge rules. The `QuoteResult` from M2 is the complete, final pricing object — M4 maps it to the shipment record and forwards it to the client unchanged.
+
+**Rationale:** Pricing rules change frequently (GST rate revisions, rate card updates, new surcharges). Duplicating any pricing logic in M4 creates drift and bugs. M2 is the single place to change.
+
+**Consequence:** The `PricingPort.computeQuote()` return type (`QuoteResult`) must include everything the client needs: base amount, tax, total, breakdown, and rate card version. M4 stores all of these fields but computes none of them.
+
+---
+
+### KDD-10: No COD in v1 — not even a flag
 
 **Decision:** `payment_mode` will not include a COD option. No DB column, no API field.
 
@@ -244,9 +255,9 @@ The canonical record for one shipment end-to-end.
 | `volumetric_weight_grams` | INTEGER | `(l × w × h) / 5` (industry standard divisor) |
 | `chargeable_weight_grams` | INTEGER | `max(actual, volumetric)`; locked at booking |
 | `declared_value_paise` | BIGINT (nullable) | Shipper-declared value for liability cap; does not affect pricing in v1; required for B2B |
-| `quoted_price_paise` | BIGINT | Price in paise (₹1 = 100 paise) |
-| `gst_paise` | BIGINT | 18% GST on `quoted_price_paise` |
-| `total_price_paise` | BIGINT | `quoted_price_paise + gst_paise` |
+| `quoted_price_paise` | BIGINT | Base price from M2 (excluding tax) |
+| `tax_paise` | BIGINT | Tax amount from M2 (e.g. GST); M4 does not compute this |
+| `total_price_paise` | BIGINT | Total from M2 (`quoted_price_paise + tax_paise`); M4 does not compute this |
 | `final_price_paise` | BIGINT (nullable) | Set after weight confirmation (post-v1); reserved |
 | `rate_card_version` | VARCHAR(50) | Snapshot of M2 rate card version used; audit |
 | `state` | shipment_state ENUM | Current state (see §6) |
@@ -298,9 +309,9 @@ One row per payment attempt. Multiple rows possible for B2C refunds.
 | `razorpay_order_id` | VARCHAR(100) | Created by M4 on Razorpay before checkout |
 | `razorpay_payment_id` | VARCHAR(100) (nullable) | Set on capture |
 | `razorpay_signature` | VARCHAR(500) (nullable) | HMAC-SHA256; stored for audit |
-| `amount_paise` | BIGINT | Amount excluding GST |
-| `gst_paise` | BIGINT | 18% GST |
-| `total_paise` | BIGINT | `amount_paise + gst_paise` |
+| `amount_paise` | BIGINT | Base amount from M2 (excluding tax) |
+| `tax_paise` | BIGINT | Tax from M2; M4 does not compute this |
+| `total_paise` | BIGINT | Total from M2 |
 | `currency` | VARCHAR(3) | `INR` |
 | `status` | ENUM(`CREATED`, `AUTHORIZED`, `CAPTURED`, `FAILED`, `REFUND_INITIATED`, `REFUNDED`) | |
 | `refund_id` | VARCHAR(100) (nullable) | Razorpay refund ID |
@@ -740,9 +751,9 @@ Validation failures return `400 Bad Request` with a structured error body:
      → 422 UNSERVICEABLE if either pincode is not covered
 4.  Compute volumetric weight; determine delivery_type (INTERCITY / SAME_CITY)
 5.  Call M2 PricingPort.computeQuote(request) [circuit breaker, 500ms timeout]
+     → returns {base_amount_paise, tax_paise, total_paise, breakdown, rate_card_version}
      → 503 if circuit open
-6.  Compute GST (18%); compute total_price_paise
-7.  Verify Razorpay HMAC-SHA256 signature server-side
+6.  Verify Razorpay HMAC-SHA256 signature server-side
      → 402 PAYMENT_VERIFICATION_FAILED if invalid
 8.  Capture payment via Razorpay API
      → 402 PAYMENT_CAPTURE_FAILED if capture fails
@@ -1168,10 +1179,14 @@ public interface ServiceabilityPort {
     // Returns: serviceable=true/false, delivery_type (INTERCITY/SAME_CITY), origin_tile_id
 }
 
-// M2 — pricing
+// M2 — pricing (M4 owns no pricing or tax logic)
 public interface PricingPort {
     QuoteResult computeQuote(QuoteRequest request);
-    // QuoteRequest includes: customer_type, delivery_type, city_pair, chargeable_weight_grams
+    // QuoteRequest: customer_type, delivery_type, origin_city, dest_city,
+    //               chargeable_weight_grams, declared_value_paise
+    // QuoteResult:  base_amount_paise, tax_paise, total_paise,
+    //               breakdown (map of charge components), rate_card_version
+    // M4 stores and forwards this result; it does not compute or validate any field in it.
 }
 
 // M9 — two-stage ETA
@@ -1463,7 +1478,7 @@ CREATE TABLE shipments (
   chargeable_weight_grams  INTEGER NOT NULL,
   declared_value_paise     BIGINT,
   quoted_price_paise       BIGINT NOT NULL,
-  gst_paise                BIGINT NOT NULL,
+  tax_paise                BIGINT NOT NULL,
   total_price_paise        BIGINT NOT NULL,
   final_price_paise        BIGINT,
   rate_card_version        VARCHAR(50) NOT NULL,
@@ -1533,7 +1548,7 @@ CREATE TABLE payment_transactions (
   razorpay_payment_id   VARCHAR(100),
   razorpay_signature    VARCHAR(500),
   amount_paise          BIGINT NOT NULL,
-  gst_paise             BIGINT NOT NULL DEFAULT 0,
+  tax_paise             BIGINT NOT NULL DEFAULT 0,
   total_paise           BIGINT NOT NULL,
   currency              VARCHAR(3) NOT NULL DEFAULT 'INR',
   status                VARCHAR(30) NOT NULL,
@@ -1663,14 +1678,14 @@ Webhook payloads are verified before processing. Unverified payloads return `401
 
 ---
 
-### 11.4 GST Handling
+### 11.4 Pricing and Tax
 
-- GST rate: **18%** (Indian logistics services)
-- Applied to `quoted_price_paise`; `gst_paise = ROUND(quoted_price_paise * 0.18)`
-- `total_price_paise = quoted_price_paise + gst_paise`
-- B2B customers: GSTIN stored on `B2bAccount`; available for Input Tax Credit (ITC) claims
-- GST breakdown returned in all pricing responses
-- GST invoice PDF generation is out of M4 scope (future billing service)
+All pricing, tax computation, and rate card logic is **entirely owned by M2**. M4 stores what M2 returns and passes it through to the client unchanged. Specifically:
+
+- M4 does **not** know the GST rate, volumetric divisor, or any surcharge rule
+- `QuoteResult` from M2 contains: `quoted_price_paise`, `tax_paise`, `total_price_paise`, `breakdown`, `rate_card_version`
+- M4 maps these fields directly to `Shipment` and `PaymentTransaction` columns
+- B2B GSTIN is stored on `B2bAccount` for M2 to use when computing quotes; M4 passes it as context but does not interpret it
 
 ---
 
@@ -1813,8 +1828,6 @@ oneday:
       redis-ttl-seconds: 60               # Tracking API cache TTL
     archival:
       archive-after-years: 2
-    gst:
-      rate: 0.18                          # 18%; change via migration not config if rate changes
     cities:
       valid-codes: BLR,BOM,DEL,HYD,MAA
 ```

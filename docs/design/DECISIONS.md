@@ -72,6 +72,7 @@ Chronological log of every decision entry and update. Quick reference for "what 
 | 2026-05-11 | M4-D-018 | M4 | Circuit breakers (Resilience4j) on M2, M3, and Razorpay calls | DECIDED |
 | 2026-05-11 | M4-D-019 | M4 | COD excluded from v1 and not planned without explicit business decision | DECIDED |
 | 2026-05-11 | M4-D-020 | M4 | GST 18% applied to all bookings; breakdown in all pricing responses | DECIDED |
+| 2026-05-12 | M4-D-020 | M4 | Corrected: all pricing + GST logic owned by M2; M4 stores and forwards only | UPDATED |
 | 2026-05-11 | M4-D-021 | M4 | B2B webhook delivery: HMAC-signed state events to registered URL | DECIDED |
 | 2026-05-10 | M8-D-001 | M8 | Barcode format: QR Code (2D) | DECIDED |
 | 2026-05-10 | M8-D-002 | M8 | Parcel ID format: {CITY}-{YYYYMMDD}-{6-digit-seq} | DECIDED |
@@ -740,24 +741,30 @@ _(First entry)_
 
 ---
 
-### M4-D-020 — GST 18% on All Bookings
+### M4-D-020 — Pricing and Tax Computation Owned Entirely by M2
 
 | Field | Value |
 |---|---|
 | **Date** | 2026-05-11 |
+| **Last updated** | 2026-05-12 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4-ORDERS-DESIGN.md §11.4 |
+| **Source** | docs/design/M4-ORDERS-DESIGN.md §11.4 (KDD-9) |
 
 **Decision:**  
-GST at **18%** is applied to all bookings (B2B, B2C, C2C). `gst_paise = ROUND(quoted_price_paise * 0.18)`. `total_price_paise = quoted_price_paise + gst_paise`. Breakdown is returned in all pricing responses.
+All pricing logic — base rates, GST, surcharges, volumetric divisor, rate card selection — is **M2's responsibility**. M4 passes the booking context to M2 via `PricingPort.computeQuote()` and stores the result as-is. M4 does not know the GST rate, does not compute tax, and has no pricing config.
+
+**Rationale:**  
+Clear separation of concerns. Pricing rules change frequently (GST revisions, rate card updates, new surcharges). Having any pricing logic in M4 creates drift and debugging confusion. M2 is the single place to change.
 
 **Implications:**
-- Three monetary columns on `Shipment`: `quoted_price_paise`, `gst_paise`, `total_price_paise`
-- B2B customers' GSTIN stored on `B2bAccount` for ITC claims
-- GST invoice PDF generation is a future billing service concern — M4 provides the data
+- `QuoteResult` from M2 contains: `quoted_price_paise`, `tax_paise`, `total_price_paise`, `breakdown`, `rate_card_version`
+- M4 columns are named `tax_paise` (not `gst_paise`) — M4 does not know the tax type
+- No `gst.rate` property in M4's `application.yml`
+- B2B GSTIN stored on `B2bAccount` is passed to M2 as context; M4 does not interpret it
 
 **Change log:**  
-_(First entry)_
+- **2026-05-11** — Initially recorded as M4 computing GST 18%
+- **2026-05-12** — CORRECTED: GST and all pricing logic moved entirely to M2; M4 stores and forwards only
 
 ---
 
