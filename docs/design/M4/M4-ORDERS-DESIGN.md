@@ -6,10 +6,11 @@
 | **Version** | 0.3 |
 | **Status** | Draft — pending ops sign-off on state machine |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-11 |
+| **Last updated** | 2026-05-12 |
 | **Depends on** | M1 (auth/JWT), M2 (pricing), M3 (grid/serviceability), M8 (barcode/label) |
 | **Consumed by** | M5 (dispatch), M6 (routing), M7 (hub), M9 (airline), M10 (SLA), M11 (exceptions) |
-| **Related docs** | [MODULES.md](../MODULES.md) · [DECISIONS.md](DECISIONS.md) · [M8-BARCODE-DESIGN.md](M8-BARCODE-DESIGN.md) · [PRD-ONE-DAY-DELIVERY.md](../PRD-ONE-DAY-DELIVERY.md) |
+| **Related docs** | [MODULES.md](../../MODULES.md) · [DECISIONS.md](../DECISIONS.md) · [M8-BARCODE-DESIGN.md](../M8-BARCODE-DESIGN.md) · [PRD-ONE-DAY-DELIVERY.md](../../PRD-ONE-DAY-DELIVERY.md) |
+| **Diagrams** | [ER Diagram](M4-ER-DIAGRAM.md) · [State Machine](M4-STATE-MACHINE.md) · [Sequence Diagrams](M4-SEQUENCES.md) |
 
 ---
 
@@ -435,86 +436,9 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 > **Status:** Updated 2026-05-11 — 20 states; SAME_CITY path added; IN_TRANSIT removed.
 > Requires ops sign-off before implementation (see §19, OD-4).
 
-### 6.1 Visual Flow — INTERCITY Path
+### 6.1 Visual Flow
 
-```
-                         ┌─────────┐
-                         │ BOOKED  │
-                         └────┬────┘
-              ┌───────────────┼──────────────────┐
-              ▼               ▼                  │
-     ┌────────────────┐  ┌──────────┐            │
-     │PICKUP_ASSIGNED │  │CANCELLED │◄───────────┤ (customer cancels up to PICKED_UP)
-     └───────┬────────┘  └──────────┘            │
-      ┌──────┴──────┐                            │
-      ▼             ▼                            │
-┌─────────────┐ ┌──────────────┐                │
-│PICKUP_FAILED│ │  PICKED_UP   │────────────────►┘
-└──────┬──────┘ └──────┬───────┘
-       │               │
-       │          ┌────▼──────────┐
-       │          │ HANDED_TO_VAN │   DA cron handoff; DA responsibility ends
-       │          └────┬──────────┘
-       │               │
-       │          ┌────▼──────────┐
-       │          │AT_ORIGIN_HUB  │   Hub in-scan (M8)
-       │          └────┬──────────┘
-       │               │
-       │          ┌────▼──────────┐
-       │          │HUB_PROCESSING │   Stand assigned; being sorted (M7)
-       │          └────┬──────────┘
-       │               │
-       │          ┌────▼──────────┐
-       │          │    IN_BAG     │   Bagged for specific flight (M7)
-       │          └────┬──────────┘
-       │               │
-       │     ┌─────────┴──────────────────────────────────────┐
-       │     │ delivery_type=INTERCITY      delivery_type=SAME_CITY
-       │     ▼                                        ▼
-       │  ┌────────────────────┐            ┌──────────────────────┐
-       │  │DISPATCHED_TO_AIRPORT│           │  OUT_FOR_DELIVERY     │ ←── (skip air leg)
-       │  └────┬───────────────┘            └──────────┬───────────┘
-       │       │                                        │
-       │  ┌────▼──────────┐                            │
-       │  │  AT_AIRPORT   │   GHA acceptance scan      │
-       │  └────┬──────────┘                            │
-       │       │                                        │
-       │  ┌────▼──────────┐                            │
-       │  │   DEPARTED    │   Flight departed           │
-       │  └────┬──────────┘                            │
-       │       │                                        │
-       │  ┌────▼──────────┐                            │
-       │  │ AT_DEST_HUB   │   Dest hub in-scan (M8)    │
-       │  └────┬──────────┘                            │
-       │       │                                        │
-       │  ┌────▼──────────────┐                        │
-       │  │DEST_HUB_PROCESSING│   Last-mile sort        │
-       │  └────┬──────────────┘                        │
-       │       │                                        │
-       │  ┌────▼──────────────┐                        │
-       │  │ OUT_FOR_DELIVERY  │◄───────────────────────┘
-       │  └────┬──────────────┘
-       │  ┌────┴─────────────┐
-       │  ▼                  ▼
-       │ ┌──────────┐ ┌─────────────────┐
-       │ │DELIVERED │ │ DELIVERY_FAILED  │
-       │ └──────────┘ └────────┬────────┘
-       │              ┌────────┴──────────────┐
-       │              ▼                       ▼
-       │    ┌─────────────────┐   ┌──────────────────────┐
-       │    │  RTO_INITIATED  │   │  OUT_FOR_DELIVERY     │ (rescheduled attempt)
-       │    └──────┬──────────┘   └──────────────────────┘
-       │           │
-       │    ┌──────▼──────────┐
-       │    │ RTO_IN_TRANSIT  │
-       │    └──────┬──────────┘
-       │           │
-       └──────────►│
-                   ▼
-            ┌──────────────┐
-            │ RTO_COMPLETED│
-            └──────────────┘
-```
+> Full state machine diagram (visual flow + transitions + state labels): **[M4-STATE-MACHINE.md](M4-STATE-MACHINE.md)**
 
 ---
 
@@ -1232,57 +1156,9 @@ On circuit open: return `503 Service Unavailable` with `Retry-After: 30` header.
 
 ---
 
-### 8.4 Sequence Diagram — B2C Booking
+### 8.4 Sequence Diagrams
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant M4
-    participant M3
-    participant M2
-    participant Razorpay
-    participant DB
-    participant Kafka
-    participant M9
-
-    Client->>M4: POST /b2c/shipments (Idempotency-Key)
-    M4->>DB: Check idempotency key (miss)
-    M4->>M3: check(originPin, destPin) [circuit breaker]
-    M3-->>M4: {serviceable: true, delivery_type: INTERCITY}
-    M4->>M2: computeQuote(request) [circuit breaker]
-    M2-->>M4: {quoted_price_paise: 45000}
-    M4->>Razorpay: verify signature + capture(paymentId, amount)
-    Razorpay-->>M4: {status: CAPTURED}
-    M4->>DB: BEGIN TX — insert PaymentTransaction, Shipment, StateHistory, RefCounter++
-    DB-->>M4: commit OK
-    M4->>M9: fetchEta(shipmentId, BOOKED, context)
-    M9-->>M4: EtaResult
-    M4->>DB: UPDATE shipments SET eta_promised=... WHERE id=...
-    M4->>Kafka: emit shipment.created
-    M4-->>Client: 201 {shipment_ref, eta_promised}
-```
-
----
-
-### 8.5 Sequence Diagram — Kafka State Transition
-
-```mermaid
-sequenceDiagram
-    participant M5
-    participant Kafka
-    participant M4Consumer
-    participant DB
-
-    M5->>Kafka: publish oneday.da.pickup_completed {shipment_id, event_key}
-    Kafka-->>M4Consumer: deliver message
-    M4Consumer->>DB: SELECT FOR UPDATE shipments WHERE id=...
-    DB-->>M4Consumer: {state: PICKUP_ASSIGNED}
-    M4Consumer->>DB: UPDATE state=PICKED_UP
-    M4Consumer->>DB: INSERT shipment_state_history (event_ref=kafka_msg_key)
-    DB-->>M4Consumer: commit
-    M4Consumer->>Kafka: emit shipment.state_changed
-    Note right of DB: Raw Kafka payload NOT stored in DB
-```
+> All sequence diagrams (B2C PREPAID booking, COD booking, Kafka state transition, AT_ORIGIN_HUB ETA update): **[M4-SEQUENCES.md](M4-SEQUENCES.md)**
 
 ---
 
