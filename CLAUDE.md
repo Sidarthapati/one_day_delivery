@@ -8,7 +8,7 @@ An in-house one-day intercity parcel delivery platform (B2B + B2C) across 5 Indi
 
 Stack: **Java 21 + Spring Boot 3.2**, **Maven multi-module**, **PostgreSQL**, **Kafka**. Frontend (React) comes later.
 
-Design docs in `docs/`: `PRD-ONE-DAY-DELIVERY.md`, `MODULES.md`, `PRD-DISCOVERY-QUESTIONNAIRE.md`, `M3-GRID-DESIGN.md`, `M3-ALGORITHM-DISCUSSION.md`.
+Design docs in `docs/`: `PRD-ONE-DAY-DELIVERY.md`, `MODULES.md`, `PRD-DISCOVERY-QUESTIONNAIRE.md`, `M3-GRID-DESIGN.md`, `M3-ALGORITHM-DISCUSSION.md`, `M3-IMPLEMENTATION-PLAN.md`.
 
 ## Build Commands
 
@@ -59,6 +59,14 @@ com.oneday.{module}/
 - **Cron-meeting is a hard constraint:** M5 must confirm a parcel can reach the hub cron before airline cutoff — no assignment otherwise.
 - **DA utilisation ~70%:** 70% of the shift is order-engaged time (travel to each pickup + service at each pickup); 30% is idle/unproductive (hub wait, repositioning without an order). This is the cost floor in M3, M5, M6 — don't optimise purely for speed.
 - **Cross-module imports:** only import another module's public service interface, never its internal classes.
+
+## Implementation Status
+
+| Module | Status |
+|--------|--------|
+| `common` | `BaseEntity` (@MappedSuperclass, UUID id + createdAt) — done |
+| `grid` (M3) | Phase 1 (foundation) done and build-verified. Phase 2 (domain layer) next. See `docs/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
+| All others | Not started |
 
 ## Open Questions (block implementation of specific modules)
 

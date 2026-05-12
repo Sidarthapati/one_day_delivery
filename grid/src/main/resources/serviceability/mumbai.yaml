@@ -1,0 +1,25 @@
+city_id: "city-mumbai"
+city_name: "Mumbai"
+center_lat: 19.0760
+center_lon: 72.8777
+serviceable_pincodes:
+  - pincode: "400001"
+    lat: 18.9322
+    lon: 72.8264
+    locality: "Fort"
+  - pincode: "400007"
+    lat: 18.9716
+    lon: 72.8162
+    locality: "Mumbai Central"
+  - pincode: "400051"
+    lat: 19.0596
+    lon: 72.8295
+    locality: "Bandra West"
+  - pincode: "400053"
+    lat: 19.1197
+    lon: 72.8468
+    locality: "Andheri West"
+  - pincode: "400063"
+    lat: 19.2307
+    lon: 72.8567
+    locality: "Borivali"
