@@ -8,7 +8,7 @@ An in-house one-day intercity parcel delivery platform (B2B + B2C) across 5 Indi
 
 Stack: **Java 21 + Spring Boot 3.2**, **Maven multi-module**, **PostgreSQL**, **Kafka**. Frontend (React) comes later.
 
-Design docs in `docs/`: `PRD-ONE-DAY-DELIVERY.md`, `MODULES.md`, `PRD-DISCOVERY-QUESTIONNAIRE.md`.
+Design docs in `docs/`: `PRD-ONE-DAY-DELIVERY.md`, `MODULES.md`, `PRD-DISCOVERY-QUESTIONNAIRE.md`, `M3-GRID-DESIGN.md`, `M3-ALGORITHM-DISCUSSION.md`.
 
 ## Build Commands
 
@@ -57,13 +57,13 @@ com.oneday.{module}/
 - **Nightly stability:** grids (M3) and van routes (M6) replan once nightly. Intraday changes need station manager approval.
 - **70/30 demand weighting:** grid sizing and flight assignment use 70% historical / 30% current demand.
 - **Cron-meeting is a hard constraint:** M5 must confirm a parcel can reach the hub cron before airline cutoff — no assignment otherwise.
-- **DA utilisation ~70%:** cost floor is first-class in M3, M5, M6 — don't optimise purely for speed.
+- **DA utilisation ~70%:** 70% of the shift is order-engaged time (travel to each pickup + service at each pickup); 30% is idle/unproductive (hub wait, repositioning without an order). This is the cost floor in M3, M5, M6 — don't optimise purely for speed.
 - **Cross-module imports:** only import another module's public service interface, never its internal classes.
 
 ## Open Questions (block implementation of specific modules)
 
 See `docs/PRD-ONE-DAY-DELIVERY.md §20` for full list. Key blockers:
-- Grid vertex/tile rules (blocks M3) — G1–G4
+- Grid vertex/tile rules (partially resolved — see `M3-GRID-DESIGN.md`): G1 (cron-vertex meaning), G2 (UTM vs WGS84), G4 (approval SLA) still open; G3 (1 DA : N tiles and M DAs : 1 tile) resolved in design doc
 - DA assignment objective function (blocks M5) — A1–A4
 - Barcode standard + hub overload tactics (blocks M7, M8) — H1–H3
 - Airline AWB issuer + handover SLA in minutes (blocks M9) — L1–L3
