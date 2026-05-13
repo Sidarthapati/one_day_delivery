@@ -1,0 +1,25 @@
+city_id: "city-bangalore"
+city_name: "Bangalore"
+center_lat: 12.9716
+center_lon: 77.5946
+serviceable_pincodes:
+  - pincode: "560001"
+    lat: 12.9716
+    lon: 77.6099
+    locality: "MG Road"
+  - pincode: "560025"
+    lat: 12.9784
+    lon: 77.6408
+    locality: "Indiranagar"
+  - pincode: "560030"
+    lat: 12.9352
+    lon: 77.6245
+    locality: "Koramangala"
+  - pincode: "560034"
+    lat: 12.9166
+    lon: 77.6101
+    locality: "BTM Layout"
+  - pincode: "560038"
+    lat: 12.9698
+    lon: 77.7500
+    locality: "Whitefield"

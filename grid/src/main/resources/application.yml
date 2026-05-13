@@ -1,0 +1,38 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/oneday
+    username: oneday
+    password: secret
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+grid:
+  osrm:
+    base-url: http://localhost:5000
+    adjacency-threshold-seconds: 600
+  solver:
+    time-limit-seconds: 60
+    load-tolerance: 0.30
+    min-inter-stop-pairs-per-window: 5
+  bootstrap:
+    service-time-min: 12.0
+    inter-stop-travel-min: 5.0
+    min-pickups-for-real-data: 20
+  shift:
+    start-hour: 7
+    end-hour: 20
+  da:
+    target-utilisation: 0.70
+    max-utilisation: 0.90
+  intraday:
+    overload-warning-threshold: 1.5
+    overload-critical-threshold: 2.0
+    warning-sustained-minutes: 15
+    critical-sustained-minutes: 10
+    re-alert-suppression-minutes: 30

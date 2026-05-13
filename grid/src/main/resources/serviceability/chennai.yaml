@@ -1,0 +1,25 @@
+city_id: "city-chennai"
+city_name: "Chennai"
+center_lat: 13.0827
+center_lon: 80.2707
+serviceable_pincodes:
+  - pincode: "600001"
+    lat: 13.0878
+    lon: 80.2785
+    locality: "Periyamet"
+  - pincode: "600004"
+    lat: 13.0569
+    lon: 80.2556
+    locality: "Anna Salai"
+  - pincode: "600006"
+    lat: 13.0769
+    lon: 80.2457
+    locality: "Chetpet"
+  - pincode: "600017"
+    lat: 13.0569
+    lon: 80.2425
+    locality: "Nungambakkam"
+  - pincode: "600040"
+    lat: 13.0418
+    lon: 80.2341
+    locality: "T Nagar"

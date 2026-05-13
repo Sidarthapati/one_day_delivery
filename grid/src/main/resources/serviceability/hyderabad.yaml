@@ -1,0 +1,25 @@
+city_id: "city-hyderabad"
+city_name: "Hyderabad"
+center_lat: 17.3850
+center_lon: 78.4867
+serviceable_pincodes:
+  - pincode: "500001"
+    lat: 17.3763
+    lon: 78.4794
+    locality: "Nampally"
+  - pincode: "500003"
+    lat: 17.4400
+    lon: 78.4983
+    locality: "Secunderabad"
+  - pincode: "500016"
+    lat: 17.4146
+    lon: 78.4509
+    locality: "Banjara Hills"
+  - pincode: "500033"
+    lat: 17.4435
+    lon: 78.3772
+    locality: "HITEC City"
+  - pincode: "500081"
+    lat: 17.4401
+    lon: 78.3489
+    locality: "Gachibowli"

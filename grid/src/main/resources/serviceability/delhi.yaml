@@ -1,0 +1,25 @@
+city_id: "city-delhi"
+city_name: "Delhi"
+center_lat: 28.6139
+center_lon: 77.2090
+serviceable_pincodes:
+  - pincode: "110001"
+    lat: 28.6315
+    lon: 77.2197
+    locality: "Connaught Place"
+  - pincode: "110002"
+    lat: 28.6394
+    lon: 77.2253
+    locality: "Darya Ganj"
+  - pincode: "110005"
+    lat: 28.6517
+    lon: 77.1892
+    locality: "Karol Bagh"
+  - pincode: "110019"
+    lat: 28.5308
+    lon: 77.2152
+    locality: "Kalkaji"
+  - pincode: "110048"
+    lat: 28.5678
+    lon: 77.2089
+    locality: "Greater Kailash"
