@@ -65,8 +65,16 @@ com.oneday.{module}/
 | Module | Status |
 |--------|--------|
 | `common` | `BaseEntity` (@MappedSuperclass, UUID id + createdAt) — done |
-| `grid` (M3) | Phase 1 (foundation) done and build-verified. Phase 2 (domain layer) next. See `docs/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
+| `grid` (M3) | Phases 1–3 done. Phase 4 (DTOs) next. See `docs/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
 | All others | Not started |
+
+## Local Dev Setup
+
+- **PostgreSQL 16** installed via Homebrew. Start: `brew services start postgresql@16`
+- **DB:** `oneday`, **user:** `oneday`, **password:** `secret`, **port:** 5432
+- **GUI:** TablePlus (`/Applications/TablePlus.app`) — connect to localhost:5432
+- `grid/src/main/resources/application.yml` already has `spring.datasource` pointing at the local DB
+- Migrations run automatically via Flyway on app startup; to run manually: `psql -U oneday -d oneday -f <migration.sql>`
 
 ## Open Questions (block implementation of specific modules)
 
