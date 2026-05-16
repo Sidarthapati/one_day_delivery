@@ -638,6 +638,7 @@ CREATE TABLE assignment_proposal (
     city_id               UUID NOT NULL,
     valid_for_date        DATE NOT NULL,
     status                VARCHAR(20) NOT NULL,  -- PROPOSED | APPROVED | REJECTED | SUPERSEDED
+    proposal_type         VARCHAR(30) NOT NULL DEFAULT 'NIGHTLY',  -- NIGHTLY | INTRADAY_OVERRIDE | INTRADAY_SUGGESTION | INTRADAY_SHARE
     solver_type           VARCHAR(30) NOT NULL,  -- CP_SAT | BFS_FALLBACK
     adjacency_source      VARCHAR(30) NOT NULL,  -- OSRM | GEOMETRIC_FALLBACK
     optimality_gap_pct    DOUBLE PRECISION,      -- null for BFS_FALLBACK
@@ -742,9 +743,16 @@ GET  /grid/proposals/{proposal_id}
 POST /grid/proposals/{proposal_id}/approve
 POST /grid/proposals/{proposal_id}/reject
 PUT  /grid/proposals/{proposal_id}/regions/{region_id}/override
+POST /grid/assignments/intraday-override
+POST /grid/assignments/tile-share
+POST /grid/proposals/{proposal_id}/approve-intraday
 ```
 
 The `GET /{proposal_id}` response includes `solver_type`, `adjacency_source`, `optimality_gap_pct`, and per-region `has_bootstrapped_tiles` so reviewers see metadata about the quality of the proposal they're approving.
+
+**Tile-share endpoint** (`POST /grid/assignments/tile-share`): adds a DA to a tile without removing the existing DA. The body is `{ city_id, da_id, tile_id, requested_by }`. The system validates (a) the DA is not already assigned to this tile and (b) the tile is road-adjacent to at least one tile already in the DA's territory. Creates an `INTRADAY_SHARE` proposal pending approval. Response returns a `TileShareResponse` with the new `proposal_id` for the approval screen.
+
+Unlike `intraday-override` (Scenario B), tile-share does not supersede the existing DA's assignment — both DAs end up with `n_das_on_tile = 2` for that tile.
 
 ### 7.7 No-DA alert (Kafka, produced by M3, consumed by M10)
 
@@ -973,6 +981,11 @@ If the station manager does not act within the approval window:
 - Log the auto-fallback as an audit event visible to admin
 
 Intraday changes (station manager splits or merges a DA territory mid-day) also go through the approval flow with an immediate confirmation window. Every intraday change is audit-logged with approver ID, timestamp, and before/after tile sets. Contiguity is re-validated using the road-adjacency graph on every intraday override.
+
+Two intraday assignment patterns are supported:
+
+- **Intraday override** (`proposal_type = INTRADAY_OVERRIDE`): exclusive tile move — tiles are transferred from one DA to another. The source DA's assignments for those tiles are superseded. Both territories must remain contiguous after the move.
+- **Tile share** (`proposal_type = INTRADAY_SHARE`): additive overlay — a second DA is added to a tile without removing the existing DA. `n_das_on_tile` becomes 2. Only one contiguity check is needed: the shared tile must be road-adjacent to at least one tile already in the new DA's territory. Use this when a tile is overloaded intraday and a nearby DA has spare capacity.
 
 ---
 
