@@ -12,6 +12,7 @@ import com.oneday.auth.service.AuthService;
 import com.oneday.auth.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -31,6 +32,7 @@ public class UserController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'STATION_MANAGER')")
     public ResponseEntity<UserResponse> createUser(
             @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody RegisterUserRequest request) {

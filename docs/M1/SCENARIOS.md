@@ -18,8 +18,9 @@
 | `VAN_DRIVER` | Drives the intra-city van on a planned route. Confirms stops. |
 | `CRON_DRIVER` | Drives the inter-city overnight trunk ("cron") run. Confirms the cron leg. |
 | `CALL_CENTER_AGENT` | Handles customer complaints, reschedules deliveries, captures exceptions. |
-| `B2B_USER` | A business customer. Books shipments, gets quotes, views invoices, and can create API keys for their system integrations. |
-| `B2C_CUSTOMER` | An individual customer. Books shipments, gets quotes, tracks their own parcels. |
+| `B2B_USER` | A business shipping to other businesses. Admin-onboarded. Books shipments, gets quotes, views invoices, creates API keys for system integrations. |
+| `B2C_CUSTOMER` | A business shipping to consumers (e.g. an e-commerce company). Admin-onboarded. Books shipments, gets quotes, tracks own parcels. |
+| `C2C_CUSTOMER` | An individual shipping a personal parcel to another individual. Self-registers via public endpoint. Books shipments, views and tracks own parcels, gets quotes. |
 | `AIRLINE_GHA` | Ground Handling Agent at an airport. Views manifests and acknowledges handover of cargo. |
 
 ---
@@ -67,8 +68,7 @@ POST /auth/login
    - Build a JJWT with `subject = userId (UUID)`, plus claims `role`, `cityId`, `name`.
    - Sign it with HMAC-SHA using the secret from `jwt.secret` config.
    - Default expiry is **8 hours** (overridable via `jwt.expiry-hours`).
-5. Publish a `USER_LOGIN` audit event to Kafka (`auth.audit` topic).
-6. Return `LoginResponse` containing the token, expiry instant, role, and cityId.
+5. Return `LoginResponse` containing the token, expiry instant, role, and cityId.
 
 Riya gets back:
 
@@ -146,8 +146,7 @@ Authorization: Bearer <riya's token>
 3. BCrypt-hash the password — raw password never touches the database.
 4. Save the `User` row with `active = true`.
 5. Write a `role_audit_log` row: `actor_id = Riya's UUID`, `target_user_id = Arjun's UUID`, `action = CREATE`, `new_role = STATION_MANAGER`, `city_id = MUM`, `reason = "User registration"`.
-6. Publish `USER_CREATED` audit event to Kafka.
-7. Return the created `User` object (password hash is `@JsonIgnore` — never returned in API responses).
+6. Return the created `User` object (password hash is `@JsonIgnore` — never returned in API responses).
 
 Arjun can now log in. His token will carry `role = STATION_MANAGER` and `cityId = MUM`.
 
@@ -182,8 +181,8 @@ She cannot view all shipments — only `shipment:view:assigned`. She cannot appr
 |---|---|
 | `STATION_MANAGER` | `B2B_USER` |
 | `SUPERVISOR` | `B2C_CUSTOMER` |
-| `HUB_OPERATOR` | `AIRLINE_GHA` |
-| `DELIVERY_ASSOCIATE` | |
+| `HUB_OPERATOR` | `C2C_CUSTOMER` |
+| `DELIVERY_ASSOCIATE` | `AIRLINE_GHA` |
 | `VAN_DRIVER` | |
 | `CRON_DRIVER` | |
 | `CALL_CENTER_AGENT` | |
@@ -236,7 +235,6 @@ Authorization: Bearer <arjun's token>
    - The `newRole` **must not** be `ADMIN`. A Station Manager can never self-promote or promote others to god-mode.
 3. Update Priya's role to `SUPERVISOR` and set her cityId (can be changed as part of promotion — e.g., transferring to a different city, though only ADMIN can cross city boundaries).
 4. Write `role_audit_log`: `action = GRANT`, `previous_role = DELIVERY_ASSOCIATE`, `new_role = SUPERVISOR`, with Arjun's reason text.
-5. Publish `ROLE_CHANGED` audit event.
 
 **Important:** Priya's existing JWT still says `DELIVERY_ASSOCIATE` until it expires (up to 8 hours). After that, she logs in again and gets a fresh token with `SUPERVISOR`. This is a deliberate trade-off — stateless tokens mean no real-time revocation for role changes. Deactivation (Chapter 9) does work immediately because the filter re-checks `active` from the database on every request.
 
@@ -284,8 +282,7 @@ Authorization: Bearer <farhan's token>
 2. Generate a 32-byte cryptographically random value using `SecureRandom`, Base64-URL-encode it → this is the `rawKey`.
 3. Compute `SHA-256(rawKey)` → this is the `keyHash` stored in DB.
 4. Save the `ApiKey` row with `active = true` and `label = "farhankart-oms-prod"`.
-5. Publish `API_KEY_CREATED` audit event.
-6. Return `ApiKeyResponse` containing the **raw key** — this is the **only time** the raw value is ever shown. Once this response is gone, it cannot be recovered. Farhan must save it.
+5. Return `ApiKeyResponse` containing the **raw key** — this is the **only time** the raw value is ever shown. Once this response is gone, it cannot be recovered. Farhan must save it.
 
 ```json
 {
@@ -316,7 +313,58 @@ The key's `active` flag is set to `false`. Next time FarhanKart sends it, the fi
 
 ---
 
-## Chapter 8 — The GHA at Mumbai Airport (AIRLINE_GHA Role)
+## Chapter 8 — Meera Ships Her Old Phone to a Friend (C2C Self-Registration)
+
+Meera wants to send her old phone to a friend in Delhi. She's an individual — no business account, no contract. She opens the app and signs up directly:
+
+```
+POST /auth/register
+(no Authorization header — public endpoint)
+
+{
+  "email": "meera@gmail.com",
+  "password": "Meera@1234",
+  "name": "Meera Pillai"
+}
+```
+
+**Inside `AuthServiceImpl.register()`:**
+
+1. `UserRepository.existsByEmail("meera@gmail.com")` — returns false. Good.
+2. `RoleRepository.findByName("C2C_CUSTOMER")` — fetches the seeded role. No caller input on role: the endpoint hardcodes it. Meera cannot sign up as B2B or ADMIN.
+3. BCrypt-hash her password. `city_id = null` — C2C customers are not city-scoped; they can ship from any city.
+4. `UserRepository.save(user)` — row inserted.
+5. `RoleAuditLogRepository.save(log)` — `actor_id = meera's UUID`, `action = CREATE`, `new_role = C2C_CUSTOMER`. Self-registration means actor and target are the same person.
+6. JWT issued immediately — no separate login step needed.
+
+Meera gets back:
+```json
+{
+  "token": "eyJhbGci...",
+  "expiresAt": "2026-05-16T22:00:00Z",
+  "role": "C2C_CUSTOMER",
+  "cityId": null,
+  "mustChangePassword": false
+}
+```
+
+Her permissions:
+```
+shipment:create
+shipment:view:own
+shipment:track:own
+pricing:quote
+```
+
+She can get a quote, book a shipment, and track it. She cannot view other people's shipments, cannot access invoices, cannot create API keys.
+
+**Why C2C gets self-registration but B2C and B2B don't:**
+
+Meera is an individual — there are no commercial pre-conditions to check before she can use the service. Forcing her through an admin creates unnecessary friction and loses the customer. B2C and B2B accounts represent *businesses* — they need a service agreement, negotiated rates, and (for B2B) invoice and API key setup. Those steps require human review, so admin-created onboarding is the right gate.
+
+---
+
+## Chapter 9 — The GHA at Mumbai Airport (AIRLINE_GHA Role)
 
 IndigoAir's Ground Handling Agent at Mumbai airport uses One-Day Delivery's system to acknowledge cargo handover. Riya creates their account:
 
@@ -336,7 +384,7 @@ They cannot book shipments, cannot see pricing, cannot touch any user management
 
 ---
 
-## Chapter 9 — A Rogue Employee Gets Deactivated (Account Deactivation)
+## Chapter 10 — A Rogue Employee Gets Deactivated (Account Deactivation)
 
 A hub operator at the Delhi hub has been flagged for fraudulent scan events. Riya deactivates them immediately:
 
@@ -352,7 +400,6 @@ Authorization: Bearer <riya's token>
 1. Load the user.
 2. Set `active = false` and save.
 3. Write `role_audit_log`: `action = DEACTIVATE`, `previous_role = HUB_OPERATOR`, `reason = "Account deactivated by admin"`.
-4. Publish `USER_DEACTIVATED` audit event.
 
 **This takes effect on the next request**, not the current one. Here's why: the JWT filter, on every request, loads the user from DB and checks `user.isActive()`. Even if the employee has a valid, non-expired token, the filter will find `active = false` and fail to set the SecurityContext. Their very next request returns 403.
 
@@ -360,7 +407,7 @@ The token is not explicitly revoked (there's no token blocklist). It simply beco
 
 ---
 
-## Chapter 10 — Other Modules Ask "Can This User Do That?" (Permission Check)
+## Chapter 11 — Other Modules Ask "Can This User Do That?" (Permission Check)
 
 The `orders` module (M4) wants to verify that a caller has `shipment:create` permission before booking a shipment. Because the monolith runs in a single JVM, M4 injects `PermissionService` as a Spring bean — no HTTP round-trip:
 
@@ -437,7 +484,7 @@ Booking is a `B2B_USER` action. A Hub Operator's job is scanning and stand assig
 
 ---
 
-## Chapter 11 — Viewing the Audit Trail
+## Chapter 12 — Viewing the Audit Trail
 
 Riya or Arjun (within their city) can view the full history of role changes for any user:
 
@@ -459,23 +506,6 @@ This log is **append-only** — there is no DELETE or UPDATE path on `role_audit
 
 ---
 
-## Chapter 12 — The Kafka Side: Events for Other Consumers
-
-Every significant auth action publishes a structured event to Kafka via `AuthAuditProducer`. The events and their types:
-
-| Event Type | Triggered By |
-|---|---|
-| `USER_LOGIN` | Successful login |
-| `USER_CREATED` | Admin registers a new user |
-| `ROLE_CHANGED` | Admin or Station Manager changes a user's role |
-| `USER_DEACTIVATED` | Admin deactivates an account |
-| `API_KEY_CREATED` | B2B user or Admin creates an API key |
-| `API_KEY_REVOKED` | Owner or Admin revokes an API key |
-
-Each event carries `actorId`, `targetUserId`, `cityId`, and a timestamp. Downstream modules (like SLA or exceptions) can consume these to react — for example, unassigning parcels from a deactivated DA, or flagging city-scoped role changes for the SLA monitor.
-
----
-
 ## Summary: The Full Auth Lifecycle
 
 ```
@@ -483,16 +513,20 @@ Day 0
   └─ DB migration runs → users + api_keys + role_audit_logs tables created
   └─ Seed admin inserted (admin@oneday.in)
 
-Onboarding (Admin only)
+C2C Self-Registration (public)
+  └─ POST /auth/register → hardcoded role = C2C_CUSTOMER
+  └─ Email uniqueness check, BCrypt hash, audit log written
+  └─ JWT issued immediately (auto-login)
+
+Onboarding (Admin only — for B2C, B2B, and all staff roles)
   └─ POST /users → register user with role + cityId
   └─ Role validation: city-scoped roles require cityId
-  └─ Password bcrypt-hashed, audit log written, Kafka event published
+  └─ Password bcrypt-hashed, audit log written
 
 Login
   └─ POST /auth/login (open endpoint)
   └─ Email lookup (active=true only) → bcrypt match
   └─ JWT issued: sub=userId, claims={role,cityId,name}, signed HMAC-SHA, 8h TTL
-  └─ Kafka USER_LOGIN published
 
 Every Request
   └─ JwtAuthenticationFilter runs first
@@ -512,15 +546,246 @@ API Keys (B2B integrations)
 Role Changes
   └─ PUT /users/{id}/role (ADMIN or STATION_MANAGER)
   └─ Station Manager: city-scope enforced, cannot grant ADMIN
-  └─ Audit log row written, Kafka ROLE_CHANGED published
+  └─ Audit log row written
   └─ Old JWT still valid until expiry (stateless trade-off)
 
 Deactivation
   └─ DELETE /users/{id} (ADMIN only)
   └─ active=false → DB re-check in filter kills next request immediately
-  └─ Audit log written, Kafka USER_DEACTIVATED published
+  └─ Audit log written
 
 Audit Trail
   └─ GET /users/{id}/audit-log (ADMIN or STATION_MANAGER)
   └─ Append-only role_audit_logs, newest first
 ```
+
+---
+
+## Chapter 13 — One Day in the Life of the Database  
+
+*A row-level walkthrough. Every action in Chapters 1–12 leaves a trace in the database. This is what that trace looks like.*
+
+---
+
+### 06:00 — Migrations Run, the Schema Exists, Seed Data Lands
+
+The app starts for the first time. Flyway executes V1 through V9 in order.
+
+After V7 completes, the `permissions` table holds 40 rows. A sample:
+
+| id (UUID) | action |
+|---|---|
+| `a1b2c3...` | `shipment:create` |
+| `d4e5f6...` | `shipment:view` |
+| `g7h8i9...` | `hub:scan` |
+| `j0k1l2...` | `api-key:create:own` |
+| … 36 more … | … |
+
+After V8, the `roles` table holds 12 rows:
+
+| id (UUID) | name | display_name | city_scoped | is_builtin | active |
+|---|---|---|---|---|---|
+| `r1...` | `ADMIN` | Administrator | false | true | true |
+| `r2...` | `STATION_MANAGER` | Station Manager | true | true | true |
+| `r3...` | `DELIVERY_ASSOCIATE` | Delivery Associate | true | true | true |
+| `r4...` | `B2B_USER` | B2B User | false | true | true |
+| … 8 more … | … | … | … | … | … |
+
+After V9, the `role_permissions` table holds 68 rows — one per (role, permission) pair. A sample for just `ADMIN`:
+
+| role_id | permission_id |
+|---|---|
+| `r1...` | `a1b2c3...` ← shipment:create |
+| `r1...` | `d4e5f6...` ← shipment:view |
+| `r1...` | `g7h8i9...` ← hub:scan |
+| … 9 more for ADMIN … | … |
+
+No `users` rows yet. No `api_keys`. No `role_audit_logs`. The platform is an empty stage.
+
+---
+
+### 08:00 — Riya Logs In (No DB Write)
+
+`POST /auth/login { "email": "admin@oneday.in", "password": "Admin1234!" }`
+
+The `users` table is read (one SELECT by email, `active = true`). BCrypt comparison runs in memory. A JWT is issued. Nothing is written — login is a read-only operation on the DB.
+
+---
+
+### 09:15 — Riya Creates Arjun (First Row in `users`, First Row in `role_audit_logs`)
+
+`POST /users { "email": "arjun.sharma@oneday.in", "role": "STATION_MANAGER", "cityId": "MUM" }`
+
+Two DB writes happen:
+
+**`users` table — 1 new row:**
+
+| id | email | password_hash | name | role_id | city_id | active | must_change_password |
+|---|---|---|---|---|---|---|---|
+| `u-arjun` | arjun.sharma@oneday.in | `$2a$12$Kx...` | Arjun Sharma | `r2...` ← STATION_MANAGER | MUM | true | false |
+
+`role_id` is a FK to `roles.id`. The bcrypt hash is 60 characters; the raw password `"Secure#9012"` is gone.
+
+**`role_audit_logs` table — 1 new row:**
+
+| id | actor_id | target_user_id | action | previous_role | new_role | city_id | reason |
+|---|---|---|---|---|---|---|---|
+| `log-1` | `u-riya` | `u-arjun` | CREATE | null | STATION_MANAGER | MUM | User registration |
+
+`actor_id` and `target_user_id` are plain UUIDs — no FK to `users`. Even if Riya's account is later deleted, this row survives intact.
+
+---
+
+### 10:00 — Arjun's Staff Get Created (Three More `users` Rows)
+
+Riya registers Priya (DELIVERY_ASSOCIATE / MUM), Rohan (HUB_OPERATOR / MUM), and Kavya (SUPERVISOR / MUM). Three rows land in `users`, three rows land in `role_audit_logs`.
+
+**`users` after all three:**
+
+| id | email | name | role_id (→ roles.name) | city_id | active |
+|---|---|---|---|---|---|
+| `u-arjun` | arjun.sharma@… | Arjun Sharma | STATION_MANAGER | MUM | true |
+| `u-priya` | priya.desai@… | Priya Desai | DELIVERY_ASSOCIATE | MUM | true |
+| `u-rohan` | rohan.mehta@… | Rohan Mehta | HUB_OPERATOR | MUM | true |
+| `u-kavya` | kavya.nair@… | Kavya Nair | SUPERVISOR | MUM | true |
+
+**`role_audit_logs` — 4 rows so far, all `action = CREATE`.**
+
+---
+
+### 11:30 — Riya Onboards Farhan (B2B User, No `city_id`)
+
+`POST /users { "email": "farhan@farhankart.com", "role": "B2B_USER", "cityId": null }`
+
+**`users` — new row:**
+
+| id | email | name | role_id (→ roles.name) | city_id | active |
+|---|---|---|---|---|---|
+| `u-farhan` | farhan@farhankart.com | Farhan Khan | B2B_USER | **null** | true |
+
+`B2B_USER` is not city-scoped. `city_id` is null — he can transact across all cities. One more `role_audit_logs` row with `action = CREATE`.
+
+---
+
+### 12:00 — Farhan Creates an API Key (First Row in `api_keys`)
+
+`POST /auth/api-keys { "label": "farhankart-oms-prod" }`
+
+The service generates a 32-byte random value → Base64-URL-encodes it → SHA-256-hashes it.
+
+**`api_keys` table — 1 new row:**
+
+| id | key_hash | user_id | label | active | last_used_at |
+|---|---|---|---|---|---|
+| `k-farhan-1` | `sha256:e3b0c4...` | `u-farhan` | farhankart-oms-prod | true | null |
+
+The raw key `"AbCdEf12...XyZ"` is returned in the API response and never written anywhere. `last_used_at` is null — the key has not been used yet.
+
+---
+
+### 14:00 — FarhanKart's Backend Makes Its First Call (API Key Stamped)
+
+FarhanKart sends `X-Api-Key: AbCdEf12...XyZ` on a shipment creation request. The filter hashes it, looks up the `api_keys` row, and stamps it.
+
+**`api_keys` row updated:**
+
+| id | key_hash | label | active | **last_used_at** |
+|---|---|---|---|---|
+| `k-farhan-1` | `sha256:e3b0c4...` | farhankart-oms-prod | true | **2026-05-13 14:00:03** |
+
+This is the only mutable field on an api_key row. Everything else is write-once.
+
+---
+
+### 15:45 — Arjun Promotes Priya (Role Change, New `role_audit_logs` Row)
+
+`PUT /users/u-priya/role { "newRole": "SUPERVISOR", "cityId": "MUM", "reason": "Strong performance" }`
+
+**`users` row updated:**
+
+| id | name | role_id (before) | role_id (after) | city_id |
+|---|---|---|---|---|
+| `u-priya` | Priya Desai | DELIVERY_ASSOCIATE → | **SUPERVISOR** | MUM |
+
+The `role_id` FK value changes from the DELIVERY_ASSOCIATE UUID to the SUPERVISOR UUID.
+
+**`role_audit_logs` — new row (row 6 total):**
+
+| id | actor_id | target_user_id | action | previous_role | new_role | city_id | reason |
+|---|---|---|---|---|---|---|---|
+| `log-6` | `u-arjun` | `u-priya` | GRANT | DELIVERY_ASSOCIATE | SUPERVISOR | MUM | Strong performance |
+
+The old row (`log-2`, `action = CREATE`, `new_role = DELIVERY_ASSOCIATE`) is untouched. The audit trail now tells a complete story: Priya was created as a DA, then promoted to SUPERVISOR by Arjun.
+
+---
+
+### 17:00 — The GHA Account Is Created (No `city_id` Enforcement)
+
+`POST /users { "email": "gha.mum@indigo.in", "role": "AIRLINE_GHA", "cityId": "MUM" }`
+
+| id | email | role_id (→ name) | city_id | active |
+|---|---|---|---|---|
+| `u-gha` | gha.mum@indigo.in | AIRLINE_GHA | MUM | true |
+
+`AIRLINE_GHA` is not in the city-scoped list, so `city_id` was optional — Riya set it anyway for operational clarity. Their `role_permissions` entries cover only `manifest:view` and `handover:acknowledge`.
+
+---
+
+### 18:30 — A Rogue Operator Is Deactivated (Final State)
+
+Rohan is found to have entered fraudulent scan events. Riya deactivates him:
+
+`DELETE /users/u-rohan`
+
+**`users` row updated:**
+
+| id | name | role_id | active (before → after) |
+|---|---|---|---|
+| `u-rohan` | Rohan Mehta | HUB_OPERATOR | true → **false** |
+
+**`role_audit_logs` — new row:**
+
+| id | actor_id | target_user_id | action | previous_role | new_role | reason |
+|---|---|---|---|---|---|---|
+| `log-8` | `u-riya` | `u-rohan` | DEACTIVATE | HUB_OPERATOR | null | Account deactivated by admin |
+
+Rohan's next HTTP request — even if his JWT hasn't expired — returns 403. The filter does a DB lookup, finds `active = false`, and refuses to set the SecurityContext.
+
+---
+
+### End of Day — Full Database Snapshot
+
+**`permissions`** — 40 rows (static seed, unchanged)
+
+**`roles`** — 12 rows (static seed, unchanged)
+
+**`role_permissions`** — 68 rows (static seed, unchanged)
+
+**`users`** — 6 rows:
+
+| name | role | city_id | active |
+|---|---|---|---|
+| Riya (admin seed) | ADMIN | null | true |
+| Arjun Sharma | STATION_MANAGER | MUM | true |
+| Priya Desai | **SUPERVISOR** | MUM | true |
+| Rohan Mehta | HUB_OPERATOR | MUM | **false** |
+| Kavya Nair | SUPERVISOR | MUM | true |
+| Farhan Khan | B2B_USER | null | true |
+| GHA Mumbai | AIRLINE_GHA | MUM | true |
+
+**`api_keys`** — 1 row (Farhan's `farhankart-oms-prod`, `active = true`, `last_used_at` stamped)
+
+**`role_audit_logs`** — 8 rows, in order:
+
+| # | actor | target | action | previous → new |
+|---|---|---|---|---|
+| 1 | Riya | Arjun | CREATE | — → STATION_MANAGER |
+| 2 | Riya | Priya | CREATE | — → DELIVERY_ASSOCIATE |
+| 3 | Riya | Rohan | CREATE | — → HUB_OPERATOR |
+| 4 | Riya | Kavya | CREATE | — → SUPERVISOR |
+| 5 | Riya | Farhan | CREATE | — → B2B_USER |
+| 6 | Arjun | Priya | GRANT | DELIVERY_ASSOCIATE → SUPERVISOR |
+| 7 | Riya | GHA | CREATE | — → AIRLINE_GHA |
+| 8 | Riya | Rohan | DEACTIVATE | HUB_OPERATOR → — |
+
+Every mutation to user identity — creation, promotion, deactivation — has a corresponding, permanent, FK-free row here. The table is append-only. No row in this table has ever been updated or deleted.

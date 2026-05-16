@@ -472,6 +472,103 @@ Deactivate a custom role. Fails if any active user is currently assigned to it.
 
 ---
 
+## Onboarding (`/auth/request-onboarding`, `/onboarding-requests`)
+
+### `POST /auth/request-onboarding`
+**Public**
+
+Submit an onboarding request for a B2B or B2C account. The request sits in `PENDING` state until an admin approves or rejects it. On approval a real user record is created with `mustChangePassword = true`.
+
+**Request body**
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `email` | string | required, valid email |
+| `name` | string | required, non-blank |
+| `password` | string | required, min 8 chars |
+| `requestedRole` | string | required — `B2B_USER` or `B2C_CUSTOMER` |
+
+```json
+{
+  "email": "vendor@acme.in",
+  "name": "Acme Corp",
+  "password": "secret123",
+  "requestedRole": "B2B_USER"
+}
+```
+
+**Response `202`**
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | request identifier |
+| `email` | string | |
+| `name` | string | |
+| `requestedRole` | string | |
+| `status` | string | `PENDING` on creation |
+| `rejectionReason` | string \| null | |
+| `reviewedBy` | UUID \| null | admin who acted |
+| `reviewedAt` | ISO-8601 instant \| null | |
+| `createdAt` | ISO-8601 instant | |
+
+**Errors**
+- `409` — email already registered (as a user or pending request)
+
+---
+
+### `GET /onboarding-requests`
+**Authenticated · Admin-only**
+
+List all onboarding requests, newest first.
+
+**Response `200`** — array of `OnboardingRequestResponse` (same shape as `POST /auth/request-onboarding` response)
+
+---
+
+### `POST /onboarding-requests/{id}/approve`
+**Authenticated · Admin-only**
+
+Approve a pending onboarding request. Creates a user account with the requested role and `mustChangePassword = true`. Fails if the request has already been processed.
+
+**Path params**
+| Param | Type |
+|-------|------|
+| `id` | UUID |
+
+**Response `204`** — no body
+
+**Errors**
+- `404` — request not found
+- `409` — email already registered (race condition guard)
+- `422` — request already approved or rejected
+
+---
+
+### `POST /onboarding-requests/{id}/reject`
+**Authenticated · Admin-only**
+
+Reject a pending onboarding request. Optionally records a reason. Fails if the request has already been processed.
+
+**Path params**
+| Param | Type |
+|-------|------|
+| `id` | UUID |
+
+**Request body** *(optional)*
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `reason` | string \| null | human-readable rejection reason |
+
+```json
+{ "reason": "Incomplete business details" }
+```
+
+**Response `204`** — no body
+
+**Errors**
+- `404` — request not found
+- `422` — request already approved or rejected
+
+---
+
 ## Permissions (`/permissions`)
 
 ### `GET /permissions/check`

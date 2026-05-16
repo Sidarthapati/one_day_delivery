@@ -4,6 +4,8 @@ import com.oneday.auth.exception.ApiKeyCapExceededException;
 import com.oneday.auth.exception.BadCredentialsException;
 import com.oneday.auth.exception.EmailAlreadyExistsException;
 import com.oneday.auth.exception.ForbiddenException;
+import com.oneday.auth.exception.OnboardingRequestAlreadyProcessedException;
+import com.oneday.auth.exception.OnboardingRequestNotFoundException;
 import com.oneday.auth.exception.RoleInUseException;
 import com.oneday.auth.exception.RoleNotFoundException;
 import com.oneday.auth.exception.UserNotFoundException;
@@ -44,6 +46,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RoleNotFoundException.class)
     public ProblemDetail handleRoleNotFound(RoleNotFoundException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(OnboardingRequestNotFoundException.class)
+    public ProblemDetail handleOnboardingNotFound(OnboardingRequestNotFoundException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(OnboardingRequestAlreadyProcessedException.class)
+    public ProblemDetail handleAlreadyProcessed(OnboardingRequestAlreadyProcessedException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
