@@ -315,7 +315,7 @@ _No design doc written yet. Decisions will be added when M3 design is authored._
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | Team discussion; docs/design/M4/M4-ORDERS-DESIGN.md §5 |
+| **Source** | Team discussion; docs/M4/M4-ORDERS-DESIGN.md §5 |
 
 **Decision:**  
 B2B and B2C use **separate API endpoints**: `POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments`. Different request shapes, different auth mechanisms, different business rules.
@@ -339,7 +339,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | Team discussion; docs/design/M4/M4-ORDERS-DESIGN.md §9 |
+| **Source** | Team discussion; docs/M4/M4-ORDERS-DESIGN.md §9 |
 
 **Decision:**  
 B2C customers pay at booking time via **Razorpay**. Shipment is confirmed only after payment capture. Flow: server creates Razorpay order → client renders checkout → client submits `{razorpay_order_id, razorpay_payment_id, razorpay_signature}` → server verifies HMAC-SHA256 → captures payment → creates shipment.
@@ -360,7 +360,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | Team discussion; docs/design/M4/M4-ORDERS-DESIGN.md §9.3 |
+| **Source** | Team discussion; docs/M4/M4-ORDERS-DESIGN.md §9.3 |
 
 **Decision:**  
 B2B bookings are on credit terms. No payment gateway is invoked at booking time. The booking price is logged against the B2B account's outstanding balance. A separate billing service (out of scope v1) generates monthly invoices. M4 checks `credit_limit_paise` before accepting a booking.
@@ -382,7 +382,7 @@ _(No changes yet)_
 | **Date** | 2026-05-10 |
 | **Last updated** | 2026-05-12 |
 | **Status** | ASSUMED — pending business decision BD-001 |
-| **Source** | Team discussion; docs/design/M4/M4-ORDERS-DESIGN.md §5.1 |
+| **Source** | Team discussion; docs/M4/M4-ORDERS-DESIGN.md §5.1 |
 
 **Current assumption:**  
 Cancellation is allowed in states: `BOOKED`, `PICKUP_ASSIGNED`, `PICKED_UP`.  
@@ -407,7 +407,7 @@ After `PICKED_UP`, cancellation is rejected with `409 Conflict`.
 | **Date** | 2026-05-10 |
 | **Last updated** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §4 (KDD-4) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §4 (KDD-4) |
 
 **Decision:**  
 All ETA logic is **entirely owned by M9**. M4 calls `EtaPort.fetchEta(shipmentId, state, context)` whenever it needs an ETA and stores the result as-is. M4 has no fallback, no cutoff-time config, and no ETA computation of any kind.
@@ -441,7 +441,7 @@ All edge cases (M9 unavailability, missing flight data, same-city vs intercity d
 | **Date** | 2026-05-10 |
 | **Last updated** | 2026-05-11 |
 | **Status** | OPEN |
-| **Source** | MODULES.md M4; docs/design/M4/M4-ORDERS-DESIGN.md §4 |
+| **Source** | MODULES.md M4; docs/M4/M4-ORDERS-DESIGN.md §4 |
 
 **Current state list (v2 — updated 2026-05-11):**
 
@@ -475,7 +475,7 @@ Full ops sign-off on state list and transition rules before implementation begin
 | **Date** | 2026-05-10 |
 | **Last updated** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §5.2 (KDD-5) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §5.2 (KDD-5) |
 
 **Decision:**  
 **1 booking = 1 parcel in v1.** `parcel_id` is a column on `Shipment`. Multi-parcel is explicitly deferred to post-v1.
@@ -494,7 +494,7 @@ Full ops sign-off on state list and transition rules before implementation begin
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §11 |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §11 |
 
 **Decision:**  
 Human-readable reference: `1DD-{CITY}-{YYYYMMDD}-{5-digit-seq}` (e.g. `1DD-BLR-20260510-00042`).  
@@ -516,7 +516,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | Team discussion; docs/design/M4/M4-ORDERS-DESIGN.md §10 |
+| **Source** | Team discussion; docs/M4/M4-ORDERS-DESIGN.md §10 |
 
 **Decision:**  
 Three channels in v1: **SMS** (MSG91 — recommended for India DLT compliance), **Email** (AWS SES), **WhatsApp** (Twilio WhatsApp Business API or Meta direct).
@@ -554,7 +554,7 @@ M4 has no ETA logic at all. Cutoff time is an ETA input that M9 will manage inte
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §9.1 |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §9.1 |
 
 **Decision:**  
 Razorpay order is created **server-side** by M4. The client receives the Razorpay `order_id` and renders the checkout. This avoids exposing the Razorpay secret key to the client.
@@ -570,7 +570,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | OPEN |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §5.1, OD-2 |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §5.1, OD-2 |
 
 **Current approach:**  
 Refund initiated synchronously via Razorpay Refund API on cancellation. Razorpay webhook confirms completion. `refund_status` stored on `PaymentTransaction`.
@@ -590,7 +590,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §4 (KDD-1) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §4 (KDD-1) |
 
 **Decision:**  
 `C2C` (Consumer-to-Consumer / person-to-person) is a first-class value in the `customer_type` enum alongside `B2C` and `B2B`.
@@ -615,7 +615,7 @@ _(First entry)_
 |---|---|
 | **Date** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §4 (KDD-2) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §4 (KDD-2) |
 
 **Decision:**  
 `delivery_type ENUM('INTERCITY', 'SAME_CITY')` is stored on `Shipment`. Derived at booking by comparing `origin_city == dest_city`. Immutable after booking.
@@ -640,7 +640,7 @@ _(First entry)_
 |---|---|
 | **Date** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §9 (KDD-3) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §9 (KDD-3) |
 
 **Decision:**  
 M4 does **not** persist raw Kafka event payloads to the database. Only the resulting state transition is stored: a `shipment_state_history` row with `trigger_source=KAFKA_EVENT` and `event_ref=<kafka_message_key>`.
@@ -664,7 +664,7 @@ _(First entry)_
 |---|---|
 | **Date** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §4 (KDD-6) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §4 (KDD-6) |
 
 **Decision:**  
 `POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments` require an `Idempotency-Key: <uuid>` header. Duplicate requests with the same key within 24 hours return the original response (HTTP 200 + original body).
@@ -689,7 +689,7 @@ _(First entry)_
 |---|---|
 | **Date** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §4 (KDD-7) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §4 (KDD-7) |
 
 **Decision:**  
 B2B credit check and `Shipment` insertion happen in the same DB transaction, with `SELECT ... FOR UPDATE` on the `b2b_accounts` row.
@@ -713,7 +713,7 @@ _(First entry)_
 |---|---|
 | **Date** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §8 (KDD-8) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §8 (KDD-8) |
 
 **Decision:**  
 All synchronous calls from M4 to external dependencies (M2, M3, Razorpay) are wrapped with **Resilience4j circuit breakers** with explicit timeouts.
@@ -737,7 +737,7 @@ _(First entry)_
 |---|---|
 | **Date** | 2026-05-12 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §4 (KDD-10) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §4 (KDD-10) |
 
 **Decision:**  
 COD (Cash on Delivery) is supported in v1 for B2C and C2C shipments. B2B is credit-only; COD does not apply to B2B.
@@ -766,7 +766,7 @@ COD (Cash on Delivery) is supported in v1 for B2C and C2C shipments. B2B is cred
 | **Date** | 2026-05-11 |
 | **Last updated** | 2026-05-12 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §11.4 (KDD-9) |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §11.4 (KDD-9) |
 
 **Decision:**  
 All pricing logic — base rates, GST, surcharges, volumetric divisor, rate card selection — is **M2's responsibility**. M4 passes the booking context to M2 via `PricingPort.computeQuote()` and stores the result as-is. M4 does not know the GST rate, does not compute tax, and has no pricing config.
@@ -792,7 +792,7 @@ Clear separation of concerns. Pricing rules change frequently (GST revisions, ra
 |---|---|
 | **Date** | 2026-05-11 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M4/M4-ORDERS-DESIGN.md §7.6 |
+| **Source** | docs/M4/M4-ORDERS-DESIGN.md §7.6 |
 
 **Decision:**  
 B2B accounts can register a webhook URL. M4 delivers state-change events to this URL with an HMAC-SHA256 signature (`X-1DD-Signature` header). Retry policy: 5 attempts with exponential backoff. After 5 failures, webhook is suspended and ops alerted.
@@ -865,7 +865,7 @@ _No design doc written yet. Decisions will be added when M7 design is authored._
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | Team discussion; docs/design/M8-BARCODE-DESIGN.md §4 |
+| **Source** | Team discussion; docs/M8-BARCODE-DESIGN.md §4 |
 
 **Decision:**  
 Use **QR Code (2D)** for both parcel labels and bag labels.
@@ -887,7 +887,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | Team discussion; docs/design/M8-BARCODE-DESIGN.md §3 |
+| **Source** | Team discussion; docs/M8-BARCODE-DESIGN.md §3 |
 
 **Decision:**  
 `{CITY_CODE}-{YYYYMMDD}-{6-digit-sequence}` — e.g. `BLR-20260510-000042`.  
@@ -907,7 +907,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §3.3 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §3.3 |
 
 **Decision:**  
 M4 generates the parcel ID at booking time using a `parcel_id_counters` table. M4 calls `BarcodeService.registerParcel()` to inform M8. M8 does not generate IDs independently.
@@ -926,7 +926,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | CLAUDE.md Key Design Invariants; docs/design/M8-BARCODE-DESIGN.md §5.1 |
+| **Source** | CLAUDE.md Key Design Invariants; docs/M8-BARCODE-DESIGN.md §5.1 |
 
 **Decision:**  
 `scan_events` table rows are never updated or deleted. Corrections are new rows. `occurred_at` (device clock) and `received_at` (server clock) are both stored and immutable.
@@ -942,7 +942,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | Team discussion; docs/design/M8-BARCODE-DESIGN.md §2 |
+| **Source** | Team discussion; docs/M8-BARCODE-DESIGN.md §2 |
 
 **Decision:**  
 All scans require network connectivity in v1. DA app does not queue scans locally for later sync.
@@ -960,7 +960,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | OPEN |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §5.4 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §5.4 |
 
 **Options evaluated:**  
 - **Option A:** Dedup at write by (parcel_id + scan_point + occurred_at). Risk: clock skew causes dropped scans.  
@@ -982,7 +982,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §4.1 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §4.1 |
 
 **Decision:**  
 Error Correction Level **M** (15% data recovery). Balances data density against damage tolerance for labels on parcels in transit.
@@ -998,7 +998,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §10 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §10 |
 
 **Decision:**  
 **ZXing** (`com.google.zxing:core` + `com.google.zxing:javase`). Mature, well-maintained, Apache 2.0 licensed.
@@ -1014,7 +1014,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §10 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §10 |
 
 **Decision:**  
 Generated QR label PNG bytes are cached in **Redis** with key `qr:parcel:{parcel_id}` and TTL of **24 hours**. Labels are regenerated only on cache miss. Cache is invalidated if label data changes (e.g. stand reassignment updates bag label).
@@ -1030,7 +1030,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §4.2 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §4.2 |
 
 **Decision:**  
 Bag QR embeds the full `parcel_ids` array for bags with **≤ 100 parcels**. For bags with > 100 parcels, the array is omitted and replaced with a `manifest_url` reference to stay within QR data capacity limits.
@@ -1046,7 +1046,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §8.1 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §8.1 |
 
 **Decision:**  
 `scan_events` table is partitioned by `occurred_at` month using PostgreSQL declarative partitioning. Implement from day one to avoid a costly migration later. Each month becomes a separate partition; old partitions can be archived without touching live data.
@@ -1064,7 +1064,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | OPEN |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §12, OD-M8-4 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §12, OD-M8-4 |
 
 **Risk:**  
 Airport / GHA scanners may expect **IATA standard** barcode format (commonly DataMatrix or Code128 per IATA Resolution 606). Our current choice of QR may not be scannable by airline partner hardware.
@@ -1083,7 +1083,7 @@ _(No changes yet)_
 |---|---|
 | **Date** | 2026-05-10 |
 | **Status** | DECIDED |
-| **Source** | docs/design/M8-BARCODE-DESIGN.md §12, OD-M8-6 |
+| **Source** | docs/M8-BARCODE-DESIGN.md §12, OD-M8-6 |
 
 **Decision:**  
 Per-B2B-account label customisation (branding, logo) is **out of scope for v1**. `LabelBuilder` is implemented as a strategy pattern (`LabelBuilderStrategy` interface) so custom templates can be plugged in later without changing the core.

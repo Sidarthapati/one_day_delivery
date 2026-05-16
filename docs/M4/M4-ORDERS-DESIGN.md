@@ -9,7 +9,7 @@
 | **Last updated** | 2026-05-12 |
 | **Depends on** | M1 (auth/JWT), M2 (pricing — sync), M3 (grid/serviceability — sync), M8 (barcode/label — async via Kafka) |
 | **Consumed by** | M5 (dispatch), M6 (routing), M7 (hub), M9 (airline), M10 (SLA), M11 (exceptions) |
-| **Related docs** | [MODULES.md](../../MODULES.md) · [DECISIONS.md](../DECISIONS.md) · [M8-BARCODE-DESIGN.md](../M8-BARCODE-DESIGN.md) · [PRD-ONE-DAY-DELIVERY.md](../../PRD-ONE-DAY-DELIVERY.md) |
+| **Related docs** | [MODULES.md](../MODULES.md) · [DECISIONS.md](../DECISIONS.md) · [M8-BARCODE-DESIGN.md](../M8-BARCODE-DESIGN.md) · [PRD-ONE-DAY-DELIVERY.md](../PRD-ONE-DAY-DELIVERY.md) |
 | **Diagrams** | [ER Diagram](M4-ER-DIAGRAM.md) · [State Machine](M4-STATE-MACHINE.md) · [Sequence Diagrams](M4-SEQUENCES.md) |
 
 ---
