@@ -465,6 +465,7 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 | `PICKUP_ASSIGNED` | Pickup agent assigned |
 | `PICKED_UP` | Parcel collected |
 | `HANDED_TO_PICKUP_VAN` | Parcel handed to transport |
+| `AWAITING_SELF_DROP` | Please bring your parcel to the origin hub |
 | `AT_ORIGIN_HUB` | Arrived at origin hub |
 | `ORIGIN_HUB_PROCESSING` | Being processed at hub |
 | `IN_TAKEOFF_BAG` | Sorted and bagged for dispatch |
@@ -479,6 +480,8 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 | `DROP_ASSIGNED` | Delivery agent assigned |
 | `DROP_COLLECTED` | Delivery agent en route |
 | `DROPPED` | Delivered |
+| `AWAITING_HUB_COLLECT` | Your parcel is ready — collect from the hub |
+| `HUB_COLLECTED` | Collected from hub |
 | `PICKUP_FAILED` | Pickup unsuccessful |
 | `DELIVERY_FAILED` | Delivery unsuccessful |
 | `RTO_INITIATED` | Return to sender initiated |
@@ -490,7 +493,7 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 
 ## 6. State Machine
 
-> **Status:** Updated 2026-05-16 — 24 states; renamed HANDED_TO_VAN/HUB_PROCESSING/IN_BAG; added LANDED, DISPATCHED_TO_HUB, HANDED_TO_DROP_VAN, DROP_ASSIGNED, DROP_COLLECTED, DROPPED; removed OUT_FOR_DELIVERY and DELIVERED; failures routed to M11.
+> **Status:** Updated 2026-05-17 — 27 states; added AWAITING_SELF_DROP (self-drop pickup path), AWAITING_HUB_COLLECT and HUB_COLLECTED (hub-collect delivery path); added pickup_type and drop_type fields to bookings.
 > Requires ops sign-off before implementation (see §19, OD-4).
 
 ### 6.1 Visual Flow
@@ -504,10 +507,11 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 | # | State | Meaning | Custody | Triggered by |
 |---|---|---|---|---|
 | 1 | `BOOKED` | Created; payment captured (B2C/C2C) or COD accepted or invoiced (B2B) | Platform | M4 booking API |
-| 2 | `PICKUP_ASSIGNED` | DA assigned to collect | DA | M5 `oneday.da.assigned` |
-| 3 | `PICKED_UP` | DA confirmed physical pickup | DA | M5 `oneday.da.pickup_completed` |
-| 4 | `HANDED_TO_PICKUP_VAN` | DA handed to cron van; DA responsibility ends | Cron van | M5 `oneday.da.cron_handoff_completed` |
-| 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `HUB_ORIGIN_IN` scan event |
+| 2 | `PICKUP_ASSIGNED` | DA assigned to collect *(DA_PICKUP only)* | DA | M5 `oneday.da.assigned` |
+| 3 | `PICKED_UP` | DA confirmed physical pickup *(DA_PICKUP only)* | DA | M5 `oneday.da.pickup_completed` |
+| 4 | `HANDED_TO_PICKUP_VAN` | DA handed to cron van; DA responsibility ends *(DA_PICKUP only)* | Cron van | M5 `oneday.da.cron_handoff_completed` |
+| — | `AWAITING_SELF_DROP` | Self-drop booked; sender yet to arrive at origin hub *(SELF_DROP only)* | Platform | M4 booking API (immediate on SELF_DROP booking) |
+| 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `HUB_ORIGIN_IN` (DA path) or `SELF_DROP_ACCEPTED` (self-drop path) |
 | 6 | `ORIGIN_HUB_PROCESSING` | Stand assigned; being sorted | Hub ops | M7 stand assignment event |
 | 7 | `IN_TAKEOFF_BAG` | Bagged for specific flight (or same-city route) | Hub ops | M7 bag creation event |
 | 8 | `DISPATCHED_TO_AIRPORT` | Bag on cron van; left the hub *(INTERCITY only)* | Cron driver | M6/M7 cron departure event |
@@ -517,10 +521,12 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 | 12 | `DISPATCHED_TO_HUB` | Van moving from airport to destination hub *(INTERCITY only)* | Cron driver | M6/M7 van departure event |
 | 13 | `AT_DEST_HUB` | Scanned in at destination hub *(INTERCITY only)* | Dest hub ops | M8 `HUB_DEST_IN` scan |
 | 14 | `DEST_HUB_PROCESSING` | Last-mile sort at destination *(INTERCITY only)* | Dest hub ops | M7 dest sort event |
-| 15 | `HANDED_TO_DROP_VAN` | Parcel loaded on drop van; hub responsibility ends | Drop van | M5/M6 drop van handoff event |
-| 16 | `DROP_ASSIGNED` | Last-mile DA assigned for delivery | Last-mile DA | M5 `oneday.da.drop_assigned` |
-| 17 | `DROP_COLLECTED` | DA physically collected parcel from van for delivery | Last-mile DA | M5 `oneday.da.drop_collected` |
-| 18 | `DROPPED` | Delivery confirmed by DA | — (complete) | M5 `oneday.da.drop_completed` |
+| 15 | `HANDED_TO_DROP_VAN` | Parcel loaded on drop van; hub responsibility ends *(DA_DELIVERY only)* | Drop van | M5/M6 drop van handoff event |
+| 16 | `DROP_ASSIGNED` | Last-mile DA assigned for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `oneday.da.drop_assigned` |
+| 17 | `DROP_COLLECTED` | DA physically collected parcel from van for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `oneday.da.drop_collected` |
+| 18 | `DROPPED` | Delivery confirmed by DA *(DA_DELIVERY only)* | — (complete) | M5 `oneday.da.drop_completed` |
+| — | `AWAITING_HUB_COLLECT` | Parcel ready at destination hub; receiver yet to collect *(HUB_COLLECT only)* | Dest hub ops | M7 dest sort complete event |
+| — | `HUB_COLLECTED` | Receiver collected parcel from destination hub *(HUB_COLLECT only)* | — (complete) | M8 `HUB_COLLECT_COMPLETED` scan |
 | — | `PICKUP_FAILED` | DA could not pick up; **reported to M11** | — | M5 `oneday.da.pickup_failed` |
 | — | `DELIVERY_FAILED` | DA could not deliver; **reported to M11** | — | M5 `oneday.da.drop_failed` |
 | — | `RTO_INITIATED` | Return-to-origin triggered; **owned entirely by M11** | Platform | M11 `oneday.m11.rto_initiated` |
@@ -537,9 +543,19 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 ### 6.3 Allowed Transitions
 
 ```
-BOOKED
+BOOKED [pickup_type=DA_PICKUP]
   → PICKUP_ASSIGNED             (M5: oneday.da.assigned)
   → CANCELLED                   (API: customer cancels — see BD-001)
+
+BOOKED [pickup_type=SELF_DROP]
+  → AWAITING_SELF_DROP          (M4: immediate on booking — no DA assigned)
+  → CANCELLED                   (API: customer cancels)
+
+AWAITING_SELF_DROP
+  → AT_ORIGIN_HUB               (M8: SELF_DROP_ACCEPTED scan by hub staff)
+                                  ↳ Side-effect: EtaPort.fetchEta(shipmentId, AT_ORIGIN_HUB, ctx);
+                                    stores result as eta_updated; notifies customer
+  → CANCELLED                   (API: customer cancels before arriving at hub)
 
 PICKUP_ASSIGNED
   → PICKED_UP                   (M5: oneday.da.pickup_completed)
@@ -548,7 +564,7 @@ PICKUP_ASSIGNED
 
 PICKED_UP
   → HANDED_TO_PICKUP_VAN        (M5: oneday.da.cron_handoff_completed)
-  → CANCELLED                   (API: last state allowing cancellation — see BD-001)
+  → CANCELLED                   (API: last state allowing cancellation for DA_PICKUP — see BD-001)
 
 HANDED_TO_PICKUP_VAN
   → AT_ORIGIN_HUB               (M8: HUB_ORIGIN_IN scan)
@@ -585,8 +601,14 @@ DISPATCHED_TO_HUB
 AT_DEST_HUB
   → DEST_HUB_PROCESSING         (M7: dest sort event)
 
-DEST_HUB_PROCESSING
+DEST_HUB_PROCESSING [drop_type=DA_DELIVERY]
   → HANDED_TO_DROP_VAN          (M5/M6: drop van handoff event)
+
+DEST_HUB_PROCESSING [drop_type=HUB_COLLECT]
+  → AWAITING_HUB_COLLECT        (M7: dest sort complete; parcel staged for collection)
+
+AWAITING_HUB_COLLECT
+  → HUB_COLLECTED               (M8: HUB_COLLECT_COMPLETED scan by hub staff at receiver collection)
 
 HANDED_TO_DROP_VAN
   → DROP_ASSIGNED               (M5: oneday.da.drop_assigned)
@@ -900,8 +922,10 @@ Validation failures return `400 Bad Request` with a structured error body:
 **Path param:** `ref` — shipment reference (e.g. `1DD-BLR-20260511-000042`)
 
 **Business rules:**
-- Allowed only in states: `BOOKED`, `PICKUP_ASSIGNED`, `PICKED_UP`
-- After `PICKED_UP`, returns `409 CANCELLATION_NOT_ALLOWED`
+- DA_PICKUP path: allowed in `BOOKED`, `PICKUP_ASSIGNED`, `PICKED_UP`; blocked from `HANDED_TO_PICKUP_VAN` onward
+- SELF_DROP path: allowed in `BOOKED`, `AWAITING_SELF_DROP`; blocked from `AT_ORIGIN_HUB` onward
+- HUB_COLLECT path: same cutoff as DA_DELIVERY — blocked from `AT_ORIGIN_HUB` onward
+- After the cutoff state, returns `409 CANCELLATION_NOT_ALLOWED`
 - PREPAID: refund initiated synchronously to Razorpay; confirmation comes via webhook
 - COD: no refund (no payment was collected); cancellation is immediate
 
@@ -1365,10 +1389,12 @@ Each DLQ message includes original message headers plus:
 -- ENUMs
 CREATE TYPE shipment_state AS ENUM (
   'BOOKED', 'PICKUP_ASSIGNED', 'PICKED_UP', 'HANDED_TO_PICKUP_VAN',
+  'AWAITING_SELF_DROP',
   'AT_ORIGIN_HUB', 'ORIGIN_HUB_PROCESSING', 'IN_TAKEOFF_BAG',
   'DISPATCHED_TO_AIRPORT', 'AT_AIRPORT', 'DEPARTED', 'LANDED',
   'DISPATCHED_TO_HUB', 'AT_DEST_HUB', 'DEST_HUB_PROCESSING',
   'HANDED_TO_DROP_VAN', 'DROP_ASSIGNED', 'DROP_COLLECTED', 'DROPPED',
+  'AWAITING_HUB_COLLECT', 'HUB_COLLECTED',
   'PICKUP_FAILED', 'DELIVERY_FAILED',
   'RTO_INITIATED', 'RTO_IN_TRANSIT', 'RTO_COMPLETED',
   'CANCELLED'
@@ -1377,6 +1403,8 @@ CREATE TYPE shipment_state AS ENUM (
 CREATE TYPE customer_type  AS ENUM ('B2C', 'B2B', 'C2C');
 CREATE TYPE delivery_type  AS ENUM ('INTERCITY', 'SAME_CITY');
 CREATE TYPE payment_mode   AS ENUM ('PREPAID', 'COD');
+CREATE TYPE pickup_type    AS ENUM ('DA_PICKUP', 'SELF_DROP');
+CREATE TYPE drop_type      AS ENUM ('DA_DELIVERY', 'HUB_COLLECT');
 
 -- Shipments
 CREATE TABLE shipments (
@@ -1409,6 +1437,8 @@ CREATE TABLE shipments (
   total_price_paise        BIGINT NOT NULL,
   final_price_paise        BIGINT,
   rate_card_version        VARCHAR(50) NOT NULL,
+  pickup_type              pickup_type NOT NULL DEFAULT 'DA_PICKUP',
+  drop_type                drop_type   NOT NULL DEFAULT 'DA_DELIVERY',
   state                    shipment_state NOT NULL DEFAULT 'BOOKED',
   sla_commitment_minutes   SMALLINT,
   eta_promised             TIMESTAMPTZ,
@@ -1626,6 +1656,7 @@ All notifications dispatched **asynchronously** via `NotificationPort`. M4 does 
 | State Transition | SMS | Email | WhatsApp |
 |---|---|---|---|
 | `BOOKED` | Confirmation + estimated ETA + tracking link | Full confirmation + GST breakdown + estimated ETA | Booking summary with estimated ETA |
+| `AWAITING_SELF_DROP` | Please bring your parcel to [hub address] before [cron cutoff time] | Same | Same |
 | `PICKUP_ASSIGNED` | DA name + ETA window | — | DA assigned |
 | `PICKED_UP` | Parcel collected | — | Parcel collected |
 | `HANDED_TO_PICKUP_VAN` | In transit to hub | — | — |
@@ -1634,6 +1665,8 @@ All notifications dispatched **asynchronously** via `NotificationPort`. M4 does 
 | `AT_DEST_HUB` | At destination hub | — | — |
 | `DROP_COLLECTED` | Out for delivery + DA name + ETA | — | Out for delivery + ETA |
 | `DROPPED` | Delivered ✓ | Delivery confirmation | Delivered |
+| `AWAITING_HUB_COLLECT` | Your parcel is ready at [hub address] — bring your ID to collect | Same | Same |
+| `HUB_COLLECTED` | Parcel collected from hub ✓ | Collection confirmation | Collected |
 | `DELIVERY_FAILED` | Delivery unsuccessful + reschedule link | — | Failed + reschedule |
 | `PICKUP_FAILED` | Pickup unsuccessful — we will retry | — | — |
 | `RTO_INITIATED` | Return to sender initiated | RTO notification | — |
@@ -1848,7 +1881,9 @@ oneday:
 | E6 | B2B booking exactly at credit limit | Allowed — check is `outstanding + booking <= limit`; equality is accepted |
 | E7 | B2B concurrent bookings from same account | Row-level lock on `b2b_accounts` serialises; last one in may get 402 if limit exceeded |
 | E8 | State transition already applied (idempotent consumer restart) | `SELECT FOR UPDATE` shows state already advanced; state machine returns without error (idempotent) |
-| E9 | Customer cancels after PICKED_UP | Rejected with `409 CANCELLATION_NOT_ALLOWED`; HANDED_TO_PICKUP_VAN and beyond cannot be cancelled |
+| E9 | Customer cancels after pickup cutoff | DA_PICKUP: rejected after PICKED_UP (`409 CANCELLATION_NOT_ALLOWED`); SELF_DROP: rejected after AWAITING_SELF_DROP; both paths block from AT_ORIGIN_HUB onward |
+| E20 | Self-drop customer never arrives at origin hub | AWAITING_SELF_DROP times out at cron cutoff → M11 `SELF_DROP_NO_SHOW` exception; M11 decides to cancel or reschedule |
+| E21 | Hub-collect receiver never arrives to collect parcel | AWAITING_HUB_COLLECT ages beyond hold period (configurable, default 3 days) → M11 exception; M11 initiates RTO |
 | E10 | Weight declared at booking differs from actual weight | `final_price_paise` column reserved; weight reconciliation is post-v1 |
 | E11 | Razorpay webhook arrives before booking API response | `PaymentTransaction` row not yet created; webhook returns 200 (idempotent); M4 handles on next delivery or booking creates the row |
 | E12 | Shipment stuck in a state for > SLA threshold | M10 detects and raises exception; M11 handles. M4 is not the SLA enforcer. |
