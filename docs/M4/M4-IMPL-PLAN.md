@@ -99,7 +99,7 @@ Phase 7 (Observability)
   - `ShipmentCreatedEvent` (fields: `customerType`, `paymentMode`, `deliveryType`, `originCity`, `destCity`, `originTileId`, `chargeableWeightGrams`, `slaCommitmentMinutes`, `etaPromised`, `receiverPhone`, `receiverName`, `b2bAccountId`)
   - `ShipmentStateChangedEvent` (fields: `fromState`, `toState`, `triggeredBy`, `triggerSource`, `etaUpdated`)
   - `ShipmentCancelledEvent` (fields: `cancelledAtState`, `reason`, `refundInitiated`, `refundAmountPaise`)
-- `ShipmentState` enum (all 24 values) moved to `common` so all consumers can deserialize state fields
+- `ShipmentState` enum (all 27 values) moved to `common` so all consumers can deserialize state fields
 - `EventType` enum per topic (e.g. `DaEventType { PICKUP_ASSIGNED, PICKUP_COMPLETED, ... }`)
 - **`@JsonIgnoreProperties(ignoreUnknown = true)` on every event POJO and `BaseShipmentEvent` (inherited by all subclasses).** This is non-negotiable: without it, any new field added by another team to a produced event will throw `UnrecognizedPropertyException` on the M4 consumer side and park the message on the DLQ. Forward-compatible deserialization must be the default from day one.
 
@@ -235,6 +235,10 @@ NotificationPort     → notification service implements; M4 calls on every stat
 - `ShipmentRefService`: generates `1DD-{CITY}-{YYYYMMDD}-{NNNNN}` using `SELECT FOR UPDATE` on `ShipmentRefCounter`; documents the Redis upgrade path at high volume
 - `DeliveryTypeResolver`: `origin_city == dest_city` → `SAME_CITY`, else `INTERCITY` — pure function, zero DB calls
 - `PaymentPort` (local to `orders`): `verifySignature()`, `capture()`, `initiateRefund()` — Razorpay-specific, not in `common` since no other module touches payments
+- `PickupOtpService`: generates 4-digit OTP, stores hashed in `pickup_otps` table with 10-minute TTL; exposes `generate()`, `verify()`, `resend()` (max 3); called as a side-effect when state machine enters `PICKUP_ASSIGNED`
+- `POST /internal/v1/shipments/{ref}/pickup-otp/verify` — on success, directly transitions `PICKUP_ASSIGNED → PICKED_UP`; returns `422` on wrong OTP or expired; returns `409` if state is not `PICKUP_ASSIGNED`
+- `POST /internal/v1/shipments/{ref}/pickup-otp/resend` — invalidates previous OTP; generates fresh one; returns `429` after 3 resends
+- Flyway migration for `pickup_otps` table: `(id, shipment_id, otp_hash, expires_at, used, resend_count, created_at)`
 
 ---
 
@@ -487,7 +491,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 |---|---|---|
 | Unit | JUnit 5 + Mockito | Every PR |
 | Repository | `@DataJpaTest` + Testcontainers (PostgreSQL) | PR #6 onwards |
-| State machine | Parameterized JUnit5 (all 24×24 transition matrix) | PR #7 |
+| State machine | Parameterized JUnit5 (all 27×27 transition matrix) | PR #7 |
 | Kafka | `@EmbeddedKafka` | PR #14 onwards |
 | API | `@SpringBootTest` + MockMvc + stub ports via `@TestConfiguration` | PR #10 onwards |
 | Concurrency | `CountDownLatch` multi-thread test for B2B credit check | PR #12 |

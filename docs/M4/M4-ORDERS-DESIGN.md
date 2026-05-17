@@ -61,7 +61,7 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 | BlueDart | B2B-first, own airline | AWB-based booking, portal | ~8 customer-visible states | Credit dominant |
 | Shiprocket | B2C aggregator | Merchant-centric; multi-carrier | Varies by carrier | Prepaid, COD |
 | FedEx India | B2B + B2C | Global standards; AWB | ~15 states including customs | Prepaid + credit |
-| **1DD (ours)** | **B2B + B2C + C2C; commercial airline cargo + own DA network** | **Single API; sub-2s booking** | **24 states; full operational visibility** | **Razorpay prepaid or COD (B2C/C2C) + credit (B2B)** |
+| **1DD (ours)** | **B2B + B2C + C2C; commercial airline cargo + own DA network** | **Single API; sub-2s booking** | **27 states; full operational visibility** | **Razorpay prepaid or COD (B2C/C2C) + credit (B2B)** |
 
 **Key differentiators to protect in this design:**
 - Booking-to-dispatch in under 2 seconds (synchronous M2 + M3 calls must stay under 500ms each)
@@ -77,7 +77,7 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 - **B2C** single-shipment booking — Razorpay prepaid or COD (individual consumers)
 - **B2B** single-shipment booking with monthly invoice and credit-limit enforcement (business accounts)
 - **C2C** single-shipment booking — person-to-person; Razorpay prepaid or COD; different rate card from M2
-- Full 24-state shipment state machine covering both **INTERCITY** and **SAME_CITY** delivery paths
+- Full 27-state shipment state machine covering **INTERCITY**, **SAME_CITY**, **DA_PICKUP**, **SELF_DROP**, **DA_DELIVERY**, and **HUB_COLLECT** paths
 - Cancellation up to and including the `PICKED_UP` state
 - Customer tracking API (state history + ETA)
 - Notification dispatch (SMS + Email + WhatsApp) on every state transition
@@ -508,20 +508,20 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 |---|---|---|---|---|
 | 1 | `BOOKED` | Created; payment captured (B2C/C2C) or COD accepted or invoiced (B2B) | Platform | M4 booking API |
 | 2 | `PICKUP_ASSIGNED` | DA assigned to collect *(DA_PICKUP only)* | DA | M5 `oneday.da.assigned` |
-| 3 | `PICKED_UP` | DA confirmed physical pickup *(DA_PICKUP only)* | DA | M5 `oneday.da.pickup_completed` |
+| 3 | `PICKED_UP` | DA confirmed physical pickup after OTP verification *(DA_PICKUP only)* | DA | M4 OTP verify endpoint (`POST /internal/v1/shipments/{ref}/pickup-otp/verify`) |
 | 4 | `HANDED_TO_PICKUP_VAN` | DA handed parcel to pickup van; DA responsibility ends *(DA_PICKUP only)* | Pickup van | M5 `oneday.da.van_handoff_completed` |
 | — | `AWAITING_SELF_DROP` | Self-drop booked; sender yet to arrive at origin hub *(SELF_DROP only)* | Platform | M4 booking API (immediate on SELF_DROP booking) |
 | 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `HUB_ORIGIN_IN` (DA path) or `SELF_DROP_ACCEPTED` (self-drop path) |
 | 6 | `ORIGIN_HUB_PROCESSING` | Stand assigned; being sorted | Hub ops | M7 stand assignment event |
 | 7 | `IN_TAKEOFF_BAG` | Bagged for specific flight (or same-city route) | Hub ops | M7 bag creation event |
-| 8 | `DISPATCHED_TO_AIRPORT` | Bag on cron van; left the hub *(INTERCITY only)* | Cron driver | M6/M7 cron departure event |
+| 8 | `DISPATCHED_TO_AIRPORT` | Bag loaded on cron; left the hub *(INTERCITY only)* | Cron driver | M6 `DEPARTED_HUB` cron event |
 | 9 | `AT_AIRPORT` | Handed to GHA; airline custody *(INTERCITY only)* | GHA/Airline | M8 `GHA_ACCEPTANCE` scan |
 | 10 | `DEPARTED` | Flight departed *(INTERCITY only)* | Airline | M9 `flight.departed` event |
 | 11 | `LANDED` | Flight arrived at destination city *(INTERCITY only)* | Airline → Dest ops | M9 `flight.landed` event |
 | 12 | `DISPATCHED_TO_HUB` | Van moving from airport to destination hub *(INTERCITY only)* | Cron driver | M6/M7 van departure event |
 | 13 | `AT_DEST_HUB` | Scanned in at destination hub *(INTERCITY only)* | Dest hub ops | M8 `HUB_DEST_IN` scan |
 | 14 | `DEST_HUB_PROCESSING` | Last-mile sort at destination *(INTERCITY only)* | Dest hub ops | M7 dest sort event |
-| 15 | `HANDED_TO_DROP_VAN` | Parcel loaded on drop van; hub responsibility ends *(DA_DELIVERY only)* | Drop van | M5/M6 drop van handoff event |
+| 15 | `HANDED_TO_DROP_VAN` | Parcel loaded on drop van; hub responsibility ends *(DA_DELIVERY only)* | Drop van | M7 `DROP_VAN_HANDOFF` or M7 `SAMECITY_OUTBOUND` |
 | 16 | `DROP_ASSIGNED` | Last-mile DA assigned for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `oneday.da.drop_assigned` |
 | 17 | `DROP_COLLECTED` | DA physically collected parcel from van for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `oneday.da.drop_collected` |
 | 18 | `DROPPED` | Delivery confirmed by DA *(DA_DELIVERY only)* | — (complete) | M5 `oneday.da.drop_completed` |
@@ -558,16 +558,18 @@ AWAITING_SELF_DROP
   → CANCELLED                   (API: customer cancels before arriving at hub)
 
 PICKUP_ASSIGNED
-  → PICKED_UP                   (M5: oneday.da.pickup_completed)
+  → PICKED_UP                   (M4: OTP verify endpoint — DA calls after customer provides OTP)
+                                  ↳ Side-effect on entering PICKUP_ASSIGNED: M4 generates 4-digit OTP,
+                                    stores with 10-min TTL, sends to customer phone via NotificationPort
   → PICKUP_FAILED               (M5: oneday.da.pickup_failed) ── reported to M11
   → CANCELLED                   (API: customer cancels — see BD-001)
 
 PICKED_UP
-  → HANDED_TO_PICKUP_VAN        (M5: oneday.da.van_handoff_completed)
+  → HANDED_TO_PICKUP_VAN        (M5: oneday.da.van_handoff_completed) [QR scan — DA scans in DA app]
   → CANCELLED                   (API: last state allowing cancellation for DA_PICKUP — see BD-001)
 
 HANDED_TO_PICKUP_VAN
-  → AT_ORIGIN_HUB               (M8: HUB_ORIGIN_IN scan)
+  → AT_ORIGIN_HUB               (M8: HUB_ORIGIN_IN scan) [QR scan — hub scan station]
                                   ↳ Side-effect: EtaPort.fetchEta(shipmentId, AT_ORIGIN_HUB, ctx);
                                     stores result as eta_updated; notifies customer
 
@@ -578,10 +580,10 @@ ORIGIN_HUB_PROCESSING
   → IN_TAKEOFF_BAG              (M7: bag creation event)
 
 IN_TAKEOFF_BAG [delivery_type=INTERCITY]
-  → DISPATCHED_TO_AIRPORT       (M6/M7: cron van departure event)
+  → DISPATCHED_TO_AIRPORT       (M6: Cron DEPARTED_HUB) [QR scan — cron driver scans bag barcode at hub loading bay]
 
 IN_TAKEOFF_BAG [delivery_type=SAME_CITY]
-  → HANDED_TO_DROP_VAN          (M5/M6: same-city drop van handoff — skips air leg + dest hub)
+  → HANDED_TO_DROP_VAN          (M7: SAMECITY_OUTBOUND) [QR scan — hub scan station at van loading]
 
 DISPATCHED_TO_AIRPORT
   → AT_AIRPORT                  (M8: GHA_ACCEPTANCE scan)
@@ -593,7 +595,7 @@ DEPARTED
   → LANDED                      (M9: flight.landed event)
 
 LANDED
-  → DISPATCHED_TO_HUB           (M6/M7: van departure from airport to dest hub)
+  → DISPATCHED_TO_HUB           (M6: Cron DEPARTED_AIRPORT) [QR scan — cron driver scans bags at airport before loading]
 
 DISPATCHED_TO_HUB
   → AT_DEST_HUB                 (M8: HUB_DEST_IN scan)
@@ -602,10 +604,10 @@ AT_DEST_HUB
   → DEST_HUB_PROCESSING         (M7: dest sort event)
 
 DEST_HUB_PROCESSING [drop_type=DA_DELIVERY]
-  → HANDED_TO_DROP_VAN          (M5/M6: drop van handoff event)
+  → HANDED_TO_DROP_VAN          (M7: DROP_VAN_HANDOFF) [QR scan — hub scan station at van loading bay]
 
 DEST_HUB_PROCESSING [drop_type=HUB_COLLECT]
-  → AWAITING_HUB_COLLECT        (M7: dest sort complete; parcel staged for collection)
+  → AWAITING_HUB_COLLECT        (M7: see OD-9 — event TBD) [QR scan — hub ops scan when staging parcel]
 
 AWAITING_HUB_COLLECT
   → HUB_COLLECTED               (M8: HUB_COLLECT_COMPLETED scan by hub staff at receiver collection)
@@ -682,6 +684,62 @@ Kafka does not guarantee ordering across partitions. If M4 receives an event for
 4. M4 does **not** retry automatically. An operator must re-drive the parked event after the out-of-order lag resolves.
 
 This is an operational edge case; the primary mitigation is using the `shipment_id` as the Kafka partition key so all events for one shipment land on the same partition in order.
+
+---
+
+### 6.6 Label Management
+
+Labels are generated by M8 asynchronously after booking (see KDD-8). The physical label is a QR code carrying the `parcel_id`.
+
+**Label generation lifecycle:**
+1. Customer books → M4 emits `ShipmentCreatedEvent` to `oneday.shipments.events`
+2. M8 consumes the event, generates the label, emits `LABEL_GENERATED` to `oneday.scan.events`
+3. M4 consumes `LABEL_GENERATED`, updates `parcel_id` on the shipment, and sets `label_status = READY`
+4. An ops alert fires if `parcel_id` is still null when `PICKUP_ASSIGNED` is received — the label must be ready before the DA arrives
+
+**Physical label attachment by pickup type:**
+
+| Pickup type | When is the label physically attached | Who attaches it |
+|---|---|---|
+| `DA_PICKUP` | At the customer's address at the moment of pickup (`PICKED_UP`) | DA prints from DA app (thermal printer or phone screen) and sticks on parcel |
+| `SELF_DROP` | Before arriving at the origin hub | Customer downloads label PDF from booking confirmation email and prints at home; hub staff reprint if customer arrives without one |
+
+The label must be on the parcel by `AT_ORIGIN_HUB` — the hub scan at that state reads the QR code to identify the shipment.
+
+---
+
+### 6.7 Handover Verification
+
+Every physical change of custody requires a verification event before M4 advances the state. Two mechanisms are used across the entire shipment lifecycle:
+
+- **OTP** — a 4-digit time-limited code sent to the customer's registered phone number. Used where the counterparty is an untrusted member of the public (customer at pickup). M4 generates and owns the OTP.
+- **QR scan** — the parcel's label QR code (carrying `parcel_id`) is scanned by the receiving party's device (DA app, hub scan station, cron driver terminal). Used for all internal custody transfers within the logistics network.
+
+| Handover | Transition | Mechanism | Who scans / verifies |
+|---|---|---|---|
+| Platform assigns DA | `BOOKED → PICKUP_ASSIGNED` | System event — no physical handover | M5 |
+| Customer → DA at pickup | `PICKUP_ASSIGNED → PICKED_UP` | **OTP** | DA enters customer's OTP into DA app; M5 calls M4 verify endpoint |
+| DA → Pickup van | `PICKED_UP → HANDED_TO_PICKUP_VAN` | **QR scan** | DA scans parcel QR in DA app |
+| Pickup van → Origin hub | `HANDED_TO_PICKUP_VAN → AT_ORIGIN_HUB` | **QR scan** | Hub scan station |
+| Customer → Hub (self-drop) | `AWAITING_SELF_DROP → AT_ORIGIN_HUB` | **QR scan** | Hub staff scan customer's label at drop-off counter |
+| Origin hub → Cron | `IN_TAKEOFF_BAG → DISPATCHED_TO_AIRPORT` | **QR scan** | Cron driver scans bag barcode at hub loading bay |
+| Cron → GHA at airport | `DISPATCHED_TO_AIRPORT → AT_AIRPORT` | **QR scan** | GHA acceptance scan terminal |
+| GHA → Cron at dest airport | `LANDED → DISPATCHED_TO_HUB` | **QR scan** | Cron driver scans bags at airport before loading |
+| Cron → Dest hub | `DISPATCHED_TO_HUB → AT_DEST_HUB` | **QR scan** | Hub scan station |
+| Dest hub → Drop van | `DEST_HUB_PROCESSING → HANDED_TO_DROP_VAN` | **QR scan** | Hub scan station at van loading bay |
+| Drop van → Drop DA | `HANDED_TO_DROP_VAN → DROP_COLLECTED` | **QR scan** | DA scans parcel QR in DA app when collecting from van |
+| DA → Customer at delivery | `DROP_COLLECTED → DROPPED` | **See OD-8** | TBD |
+| Customer → Dest hub (hub-collect) | `AWAITING_HUB_COLLECT → HUB_COLLECTED` | **QR scan** | Hub staff scan at collection counter |
+
+**OTP lifecycle for DA_PICKUP:**
+
+1. M5 fires `PICKUP_ASSIGNED` event → M4 transitions state. As a side-effect, M4 immediately generates a 4-digit OTP, stores it with a 10-minute TTL in `pickup_otps`, and sends it to the customer's phone via `NotificationPort`
+2. DA arrives at customer address and asks for the OTP
+3. DA enters the OTP into the DA app → M5 calls `POST /internal/v1/shipments/{ref}/pickup-otp/verify`
+4. M4 verifies the OTP and, on success, directly transitions `PICKUP_ASSIGNED → PICKED_UP`
+5. If OTP is wrong or expired: DA requests a resend via `POST /internal/v1/shipments/{ref}/pickup-otp/resend` (maximum 3 resends); M4 generates a fresh OTP and resends to customer
+
+> `PICKED_UP` is triggered by the OTP verify HTTP endpoint, **not** by a Kafka event. `DaEventType.PICKUP_COMPLETED` is produced by M5 for other module consumers (M10 SLA) but is **not** consumed by M4 for state transitions.
 
 ---
 
@@ -1106,6 +1164,38 @@ Consumed only by other modules, never by external clients.
 
 ---
 
+#### `POST /internal/v1/shipments/{ref}/pickup-otp/verify` — Verify pickup OTP
+
+Called by M5 DA app after customer provides OTP to DA.
+
+**Auth:** Internal service token
+
+```json
+{ "otp": "4821" }
+```
+
+**Behaviour:**
+- Looks up active OTP for this shipment; verifies value and TTL
+- On success: transitions `PICKUP_ASSIGNED → PICKED_UP`; marks OTP consumed; returns `200`
+- On wrong OTP: returns `422 INVALID_OTP`
+- On expired OTP: returns `422 OTP_EXPIRED` — DA must call resend endpoint
+- On state not `PICKUP_ASSIGNED`: returns `409 INVALID_STATE`
+
+---
+
+#### `POST /internal/v1/shipments/{ref}/pickup-otp/resend` — Resend pickup OTP
+
+Called by M5 when DA requests a fresh OTP (customer didn't receive it or it expired).
+
+**Auth:** Internal service token
+
+**Behaviour:**
+- Invalidates the previous OTP; generates a new 4-digit OTP with fresh 10-minute TTL
+- Sends to customer's registered phone via `NotificationPort`
+- Maximum 3 resends per pickup attempt; returns `429 RESEND_LIMIT_EXCEEDED` beyond that
+
+---
+
 #### `PATCH /internal/v1/shipments/{id}/state` — Force state transition
 
 For synchronous flows only. Prefer Kafka event consumption.
@@ -1307,21 +1397,22 @@ All events share a common envelope:
 
 One topic per source module; `event_type` is the discriminator within each topic. M4's `ShipmentEventConsumer` routes on `event_type` and calls `ShipmentStateMachine.transition()`.
 
-| Topic | Source | `event_type` values |
+| Topic | Source | `event_type` values consumed by M4 |
 |---|---|---|
-| `oneday.da.events` | M5 | `PICKUP_ASSIGNED`, `PICKUP_COMPLETED`, `PICKUP_FAILED`, `VAN_HANDOFF_COMPLETED`, `DROP_ASSIGNED`, `DROP_COLLECTED`, `DROP_COMPLETED`, `DROP_FAILED` |
+| `oneday.da.events` | M5 | `PICKUP_ASSIGNED`, `PICKUP_FAILED`, `VAN_HANDOFF_COMPLETED`, `DROP_ASSIGNED`, `DROP_COLLECTED`, `DROP_COMPLETED`, `DROP_FAILED` |
 | `oneday.hub.events` | M7 | `STAND_ASSIGNED`, `BAG_CREATED`, `SAMECITY_OUTBOUND`, `DEST_SORT_COMPLETE`, `DROP_VAN_HANDOFF` |
-| `oneday.scan.events` | M8 | `HUB_ORIGIN_IN`, `GHA_ACCEPTANCE`, `HUB_DEST_IN`, `LABEL_GENERATED` |
+| `oneday.scan.events` | M8 | `HUB_ORIGIN_IN`, `SELF_DROP_ACCEPTED`, `GHA_ACCEPTANCE`, `HUB_DEST_IN`, `LABEL_GENERATED`, `HUB_COLLECT_COMPLETED` |
 | `oneday.flight.events` | M9 | `DEPARTED`, `LANDED`, `RTO_IN_TRANSIT` |
 | `oneday.cron.events` | M6 | `DEPARTED_HUB`, `DEPARTED_AIRPORT` |
 | `oneday.exceptions.events` | M11 | `RTO_INITIATED`, `PICKUP_RESCHEDULED`, `DELIVERY_RESCHEDULED`, `RTO_COMPLETED` |
+
+> **`PICKUP_COMPLETED` is NOT consumed by M4.** `PICKED_UP` is triggered by the OTP verify HTTP endpoint (`POST /internal/v1/shipments/{ref}/pickup-otp/verify`), not by a Kafka event. M5 still produces `PICKUP_COMPLETED` on `oneday.da.events` for other consumers (M10 SLA), but M4 registers no handler for it.
 
 **`event_type` → state transition mapping:**
 
 | `event_type` | Topic | Transition |
 |---|---|---|
-| `PICKUP_ASSIGNED` | `oneday.da.events` | `BOOKED → PICKUP_ASSIGNED` |
-| `PICKUP_COMPLETED` | `oneday.da.events` | `PICKUP_ASSIGNED → PICKED_UP` |
+| `PICKUP_ASSIGNED` | `oneday.da.events` | `BOOKED → PICKUP_ASSIGNED` + side-effect: generate OTP, send to customer |
 | `PICKUP_FAILED` | `oneday.da.events` | `PICKUP_ASSIGNED → PICKUP_FAILED` → M11 notified via `oneday.exceptions.events` |
 | `VAN_HANDOFF_COMPLETED` | `oneday.da.events` | `PICKED_UP → HANDED_TO_PICKUP_VAN` |
 | `DROP_ASSIGNED` | `oneday.da.events` | `HANDED_TO_DROP_VAN → DROP_ASSIGNED` |
@@ -1362,7 +1453,7 @@ One topic per source module; `event_type` is the discriminator within each topic
 Each DLQ message includes original message headers plus:
 ```json
 {
-  "original_topic": "oneday.da.pickup_completed",
+  "original_topic": "oneday.da.events",
   "original_partition": 3,
   "original_offset": 187234,
   "failure_reason": "ILLEGAL_STATE_TRANSITION",
@@ -1932,6 +2023,7 @@ oneday:
 | Internal endpoints | Service-to-service token; not exposed on public load balancer |
 | Razorpay signature verification | HMAC-SHA256; server-side only; key never sent to client |
 | B2B webhook HMAC | HMAC-SHA256; `X-1DD-Signature: sha256=<digest>` on all outbound webhook payloads |
+| Pickup OTP | 4-digit numeric code; 10-minute TTL; max 3 resends per pickup attempt; consumed on first successful use; stored hashed in `pickup_otps` table |
 
 ---
 
@@ -1994,3 +2086,5 @@ oneday:
 | OD-5 | Multi-parcel B2B in v2 | Child `parcels` table vs array on Shipment | **Child table** — cleaner for state machine per parcel | Post-v1 |
 | OD-6 | DPDP data deletion workflow | In-scope v1 or post-v1? | **Post-v1** — no customer account deletion in v1 | Post-v1 |
 | OD-7 | Refund partial failure (Razorpay refund.failed) | Manual ops intervention vs auto-retry | **Manual ops + alert** in v1; auto-retry post-v1 | Cancellation API implementation |
+| OD-8 | Delivery verification mechanism | A: OTP (mirrors pickup — customer receives code, DA verifies); B: QR scan on DA app delivery confirmation screen | **A recommended** — consistent with pickup; provides proof of delivery to correct recipient | M5 DA app implementation |
+| OD-9 | Event triggering `DEST_HUB_PROCESSING → AWAITING_HUB_COLLECT` | A: New `HUB_COLLECT_STAGED` hub event; B: State machine auto-transitions after `DEST_SORT_COMPLETE` based on `drop_type` | **A recommended** — explicit audit trail of when parcel was staged; auto-transition hides business logic | M7 hub implementation |
