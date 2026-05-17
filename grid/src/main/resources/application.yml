@@ -8,10 +8,6 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
-
 grid:
   osrm:
     base-url: http://localhost:5000
