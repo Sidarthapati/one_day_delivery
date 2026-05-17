@@ -90,9 +90,11 @@ Exchange email + password for a JWT.
 ---
 
 ### `POST /auth/register`
-**Public**
+**Public · C2C customers only**
 
-Self-register a new account. Assigns the default `CUSTOMER` role.
+Self-register a C2C customer account. Assigns the `C2C_CUSTOMER` role and issues a JWT immediately — no admin approval required.
+
+**B2B and B2C users must use `POST /auth/request-onboarding` instead** — those accounts go through an admin approval flow before they can log in.
 
 **Request body**
 | Field | Type | Constraints |
@@ -117,9 +119,10 @@ Self-register a new account. Assigns the default `CUSTOMER` role.
 ---
 
 ### `POST /auth/api-keys`
-**Authenticated**
+**Authenticated · ADMIN / B2B_USER / B2C_CUSTOMER only**
 
 Create a new API key for the calling user. Maximum 5 active keys per user.
+Staff roles (DELIVERY_AGENT, CITY_OPS_MANAGER, HUB_MANAGER, etc.) receive `403`.
 
 **Request body**
 | Field | Type | Constraints |
@@ -263,6 +266,29 @@ Fetch a user by ID.
 
 ---
 
+### `GET /users?email=`
+**Authenticated · ADMIN / CALL_CENTER_AGENT only**
+
+Fetch a user by email address. Useful for admin tooling where the email is known but the UUID is not.
+
+**Query params**
+| Param | Type | Required |
+|-------|------|----------|
+| `email` | string | yes |
+
+```
+GET /users?email=ravi%40oneday.in
+```
+
+**Response `200`** — `UserResponse` (same shape as `POST /users` response)
+
+**Errors**
+- `400` — `email` query param missing
+- `403` — caller is not ADMIN or CALL_CENTER_AGENT
+- `404` — no user with that email
+
+---
+
 ### `PUT /users/{id}/role`
 **Authenticated · Admin-only**
 
@@ -369,7 +395,7 @@ Admin-forced password reset for another user. Sets `mustChangePassword = true` o
 ### `PUT /users/me/password`
 **Authenticated**
 
-Self-service password change. Requires the current password.
+Self-service password change. Requires the current password. Clears `mustChangePassword` on success — use this endpoint to satisfy the forced-change flag set on onboarding approval or admin-initiated reset.
 
 **Request body**
 | Field | Type | Constraints |
@@ -412,14 +438,14 @@ Update the calling user's display name.
 ## Roles (`/roles`)
 
 ### `POST /roles`
-**Authenticated · Admin-only**
+**Authenticated · ADMIN only**
 
 Create a custom role from the fixed permission set.
 
 **Request body**
 | Field | Type | Constraints |
 |-------|------|-------------|
-| `name` | string | required, unique identifier |
+| `name` | string | required, unique, `snake_case` — lowercase letters, digits, underscores only (e.g. `warehouse_manager`) |
 | `displayName` | string | required, human-readable label |
 | `cityScoped` | boolean | true → role carries a cityId |
 | `permissions` | string[] | required, non-empty; must be valid permission codes |
@@ -434,28 +460,29 @@ Create a custom role from the fixed permission set.
 ```
 
 **Response `200`**
-| Field | Type |
-|-------|------|
-| `id` | UUID |
-| `name` | string |
-| `displayName` | string |
-| `cityScoped` | boolean |
-| `builtin` | boolean |
-| `active` | boolean |
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | |
+| `name` | string | |
+| `displayName` | string | |
+| `cityScoped` | boolean | |
+| `builtin` | boolean | |
+| `active` | boolean | |
+| `permissions` | string[] | permission action codes assigned to this role |
 
 ---
 
 ### `GET /roles`
 **Authenticated**
 
-List all roles (built-in and custom), including inactive ones.
+List all active roles (built-in and custom). Permissions are eager-loaded in a single JOIN query — no N+1.
 
 **Response `200`** — array of `RoleResponse` (same shape as `POST /roles` response)
 
 ---
 
 ### `DELETE /roles/{id}`
-**Authenticated · Admin-only**
+**Authenticated · ADMIN only**
 
 Deactivate a custom role. Fails if any active user is currently assigned to it.
 
@@ -475,9 +502,9 @@ Deactivate a custom role. Fails if any active user is currently assigned to it.
 ## Onboarding (`/auth/request-onboarding`, `/onboarding-requests`)
 
 ### `POST /auth/request-onboarding`
-**Public**
+**Public · B2B and B2C users**
 
-Submit an onboarding request for a B2B or B2C account. The request sits in `PENDING` state until an admin approves or rejects it. On approval a real user record is created with `mustChangePassword = true`.
+Submit an onboarding request for a B2B or B2C account. C2C customers should use `POST /auth/register` instead for instant access. The request sits in `PENDING` state until an admin approves or rejects it. On approval a real user record is created with `mustChangePassword = true`.
 
 **Request body**
 | Field | Type | Constraints |
@@ -572,19 +599,30 @@ Reject a pending onboarding request. Optionally records a reason. Fails if the r
 ## Permissions (`/permissions`)
 
 ### `GET /permissions/check`
-**Authenticated · Internal**
+**Authenticated · Ownership-restricted**
 
-Check whether a user may perform an action, optionally scoped to a city. Used by other modules for authorization checks — not meant for direct client calls.
+Check whether a user may perform an action, optionally scoped to a city.
+
+**Access rule**
+| Caller role | Can check |
+|---|---|
+| `ADMIN`, `CALL_CENTER_AGENT` | any user |
+| all other roles | own identity only — `403` otherwise |
 
 **Query params**
+
+Identify the user with exactly one of `userId` or `email` (providing both returns `400`):
+
 | Param | Type | Required |
 |-------|------|----------|
-| `userId` | UUID | yes |
-| `action` | string | yes — permission code, e.g. `ORDER_CREATE` |
+| `userId` | UUID | one of `userId` / `email` |
+| `email` | string | one of `userId` / `email` |
+| `action` | string | yes — permission code, e.g. `shipment:create` |
 | `cityId` | string | no — required only for city-scoped permissions |
 
 ```
-GET /permissions/check?userId=7c9e6679-...&action=ORDER_CREATE&cityId=BOM
+GET /permissions/check?userId=7c9e6679-...&action=shipment:create&cityId=BOM
+GET /permissions/check?email=ravi%40oneday.in&action=shipment:create&cityId=BOM
 ```
 
 **Response `200`**
@@ -596,3 +634,8 @@ GET /permissions/check?userId=7c9e6679-...&action=ORDER_CREATE&cityId=BOM
 ```json
 { "allowed": true, "reason": "" }
 ```
+
+**Errors**
+- `400` — neither or both of `userId` / `email` provided
+- `403` — caller is not ADMIN/CALL_CENTER_AGENT and target ≠ their own identity
+- `404` — no user found for the given email

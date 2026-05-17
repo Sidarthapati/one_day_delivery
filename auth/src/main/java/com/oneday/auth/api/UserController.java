@@ -98,4 +98,10 @@ public class UserController {
     public ResponseEntity<UserResponse> getUser(@PathVariable UUID id) {
         return ResponseEntity.ok(userService.getUser(id));
     }
+
+    @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'CALL_CENTER_AGENT')")
+    public ResponseEntity<UserResponse> getUserByEmail(@RequestParam String email) {
+        return ResponseEntity.ok(userService.getUserByEmail(email));
+    }
 }

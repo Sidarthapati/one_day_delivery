@@ -10,6 +10,7 @@ import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.auth.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -42,6 +43,7 @@ public class AuthController {
         return ResponseEntity.ok(authService.register(request));
     }
 
+    @PreAuthorize("hasAnyRole('ADMIN', 'B2B_USER', 'B2C_CUSTOMER')")
     @PostMapping("/api-keys")
     public ResponseEntity<ApiKeyCreateResponse> createApiKey(
             @AuthenticationPrincipal AuthUserDetails principal,

@@ -6,6 +6,7 @@ import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.auth.service.RoleService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,6 +24,7 @@ public class RoleController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<RoleResponse> createRole(
             @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody CreateRoleRequest request) {
@@ -35,6 +37,7 @@ public class RoleController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deactivateRole(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthUserDetails principal) {

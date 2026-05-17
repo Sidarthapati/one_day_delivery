@@ -1,5 +1,6 @@
 package com.oneday.auth.dto.response;
 
+import java.util.Set;
 import java.util.UUID;
 
 public record RoleResponse(
@@ -8,5 +9,6 @@ public record RoleResponse(
         String displayName,
         boolean cityScoped,
         boolean builtin,
-        boolean active
+        boolean active,
+        Set<String> permissions
 ) {}
