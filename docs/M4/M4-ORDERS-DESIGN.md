@@ -1364,10 +1364,11 @@ Each DLQ message includes original message headers plus:
 ```sql
 -- ENUMs
 CREATE TYPE shipment_state AS ENUM (
-  'BOOKED', 'PICKUP_ASSIGNED', 'PICKED_UP', 'HANDED_TO_VAN',
-  'AT_ORIGIN_HUB', 'HUB_PROCESSING', 'IN_BAG', 'DISPATCHED_TO_AIRPORT',
-  'AT_AIRPORT', 'DEPARTED', 'AT_DEST_HUB', 'DEST_HUB_PROCESSING',
-  'OUT_FOR_DELIVERY', 'DELIVERED',
+  'BOOKED', 'PICKUP_ASSIGNED', 'PICKED_UP', 'HANDED_TO_PICKUP_VAN',
+  'AT_ORIGIN_HUB', 'ORIGIN_HUB_PROCESSING', 'IN_TAKEOFF_BAG',
+  'DISPATCHED_TO_AIRPORT', 'AT_AIRPORT', 'DEPARTED', 'LANDED',
+  'DISPATCHED_TO_HUB', 'AT_DEST_HUB', 'DEST_HUB_PROCESSING',
+  'HANDED_TO_DROP_VAN', 'DROP_ASSIGNED', 'DROP_COLLECTED', 'DROPPED',
   'PICKUP_FAILED', 'DELIVERY_FAILED',
   'RTO_INITIATED', 'RTO_IN_TRANSIT', 'RTO_COMPLETED',
   'CANCELLED'
@@ -1627,12 +1628,12 @@ All notifications dispatched **asynchronously** via `NotificationPort`. M4 does 
 | `BOOKED` | Confirmation + estimated ETA + tracking link | Full confirmation + GST breakdown + estimated ETA | Booking summary with estimated ETA |
 | `PICKUP_ASSIGNED` | DA name + ETA window | — | DA assigned |
 | `PICKED_UP` | Parcel collected | — | Parcel collected |
-| `HANDED_TO_VAN` | In transit to hub | — | — |
+| `HANDED_TO_PICKUP_VAN` | In transit to hub | — | — |
 | `AT_ORIGIN_HUB` | At origin hub | Accurate delivery ETA confirmed (once flight assigned) | Accurate ETA update |
 | `DEPARTED` | In transit by air | — | In transit |
 | `AT_DEST_HUB` | At destination hub | — | — |
-| `OUT_FOR_DELIVERY` | OFD + DA name + ETA | — | OFD + ETA |
-| `DELIVERED` | Delivered ✓ | Delivery confirmation | Delivered |
+| `DROP_COLLECTED` | Out for delivery + DA name + ETA | — | Out for delivery + ETA |
+| `DROPPED` | Delivered ✓ | Delivery confirmation | Delivered |
 | `DELIVERY_FAILED` | Delivery unsuccessful + reschedule link | — | Failed + reschedule |
 | `PICKUP_FAILED` | Pickup unsuccessful — we will retry | — | — |
 | `RTO_INITIATED` | Return to sender initiated | RTO notification | — |
@@ -1656,7 +1657,7 @@ All notifications dispatched **asynchronously** via `NotificationPort`. M4 does 
 1. `NotificationPort.send()` is called asynchronously; M4 publishes to an internal `notification.requested` Kafka topic.
 2. A dedicated notification service consumes this topic.
 3. Retry policy (per channel): 3 attempts with 30s, 5m, 30m backoff.
-4. After 3 failures: log to `notification_failures` table (out of M4 scope); alert ops for BOOKED and DELIVERED events only (highest customer impact).
+4. After 3 failures: log to `notification_failures` table (out of M4 scope); alert ops for BOOKED and DROPPED events only (highest customer impact).
 5. Fallback: if WhatsApp fails, no fallback in v1 (WhatsApp is supplementary). If SMS fails after 3 attempts, flag for manual outreach via ops queue.
 6. M4 does **not** block or retry delivery of state transitions due to notification failures. Notifications are best-effort.
 
@@ -1723,7 +1724,7 @@ All M4 log entries include:
 | Kafka consumer lag | > 1000 messages | P2 |
 | Circuit breaker open (M2 or M3) | Any | P1 |
 | Payment capture failure rate | > 2% over 5 min | P1 |
-| Notification failure (BOOKED/DELIVERED) | > 10 in 5 min | P2 |
+| Notification failure (BOOKED/DROPPED) | > 10 in 5 min | P2 |
 
 ---
 
@@ -1847,7 +1848,7 @@ oneday:
 | E6 | B2B booking exactly at credit limit | Allowed — check is `outstanding + booking <= limit`; equality is accepted |
 | E7 | B2B concurrent bookings from same account | Row-level lock on `b2b_accounts` serialises; last one in may get 402 if limit exceeded |
 | E8 | State transition already applied (idempotent consumer restart) | `SELECT FOR UPDATE` shows state already advanced; state machine returns without error (idempotent) |
-| E9 | Customer cancels after PICKED_UP | Rejected with `409 CANCELLATION_NOT_ALLOWED`; HANDED_TO_VAN and beyond cannot be cancelled |
+| E9 | Customer cancels after PICKED_UP | Rejected with `409 CANCELLATION_NOT_ALLOWED`; HANDED_TO_PICKUP_VAN and beyond cannot be cancelled |
 | E10 | Weight declared at booking differs from actual weight | `final_price_paise` column reserved; weight reconciliation is post-v1 |
 | E11 | Razorpay webhook arrives before booking API response | `PaymentTransaction` row not yet created; webhook returns 200 (idempotent); M4 handles on next delivery or booking creates the row |
 | E12 | Shipment stuck in a state for > SLA threshold | M10 detects and raises exception; M11 handles. M4 is not the SLA enforcer. |
