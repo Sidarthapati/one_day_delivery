@@ -188,7 +188,7 @@
 | `da.arrived_at_pickup` event (DA ID, shipment ID, timestamp) | M4 (state update) |
 | `da.pickup_completed` event (DA ID, shipment ID, timestamp) | M4 (state update), M8 (triggers barcode attach scan), M10 |
 | `da.pickup_failed` event (DA ID, shipment ID, reason code) | M4 (state update), M11 (failure flow) |
-| `da.cron_handoff_completed` event (DA ID, van ID, packet list, timestamp) | M4 (state update), M10 (SLA leg closed) |
+| `da.van_handoff_completed` event (DA ID, van ID, packet list, timestamp) | M4 (state update), M10 (SLA leg closed) |
 | `da.queue_reordered` event (DA ID, new queue snapshot) | DA app |
 | Updated DA priority queue | DA app |
 | Cron feasibility check result | Internal; if fail → alert to M10 |

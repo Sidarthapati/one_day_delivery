@@ -116,7 +116,7 @@
 | 1 | `BOOKED` | Created; payment captured (B2C/C2C PREPAID) or COD accepted or invoiced (B2B) | Platform | M4 booking API |
 | 2 | `PICKUP_ASSIGNED` | DA assigned to collect | DA | M5 `oneday.da.assigned` |
 | 3 | `PICKED_UP` | DA confirmed physical pickup | DA | M5 `oneday.da.pickup_completed` |
-| 4 | `HANDED_TO_PICKUP_VAN` | DA handed to cron van; DA responsibility ends | Cron van | M5 `oneday.da.cron_handoff_completed` |
+| 4 | `HANDED_TO_PICKUP_VAN` | DA handed parcel to pickup van; DA responsibility ends | Pickup van | M5 `oneday.da.van_handoff_completed` |
 | 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `HUB_ORIGIN_IN` scan event |
 | 6 | `ORIGIN_HUB_PROCESSING` | Stand assigned; being sorted | Hub ops | M7 stand assignment event |
 | 7 | `IN_TAKEOFF_BAG` | Bagged for specific flight (or same-city route) | Hub ops | M7 bag creation event |
@@ -155,7 +155,7 @@ PICKUP_ASSIGNED
   → CANCELLED                   (API: customer cancels — see BD-001)
 
 PICKED_UP
-  → HANDED_TO_PICKUP_VAN        (M5: oneday.da.cron_handoff_completed)
+  → HANDED_TO_PICKUP_VAN        (M5: oneday.da.van_handoff_completed)
   → CANCELLED                   (API: last state allowing cancellation — see BD-001)
 
 HANDED_TO_PICKUP_VAN

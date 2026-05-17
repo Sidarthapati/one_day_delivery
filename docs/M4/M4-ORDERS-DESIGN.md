@@ -509,7 +509,7 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 | 1 | `BOOKED` | Created; payment captured (B2C/C2C) or COD accepted or invoiced (B2B) | Platform | M4 booking API |
 | 2 | `PICKUP_ASSIGNED` | DA assigned to collect *(DA_PICKUP only)* | DA | M5 `oneday.da.assigned` |
 | 3 | `PICKED_UP` | DA confirmed physical pickup *(DA_PICKUP only)* | DA | M5 `oneday.da.pickup_completed` |
-| 4 | `HANDED_TO_PICKUP_VAN` | DA handed to cron van; DA responsibility ends *(DA_PICKUP only)* | Cron van | M5 `oneday.da.cron_handoff_completed` |
+| 4 | `HANDED_TO_PICKUP_VAN` | DA handed parcel to pickup van; DA responsibility ends *(DA_PICKUP only)* | Pickup van | M5 `oneday.da.van_handoff_completed` |
 | — | `AWAITING_SELF_DROP` | Self-drop booked; sender yet to arrive at origin hub *(SELF_DROP only)* | Platform | M4 booking API (immediate on SELF_DROP booking) |
 | 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `HUB_ORIGIN_IN` (DA path) or `SELF_DROP_ACCEPTED` (self-drop path) |
 | 6 | `ORIGIN_HUB_PROCESSING` | Stand assigned; being sorted | Hub ops | M7 stand assignment event |
@@ -563,7 +563,7 @@ PICKUP_ASSIGNED
   → CANCELLED                   (API: customer cancels — see BD-001)
 
 PICKED_UP
-  → HANDED_TO_PICKUP_VAN        (M5: oneday.da.cron_handoff_completed)
+  → HANDED_TO_PICKUP_VAN        (M5: oneday.da.van_handoff_completed)
   → CANCELLED                   (API: last state allowing cancellation for DA_PICKUP — see BD-001)
 
 HANDED_TO_PICKUP_VAN
@@ -1309,7 +1309,7 @@ One topic per source module; `event_type` is the discriminator within each topic
 
 | Topic | Source | `event_type` values |
 |---|---|---|
-| `oneday.da.events` | M5 | `PICKUP_ASSIGNED`, `PICKUP_COMPLETED`, `PICKUP_FAILED`, `CRON_HANDOFF_COMPLETED`, `DROP_ASSIGNED`, `DROP_COLLECTED`, `DROP_COMPLETED`, `DROP_FAILED` |
+| `oneday.da.events` | M5 | `PICKUP_ASSIGNED`, `PICKUP_COMPLETED`, `PICKUP_FAILED`, `VAN_HANDOFF_COMPLETED`, `DROP_ASSIGNED`, `DROP_COLLECTED`, `DROP_COMPLETED`, `DROP_FAILED` |
 | `oneday.hub.events` | M7 | `STAND_ASSIGNED`, `BAG_CREATED`, `SAMECITY_OUTBOUND`, `DEST_SORT_COMPLETE`, `DROP_VAN_HANDOFF` |
 | `oneday.scan.events` | M8 | `HUB_ORIGIN_IN`, `GHA_ACCEPTANCE`, `HUB_DEST_IN`, `LABEL_GENERATED` |
 | `oneday.flight.events` | M9 | `DEPARTED`, `LANDED`, `RTO_IN_TRANSIT` |
@@ -1323,7 +1323,7 @@ One topic per source module; `event_type` is the discriminator within each topic
 | `PICKUP_ASSIGNED` | `oneday.da.events` | `BOOKED → PICKUP_ASSIGNED` |
 | `PICKUP_COMPLETED` | `oneday.da.events` | `PICKUP_ASSIGNED → PICKED_UP` |
 | `PICKUP_FAILED` | `oneday.da.events` | `PICKUP_ASSIGNED → PICKUP_FAILED` → M11 notified via `oneday.exceptions.events` |
-| `CRON_HANDOFF_COMPLETED` | `oneday.da.events` | `PICKED_UP → HANDED_TO_PICKUP_VAN` |
+| `VAN_HANDOFF_COMPLETED` | `oneday.da.events` | `PICKED_UP → HANDED_TO_PICKUP_VAN` |
 | `DROP_ASSIGNED` | `oneday.da.events` | `HANDED_TO_DROP_VAN → DROP_ASSIGNED` |
 | `DROP_COLLECTED` | `oneday.da.events` | `DROP_ASSIGNED → DROP_COLLECTED` |
 | `DROP_COMPLETED` | `oneday.da.events` | `DROP_COLLECTED → DROPPED` |
