@@ -2,6 +2,7 @@ package com.oneday.auth.service.impl;
 
 import com.oneday.auth.domain.OnboardingRequest;
 import com.oneday.auth.domain.Role;
+import com.oneday.auth.domain.RoleAuditLog;
 import com.oneday.auth.domain.User;
 import com.oneday.auth.dto.request.OnboardingSubmitRequest;
 import com.oneday.auth.dto.response.OnboardingRequestResponse;
@@ -10,6 +11,7 @@ import com.oneday.auth.exception.OnboardingRequestAlreadyProcessedException;
 import com.oneday.auth.exception.OnboardingRequestNotFoundException;
 import com.oneday.auth.exception.RoleNotFoundException;
 import com.oneday.auth.repository.OnboardingRequestRepository;
+import com.oneday.auth.repository.RoleAuditLogRepository;
 import com.oneday.auth.repository.RoleRepository;
 import com.oneday.auth.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +42,7 @@ class OnboardingServiceImplTest {
     @Mock private UserRepository userRepository;
     @Mock private RoleRepository roleRepository;
     @Mock private PasswordEncoder passwordEncoder;
+    @Mock private RoleAuditLogRepository auditLogRepository;
 
     @InjectMocks private OnboardingServiceImpl service;
 
@@ -130,6 +133,8 @@ class OnboardingServiceImplTest {
         when(onboardingRepository.findById(requestId)).thenReturn(Optional.of(req));
         when(userRepository.existsByEmail("corp@example.com")).thenReturn(false);
         when(roleRepository.findByName("B2B_USER")).thenReturn(Optional.of(b2bRole));
+        User savedUser = savedUser(UUID.randomUUID(), "corp@example.com", b2bRole);
+        when(userRepository.save(any(User.class))).thenReturn(savedUser);
 
         service.approve(requestId, adminId);
 
@@ -143,6 +148,26 @@ class OnboardingServiceImplTest {
         assertThat(req.getStatus()).isEqualTo("APPROVED");
         assertThat(req.getReviewedBy()).isEqualTo(adminId);
         assertThat(req.getReviewedAt()).isNotNull();
+    }
+
+    @Test
+    void approve_pendingRequest_writesCreateAuditLog() {
+        UUID newUserId = UUID.randomUUID();
+        OnboardingRequest req = fakeRequest(requestId, "corp@example.com", "B2B_USER", "PENDING");
+        when(onboardingRepository.findById(requestId)).thenReturn(Optional.of(req));
+        when(userRepository.existsByEmail("corp@example.com")).thenReturn(false);
+        when(roleRepository.findByName("B2B_USER")).thenReturn(Optional.of(b2bRole));
+        when(userRepository.save(any(User.class))).thenReturn(savedUser(newUserId, "corp@example.com", b2bRole));
+
+        service.approve(requestId, adminId);
+
+        ArgumentCaptor<RoleAuditLog> logCaptor = ArgumentCaptor.forClass(RoleAuditLog.class);
+        verify(auditLogRepository).save(logCaptor.capture());
+        RoleAuditLog log = logCaptor.getValue();
+        assertThat(log.getActorId()).isEqualTo(adminId);
+        assertThat(log.getTargetUserId()).isEqualTo(newUserId);
+        assertThat(log.getAction()).isEqualTo("CREATE");
+        assertThat(log.getNewRole()).isEqualTo("B2B_USER");
     }
 
     @Test
@@ -259,6 +284,16 @@ class OnboardingServiceImplTest {
         req.setPasswordHash("$2a$hash");
         req.setStatus(status);
         return req;
+    }
+
+    static User savedUser(UUID id, String email, Role role) {
+        User user = new User();
+        ReflectionTestUtils.setField(user, "id", id);
+        user.setEmail(email);
+        user.setRole(role);
+        user.setActive(true);
+        user.setMustChangePassword(true);
+        return user;
     }
 
     static Role realRole(String name, boolean cityScoped) {

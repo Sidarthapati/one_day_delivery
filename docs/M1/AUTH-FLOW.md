@@ -159,13 +159,25 @@ HTTP 401 Unauthorized
 After route-level checks, individual controller methods carry `@PreAuthorize` annotations that check the caller's role:
 
 ```java
-// Only an ADMIN can create a new role
+// Only ADMIN can create/deactivate roles
 @PreAuthorize("hasRole('ADMIN')")
 public ResponseEntity<RoleResponse> createRole(...) { ... }
 
-// ADMIN or STATION_MANAGER can register a user
+// ADMIN or STATION_MANAGER can create users, change roles, reset passwords
 @PreAuthorize("hasAnyRole('ADMIN', 'STATION_MANAGER')")
-public ResponseEntity<UserResponse> register(...) { ... }
+public ResponseEntity<UserResponse> createUser(...) { ... }
+
+// Only ADMIN can deactivate or reactivate a user
+@PreAuthorize("hasRole('ADMIN')")
+public ResponseEntity<Void> deactivate(...) { ... }
+
+// ADMIN, STATION_MANAGER, or CALL_CENTER_AGENT can read audit logs
+@PreAuthorize("hasAnyRole('ADMIN', 'STATION_MANAGER', 'CALL_CENTER_AGENT')")
+public ResponseEntity<List<AuditLogResponse>> getAuditLog(...) { ... }
+
+// ADMIN or CALL_CENTER_AGENT can look up users by email
+@PreAuthorize("hasAnyRole('ADMIN', 'CALL_CENTER_AGENT')")
+public ResponseEntity<UserResponse> getUserByEmail(...) { ... }
 ```
 
 These are evaluated by Spring Security before the method body runs. A mismatch returns **403 Forbidden**.

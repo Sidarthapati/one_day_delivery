@@ -40,6 +40,7 @@ public class UserController {
     }
 
     @PutMapping("/{id}/role")
+    @PreAuthorize("hasAnyRole('ADMIN', 'STATION_MANAGER')")
     public ResponseEntity<Void> changeRole(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthUserDetails principal,
@@ -49,11 +50,13 @@ public class UserController {
     }
 
     @GetMapping("/{id}/audit-log")
+    @PreAuthorize("hasAnyRole('ADMIN', 'STATION_MANAGER', 'CALL_CENTER_AGENT')")
     public ResponseEntity<List<AuditLogResponse>> getAuditLog(@PathVariable UUID id) {
         return ResponseEntity.ok(userService.getAuditLog(id));
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deactivate(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthUserDetails principal) {
@@ -62,6 +65,7 @@ public class UserController {
     }
 
     @PutMapping("/{id}/reactivate")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> reactivate(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthUserDetails principal) {
@@ -70,6 +74,7 @@ public class UserController {
     }
 
     @PostMapping("/{id}/reset-password")
+    @PreAuthorize("hasAnyRole('ADMIN', 'STATION_MANAGER')")
     public ResponseEntity<Void> resetPassword(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthUserDetails principal,

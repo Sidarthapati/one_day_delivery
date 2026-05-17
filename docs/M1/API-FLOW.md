@@ -423,6 +423,7 @@ OnboardingController.approve()
       → UserRepository.existsByEmail()
       → RoleRepository.findByName()                 [active check]
       → UserRepository.save()                       [mustChangePassword = true]
+      → RoleAuditLogRepository.save()               [action: CREATE, actorId: admin, targetUserId: new user]
       → OnboardingRequestRepository.save()          [status: APPROVED, reviewedBy, reviewedAt]
 ```
 

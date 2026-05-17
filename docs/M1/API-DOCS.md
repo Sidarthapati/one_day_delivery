@@ -290,7 +290,7 @@ GET /users?email=ravi%40oneday.in
 ---
 
 ### `PUT /users/{id}/role`
-**Authenticated · Admin-only**
+**Authenticated · ADMIN / STATION_MANAGER only**
 
 Change a user's role. Written to the append-only audit log.
 
@@ -317,7 +317,7 @@ Change a user's role. Written to the append-only audit log.
 ---
 
 ### `GET /users/{id}/audit-log`
-**Authenticated**
+**Authenticated · ADMIN / STATION_MANAGER / CALL_CENTER_AGENT only**
 
 Return the append-only role-change history for a user.
 
@@ -370,9 +370,9 @@ Re-enable a previously deactivated user.
 ---
 
 ### `POST /users/{id}/reset-password`
-**Authenticated · Admin-only**
+**Authenticated · ADMIN / STATION_MANAGER only**
 
-Admin-forced password reset for another user. Sets `mustChangePassword = true` on the target, forcing them to change on next login.
+Forced password reset for another user. Sets `mustChangePassword = true` on the target, forcing them to change on next login.
 
 **Path params**
 | Param | Type |

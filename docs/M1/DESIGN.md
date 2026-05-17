@@ -508,6 +508,12 @@ All service interfaces are public; implementations are package-private.
 - `updateProfile(UUID userId, UpdateProfileRequest)` — name update only; email immutable
 - `getUser(UUID)` — simple fetch
 
+### `OnboardingService`
+- `submit(OnboardingSubmitRequest)` — public; checks email uniqueness in both `users` and `onboarding_requests`, BCrypt-encodes password, persists row with `status=PENDING`
+- `listAll()` — admin view; returns all requests ordered newest-first
+- `approve(UUID requestId, UUID actorId)` — creates user account (`mustChangePassword=true`), writes `CREATE` audit log entry (actorId=approving admin, targetUserId=new user), then marks request `APPROVED`
+- `reject(UUID requestId, String reason, UUID actorId)` — marks request `REJECTED` with optional reason; no user account is created
+
 ### `RoleService`
 - `createRole(CreateRoleRequest, UUID adminId)` — validates all supplied permissions exist in the `permissions` table, inserts into `roles` + `role_permissions`
 - `listAllRoles()` — returns all active rows from `roles` (built-in + custom); used for role-assignment dropdowns

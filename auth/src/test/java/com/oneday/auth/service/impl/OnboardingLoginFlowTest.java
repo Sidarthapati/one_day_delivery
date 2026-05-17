@@ -68,7 +68,7 @@ class OnboardingLoginFlowTest {
     @BeforeEach
     void setUp() {
         onboardingService = new OnboardingServiceImpl(
-                onboardingRequestRepository, userRepository, roleRepository, passwordEncoder);
+                onboardingRequestRepository, userRepository, roleRepository, passwordEncoder, auditLogRepository);
         authService = new AuthServiceImpl(
                 userRepository, roleRepository, apiKeyRepository, auditLogRepository,
                 jwtService, passwordEncoder);
