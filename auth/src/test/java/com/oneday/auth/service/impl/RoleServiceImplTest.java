@@ -10,7 +10,6 @@ import com.oneday.auth.exception.RoleNotFoundException;
 import com.oneday.auth.repository.PermissionRepository;
 import com.oneday.auth.repository.RoleRepository;
 import com.oneday.auth.repository.UserRepository;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -40,13 +39,6 @@ class RoleServiceImplTest {
 
     @InjectMocks private RoleServiceImpl service;
 
-    private UUID actorId;
-
-    @BeforeEach
-    void setup() {
-        actorId = UUID.randomUUID();
-    }
-
     // ── CREATE ROLE ───────────────────────────────────────────────────────────
 
     @Test
@@ -59,7 +51,7 @@ class RoleServiceImplTest {
         when(roleRepository.save(any(Role.class))).thenReturn(saved);
 
         RoleResponse resp = service.createRole(
-                new CreateRoleRequest("custom_role", "Custom Role", false, permActions), actorId);
+                new CreateRoleRequest("custom_role", "Custom Role", false, permActions));
 
         assertThat(resp.name()).isEqualTo("CUSTOM_ROLE");
         assertThat(resp.cityScoped()).isFalse();
@@ -76,7 +68,7 @@ class RoleServiceImplTest {
         Role saved = realRole("WAREHOUSE_MANAGER", "Warehouse Manager", true, false, true);
         when(roleRepository.save(captor.capture())).thenReturn(saved);
 
-        service.createRole(new CreateRoleRequest("warehouse_manager", "Warehouse Manager", true, permActions), actorId);
+        service.createRole(new CreateRoleRequest("warehouse_manager", "Warehouse Manager", true, permActions));
 
         assertThat(captor.getValue().getName()).isEqualTo("WAREHOUSE_MANAGER");
     }
@@ -90,7 +82,7 @@ class RoleServiceImplTest {
         Role saved = realRole("CITY_ROLE", "City Role", true, false, true);
         when(roleRepository.save(captor.capture())).thenReturn(saved);
 
-        service.createRole(new CreateRoleRequest("city_role", "City Role", true, permActions), actorId);
+        service.createRole(new CreateRoleRequest("city_role", "City Role", true, permActions));
 
         assertThat(captor.getValue().isCityScoped()).isTrue();
         assertThat(captor.getValue().isBuiltin()).isFalse();
@@ -105,7 +97,7 @@ class RoleServiceImplTest {
         Role saved = realRole("NEW_ROLE", "New Role", false, false, true);
         when(roleRepository.save(captor.capture())).thenReturn(saved);
 
-        service.createRole(new CreateRoleRequest("new_role", "New Role", false, permActions), actorId);
+        service.createRole(new CreateRoleRequest("new_role", "New Role", false, permActions));
 
         assertThat(captor.getValue().isBuiltin()).isFalse();
         assertThat(captor.getValue().isActive()).isTrue();
@@ -118,7 +110,7 @@ class RoleServiceImplTest {
         when(permissionRepository.findAllByActionIn(permActions)).thenReturn(List.of(perm("shipment:view")));
 
         assertThatThrownBy(() -> service.createRole(
-                new CreateRoleRequest("role", "Role", false, permActions), actorId))
+                new CreateRoleRequest("role", "Role", false, permActions)))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("not valid");
     }
@@ -129,7 +121,7 @@ class RoleServiceImplTest {
         when(permissionRepository.findAllByActionIn(permActions)).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.createRole(
-                new CreateRoleRequest("role", "Role", false, permActions), actorId))
+                new CreateRoleRequest("role", "Role", false, permActions)))
                 .isInstanceOf(ForbiddenException.class);
     }
 
@@ -206,7 +198,7 @@ class RoleServiceImplTest {
         when(roleRepository.findById(roleId)).thenReturn(Optional.of(role));
         when(userRepository.existsByRoleId(roleId)).thenReturn(false);
 
-        service.deactivateRole(roleId, actorId);
+        service.deactivateRole(roleId);
 
         assertThat(role.isActive()).isFalse();
         verify(roleRepository).save(role);
@@ -219,7 +211,7 @@ class RoleServiceImplTest {
         ReflectionTestUtils.setField(role, "id", roleId);
         when(roleRepository.findById(roleId)).thenReturn(Optional.of(role));
 
-        assertThatThrownBy(() -> service.deactivateRole(roleId, actorId))
+        assertThatThrownBy(() -> service.deactivateRole(roleId))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("Built-in");
     }
@@ -232,7 +224,7 @@ class RoleServiceImplTest {
         when(roleRepository.findById(roleId)).thenReturn(Optional.of(role));
         when(userRepository.existsByRoleId(roleId)).thenReturn(true);
 
-        assertThatThrownBy(() -> service.deactivateRole(roleId, actorId))
+        assertThatThrownBy(() -> service.deactivateRole(roleId))
                 .isInstanceOf(RoleInUseException.class)
                 .hasMessageContaining("CUSTOM");
     }
@@ -242,7 +234,7 @@ class RoleServiceImplTest {
         UUID roleId = UUID.randomUUID();
         when(roleRepository.findById(roleId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deactivateRole(roleId, actorId))
+        assertThatThrownBy(() -> service.deactivateRole(roleId))
                 .isInstanceOf(RoleNotFoundException.class);
     }
 
@@ -257,7 +249,7 @@ class RoleServiceImplTest {
             ReflectionTestUtils.setField(role, "id", roleId);
             when(roleRepository.findById(roleId)).thenReturn(Optional.of(role));
 
-            assertThatThrownBy(() -> service.deactivateRole(roleId, actorId))
+            assertThatThrownBy(() -> service.deactivateRole(roleId))
                     .isInstanceOf(ForbiddenException.class);
         }
     }

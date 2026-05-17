@@ -38,6 +38,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         String authHeader = request.getHeader("Authorization");
+        // lgtm[java/user-controlled-bypass] Intentional: absent/malformed header leaves SecurityContext empty;
+        // anyRequest().authenticated() in SecurityConfig then rejects the request with 401.
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             tryAuthenticateWithJwt(authHeader.substring(7));
         }

@@ -25,7 +25,6 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -54,7 +53,7 @@ class RoleControllerTest {
     @Test
     void createRole_admin_returns200WithRoleDetails() throws Exception {
         RoleResponse resp = new RoleResponse(ROLE_ID, "WAREHOUSE_MANAGER", "Warehouse Manager", true, false, true, Set.of());
-        when(roleService.createRole(any(), any(UUID.class))).thenReturn(resp);
+        when(roleService.createRole(any())).thenReturn(resp);
 
         mockMvc.perform(post("/roles")
                         .with(user(buildPrincipal("ADMIN", null)))
@@ -75,7 +74,7 @@ class RoleControllerTest {
 
     @Test
     void createRole_invalidPermissions_returns403() throws Exception {
-        when(roleService.createRole(any(), any(UUID.class)))
+        when(roleService.createRole(any()))
                 .thenThrow(new ForbiddenException("One or more permission strings are not valid"));
 
         mockMvc.perform(post("/roles")
@@ -195,19 +194,19 @@ class RoleControllerTest {
 
     @Test
     void deactivateRole_admin_returns204() throws Exception {
-        doNothing().when(roleService).deactivateRole(any(UUID.class), any(UUID.class));
+        doNothing().when(roleService).deactivateRole(any(UUID.class));
 
         mockMvc.perform(delete("/roles/{id}", ROLE_ID)
                         .with(user(buildPrincipal("ADMIN", null))))
                 .andExpect(status().isNoContent());
 
-        verify(roleService).deactivateRole(eq(ROLE_ID), any(UUID.class));
+        verify(roleService).deactivateRole(ROLE_ID);
     }
 
     @Test
     void deactivateRole_builtinRole_returns403() throws Exception {
         doThrow(new ForbiddenException("Built-in roles cannot be deactivated"))
-                .when(roleService).deactivateRole(any(UUID.class), any(UUID.class));
+                .when(roleService).deactivateRole(any(UUID.class));
 
         mockMvc.perform(delete("/roles/{id}", ROLE_ID)
                         .with(user(buildPrincipal("ADMIN", null))))
@@ -217,7 +216,7 @@ class RoleControllerTest {
     @Test
     void deactivateRole_roleInUse_returns422() throws Exception {
         doThrow(new RoleInUseException("CUSTOM_ROLE"))
-                .when(roleService).deactivateRole(any(UUID.class), any(UUID.class));
+                .when(roleService).deactivateRole(any(UUID.class));
 
         mockMvc.perform(delete("/roles/{id}", ROLE_ID)
                         .with(user(buildPrincipal("ADMIN", null))))
@@ -227,7 +226,7 @@ class RoleControllerTest {
     @Test
     void deactivateRole_notFound_returns404() throws Exception {
         doThrow(new RoleNotFoundException("Role not found"))
-                .when(roleService).deactivateRole(any(UUID.class), any(UUID.class));
+                .when(roleService).deactivateRole(any(UUID.class));
 
         mockMvc.perform(delete("/roles/{id}", ROLE_ID)
                         .with(user(buildPrincipal("ADMIN", null))))

@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.UUID;
 
 public interface RoleService {
-    RoleResponse createRole(CreateRoleRequest request, UUID actorId);
+    RoleResponse createRole(CreateRoleRequest request);
     List<RoleResponse> listAllRoles();
-    void deactivateRole(UUID roleId, UUID actorId);
+    void deactivateRole(UUID roleId);
 }

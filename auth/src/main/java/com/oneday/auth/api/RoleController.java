@@ -2,12 +2,10 @@ package com.oneday.auth.api;
 
 import com.oneday.auth.dto.request.CreateRoleRequest;
 import com.oneday.auth.dto.response.RoleResponse;
-import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.auth.service.RoleService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,9 +24,8 @@ public class RoleController {
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<RoleResponse> createRole(
-            @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody CreateRoleRequest request) {
-        return ResponseEntity.ok(roleService.createRole(request, principal.getUserId()));
+        return ResponseEntity.ok(roleService.createRole(request));
     }
 
     @GetMapping
@@ -38,10 +35,8 @@ public class RoleController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> deactivateRole(
-            @PathVariable UUID id,
-            @AuthenticationPrincipal AuthUserDetails principal) {
-        roleService.deactivateRole(id, principal.getUserId());
+    public ResponseEntity<Void> deactivateRole(@PathVariable UUID id) {
+        roleService.deactivateRole(id);
         return ResponseEntity.noContent().build();
     }
 }

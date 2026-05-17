@@ -36,7 +36,7 @@ class RoleServiceImpl implements RoleService {
 
     @Override
     @Transactional
-    public RoleResponse createRole(CreateRoleRequest request, UUID actorId) {
+    public RoleResponse createRole(CreateRoleRequest request) {
         var permissions = permissionRepository.findAllByActionIn(request.permissions());
         if (permissions.size() != request.permissions().size()) {
             throw new ForbiddenException("One or more permission strings are not valid");
@@ -64,7 +64,7 @@ class RoleServiceImpl implements RoleService {
 
     @Override
     @Transactional
-    public void deactivateRole(UUID roleId, UUID actorId) {
+    public void deactivateRole(UUID roleId) {
         var role = roleRepository.findById(roleId)
                 .orElseThrow(() -> new RoleNotFoundException("Role not found"));
         if (role.isBuiltin()) {

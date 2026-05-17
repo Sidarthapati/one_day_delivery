@@ -35,6 +35,8 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http,
             JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         return http
+                // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies — no CSRF surface.
+                // lgtm[java/spring-disabled-csrf-protection]
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(e -> e
