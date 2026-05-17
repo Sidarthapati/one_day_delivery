@@ -1654,7 +1654,7 @@ All notifications dispatched **asynchronously** via `NotificationPort`. M4 does 
 
 ### 12.3 Notification Failure Handling
 
-1. `NotificationPort.send()` is called asynchronously; M4 publishes to an internal `notification.requested` Kafka topic.
+1. `NotificationPort.send()` is called asynchronously; M4 publishes to `oneday.notifications.requested` Kafka topic.
 2. A dedicated notification service consumes this topic.
 3. Retry policy (per channel): 3 attempts with 30s, 5m, 30m backoff.
 4. After 3 failures: log to `notification_failures` table (out of M4 scope); alert ops for BOOKED and DROPPED events only (highest customer impact).
