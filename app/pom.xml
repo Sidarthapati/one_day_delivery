@@ -81,7 +81,8 @@
                     <user>oneday</user>
                     <password>oneday</password>
                     <locations>
-                        <location>filesystem:src/main/resources/db/migration</location>
+                        <location>filesystem:src/main/resources/db/migration/auth</location>
+                        <location>filesystem:${project.basedir}/../grid/src/main/resources/db/migration/grid</location>
                     </locations>
                 </configuration>
             </plugin>
