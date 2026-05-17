@@ -211,6 +211,8 @@ Package: `com.oneday.grid.dto`
 | `ProposalRejectRequest` | POST /grid/proposals/{id}/reject (optional notes field) |
 | `IntradayReassignmentRequest` | POST /grid/assignments/intraday-override |
 | `IntradayReassignmentResponse` | response for the above — includes new proposal_id for tracking |
+| `TileShareRequest` | POST /grid/assignments/tile-share |
+| `TileShareResponse` | response for the above — includes new proposal_id for approval screen |
 
 Use Java records for all DTOs (Java 21).
 
@@ -364,6 +366,10 @@ public interface ProposalService {
     ProposalDto requestIntradayReassignment(UUID cityId, UUID fromDaId, UUID toDaId,
                                             List<UUID> tileIdsToMove, UUID requestedBy);
     void approveIntradayReassignment(UUID proposalId, UUID reviewerId);
+
+    // Tile share: add a second DA to a tile without removing the existing DA
+    TileShareResponse requestTileShare(UUID cityId, UUID daId, UUID tileId, UUID requestedBy);
+    void approveTileShare(UUID proposalId, UUID reviewerId);
 }
 ```
 
@@ -565,6 +571,8 @@ Package: `com.oneday.grid.api`
 | PUT | `/grid/proposals/{id}/regions/{regionId}/edit` | `proposalService.editRegionInProposal(...)` | Scenario A |
 | POST | `/grid/assignments/intraday-override` | `proposalService.requestIntradayReassignment(...)` | Scenario B |
 | POST | `/grid/proposals/{id}/approve-intraday` | `proposalService.approveIntradayReassignment(id, reviewerId)` | Scenario B |
+| POST | `/grid/assignments/tile-share` | `proposalService.requestTileShare(...)` | Tile share |
+| POST | `/grid/proposals/{id}/approve-tile-share` | `proposalService.approveTileShare(id, reviewerId)` | Tile share |
 
 **Scenario B request body:**
 ```json
