@@ -205,7 +205,7 @@ sequenceDiagram
 - **Lookup:** `X-Api-Key` header → SHA-256 hash → DB lookup on `api_keys.key_hash`
 - `last_used_at` updated on each successful authentication
 - Revocation is soft (`active = false`)
-- Only `B2B_USER` and `ADMIN` roles can create API keys
+- `B2B_USER`, `B2C_CUSTOMER`, and `ADMIN` roles can create API keys
 - **No expiry in v1.** Key hygiene (rotation, revocation of unused keys) is the owner's responsibility.
 - **10-key cap per user.** A user may hold at most 10 active keys. Attempting to create an 11th returns HTTP 422. Revoking a key frees the slot.
 
@@ -232,7 +232,7 @@ BCrypt with Spring's default cost factor (10). Passwords are encoded on registra
 
 The `users` table carries a `must_change_password` boolean (default `false`). It is set to `true` when an admin resets a user's password. The login response includes a `mustChangePassword` field. When `true`, the client must direct the user to `PUT /users/me/password` before accessing other features. Enforcement is client-side in v1; the server does not block other endpoints. The flag is cleared when the user changes their password.
 
-The bootstrap admin seed (`V2__seed_admin.sql`) ships with `must_change_password = false` and a well-known credential. **The seed admin account must be removed before go-live.**
+The bootstrap admin account is created by `DataInitializer` (a Spring `ApplicationRunner` that runs on startup) with `must_change_password = false` and the well-known credential `Admin1234!`. It only runs if `admin@oneday.in` does not yet exist. **The seed admin account must be removed before go-live.**
 
 ---
 
@@ -404,7 +404,7 @@ All endpoints are under the module's base path. Public endpoints are `/auth/logi
 | `POST` | `/auth/login` | Public | Email+password → JWT + expiry + role + mustChangePassword |
 | `GET` | `/auth/health` | Public | Liveness probe |
 | `POST` | `/auth/register` | Public | C2C self-registration → auto-login response |
-| `POST` | `/auth/api-keys` | `B2B_USER` or `ADMIN` | Create API key; raw key returned once |
+| `POST` | `/auth/api-keys` | `B2B_USER`, `B2C_CUSTOMER`, or `ADMIN` | Create API key; raw key returned once |
 | `GET` | `/auth/api-keys` | Authenticated | List own API keys (metadata only, no raw key) |
 | `DELETE` | `/auth/api-keys/{keyId}` | Authenticated | Revoke own key (ADMIN can revoke any) |
 
@@ -463,7 +463,7 @@ Station managers can only create, change roles, or reset passwords for users in 
 |--------|------|------|-------------|
 | `POST` | `/roles` | `ADMIN` | Create a custom role — supply name, display name, city\_scoped flag, and a non-empty subset of the seeded permission strings |
 | `GET` | `/roles` | Authenticated | List all active roles (built-in + custom) — used to populate role-assignment dropdowns |
-| `DELETE` | `/roles/{id}` | `ADMIN` | Deactivate a custom role; blocked if any active user currently holds it; blocked for built-in roles |
+| `DELETE` | `/roles/{id}` | `ADMIN` | Deactivate a custom role; blocked if any user (active or inactive) currently holds it; blocked for built-in roles |
 
 Custom roles are composites of the seeded `permissions` rows. No new action strings can be introduced without a code change and Flyway migration.
 
@@ -509,9 +509,9 @@ All service interfaces are public; implementations are package-private.
 - `getUser(UUID)` — simple fetch
 
 ### `RoleService`
-- `createRole(CreateRoleRequest, UUID adminId)` — validates all supplied permissions exist in the `permissions` table, inserts into `roles` + `role_permissions`, writes audit log
+- `createRole(CreateRoleRequest, UUID adminId)` — validates all supplied permissions exist in the `permissions` table, inserts into `roles` + `role_permissions`
 - `listAllRoles()` — returns all active rows from `roles` (built-in + custom); used for role-assignment dropdowns
-- `deactivateRole(UUID roleId, UUID adminId)` — blocked if any active user currently holds this role; sets `active = false`, writes audit log; blocked for built-in roles
+- `deactivateRole(UUID roleId, UUID adminId)` — blocked if any user (active or inactive) currently holds this role; sets `active = false`; blocked for built-in roles
 
 ### `PermissionService`
 - `canDo(UUID userId, String action, String cityId)` — active check → load `role_permissions` for user's role → city-scope check → `PermissionCheckResponse`
@@ -633,7 +633,7 @@ A deactivated account can be reactivated by ADMIN only (Station Managers cannot 
 ```
 PUT /users/{id}/reactivate
 Authorization: Bearer <admin token>
-{ "reason": "..." }
+(no request body)
 ```
 
 Sets `active = true`. The previous DEACTIVATE audit row is preserved; a new REACTIVATE row is appended. The user's role and `city_id` are unchanged — they resume with the same permissions they had before deactivation.
@@ -780,6 +780,26 @@ updated_at     TIMESTAMP NOT NULL
 ```
 
 Indexes: `(target_user_id, created_at DESC)`, `(actor_id, created_at DESC)`.
+
+### `onboarding_requests`
+
+Holds pending / processed B2B and B2C onboarding applications before a user account is created.
+
+```
+id               UUID PK
+email            VARCHAR(255) NOT NULL
+name             VARCHAR(255) NOT NULL
+password_hash    VARCHAR(255) NOT NULL
+requested_role   VARCHAR(50) NOT NULL   -- CHECK IN ('B2B_USER', 'B2C_CUSTOMER')
+status           VARCHAR(20) NOT NULL   -- PENDING | APPROVED | REJECTED
+rejection_reason TEXT
+reviewed_by      UUID REFERENCES users(id)   -- DB FK; mapped as plain UUID in Java entity
+reviewed_at      TIMESTAMP
+created_at       TIMESTAMP NOT NULL
+updated_at       TIMESTAMP NOT NULL
+```
+
+> **Note:** `reviewed_by` is a real foreign key in the DB schema but is mapped as a plain `UUID` field (not `@ManyToOne`) in `OnboardingRequest.java`. This is intentional to avoid lazy-loading concerns on a status-check entity — the trade-off is that the JPA model doesn't enforce referential integrity at the application layer.
 
 ---
 

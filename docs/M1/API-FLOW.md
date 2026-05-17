@@ -83,7 +83,7 @@ Tests tab:
 var res = pm.response.json();
 pm.environment.set("jwt", res.token);
 ```
-Expected: `200` → `{ "token": "eyJ...", "role": "CUSTOMER", ... }`
+Expected: `200` → `{ "token": "eyJ...", "role": "C2C_CUSTOMER", ... }`
 
 ---
 

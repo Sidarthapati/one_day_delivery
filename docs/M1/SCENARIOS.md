@@ -27,24 +27,29 @@
 
 ## Chapter 1 — Day Zero: The System Comes Alive
 
-The database migration runs for the first time. Two SQL scripts execute in order.
+The database migrations run for the first time. Flyway executes V1 through V10 in order:
 
-`V1__create_auth_tables.sql` creates three tables:
+- **V1** — creates the `permissions` table (40 action strings, e.g. `shipment:create`, `hub:scan`)
+- **V2** — creates the `roles` table (built-in and custom roles live here)
+- **V3** — creates the `role_permissions` join table
+- **V4** — creates the `users` table (email, bcrypt hash, role FK, city_id, active flag)
+- **V5** — creates the `api_keys` table (stores SHA-256 hash only, never the raw key)
+- **V6** — creates the `role_audit_logs` table (append-only; every user mutation lands here)
+- **V7** — seeds the 40 permission rows
+- **V8** — seeds the 12 built-in role rows
+- **V9** — seeds the role → permission assignments (~52 rows)
+- **V10** — creates the `onboarding_requests` table (B2B / B2C pending applications)
 
-- **`users`** — one row per person. Stores email (unique), a bcrypt password hash, display name, role (an enum string), and an optional `city_id`. The `active` flag is the kill-switch.
-- **`api_keys`** — one row per API key. Never stores the raw key — only a SHA-256 hash of it. Tracks `last_used_at` so it can be audited. Linked to the owning user by `user_id`.
-- **`role_audit_logs`** — append-only. Every time a user is created, has their role changed, or is deactivated, a row lands here. It records who did it (`actor_id`), who it happened to (`target_user_id`), what changed (`previous_role` → `new_role`), and why (`reason` text).
-
-`V2__seed_admin.sql` inserts the bootstrap admin:
+After migrations complete, the application starts and `DataInitializer` runs. It checks whether `admin@oneday.in` already exists; if not, it inserts the bootstrap admin:
 
 ```
 email:    admin@oneday.in
-password: Admin1234!
+password: Admin1234!   (BCrypt-hashed)
 role:     ADMIN
 city_id:  null   ← ADMIN has no city boundary
 ```
 
-This is the only user that exists without going through the API. The seed comment says to delete this row and re-register once a real admin is set up. From this point forward, every new user is created through the API, which means every creation is logged.
+This is the only user that exists without going through the API. From this point forward, every new user is created through the API, which means every creation is logged.
 
 ---
 
@@ -111,7 +116,7 @@ Incoming HTTP request
                    (DB check catches deactivations even before token expires)
                 4. Set Spring SecurityContext
            └─ NO → no authentication set, request continues unauthenticated
-                   (will hit 403 on any protected endpoint)
+                   (will hit 401 on any protected endpoint)
 ```
 
 After the filter, Spring Security's `@PreAuthorize` annotations on controllers do the role check. For example `@PreAuthorize("hasRole('ADMIN')")` checks that the authenticated principal has `ROLE_ADMIN` in their granted authorities.
@@ -218,11 +223,12 @@ PUT /users/{priya-uuid}/role
 Authorization: Bearer <arjun's token>
 
 {
-  "newRole": "SUPERVISOR",
-  "cityId": "MUM",
+  "newRoleId": "<supervisor-role-uuid>",
   "reason": "Strong performance, promoting to field supervisor"
 }
 ```
+
+*(The role UUID for `SUPERVISOR` can be obtained from `GET /roles`.)*
 
 `@PreAuthorize("hasAnyRole('ADMIN', 'STATION_MANAGER')")` — both roles can reach this.
 
@@ -591,7 +597,7 @@ After V8, the `roles` table holds 12 rows:
 | `r4...` | `B2B_USER` | B2B User | false | true | true |
 | … 8 more … | … | … | … | … | … |
 
-After V9, the `role_permissions` table holds 68 rows — one per (role, permission) pair. A sample for just `ADMIN`:
+After V9, the `role_permissions` table holds ~52 rows — one per (role, permission) pair. A sample for just `ADMIN`:
 
 | role_id | permission_id |
 |---|---|
@@ -699,7 +705,7 @@ This is the only mutable field on an api_key row. Everything else is write-once.
 
 ### 15:45 — Arjun Promotes Priya (Role Change, New `role_audit_logs` Row)
 
-`PUT /users/u-priya/role { "newRole": "SUPERVISOR", "cityId": "MUM", "reason": "Strong performance" }`
+`PUT /users/u-priya/role { "newRoleId": "<supervisor-role-uuid>", "reason": "Strong performance" }`
 
 **`users` row updated:**
 
@@ -759,7 +765,7 @@ Rohan's next HTTP request — even if his JWT hasn't expired — returns 403. Th
 
 **`roles`** — 12 rows (static seed, unchanged)
 
-**`role_permissions`** — 68 rows (static seed, unchanged)
+**`role_permissions`** — ~52 rows (static seed, unchanged)
 
 **`users`** — 6 rows:
 

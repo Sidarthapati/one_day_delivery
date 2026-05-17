@@ -111,7 +111,7 @@ Incoming Request
   Continue down filter chain → Controller
 ```
 
-**Why silent failure?** Both `tryAuthenticateWithJwt` and `tryAuthenticateWithApiKey` swallow all exceptions. A bad token simply leaves the `SecurityContext` empty; the request continues and the `anyRequest().authenticated()` rule in `SecurityConfig` rejects it with 401. This avoids leaking information about *why* a token was rejected.
+**Why silent failure?** Both `tryAuthenticateWithJwt` and `tryAuthenticateWithApiKey` swallow all exceptions. A bad token simply leaves the `SecurityContext` empty; the request continues and the `anyRequest().authenticated()` rule in `SecurityConfig` rejects it with **401 Unauthorized**. This avoids leaking information about *why* a token was rejected.
 
 ### 2.4 AuthUserDetails — the Security Principal
 

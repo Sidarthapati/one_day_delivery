@@ -9,7 +9,7 @@ All endpoints except the ones marked **Public** require a valid credential in on
 | Mechanism | Header |
 |-----------|--------|
 | JWT (issued on login/register) | `Authorization: Bearer <token>` |
-| API Key (issued via `/auth/api-keys`) | `Authorization: ApiKey <raw-key>` |
+| API Key (issued via `/auth/api-keys`) | `X-Api-Key: <raw-key>` |
 
 Stateless — no sessions.
 
@@ -121,7 +121,7 @@ Self-register a C2C customer account. Assigns the `C2C_CUSTOMER` role and issues
 ### `POST /auth/api-keys`
 **Authenticated · ADMIN / B2B_USER / B2C_CUSTOMER only**
 
-Create a new API key for the calling user. Maximum 5 active keys per user.
+Create a new API key for the calling user. Maximum 10 active keys per user.
 Staff roles (DELIVERY_AGENT, CITY_OPS_MANAGER, HUB_MANAGER, etc.) receive `403`.
 
 **Request body**
@@ -151,7 +151,7 @@ Staff roles (DELIVERY_AGENT, CITY_OPS_MANAGER, HUB_MANAGER, etc.) receive `403`.
 ```
 
 **Errors**
-- `422` — 5-key cap exceeded
+- `422` — 10-key cap exceeded
 
 ---
 
@@ -445,7 +445,7 @@ Create a custom role from the fixed permission set.
 **Request body**
 | Field | Type | Constraints |
 |-------|------|-------------|
-| `name` | string | required, unique, `snake_case` — lowercase letters, digits, underscores only (e.g. `warehouse_manager`) |
+| `name` | string | required, unique — stored as `SCREAMING_SNAKE_CASE` regardless of input (e.g. submit `warehouse_manager` or `WAREHOUSE_MANAGER`, stored as `WAREHOUSE_MANAGER`) |
 | `displayName` | string | required, human-readable label |
 | `cityScoped` | boolean | true → role carries a cityId |
 | `permissions` | string[] | required, non-empty; must be valid permission codes |
@@ -495,7 +495,7 @@ Deactivate a custom role. Fails if any active user is currently assigned to it.
 
 **Errors**
 - `404` — role not found
-- `422` — role still assigned to one or more active users
+- `422` — role still assigned to one or more users (active or inactive)
 
 ---
 
