@@ -1041,7 +1041,7 @@ Validation failures return `400 Bad Request` with a structured error body:
 
 #### `POST /api/v1/b2b/shipments` — Book a B2B shipment
 
-**Auth:** `X-Api-Key` header (B2B machine-to-machine) OR JWT with role `B2B_BUSINESS_USER`  
+**Auth:** `X-Api-Key` header (B2B machine-to-machine) OR JWT with role `B2B_USER`  
 **Headers:** `Idempotency-Key: <uuid>` (required)
 
 **Request:**
@@ -1101,7 +1101,7 @@ Validation failures return `400 Bad Request` with a structured error body:
 
 #### `GET /api/v1/b2b/accounts/{id}/balance` — Account credit status
 
-**Auth:** B2B API key or `B2B_BUSINESS_USER` JWT
+**Auth:** B2B API key or `B2B_USER` JWT
 
 **Response `200 OK`:**
 ```json
@@ -1118,7 +1118,7 @@ Validation failures return `400 Bad Request` with a structured error body:
 
 #### `POST /api/v1/b2b/accounts/{id}/webhooks` — Register a webhook
 
-**Auth:** `B2B_ADMIN` role
+**Auth:** `ADMIN` role
 
 **Request:**
 ```json
@@ -1278,19 +1278,30 @@ com.oneday.orders/
     ShipmentEventConsumer.java        ← Kafka consumer
     WebhookEventQueue.java            ← In-memory queue for B2B webhook dispatch
   dto/
-    BookingRequest.java
-    BookingResponse.java
-    TrackingResponse.java
-    QuoteRequest.java
-    QuoteResponse.java
-    StateTransitionRequest.java
+    request/
+      BookingRequest.java
+      CancellationRequest.java
+      StateTransitionRequest.java
+    response/
+      BookingResponse.java
+      TrackingResponse.java
+      ShipmentSummaryResponse.java
   port/
     ServiceabilityPort.java
     PricingPort.java
     EtaPort.java
     PaymentPort.java
-    BarcodePort.java
     NotificationPort.java
+    dto/
+      ServiceabilityResult.java
+      QuoteRequest.java       ← port contract sent to M2; distinct from BookingRequest above
+      QuoteResult.java
+      EtaRequest.java
+      EtaContext.java
+      EtaResult.java
+      NotificationRequest.java
+      NotificationEventType.java
+  // M8 (barcode) has no port interface — M8 subscribes to shipment.created via Kafka
 ```
 
 ---
@@ -1308,7 +1319,8 @@ public interface ServiceabilityPort {
 public interface PricingPort {
     QuoteResult computeQuote(QuoteRequest request);
     // QuoteRequest: customer_type, delivery_type, origin_city, dest_city,
-    //               chargeable_weight_grams, declared_value_paise
+    //               chargeable_weight_grams, declared_value_paise,
+    //               b2b_rate_card_id (null for B2C/C2C; required for account-level B2B pricing)
     // QuoteResult:  base_amount_paise, tax_paise, total_paise,
     //               breakdown (map of charge components), rate_card_version
     // M4 stores and forwards this result; it does not compute or validate any field in it.
@@ -1316,16 +1328,20 @@ public interface PricingPort {
 
 // M9 — all ETA logic; M4 has none
 public interface EtaPort {
-    EtaResult fetchEta(UUID shipmentId, ShipmentState state, EtaContext context);
+    EtaResult fetchEta(EtaRequest request);
+    // EtaRequest: shipmentId, currentState, occurredAt (state entry time — not wall-clock),
+    //             EtaContext { originCity, destCity, deliveryType, bookedAt, assignedFlightId }
     // M4 calls this at booking (state=BOOKED) and at key transitions (e.g. AT_ORIGIN_HUB)
-    // M9 decides what ETA to return based on state and context
+    // M9 uses currentState + EtaContext to select the right estimation model
+    // assignedFlightId is null at BOOKED; populated by M9 at AT_ORIGIN_HUB onwards
     // M4 stores the result; all edge cases are M9's responsibility
 }
 
-// M8 — barcode/label registration (fully async; no direct call from M4)
+// M8 — barcode/label registration (fully async; no port interface)
 // Flow: M4 emits shipment.created → M8 consumes → M8 generates label → M8 emits oneday.label.generated
 // M4 consumes oneday.label.generated and updates parcel_id on the shipment.
-// No BarcodePort method is called synchronously during booking.
+// ShipmentCreatedEvent carries senderName, senderAddressLine, receiverAddressLine so M8
+// has everything it needs to generate a complete label without calling back to M4.
 // M8 is NOT in the circuit breaker list; its unavailability does not block bookings.
 
 // Payment — Razorpay
@@ -1339,7 +1355,10 @@ public interface PaymentPort {
 // Notifications
 public interface NotificationPort {
     void send(NotificationRequest request);
-    // Async; M4 does not block on delivery; see §12.2 for failure handling
+    // NotificationRequest: type (OTP_GENERATED | STATE_CHANGED), recipientPhone, recipientEmail,
+    //                      shipmentRef, newState (null for OTP), otp (null for STATE_CHANGED), eta
+    // Async; M4 publishes to oneday.notifications.requested and returns immediately
+    // The notification service owns channel selection, templating, and retry; see §12
 }
 ```
 
