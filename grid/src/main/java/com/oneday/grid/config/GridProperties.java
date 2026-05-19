@@ -1,4 +1,4 @@
-package com.oneday.grid.service;
+package com.oneday.grid.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

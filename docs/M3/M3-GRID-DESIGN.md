@@ -620,15 +620,17 @@ CREATE TABLE da_tile_assignment (
     tile_id        UUID NOT NULL REFERENCES tile(id),
     valid_date     DATE NOT NULL,
     n_das_on_tile  INT NOT NULL DEFAULT 1,
-    status         VARCHAR(20) NOT NULL,   -- PROPOSED | APPROVED | ACTIVE | SUPERSEDED
+    status         VARCHAR(20) NOT NULL,   -- PROPOSED | ACTIVE | SUPERSEDED
     proposed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     approved_by    UUID,
     approved_at    TIMESTAMPTZ,
-    UNIQUE(da_id, tile_id, valid_date)
+    UNIQUE(proposal_id, da_id, tile_id, valid_date)
 );
 ```
 
-Append-only. Old rows are never deleted or mutated. `proposal_id` links each assignment row back to the proposal it was generated from, allowing multiple proposals for the same date (e.g., after a rejection and re-run) without ambiguity.
+Rows are never deleted or physically mutated (da_id, tile_id, proposal_id, valid_date are immutable). The `status` field IS updated as rows advance through their lifecycle — this is tracking lifecycle state, not rewriting history. Multiple proposals for the same (da, tile, date) are valid and expected; the `proposal_id` in the constraint is what makes them distinct.
+
+**V9 migration ships `UNIQUE(da_id, tile_id, valid_date)` — this must be replaced by a V10 migration** before Phase 5. The original constraint blocks intraday override proposals: writing a new PROPOSED row for (DA-A, T1, today) under proposal P2 would collide with the existing ACTIVE row for (DA-A, T1, today) under P1. With `proposal_id` included the two rows are distinct.
 
 ### 6.7 Assignment proposal
 
@@ -813,6 +815,27 @@ Topic: `grid.tile_overload_alert`
 - `CRITICAL`: `adjusted_load_score >= 2.0`, sustained for ≥ 10 minutes, or `unserved_orders > DA_daily_capacity` at any point
 
 Both severity levels notify the station manager via push notification. `CRITICAL` also sends an SMS fallback if the push is not acknowledged within 5 minutes.
+
+### 7.10 Assignment updated event (Kafka, produced by M3, consumed by M5)
+
+Topic: `grid.assignment_updated`
+
+Published by `ProposalServiceImpl` whenever an intraday proposal (INTRADAY_OVERRIDE or INTRADAY_SHARE) is approved and activated.
+
+```json
+{
+  "event_type":      "grid.assignment_updated",
+  "city_id":         "...",
+  "operating_date":  "2026-05-17",
+  "proposal_type":   "INTRADAY_OVERRIDE",
+  "affected_da_ids": ["da-uuid-A", "da-uuid-B"],
+  "approved_at":     "2026-05-17T10:15:00+05:30"
+}
+```
+
+M5 subscribes to this topic and re-queries `da_tile_assignment WHERE da_id IN (affected_da_ids) AND valid_date = operating_date AND status = 'ACTIVE'` to patch its in-memory assignment cache for only the affected DAs. A full cache flush is not needed — all other DAs are unchanged.
+
+Not emitted for nightly proposal approvals (M5 loads the full assignment map fresh at shift start).
 
 ---
 
@@ -1012,13 +1035,19 @@ M4 (Orders)
   → M3 reads per-tile service_time_min and inter_stop_travel_min from M4 GPS event log
 
 M5 (DA Dispatch)
-  ← reads da_tile_assignment map from M3
+  ← reads da_tile_assignment map from M3 at shift start (full load, cached in memory)
   ← reads tile_for_gps API for real-time tile lookup
   ← reads n_das_on_tile to split intra-tile dispatch queues for high-demand tiles
   ← reads tile load-score API (§7.8) to decide when cross-territory dispatch is warranted
+  ← consumes grid.assignment_updated (Kafka, §7.10): patches in-memory cache for affected DAs only on intraday approval
   → on no-DA-found, triggers M3 to emit no_da_alert
   → publishes dispatch.tile_queue_depth (Kafka): per-tile unserved order count, emitted every 5 minutes during shift hours
     Used by M3's IntradayMonitorJob to compute live load scores and detect overloads
+
+M5 query for current assignments (does not reference proposal_id):
+  SELECT da_id, tile_id, n_das_on_tile
+  FROM da_tile_assignment
+  WHERE valid_date = CURRENT_DATE AND status = 'ACTIVE'
 
 M6 (Van Routing)
   ← reads grid_vertices from M3
@@ -1329,3 +1358,46 @@ Not planned. The nightly model with Level 2 alerting and Level 1 manual override
 | E12 | **OSRM matrix partially unavailable**: some tile-pair routes return null (unreachable) | Treat null pairs as travel_time = infinity (not adjacent). If a tile has no OSRM-reachable neighbors, fall back to geometric adjacency for that tile only. Log as ISOLATION_WARNING. |
 | E13 | **Newly added active tiles mid-month**: a new pincode activates between OSRM refreshes | New tile has no travel-time entries. Use geometric 4-connectivity for new tile only until next OSRM refresh. Flag the tile's DA territories in proposals with `uses_geometric_adjacency = true`. |
 | E14 | **Sparse tile inter-stop travel inflation**: a tile with 2–3 orders/day has far-apart stops that are occasionally routed consecutively, producing a high `inter_stop_travel_per_order` from a tiny sample and inflating `demand_minutes` | Two guards applied at nightly replan: (1) winsorise each measured pair at `tile.traversal_cap_sec` (OSRM SW→NE corner time, precomputed at init) before averaging — eliminates detour outliers; (2) if fewer than `MIN_INTER_STOP_PAIRS_PER_WINDOW` (default 5) pairs survive in the 7-day window, discard the tile-level measurement and use the city-wide `inter_stop_travel` average instead. Both guards combined ensure sparse tiles fall back to a representative city average rather than an anomalous per-tile figure. |
+
+---
+
+## 18. Data Volume & Retention
+
+### 18.1 Expected volume (5-city steady state)
+
+| Table | Rows/day | 3-month total |
+|-------|----------|---------------|
+| `assignment_proposal` | ~10 | ~900 |
+| `assignment_proposal_region` | ~200 | ~18,000 |
+| `da_tile_assignment` | ~400 | ~36,000 |
+| `tile_demand_snapshot` | ~275 | ~24,750 |
+| **Total** | **~885** | **~80,000** |
+
+Assumptions: ~35 DAs/city × 5 cities, ~55 active tiles/city, ~1-2 intraday proposals/city/day on average.
+
+Even at 10× growth (50 active cities, high intraday activity), 3-month rolling volume would be ~800K rows — well within PostgreSQL's comfort zone with proper indexing. Performance is never the driver for the S3 dump; clean backups and predictable DB size are.
+
+### 18.2 Retention policy
+
+**Live DB:** rolling 90-day window. Rows older than 90 days are eligible for archival.
+
+**Archive job (monthly):** run a `COPY ... TO` export of rows where `valid_date < NOW() - INTERVAL '90 days'`, upload to S3 as gzip CSV partitioned by city + month, then DELETE the exported rows only after confirming the S3 write succeeded. This is the only operation that issues DELETE on these tables.
+
+**S3 path convention:** `s3://<bucket>/grid-archive/{table}/{city_id}/YYYY-MM/`
+
+**Querying history:** application code never needs to query the archive. The S3 files exist for compliance, audit, and ML training (future demand forecasting). Presto/Athena can query them if needed.
+
+### 18.3 Recommended indexes
+
+```sql
+-- Primary access pattern for M5 and approval flows
+CREATE INDEX idx_dta_active_date ON da_tile_assignment(valid_date, status);
+CREATE INDEX idx_dta_da_date     ON da_tile_assignment(da_id, valid_date, status);
+CREATE INDEX idx_dta_tile_date   ON da_tile_assignment(tile_id, valid_date, status);
+
+-- Proposal lookups
+CREATE INDEX idx_ap_city_date    ON assignment_proposal(city_id, valid_for_date);
+
+-- Demand scoring
+CREATE INDEX idx_tds_tile_date   ON tile_demand_snapshot(tile_id, snapshot_date);
+```
