@@ -507,31 +507,31 @@ In v1: 1 `Shipment` = 1 parcel. The `parcel_id` column on `Shipment` holds the M
 | # | State | Meaning | Custody | Triggered by |
 |---|---|---|---|---|
 | 1 | `BOOKED` | Created; payment captured (B2C/C2C) or COD accepted or invoiced (B2B) | Platform | M4 booking API |
-| 2 | `PICKUP_ASSIGNED` | DA assigned to collect *(DA_PICKUP only)* | DA | M5 `oneday.da.assigned` |
+| 2 | `PICKUP_ASSIGNED` | DA assigned to collect *(DA_PICKUP only)* | DA | M5 `DaEventType.PICKUP_ASSIGNED` |
 | 3 | `PICKED_UP` | DA confirmed physical pickup after OTP verification *(DA_PICKUP only)* | DA | M4 OTP verify endpoint (`POST /internal/v1/shipments/{ref}/pickup-otp/verify`) |
-| 4 | `HANDED_TO_PICKUP_VAN` | DA handed parcel to pickup van; DA responsibility ends *(DA_PICKUP only)* | Pickup van | M5 `oneday.da.van_handoff_completed` |
+| 4 | `HANDED_TO_PICKUP_VAN` | DA handed parcel to pickup van; DA responsibility ends *(DA_PICKUP only)* | Pickup van | M5 `DaEventType.VAN_HANDOFF_COMPLETED` |
 | — | `AWAITING_SELF_DROP` | Self-drop booked; sender yet to arrive at origin hub *(SELF_DROP only)* | Platform | M4 booking API (immediate on SELF_DROP booking) |
-| 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `HUB_ORIGIN_IN` (DA path) or `SELF_DROP_ACCEPTED` (self-drop path) |
-| 6 | `ORIGIN_HUB_PROCESSING` | Stand assigned; being sorted | Hub ops | M7 stand assignment event |
-| 7 | `IN_TAKEOFF_BAG` | Bagged for specific flight (or same-city route) | Hub ops | M7 bag creation event |
-| 8 | `DISPATCHED_TO_AIRPORT` | Bag loaded on cron; left the hub *(INTERCITY only)* | Cron driver | M6 `DEPARTED_HUB` cron event |
-| 9 | `AT_AIRPORT` | Handed to GHA; airline custody *(INTERCITY only)* | GHA/Airline | M8 `GHA_ACCEPTANCE` scan |
-| 10 | `DEPARTED` | Flight departed *(INTERCITY only)* | Airline | M9 `flight.departed` event |
-| 11 | `LANDED` | Flight arrived at destination city *(INTERCITY only)* | Airline → Dest ops | M9 `flight.landed` event |
-| 12 | `DISPATCHED_TO_HUB` | Van moving from airport to destination hub *(INTERCITY only)* | Cron driver | M6/M7 van departure event |
-| 13 | `AT_DEST_HUB` | Scanned in at destination hub *(INTERCITY only)* | Dest hub ops | M8 `HUB_DEST_IN` scan |
-| 14 | `DEST_HUB_PROCESSING` | Last-mile sort at destination *(INTERCITY only)* | Dest hub ops | M7 dest sort event |
-| 15 | `HANDED_TO_DROP_VAN` | Parcel loaded on drop van; hub responsibility ends *(DA_DELIVERY only)* | Drop van | M7 `DROP_VAN_HANDOFF` or M7 `SAMECITY_OUTBOUND` |
-| 16 | `DROP_ASSIGNED` | Last-mile DA assigned for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `oneday.da.drop_assigned` |
-| 17 | `DROP_COLLECTED` | DA physically collected parcel from van for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `oneday.da.drop_collected` |
-| 18 | `DROPPED` | Delivery confirmed by DA *(DA_DELIVERY only)* | — (complete) | M5 `oneday.da.drop_completed` |
-| — | `AWAITING_HUB_COLLECT` | Parcel ready at destination hub; receiver yet to collect *(HUB_COLLECT only)* | Dest hub ops | M7 dest sort complete event |
-| — | `HUB_COLLECTED` | Receiver collected parcel from destination hub *(HUB_COLLECT only)* | — (complete) | M8 `HUB_COLLECT_COMPLETED` scan |
-| — | `PICKUP_FAILED` | DA could not pick up; **reported to M11** | — | M5 `oneday.da.pickup_failed` |
-| — | `DELIVERY_FAILED` | DA could not deliver; **reported to M11** | — | M5 `oneday.da.drop_failed` |
-| — | `RTO_INITIATED` | Return-to-origin triggered; **owned entirely by M11** | Platform | M11 `oneday.m11.rto_initiated` |
-| — | `RTO_IN_TRANSIT` | Return flight to origin city *(INTERCITY only; M11-driven)* | Airline | M9 return flight departed |
-| — | `RTO_COMPLETED` | Returned to sender *(M11-driven)* | — (complete) | M5 return delivery confirmed |
+| 5 | `AT_ORIGIN_HUB` | Scanned in at origin hub | Hub ops | M8 `ScanEventType.HUB_ORIGIN_IN` (DA path) or `ScanEventType.SELF_DROP_ACCEPTED` (self-drop path) |
+| 6 | `ORIGIN_HUB_PROCESSING` | Stand assigned; being sorted | Hub ops | M7 `HubEventType.STAND_ASSIGNED` |
+| 7 | `IN_TAKEOFF_BAG` | Bagged for specific flight (or same-city route) | Hub ops | M7 `HubEventType.BAG_CREATED` |
+| 8 | `DISPATCHED_TO_AIRPORT` | Bag loaded on cron; left the hub *(INTERCITY only)* | Cron driver | M6 `CronEventType.DEPARTED_HUB` |
+| 9 | `AT_AIRPORT` | Handed to GHA; airline custody *(INTERCITY only)* | GHA/Airline | M8 `ScanEventType.GHA_ACCEPTANCE` |
+| 10 | `DEPARTED` | Flight departed *(INTERCITY only)* | Airline | M9 `FlightEventType.DEPARTED` |
+| 11 | `LANDED` | Flight arrived at destination city *(INTERCITY only)* | Airline → Dest ops | M9 `FlightEventType.LANDED` |
+| 12 | `DISPATCHED_TO_HUB` | Van moving from airport to destination hub *(INTERCITY only)* | Cron driver | M6 `CronEventType.DEPARTED_AIRPORT` |
+| 13 | `AT_DEST_HUB` | Scanned in at destination hub *(INTERCITY only)* | Dest hub ops | M8 `ScanEventType.HUB_DEST_IN` |
+| 14 | `DEST_HUB_PROCESSING` | Last-mile sort at destination *(INTERCITY only)* | Dest hub ops | M7 `HubEventType.DEST_SORT_COMPLETE` |
+| 15 | `HANDED_TO_DROP_VAN` | Parcel loaded on drop van; hub responsibility ends *(DA_DELIVERY only)* | Drop van | M7 `HubEventType.DROP_VAN_HANDOFF` or `HubEventType.SAMECITY_OUTBOUND` |
+| 16 | `DROP_ASSIGNED` | Last-mile DA assigned for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `DaEventType.DROP_ASSIGNED` |
+| 17 | `DROP_COLLECTED` | DA physically collected parcel from van for delivery *(DA_DELIVERY only)* | Last-mile DA | M5 `DaEventType.DROP_COLLECTED` |
+| 18 | `DROPPED` | Delivery confirmed by DA *(DA_DELIVERY only)* | — (complete) | M5 `DaEventType.DROP_COMPLETED` |
+| — | `AWAITING_HUB_COLLECT` | Parcel ready at destination hub; receiver yet to collect *(HUB_COLLECT only)* | Dest hub ops | M7 (see OD-9 — event TBD) |
+| — | `HUB_COLLECTED` | Receiver collected parcel from destination hub *(HUB_COLLECT only)* | — (complete) | M8 `ScanEventType.HUB_COLLECT_COMPLETED` |
+| — | `PICKUP_FAILED` | DA could not pick up; **reported to M11** | — | M5 `DaEventType.PICKUP_FAILED` |
+| — | `DELIVERY_FAILED` | DA could not deliver; **reported to M11** | — | M5 `DaEventType.DROP_FAILED` |
+| — | `RTO_INITIATED` | Return-to-origin triggered; **owned entirely by M11** | Platform | M11 `ExceptionsEventType.RTO_INITIATED` |
+| — | `RTO_IN_TRANSIT` | Return flight to origin city *(INTERCITY only; M11-driven)* | Airline | M9 `FlightEventType.RTO_IN_TRANSIT` |
+| — | `RTO_COMPLETED` | Returned to sender *(M11-driven)* | — (complete) | M11 `ExceptionsEventType.RTO_COMPLETED` |
 | — | `CANCELLED` | Cancelled by customer | — (complete) | M4 cancellation API |
 
 > States 8–14 are skipped for `SAME_CITY` shipments. `IN_TAKEOFF_BAG` transitions directly to `HANDED_TO_DROP_VAN`.
@@ -1406,7 +1406,7 @@ All events share a common envelope:
 
 | `event_type` | Additional payload fields | Consumers |
 |---|---|---|
-| `CREATED` | `customer_type`, `payment_mode`, `delivery_type`, `origin_city`, `origin_pincode`, `origin_tile_id`, `dest_city`, `dest_pincode`, `chargeable_weight_grams`, `sla_commitment_minutes`, `eta_promised`, `receiver_phone`, `receiver_name`, `b2b_account_id` | M5 (DA assignment), M8 (label prep), M10 (SLA start) |
+| `CREATED` | `customer_type`, `payment_mode`, `delivery_type`, `pickup_type`, `drop_type`, `origin_city`, `origin_pincode`, `origin_tile_id`, `origin_lat`, `origin_lon`, `dest_city`, `dest_pincode`, `dest_lat`, `dest_lon`, `chargeable_weight_grams`, `sla_commitment_minutes`, `eta_promised`, `receiver_name`, `receiver_phone`, `b2b_account_id`, `sender_name`, `sender_address_line`, `receiver_address_line` | M5 (DA assignment — reads pickup_type/drop_type to decide action), M8 (label generation — reads sender/receiver address fields), M10 (SLA start) |
 | `STATE_CHANGED` | `from_state`, `to_state`, `triggered_by`, `trigger_source`, `eta_updated` | M10 (SLA tracking), M11 (exception checks), notification system |
 | `CANCELLED` | `cancelled_at_state`, `reason`, `refund_initiated`, `refund_amount_paise` | M5 (remove from DA queue), M10 (close SLA tracking) |
 
