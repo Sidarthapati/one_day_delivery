@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | Module | `grid` (M3) |
-| Status | Ready to implement — design locked (M3-GRID-DESIGN.md v1.0) |
+| Status | **Phases 1–8 complete. Phase 9 (integration tests) is next.** |
 | Stack | Java 21, Spring Boot 3.2, PostgreSQL, Kafka, OR-Tools 9.9, OSRM (self-hosted) |
 | Depends on | `common` only (no M4/M5 at compile time — consumed via DB reads and Kafka) |
 
@@ -197,24 +197,27 @@ Spring Data JPA interfaces only — no custom SQL unless a named query is genuin
 
 Package: `com.oneday.grid.dto`
 
-| Class | Used by |
-|-------|---------|
-| `ServiceabilityResponse` | GET /grid/serviceability |
-| `TileAtResponse` | GET /grid/tile-at |
-| `AssignmentResponse` | GET /grid/assignments |
-| `DaAssignmentResponse` | GET /grid/assignments/da/{da_id} |
-| `GridVertexResponse` | GET /grid/vertices |
-| `TileLoadScoreResponse` | GET /grid/tiles/{tile_id}/load-score |
-| `ProposalDto` | GET /grid/proposals |
-| `RegionDto` | nested in ProposalDto |
-| `OverrideRequest` | PUT /grid/proposals/{id}/regions/{id}/override |
-| `ProposalRejectRequest` | POST /grid/proposals/{id}/reject (optional notes field) |
-| `IntradayReassignmentRequest` | POST /grid/assignments/intraday-override |
-| `IntradayReassignmentResponse` | response for the above — includes new proposal_id for tracking |
-| `TileShareRequest` | POST /grid/assignments/tile-share |
-| `TileShareResponse` | response for the above — includes new proposal_id for approval screen |
+| Class | Package | Used by |
+|-------|---------|---------|
+| `ServiceabilityResponse` | response/ | GET /api/grid/{cityCode}/serviceability |
+| `TileAtResponse` | response/ | GET /api/grid/{cityCode}/tile-at |
+| `TileDetailResponse` | response/ | GET /api/grid/{cityCode}/tiles — includes lat/lng bounds + demand score |
+| `AssignmentResponse` | response/ | GET /api/grid/{cityCode}/assignments |
+| `DaAssignmentResponse` | response/ | M5 query pattern |
+| `GridVertexResponse` | response/ | GET /api/grid/{cityCode}/vertices |
+| `TileLoadScoreResponse` | response/ | GET /api/grid/{cityCode}/tiles/{id}/load-score |
+| `ProposalResponse` | response/ | GET /api/proposals and GET /api/proposals/{id} |
+| `RegionResponse` | response/ | nested in ProposalResponse |
+| `IntradayReassignmentResponse` | response/ | POST /api/proposals/intraday-reassignment |
+| `TileShareResponse` | response/ | POST /api/proposals/tile-share |
+| `ApproveRequest` | request/ | POST /api/proposals/{id}/approve and approve-* variants |
+| `ProposalRejectRequest` | request/ | POST /api/proposals/{id}/reject |
+| `RegionEditRequest` | request/ | PUT /api/proposals/{id}/regions/{daId} |
+| `IntradayReassignmentRequest` | request/ | POST /api/proposals/intraday-reassignment |
+| `TileShareRequest` | request/ | POST /api/proposals/tile-share |
+| `ReplanRequest` | request/ | POST /api/grid/{cityCode}/replan |
 
-Use Java records for all DTOs (Java 21).
+All DTOs are Java records. Sub-packages: `dto/request/` and `dto/response/`.
 
 ---
 
@@ -230,16 +233,21 @@ This is the core — implement in this order:
 public interface GridService {
     ServiceabilityResponse checkServiceability(UUID cityId, String pincode);
     TileAtResponse getTileAt(UUID cityId, double lat, double lon);
-    void initializeGrid(UUID cityId);  // called by GridInitializationJob
-    Grid getGrid(UUID cityId);         // cached
+    void initializeGrid(UUID cityId, String cityCode);
+    Grid getGrid(UUID cityId);
+    UUID resolveCityId(String cityCode);                               // cityCode → UUID from grid.cities config
+    List<TileDetailResponse> getTileDetails(UUID cityId, LocalDate);   // all tiles with lat/lng bounds + demand
+    List<GridVertexResponse> getVertices(UUID cityId);                 // all vertices for map grid-lines
+    void setTileActive(UUID tileId, boolean active);                   // map UI tile toggle
+    List<AssignmentResponse> getActiveAssignments(UUID cityId, LocalDate); // city-scoped ACTIVE assignments
 }
 ```
 
-`GridServiceImpl` (package-private):
-- On startup, load all `Grid` rows into a `Map<UUID, Grid>` (in-memory cache — geometry never changes).
-- `getTileAt`: pure arithmetic — `row = floor((lat - originLat) / tileDeltaLat)`, `col = ...`.
-- `checkServiceability`: lookup `PincodeMapping` by `(cityId, pincode)` — no computation.
-- `initializeGrid`: reads the city's YAML, computes bounding box + tile grid, inserts Grid/Tile/GridVertex rows, triggers OSRM refresh.
+`GridServiceImpl`:
+- On startup (`@PostConstruct`), loads all `Grid` rows into a `Map<UUID, Grid>` (in-memory cache).
+- `resolveCityId`: reads from `grid.cities` config map (e.g., `"delhi"` → fixed UUID). Returns 404 if unknown.
+- `getTileDetails`: loads all tiles for the city, joins with `TileDemandSnapshot` for the requested date (one batch query), computes SW/NE lat/lon bounds from `grid.originLat + rowIdx * tileDeltaLat`.
+- `getActiveAssignments`: loads city tile IDs, queries `DaTileAssignmentRepository.findByTileIdInAndValidDateAndStatus(...)` — avoids cross-city contamination.
 
 ### Step 5.2 — OsrmMatrixService
 
@@ -409,6 +417,18 @@ public interface IntradayLoadScoreService {
 Backed entirely by a `ConcurrentHashMap<UUID, Integer>` (tile_id → unserved_orders).
 No DB hit on reads. Map is zeroed at shift-start by `IntradayMonitorJob`.
 
+### Step 5.8 — GridReplanService (replan logic, shared by job and API)
+
+```java
+public interface GridReplanService {
+    ProposalResponse replan(UUID cityId, LocalDate validForDate, List<UUID> daIds);
+}
+```
+
+`GridReplanServiceImpl`: extracted from `NightlyReplanJob.replanForCity`. Both `NightlyReplanJob` (which gets `daIds` from `DaRosterPort`) and `GridController` (`POST /api/grid/{cityCode}/replan`) delegate here.
+
+Sequence: demand scoring → load adjacency graph (geometric fallback if OSRM absent/stale) → CP-SAT solver (BFS fallback if infeasible/timeout) → return `ProposalResponse`. Does **not** trigger OSRM refresh — that is the monthly `OsrmMatrixRefreshJob`'s responsibility.
+
 ---
 
 ## Phase 6 — Batch Jobs
@@ -463,20 +483,18 @@ public class NightlyReplanJob {
 }
 ```
 
-Run once per city. Sequence (from §8):
-1. Compute demand via `DemandScoringService.computeAndPersistDemand(cityId, tomorrow)`.
-2. Load road-adjacency graph from `tile_travel_time` — DB read, not OSRM.
-   - If empty or `computedAt > 45 days ago`: trigger OSRM refresh first.
-   - If refresh fails: use geometric 4-connectivity with `GEOMETRIC_FALLBACK` flag.
-3. Pre-process multi-DA tiles (Component C): split virtual sub-tiles for tiles where
-   `demandScoreMinutes > DA_max_load`.
-4. Count `K_available` (active DAs for city tomorrow) vs `K_needed`.
-5. Run `CpSatAssignmentServiceImpl.computeProposal(...)`.
-6. Post-process: collapse virtual sub-tiles, compute per-region stats.
-7. Persist `AssignmentProposal` + `AssignmentProposalRegion` + `DaTileAssignment` rows.
-8. Send "proposal awaiting approval" notification (Kafka or in-app — TBD with station manager UI team).
-9. Check: if it's now past 06:00 and no proposal approved → escalation alert.
-10. Check: if it's now past 07:00 and no proposal approved → auto-apply yesterday's assignment.
+Three scheduled methods: `run()` at 01:00, `checkEscalation()` at 06:00, `applyFallbackIfNeeded()` at 07:00.
+
+`run()` iterates all cities. Per city, it gets DA IDs from `DaRosterPort` and delegates:
+
+```java
+private void replanForCity(UUID cityId, LocalDate validForDate) {
+    List<UUID> daIds = daRosterPort.getAvailableDaIds(cityId, validForDate);
+    gridReplanService.replan(cityId, validForDate, daIds);  // ← all solver logic lives here
+}
+```
+
+The replan logic (demand scoring, adjacency graph, CP-SAT/BFS, proposal persistence) lives in `GridReplanService` — shared with the `POST /api/grid/{cityCode}/replan` API endpoint.
 
 ### Step 6.4 — IntradayMonitorJob
 
@@ -497,96 +515,102 @@ Only runs during shift hours (07:00–20:00 local time). Per city, per active ti
 
 ---
 
-## Phase 7 — Kafka Events
+## Phase 7 — Kafka Events ✓ DONE
 
 Package: `com.oneday.grid.events`
 
+### KafkaTopics constants
+
+`KafkaTopics.java` is the single source of truth for all topic names:
+
+| Constant | Topic string | Direction |
+|----------|-------------|-----------|
+| `NO_DA_ALERT` | `grid.no_da_alert` | M3 → M5, M11 |
+| `TILE_OVERLOAD_ALERT` | `grid.tile_overload_alert` | M3 → M5, M10 |
+| `TILE_QUEUE_DEPTH` | `orders.tile_queue_depth` | M4 → M3 |
+
+### Event POJOs (`events/payload/`)
+
+| Record | Direction | Fields |
+|--------|-----------|--------|
+| `TileQueueDepthEvent` | inbound (M4 → M3) | `tileId, cityId, date, unservedOrders, bookedOrders, recordedAt` |
+| `NoDaAlertEvent` | outbound (M3 → M5/M11) | `cityId, tileId, validDate, reason, alertedAt` |
+| `TileOverloadAlertEvent` | outbound (M3 → M5/M10) | `cityId, tileId, daId, date, severity, expectedOrders, unservedOrders, adjustedLoadScore, sustainedMinutes, alertedAt` |
+
 ### Step 7.1 — TileQueueDepthConsumer
 
-```java
-@KafkaListener(topics = "dispatch.tile_queue_depth")
-public class TileQueueDepthConsumer {
-    public void consume(TileQueueDepthEvent event) {
-        // Replace in-memory map entirely (last-write wins)
-        loadScoreService.updateQueueDepth(event.cityId(), event.operatingDate(), event.tileDepths());
-    }
-}
-```
-
-Deserialize the payload from M3-GRID-DESIGN.md §16.2.1.
+`@KafkaListener` on topic `orders.tile_queue_depth`, group `grid-service`. **`autoStartup = false`** until M4 ships (flip `grid.kafka.consumer.auto-startup: true` in `application.yml` to enable). On each message calls `loadScoreService.updateQueueDepth(event.cityId(), event.date(), Map.of(event.tileId(), event.unservedOrders()))`.
 
 ### Step 7.2 — NoDaAlertProducer
 
-```java
-@Component
-public class NoDaAlertProducer {
-    // topic: grid.no_da_alert
-    public void emit(UUID cityId, UUID tileId, LocalDate validDate, String reason) { ... }
-}
-```
-
-Payload schema from §7.7.
+Injects `KafkaTemplate<String, Object>`. Sends `NoDaAlertEvent` to `grid.no_da_alert` keyed by `tileId`. `try/catch` around send — if broker unavailable, logs WARN (app continues without Kafka).
 
 ### Step 7.3 — TileOverloadAlertProducer
 
-```java
-@Component
-public class TileOverloadAlertProducer {
-    // topic: grid.tile_overload_alert
-    public void emit(UUID cityId, UUID tileId, UUID daId, LocalDate date,
-                     String severity, double expectedOrders, int unserved,
-                     double adjustedScore, int sustainedMinutes) { ... }
-}
+Same pattern — sends `TileOverloadAlertEvent` to `grid.tile_overload_alert` keyed by `tileId`.
+
+### Kafka config (`application.yml`)
+
+```yaml
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: grid-service
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.oneday.grid.events.payload"
+
+grid:
+  kafka:
+    consumer:
+      auto-startup: false   # flip to true when M4 is publishing
 ```
 
-Payload schema from §7.9.
+No Kafka broker needed for local dev — producers catch send failures silently, consumer never starts.
 
 ---
 
-## Phase 8 — REST API
+## Phase 8 — REST API ✓ DONE
 
-Package: `com.oneday.grid.api`
+Package: `com.oneday.grid.api`. Swagger UI auto-generated at `http://localhost:8080/swagger-ui.html` (springdoc-openapi 2.3.0).
 
-### GridController
+All paths use `{cityCode}` (e.g. `delhi`) which is resolved to a UUID via `GridService.resolveCityId`. City UUIDs are fixed in `grid.cities` config in `application.yml`.
 
-| Method | Path | Handler |
-|--------|------|---------|
-| GET | `/grid/serviceability` | `gridService.checkServiceability(cityId, pincode)` |
-| GET | `/grid/tile-at` | `gridService.getTileAt(cityId, lat, lon)` |
-| GET | `/grid/assignments` | `daTileAssignmentRepo.findByCityIdAndValidDate(...)` |
-| GET | `/grid/assignments/da/{daId}` | `daTileAssignmentRepo.findByDaIdAndValidDate(...)` |
-| GET | `/grid/vertices` | `gridVertexRepo.findByGridId(...)` |
-| GET | `/grid/tiles/{tileId}/load-score` | `loadScoreService.getLoadScore(tileId, today)` |
-| POST | `/grid/admin/init` | `gridInitializationJob.initialize(cityId)` |
-| POST | `/grid/admin/osrm-refresh` | `osrmMatrixRefreshJob.refresh(cityId)` |
+### GridController — `GET|PATCH|POST /api/grid/...`
 
-### ProposalController
+| Method | Path | Handler | Notes |
+|--------|------|---------|-------|
+| GET | `/api/grid/{cityCode}/tiles?date=` | `gridService.getTileDetails(cityId, date)` | lat/lng bounds + demand — feeds map UI |
+| GET | `/api/grid/{cityCode}/vertices` | `gridService.getVertices(cityId)` | grid-line drawing |
+| GET | `/api/grid/{cityCode}/assignments?date=` | `gridService.getActiveAssignments(cityId, date)` | DA territory coloring |
+| GET | `/api/grid/{cityCode}/serviceability?pincode=` | `gridService.checkServiceability(cityId, pincode)` | |
+| GET | `/api/grid/{cityCode}/tile-at?lat=&lon=` | `gridService.getTileAt(cityId, lat, lon)` | |
+| GET | `/api/grid/{cityCode}/tiles/{tileId}/load-score` | `loadScoreService.getLoadScore(tileId, date)` | intraday load |
+| PATCH | `/api/grid/{cityCode}/tiles/{tileId}/active?active=` | `gridService.setTileActive(tileId, active)` | map UI tile toggle → 204 |
+| POST | `/api/grid/{cityCode}/replan` | `gridReplanService.replan(cityId, date, daIds)` | body: `ReplanRequest` → 201 |
+| POST | `/api/grid/admin/init?cityCode=` | `gridService.initializeGrid(cityId, cityCode)` | one-time city setup → 201 |
+
+### ProposalController — `GET|POST|PUT /api/proposals/...`
 
 | Method | Path | Handler | Scenario |
 |--------|------|---------|---------|
-| GET | `/grid/proposals` | `proposalService.getProposals(cityId, date)` | both |
-| GET | `/grid/proposals/{id}` | `proposalService.getProposal(id)` | both |
-| POST | `/grid/proposals/{id}/approve` | `proposalService.approve(id, reviewerId)` | nightly |
-| POST | `/grid/proposals/{id}/reject` | `proposalService.reject(id, reviewerId, notes)` | nightly |
-| PUT | `/grid/proposals/{id}/regions/{regionId}/edit` | `proposalService.editRegionInProposal(...)` | Scenario A |
-| POST | `/grid/assignments/intraday-override` | `proposalService.requestIntradayReassignment(...)` | Scenario B |
-| POST | `/grid/proposals/{id}/approve-intraday` | `proposalService.approveIntradayReassignment(id, reviewerId)` | Scenario B |
-| POST | `/grid/assignments/tile-share` | `proposalService.requestTileShare(...)` | Tile share |
-| POST | `/grid/proposals/{id}/approve-tile-share` | `proposalService.approveTileShare(id, reviewerId)` | Tile share |
+| GET | `/api/proposals/{proposalId}` | `proposalService.getProposal(id)` | |
+| GET | `/api/proposals?cityCode=&date=` | `proposalService.getProposals(cityId, date)` | |
+| POST | `/api/proposals/{proposalId}/approve` | `proposalService.approve(id, reviewerId)` | nightly |
+| POST | `/api/proposals/{proposalId}/reject` | `proposalService.reject(id, reviewerId, notes)` | nightly |
+| PUT | `/api/proposals/{proposalId}/regions/{daId}` | `proposalService.editRegionInProposal(...)` | Scenario A (pre-approval edit) |
+| POST | `/api/proposals/intraday-reassignment` | `proposalService.requestIntradayReassignment(...)` | Scenario B → 201 |
+| POST | `/api/proposals/{proposalId}/approve-reassignment` | `proposalService.approveIntradayReassignment(...)` | Scenario B |
+| POST | `/api/proposals/tile-share` | `proposalService.requestTileShare(...)` | Tile share → 201 |
+| POST | `/api/proposals/{proposalId}/approve-tile-share` | `proposalService.approveTileShare(...)` | Tile share |
 
-**Scenario B request body:**
-```json
-{
-  "city_id": "...",
-  "from_da_id": "...",
-  "to_da_id": "...",
-  "tile_ids_to_move": ["...", "..."],
-  "requested_by": "..."
-}
-```
-
-**Scenario B response** includes the new `proposal_id` so the station manager UI can immediately
-show a confirmation screen with the contiguity-validated plan and a one-tap approve button.
+All approve endpoints take body `{ "reviewerId": "uuid" }` (`ApproveRequest` record). All mutating endpoints return 204 (except POST creates which return 201 with body).
 
 ---
 
@@ -623,28 +647,24 @@ Do not test against a live OSRM instance in CI.
 ## Implementation Order Summary
 
 ```
-Phase 1 (foundation)    → pom.xml + Flyway migrations + config + YAML stubs
-Phase 2 (domain)        → 9 JPA entities + 4 enums
-Phase 3 (repos)         → 9 repository interfaces
-Phase 4 (DTOs)          → 10 record classes
-Phase 5.1 (GridService) → tile math, pincode lookup, grid cache
-Phase 5.2 (OSRM)        → OsrmMatrixService + OsrmClient
-Phase 5.3 (demand)      → DemandScoringService + bootstrap rules
-Phase 5.4 (BFS)         → BfsAssignmentServiceImpl (fallback)
-Phase 5.5 (CP-SAT)      → CpSatAssignmentServiceImpl + lazy-cuts
-Phase 5.6 (proposals)   → ProposalService (approve/reject/override)
-Phase 5.7 (load scores) → IntradayLoadScoreService
-Phase 6.1 (init job)    → GridInitializationJob
-Phase 6.2 (OSRM job)    → OsrmMatrixRefreshJob
-Phase 6.3 (nightly)     → NightlyReplanJob
-Phase 6.4 (intraday)    → IntradayMonitorJob
-Phase 7 (Kafka)         → TileQueueDepthConsumer, NoDaAlertProducer, TileOverloadAlertProducer
-Phase 8 (API)           → GridController, ProposalController
-Phase 9 (tests)         → unit tests → integration tests
+Phase 1  ✓  pom.xml + Flyway migrations (V1–V10) + config + YAML stubs
+Phase 2  ✓  9 JPA entities + 5 enums
+Phase 3  ✓  9 repository interfaces
+Phase 4  ✓  17 DTO records (request/ + response/ subpackages)
+Phase 5  ✓  Services: GridService, OsrmMatrixService, DemandScoringService,
+              BfsAssignmentServiceImpl, CpSatAssignmentServiceImpl, ProposalService,
+              IntradayLoadScoreService, GridReplanService
+           ✓  65 unit tests, 0 failures
+Phase 6  ✓  Batch jobs: GridInitializationJob, OsrmMatrixRefreshJob,
+              NightlyReplanJob (delegates to GridReplanService), IntradayMonitorJob
+Phase 7  ✓  Kafka: TileQueueDepthConsumer (autoStartup=false), NoDaAlertProducer,
+              TileOverloadAlertProducer, KafkaTopics constants, 3 event POJOs
+Phase 8  ✓  REST: GridController (9 endpoints), ProposalController (8 endpoints)
+              Swagger UI at /swagger-ui.html
+Phase 9  ○  Integration tests (TestContainers + real PostgreSQL) — not started
 ```
 
-**Do not start Phase 6 without Phase 5 unit tests passing.** The nightly job is the most complex
-integration point — bugs caught at service level are far cheaper to fix than bugs caught in the job.
+**Next up:** real serviceability data + DA seed data, then map UI demo (for Sunday demo).
 
 ---
 

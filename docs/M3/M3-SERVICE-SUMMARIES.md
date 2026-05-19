@@ -11,10 +11,11 @@ All services live under `grid/src/main/java/com/oneday/grid/service/`. Each sect
    - [CpSatAssignmentServiceImpl](#cpsatassignmentserviceimpl)
 2. [DemandScoringService](#2-demandscoringservice)
 3. [GridService](#3-gridservice)
-4. [IntradayLoadScoreService](#4-intradayloadscoreservice)
-5. [OsrmMatrixService](#5-osrmmatrixservice)
-6. [ProposalService](#7-proposalservice)
-7. [Supporting Utilities](#7-supporting-utilities)
+4. [GridReplanService](#4-gridreplanservice)
+5. [IntradayLoadScoreService](#5-intradayloadscoreservice)
+6. [OsrmMatrixService](#6-osrmmatrixservice)
+7. [ProposalService](#7-proposalservice)
+8. [Supporting Utilities](#8-supporting-utilities)
    - [ContiguityValidator](#contiguityvalidator)
    - [OsrmClient](#osrmclient)
    - [TileEdge / OsrmTableResponse](#tileedge--osrmtableresponse)
@@ -182,10 +183,15 @@ When M4 data is unavailable (pre-launch), all four queries return empty maps and
 **Implementation:** `impl/GridServiceImpl.java`
 
 ```
-void                   initializeGrid(UUID cityId, String cityCode)
-Grid                   getGrid(UUID cityId)
-ServiceabilityResponse checkServiceability(UUID cityId, String pincode)
-TileAtResponse         getTileAt(UUID cityId, double lat, double lon)
+void                        initializeGrid(UUID cityId, String cityCode)
+Grid                        getGrid(UUID cityId)
+UUID                        resolveCityId(String cityCode)
+ServiceabilityResponse      checkServiceability(UUID cityId, String pincode)
+TileAtResponse              getTileAt(UUID cityId, double lat, double lon)
+List<TileDetailResponse>    getTileDetails(UUID cityId, LocalDate date)
+List<GridVertexResponse>    getVertices(UUID cityId)
+void                        setTileActive(UUID tileId, boolean active)
+List<AssignmentResponse>    getActiveAssignments(UUID cityId, LocalDate date)
 ```
 
 Manages the static 2 × 2 km rectangular tile grid for a city.
@@ -202,6 +208,10 @@ One-time setup that:
 7. Creates `GridVertex` rows for all `(nRows+1) × (nCols+1)` lattice corners, storing exact lat/lon for each vertex.
 8. Puts the new `Grid` into an in-memory `ConcurrentHashMap` cache keyed by `cityId`.
 
+#### `resolveCityId`
+
+Looks up `grid.cities` config map (e.g., `"delhi"` → `f47ac10b-58cc-4372-a567-0e02b2c3d479`). Throws HTTP 404 if the city code is unknown. Used by all REST controllers to convert the URL path param into a UUID.
+
 #### `getGrid`
 
 Returns the cached `Grid` for a city; throws `IllegalArgumentException` if not found. The cache is populated at startup via `@PostConstruct`.
@@ -214,9 +224,52 @@ Looks up the `PincodeMapping` table. Returns a `ServiceabilityResponse` with `se
 
 Converts a lat/lon coordinate into a grid `(row, col)` index using the grid's origin and delta values, then fetches the corresponding `Tile`.
 
+#### `getTileDetails`
+
+Returns all tiles for a city with pre-computed lat/lon bounds (SW and NE corners) and today's demand score. Joins `Tile` with `TileDemandSnapshot` for the given date in one batch query. Used by the map UI to draw and colour tiles.
+
+#### `getVertices`
+
+Returns all `GridVertex` rows for the city's grid. Used by the map UI to draw grid-line edges.
+
+#### `setTileActive`
+
+Flips a tile's `is_active` flag. Called by the map UI tile toggle. Used to exclude a tile from nightly replanning (e.g., a known unserviceable area).
+
+#### `getActiveAssignments`
+
+Returns all `DaTileAssignment` rows with status `ACTIVE` for the city on a given date. Scoped to the city's tile set (avoids cross-city contamination). Used by the map UI to colour tiles by assigned DA.
+
 ---
 
-## 4. IntradayLoadScoreService
+## 4. GridReplanService
+
+**Interface:** `service/GridReplanService.java`  
+**Implementation:** `impl/GridReplanServiceImpl.java`
+
+```
+ProposalResponse replan(UUID cityId, LocalDate validForDate, List<UUID> daIds)
+```
+
+Encapsulates the per-city replan logic that was previously private inside `NightlyReplanJob`. Both the nightly scheduled job and the `POST /api/grid/{cityCode}/replan` REST endpoint call this service.
+
+#### What it does
+
+1. Calls `DemandScoringService.computeAndPersistDemand(cityId, date)`.
+2. Loads the adjacency graph from `tile_travel_time`. If absent or stale (> 45 days), falls back to geometric 4-connectivity — does **not** trigger `OsrmMatrixRefreshJob`.
+3. Logs a warning for any tiles exceeding `DA_max_load` (Component C is deferred).
+4. Calls `CpSatAssignmentServiceImpl.computeProposal(...)` with the explicit `daIds` list.
+5. Forces `adjacencySource = GEOMETRIC_FALLBACK` on the proposal if the fallback was used.
+6. Returns the full `ProposalResponse` via `proposalService.getProposal(proposal.getId())`.
+
+#### Why `daIds` is explicit
+
+`NightlyReplanJob` gets DA IDs from `DaRosterPort` (which returns empty until M1 ships). The REST endpoint accepts them in the `ReplanRequest` body. Keeping the service interface explicit allows both callers to supply the right source without coupling them together.
+
+---
+
+## 5. IntradayLoadScoreService
+
 
 **Interface:** `service/IntradayLoadScoreService.java`  
 **Implementation:** `impl/IntradayLoadScoreServiceImpl.java`
@@ -254,7 +307,7 @@ Package-private method called by `IntradayMonitorJob` at shift start (07:00) to 
 
 ---
 
-## 5. OsrmMatrixService
+## 6. OsrmMatrixService
 
 **Interface:** `service/OsrmMatrixService.java`  
 **Implementation:** `impl/OsrmMatrixServiceImpl.java`
@@ -283,7 +336,7 @@ For each active tile, calls OSRM `/route/v1/driving` from SW corner to NE corner
 
 ---
 
-## 6. ProposalService
+## 7. ProposalService
 
 **Interface:** `service/ProposalService.java`  
 **Implementation:** `impl/ProposalServiceImpl.java`
@@ -343,7 +396,7 @@ Manages the full lifecycle of assignment proposals — from nightly approval to 
 
 ---
 
-## 7. Supporting Utilities
+## 8. Supporting Utilities
 
 ### ContiguityValidator
 

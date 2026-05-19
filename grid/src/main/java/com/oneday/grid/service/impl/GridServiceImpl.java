@@ -2,24 +2,36 @@ package com.oneday.grid.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.config.ServiceabilityConfig;
+import com.oneday.grid.domain.AssignmentStatus;
+import com.oneday.grid.domain.DaTileAssignment;
 import com.oneday.grid.domain.Grid;
 import com.oneday.grid.domain.GridVertex;
 import com.oneday.grid.domain.PincodeMapping;
 import com.oneday.grid.domain.Tile;
+import com.oneday.grid.domain.TileDemandSnapshot;
+import com.oneday.grid.dto.response.AssignmentResponse;
+import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
+import com.oneday.grid.dto.response.TileDetailResponse;
+import com.oneday.grid.repository.DaTileAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
 import com.oneday.grid.repository.GridVertexRepository;
 import com.oneday.grid.repository.PincodeMappingRepository;
+import com.oneday.grid.repository.TileDemandSnapshotRepository;
 import com.oneday.grid.repository.TileRepository;
 import com.oneday.grid.service.GridService;
 import jakarta.annotation.PostConstruct;
+import org.springframework.http.HttpStatus;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -28,6 +40,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @Service
 public class GridServiceImpl implements GridService {
@@ -39,7 +52,10 @@ public class GridServiceImpl implements GridService {
     private final TileRepository tileRepository;
     private final PincodeMappingRepository pincodeMappingRepository;
     private final GridVertexRepository gridVertexRepository;
+    private final TileDemandSnapshotRepository demandSnapshotRepository;
+    private final DaTileAssignmentRepository assignmentRepository;
     private final ResourceLoader resourceLoader;
+    private final GridProperties gridProperties;
     private final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
 
     private final Map<UUID, Grid> gridCache = new ConcurrentHashMap<>();
@@ -48,12 +64,18 @@ public class GridServiceImpl implements GridService {
                     TileRepository tileRepository,
                     PincodeMappingRepository pincodeMappingRepository,
                     GridVertexRepository gridVertexRepository,
-                    ResourceLoader resourceLoader) {
+                    TileDemandSnapshotRepository demandSnapshotRepository,
+                    DaTileAssignmentRepository assignmentRepository,
+                    ResourceLoader resourceLoader,
+                    GridProperties gridProperties) {
         this.gridRepository = gridRepository;
         this.tileRepository = tileRepository;
         this.pincodeMappingRepository = pincodeMappingRepository;
         this.gridVertexRepository = gridVertexRepository;
+        this.demandSnapshotRepository = demandSnapshotRepository;
+        this.assignmentRepository = assignmentRepository;
         this.resourceLoader = resourceLoader;
+        this.gridProperties = gridProperties;
     }
 
     @PostConstruct
@@ -86,6 +108,70 @@ public class GridServiceImpl implements GridService {
                 .map(t -> new TileAtResponse(t.getId(), t.getRowIdx(), t.getColIdx(), t.isActive()))
                 .orElseThrow(() -> new IllegalArgumentException(
                         "No tile at row=" + row + ", col=" + col + " for cityId=" + cityId));
+    }
+
+    @Override
+    public UUID resolveCityId(String cityCode) {
+        UUID cityId = gridProperties.getCities().get(cityCode.toLowerCase());
+        if (cityId == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown cityCode: " + cityCode);
+        }
+        return cityId;
+    }
+
+    @Override
+    public List<TileDetailResponse> getTileDetails(UUID cityId, LocalDate date) {
+        Grid grid = getGrid(cityId);
+        List<Tile> tiles = tileRepository.findByGridId(grid.getId());
+
+        Map<UUID, TileDemandSnapshot> snapshotByTile = demandSnapshotRepository
+                .findBySnapshotDate(date).stream()
+                .collect(Collectors.toMap(TileDemandSnapshot::getTileId, s -> s));
+
+        return tiles.stream().map(t -> {
+            double swLat = grid.getOriginLat() + t.getRowIdx() * grid.getTileDeltaLat();
+            double swLon = grid.getOriginLon() + t.getColIdx() * grid.getTileDeltaLon();
+            TileDemandSnapshot snap = snapshotByTile.get(t.getId());
+            return new TileDetailResponse(
+                    t.getId(), t.getRowIdx(), t.getColIdx(), t.isActive(),
+                    swLat, swLon,
+                    swLat + grid.getTileDeltaLat(), swLon + grid.getTileDeltaLon(),
+                    snap != null ? snap.getDemandScoreOrders() : 0.0,
+                    snap != null && snap.isBootstrapped()
+            );
+        }).toList();
+    }
+
+    @Override
+    public List<GridVertexResponse> getVertices(UUID cityId) {
+        Grid grid = getGrid(cityId);
+        return gridVertexRepository.findByGridId(grid.getId()).stream()
+                .map(v -> new GridVertexResponse(v.getId(), v.getRowIdx(), v.getColIdx(), v.getLat(), v.getLon()))
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public void setTileActive(UUID tileId, boolean active) {
+        Tile tile = tileRepository.findById(tileId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tile not found: " + tileId));
+        tile.setActive(active);
+        tileRepository.save(tile);
+    }
+
+    @Override
+    public List<AssignmentResponse> getActiveAssignments(UUID cityId, LocalDate date) {
+        Grid grid = getGrid(cityId);
+        Set<UUID> cityTileIds = tileRepository.findByGridId(grid.getId()).stream()
+                .map(Tile::getId).collect(Collectors.toSet());
+        return assignmentRepository
+                .findByTileIdInAndValidDateAndStatus(cityTileIds, date, AssignmentStatus.ACTIVE)
+                .stream()
+                .map(a -> new AssignmentResponse(
+                        a.getId(), a.getProposalId(), a.getDaId(), a.getTileId(),
+                        a.getValidDate(), a.getNDasOnTile(), a.getStatus(),
+                        a.getProposedAt(), a.getApprovedBy(), a.getApprovedAt()))
+                .toList();
     }
 
     @Override

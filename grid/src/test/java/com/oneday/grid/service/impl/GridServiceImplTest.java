@@ -1,13 +1,16 @@
 package com.oneday.grid.service.impl;
 
+import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.Grid;
 import com.oneday.grid.domain.PincodeMapping;
 import com.oneday.grid.domain.Tile;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
+import com.oneday.grid.repository.DaTileAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
 import com.oneday.grid.repository.GridVertexRepository;
 import com.oneday.grid.repository.PincodeMappingRepository;
+import com.oneday.grid.repository.TileDemandSnapshotRepository;
 import com.oneday.grid.repository.TileRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,7 +35,10 @@ class GridServiceImplTest {
     @Mock TileRepository tileRepository;
     @Mock PincodeMappingRepository pincodeMappingRepository;
     @Mock GridVertexRepository gridVertexRepository;
+    @Mock TileDemandSnapshotRepository demandSnapshotRepository;
+    @Mock DaTileAssignmentRepository assignmentRepository;
     @Mock ResourceLoader resourceLoader;
+    @Mock GridProperties gridProperties;
     // Grid extends BaseEntity (id is read-only), so we mock it as a @Mock field
     @Mock Grid grid;
 
@@ -50,7 +56,9 @@ class GridServiceImplTest {
         lenient().when(grid.getId()).thenReturn(gridId);
         when(gridRepository.findAll()).thenReturn(List.of(grid));
         service = new GridServiceImpl(gridRepository, tileRepository,
-                pincodeMappingRepository, gridVertexRepository, resourceLoader);
+                pincodeMappingRepository, gridVertexRepository,
+                demandSnapshotRepository, assignmentRepository,
+                resourceLoader, gridProperties);
         service.loadGridCache();
     }
 

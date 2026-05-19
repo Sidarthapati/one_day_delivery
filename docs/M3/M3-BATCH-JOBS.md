@@ -51,7 +51,7 @@ There are two things that could change:
 
 **File:** `grid/src/main/java/com/oneday/grid/batch/GridInitializationJob.java`
 
-**Triggered by:** `POST /grid/admin/init?city_id=...&city_code=...` (REST API, Phase 8)
+**Triggered by:** `POST /api/grid/admin/init?cityCode=delhi` (REST API)
 
 **Runs:** Once per city, at city onboarding time. Never re-runs after that (GridServiceImpl will throw if the city already has a grid row).
 
@@ -94,10 +94,9 @@ A pincode's lat/lon is its centroid. Customers in that pincode may actually live
 **File:** `grid/src/main/java/com/oneday/grid/batch/OsrmMatrixRefreshJob.java`
 
 **Triggered by:**
-- `POST /grid/admin/osrm-refresh?city_id=...` (admin API, on-demand)
 - `@Scheduled(cron = "0 0 2 1 * *")` — 02:00 IST on the 1st of every month (all cities)
 - Automatically by `GridInitializationJob` (at city creation)
-- Automatically by `NightlyReplanJob` (if it finds the adjacency matrix is absent or > 45 days old)
+- Note: `NightlyReplanJob` no longer triggers OSRM refresh directly — `GridReplanServiceImpl` uses geometric fallback when the matrix is absent/stale rather than triggering a refresh at replan time
 
 ### What it does (step by step)
 
@@ -165,110 +164,40 @@ This is the core of M3. It runs once per night per city and produces the `Assign
 
 ### `run()` — 01:00 IST
 
-Iterates all cities. For each city:
+Iterates all cities. For each city, fetches DA IDs from `DaRosterPort` and delegates all solver logic to `GridReplanService`:
+
+```java
+private void replanForCity(UUID cityId, LocalDate validForDate) {
+    List<UUID> daIds = daRosterPort.getAvailableDaIds(cityId, validForDate);
+    gridReplanService.replan(cityId, validForDate, daIds);
+}
+```
+
+**`GridReplanServiceImpl.replan(...)` does the actual work:**
 
 ```
 Step 1: Demand scoring
 ───────────────────────────────────────────────────────────────────────
-Calls DemandScoringService.computeAndPersistDemand(cityId, tomorrow)
+DemandScoringService.computeAndPersistDemand(cityId, date)
+→ one TileDemandSnapshot row per active tile
+→ bootstrap mode (12min service time, 5min inter-stop) until M4 live
 
-This queries M4's shipment_leg_events table (when M4 is live) to compute:
-  - hist_avg_orders:  7-day rolling average order count per tile
-  - current_orders:   orders placed today at snapshot time
-  - demand_score_orders = 0.70 × histAvg + 0.30 × current   (70/30 weighting)
-  - service_time_min: avg minutes at customer location per pickup
-  - inter_stop_travel_min: avg minutes between consecutive pickups within tile
-  - order_engaged_min = service_time + inter_stop_travel
-  - demand_score_minutes = demand_score_orders × order_engaged_min  ← solver input
-
-Until M4 is live, all tiles run in bootstrap mode:
-  service_time_min    = 12.0 (config default)
-  inter_stop_travel_min = 5.0 (config default)
-  histAvgOrders       = 0 (no data), currentOrders = 0
-  → demand_score_minutes = 0 for every tile
-
-Result: one TileDemandSnapshot row per active tile, persisted to DB.
-
-
-Step 2: Load adjacency graph from DB (NOT from OSRM)
+Step 2: Load adjacency graph from DB (NOT OSRM)
 ───────────────────────────────────────────────────────────────────────
-Queries tile_travel_time rows for pairs ≤ 600s.
-Converts to Map<UUID tileId, List<UUID adjacentTileIds>>.
+Reads tile_travel_time rows for pairs ≤ 600s.
+If absent or oldest computedAt > 45 days: falls back to geometric 4-connectivity
+(|Δrow| + |Δcol| == 1). Sets adjacencySource = GEOMETRIC_FALLBACK on proposal.
+Note: does NOT trigger OsrmMatrixRefreshJob — that is the monthly scheduled job's job.
 
-Staleness check: if matrix is absent OR oldest computedAt > 45 days ago:
-  → Triggers OsrmMatrixRefreshJob.refresh(cityId)
-  → Re-queries tile_travel_time after refresh
-
-If OSRM refresh fails (server down, network error):
-  → Falls back to geometric 4-connectivity
-  → Two tiles are adjacent iff |Δrow| + |Δcol| == 1 (cardinal neighbours only)
-  → Sets adjacencySource = GEOMETRIC_FALLBACK on the proposal
-  → This is correct behaviour — the solver still produces a valid plan,
-    just without road-realistic territory boundaries
-
-
-Step 3: Component C (multi-DA tiles) — TODO
+Step 3: Component C — deferred
 ───────────────────────────────────────────────────────────────────────
-When a tile's demand_score_minutes > DA_max_load (default: 780 min × 0.90 = 702 min),
-that tile needs more than one DA. The full implementation splits such tiles into
-virtual sub-tiles for the solver, then collapses them after solving.
+Tiles exceeding DA_max_load are logged and passed to solver unchanged.
+Solver flags them as understaffed. Blocked on schema solution for virtual tile IDs.
 
-Currently deferred: the solver receives the full demand unchanged.
-If any tile exceeds DA_max_load, a WARN is logged and the solver will simply
-flag that tile as understaffed. At bootstrap demand levels (all tiles = 0 min)
-this case cannot fire.
-
-Technical blocker: DaTileAssignment.tileId has @Column(updatable=false), so
-virtual tile UUIDs cannot be patched back to real tile IDs through JPA after
-the solver persists the rows.
-
-
-Step 4: DA availability
+Step 4: Run CP-SAT solver (BFS fallback if infeasible/timeout)
 ───────────────────────────────────────────────────────────────────────
-Calls DaRosterPort.getAvailableDaIds(cityId, tomorrow).
-Until M1 (auth) is integrated, NoOpDaRosterPort returns an empty list.
-
-Computes:
-  K_available = availableDaIds.size()
-  K_needed    = ceil(Σ demand_score_minutes / DA_target_load)
-              = ceil(total / (780 min × 0.70))   [default]
-
-If K_available < K_needed → logs UNDERSTAFFED warning.
-Solver continues — it will assign as many tiles per DA as possible and
-record remaining tiles in understaffedTileIds on the proposal.
-
-
-Step 5: Run CP-SAT solver
-───────────────────────────────────────────────────────────────────────
-Calls CpSatAssignmentServiceImpl.computeProposal(cityId, tomorrow, demand, graph, daIds)
-
-CP-SAT formulation (summary):
-  Variables:    assignment[i] ∈ {0, K-1}  — one integer var per tile
-  Constraints:  load balance: DA_min_load ≤ Σdemand per DA ≤ DA_max_load
-                symmetry breaking: assignment[seed_k] == k
-  Objective:    minimize (max_load - min_load) across DAs
-  Contiguity:   lazy-cut loop — after each solve, BFS-checks each DA's
-                territory; if disconnected, adds a Boolean constraint to
-                force connectivity, then re-solves
-
-Fallback chain:
-  1. CP-SAT with tight tolerance (30% load spread)
-  2. If INFEASIBLE: widen tolerance 5% and retry up to 3×
-  3. If still infeasible or timeout: BFS greedy fallback
-     → proposal.solverType = BFS_FALLBACK
-
-The solver persists:
-  - AssignmentProposal (status = PROPOSED, solverType = CP_SAT | BFS_FALLBACK)
-  - AssignmentProposalRegion (one row per DA: estimated demand, utilisation %)
-  - DaTileAssignment (one row per DA-tile pair, status = PROPOSED)
-
-
-Step 6: Log and notify
-───────────────────────────────────────────────────────────────────────
-Logs PROPOSAL_READY with proposalId, solverType, totalDas.
-
-Real notification (Slack / in-app / email to station manager) is a TODO.
-Phase 7/8 will add a Kafka event or direct API call.
+CpSatAssignmentServiceImpl → persists AssignmentProposal (PROPOSED) + regions + assignments.
+Returns ProposalResponse via proposalService.getProposal(proposal.getId()).
 ```
 
 ---
@@ -315,10 +244,10 @@ This job monitors whether tiles are becoming overloaded during the shift. It rea
 ### Data flow
 
 ```
-M5 (dispatch)
-    ↓ Kafka: dispatch.tile_queue_depth (every 5 min)
-TileQueueDepthConsumer   [Phase 7]
-    ↓ calls IntradayLoadScoreService.updateQueueDepth(cityId, date, Map<tileId, unservedOrders>)
+M4 (Orders)
+    ↓ Kafka: orders.tile_queue_depth (per-tile event on order status change)
+TileQueueDepthConsumer   [autoStartup=false until M4 ships]
+    ↓ calls IntradayLoadScoreService.updateQueueDepth(cityId, date, Map.of(tileId, unservedOrders))
 IntradayLoadScoreServiceImpl
     ↓ stores in ConcurrentHashMap<tileId, unservedOrders>
 IntradayMonitorJob.run()
@@ -327,7 +256,7 @@ IntradayMonitorJob.run()
     ↓ calls TileOverloadAlertProducer.emit(...)
 ```
 
-Until Phase 7 (TileQueueDepthConsumer) is wired in, `unservedOrders` is always 0 for every tile, so no alerts will fire. This is correct — there's no real dispatch data yet.
+`TileQueueDepthConsumer` is deployed but `autoStartup = false` — flip `grid.kafka.consumer.auto-startup: true` when M4 starts publishing. Until then `unservedOrders` is always 0, so no alerts fire.
 
 ### Threshold and hysteresis logic
 
@@ -395,18 +324,19 @@ When M1 ships a real implementation, annotate it `@Primary` and Spring will wire
 
 ---
 
-## 7. Event Stubs
+## 7. Kafka Events
 
-**Files:** `com.oneday.grid.events.NoDaAlertProducer`, `com.oneday.grid.events.TileOverloadAlertProducer`
+**Package:** `com.oneday.grid.events`
 
-Both are `@Component` stubs that currently write a structured `WARN` log instead of publishing to Kafka. Phase 7 will replace the log calls with `KafkaTemplate.send(topic, key, payload)`.
+All three Kafka classes are fully wired. Topic names live in `KafkaTopics.java`. Event payloads are Java records in `com.oneday.grid.events.payload`.
 
-| Producer | Topic | Emitted by | Consumed by |
-|----------|-------|-----------|-------------|
-| `NoDaAlertProducer` | `grid.no_da_alert` | NightlyReplanJob (future) | M10 (SLA) |
-| `TileOverloadAlertProducer` | `grid.tile_overload_alert` | IntradayMonitorJob | M10 (SLA), station manager UI |
+| Class | Type | Topic | Key | Emitted/consumed by |
+|-------|------|-------|-----|---------------------|
+| `NoDaAlertProducer` | Producer | `grid.no_da_alert` | tileId | M3 → M5, M11 |
+| `TileOverloadAlertProducer` | Producer | `grid.tile_overload_alert` | tileId | M3 → M5, M10 |
+| `TileQueueDepthConsumer` | Consumer | `orders.tile_queue_depth` | — | M4 → M3 |
 
-**Why stubs and not just log statements in the caller?** The stub is a named, injectable dependency. When Phase 7 wires in Kafka, only the stub body changes — all callers stay the same. If the log statements were inline in the job, Phase 7 would need to hunt through each job to add KafkaTemplate calls.
+Both producers inject `KafkaTemplate<String, Object>` and wrap the send in `try/catch` — if no broker is available (local dev), they log a WARN and continue. The consumer has `autoStartup = false` and is a no-op until M4 ships.
 
 ---
 
@@ -415,10 +345,11 @@ Both are `@Component` stubs that currently write a structured `WARN` log instead
 ```
 City onboarding (one-time)
 ───────────────────────────────────
-POST /grid/admin/init
-    └─► GridInitializationJob.initialize(cityId, cityCode)
-            ├─► GridService.initializeGrid(...)    [creates Grid, Tile, GridVertex, PincodeMapping rows]
-            └─► OsrmMatrixRefreshJob.refresh(...)  [populates tile_travel_time]
+POST /api/grid/admin/init?cityCode=delhi
+    └─► GridService.initializeGrid(cityId, cityCode)
+            ├─► Reads serviceability/{cityCode}.yaml
+            ├─► Creates Grid, Tile, GridVertex, PincodeMapping rows
+            └─► (OSRM refresh is separate — call OsrmMatrixRefreshJob manually)
 
 
 Every 1st of month at 02:00 IST (steady state)
@@ -431,20 +362,21 @@ OsrmMatrixRefreshJob.runMonthly()
 Every night
 ───────────────────────────────────
 01:00 IST  NightlyReplanJob.run()
-    ├─► DemandScoringService.computeAndPersistDemand(cityId, tomorrow)
-    ├─► Load tile_travel_time from DB → adjacency graph
-    │       if absent/stale ──► OsrmMatrixRefreshJob.refresh(cityId)
-    │       if OSRM fails   ──► geometric 4-connectivity fallback
-    ├─► DaRosterPort.getAvailableDaIds(cityId, tomorrow)
-    └─► CpSatAssignmentServiceImpl.computeProposal(...)
-            ├── CP-SAT solve with lazy-cuts contiguity
-            └── if failed ──► BfsAssignmentServiceImpl.computeProposal(...)
-        → persists AssignmentProposal (PROPOSED) + regions + DaTileAssignments
+    └─► per city:
+        ├─► DaRosterPort.getAvailableDaIds(cityId, tomorrow)
+        └─► GridReplanService.replan(cityId, tomorrow, daIds)
+                ├─► DemandScoringService.computeAndPersistDemand(...)
+                ├─► Load tile_travel_time from DB → adjacency graph
+                │       if absent/stale ──► geometric 4-connectivity fallback
+                └─► CpSatAssignmentServiceImpl.computeProposal(...)
+                        ├── CP-SAT solve with lazy-cuts contiguity
+                        └── if failed ──► BfsAssignmentServiceImpl.computeProposal(...)
+                    → persists AssignmentProposal (PROPOSED) + regions + DaTileAssignments
 
-    ← station manager reviews and calls POST /grid/proposals/{id}/approve  [Phase 8 API]
+    ← station manager reviews → POST /api/proposals/{id}/approve
 
 06:00 IST  NightlyReplanJob.checkEscalation()
-    └─► if no APPROVED proposal: log ESCALATION_ALERT (wake station manager)
+    └─► if no APPROVED proposal: log ESCALATION_ALERT
 
 07:00 IST  NightlyReplanJob.applyFallbackIfNeeded()
     └─► if still no APPROVED proposal: copy yesterday's plan → new APPROVED proposal
@@ -452,23 +384,28 @@ Every night
 
 During shift (07:00–20:00 IST, every 5 minutes)
 ───────────────────────────────────
-M5 ──Kafka──► TileQueueDepthConsumer  [Phase 7]
+M4 ──Kafka: orders.tile_queue_depth──► TileQueueDepthConsumer  (autoStartup=false until M4 ships)
     └─► IntradayLoadScoreService.updateQueueDepth(cityId, date, {tileId → unservedOrders})
 
 IntradayMonitorJob.run()
     └─► per tile: getLoadScore → check thresholds → hysteresis → TileOverloadAlertProducer.emit(...)
+
+
+On-demand (map demo / station manager UI)
+───────────────────────────────────
+POST /api/grid/{cityCode}/replan   body: { daIds: [...], date: "2026-05-25" }
+    └─► GridReplanService.replan(cityId, date, daIds)   (same service as nightly job)
 ```
 
 ---
 
 ## 9. What Is Not Yet Implemented
 
-| Gap | Where it's needed | Phase |
-|-----|------------------|-------|
-| Component C (multi-DA tile virtual splitting) | NightlyReplanJob step 3 | Deferred — needs schema change to allow post-solve tile ID patching |
-| Real DA roster from M1 | DaRosterPort | M1 (auth) — when ready, annotate impl `@Primary` |
-| Kafka TileQueueDepthConsumer | IntradayMonitorJob data source | Phase 7 |
-| Real Kafka publish in event producers | NoDaAlertProducer, TileOverloadAlertProducer | Phase 7 |
-| Station manager notification at 01:00 | NightlyReplanJob step 6 | Phase 7 or 8 |
-| REST controllers to trigger jobs | GridInitializationJob, OsrmMatrixRefreshJob | Phase 8 |
-| `@EnableScheduling` on app entry point | All @Scheduled methods | app/ module (not yet started) |
+| Gap | Where it's needed | Blocked on |
+|-----|------------------|------------|
+| Component C (multi-DA tile virtual splitting) | GridReplanServiceImpl | Schema change needed: `DaTileAssignment.tileId` is `updatable=false`, so virtual tile UUIDs can't be patched back after solve |
+| Real DA roster from M1 | DaRosterPort | M1 (auth) — when ready, annotate impl `@Primary`; `NightlyReplanJob` does not change |
+| TileQueueDepthConsumer active | IntradayMonitorJob data source | M4 (Orders) publishing `orders.tile_queue_depth` — flip `grid.kafka.consumer.auto-startup: true` when ready |
+| Station manager push notification at 01:00 | NightlyReplanJob | Station manager UI (React) — Phase 8 API exists, notification channel TBD |
+| `@EnableScheduling` on app entry point | All `@Scheduled` methods | `app/` module not yet started |
+| Integration tests (Phase 9) | Full end-to-end validation | TestContainers + WireMock for OSRM |
