@@ -5,6 +5,7 @@ import com.oneday.grid.domain.DaTileAssignment;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -22,4 +23,8 @@ public interface DaTileAssignmentRepository extends JpaRepository<DaTileAssignme
 
     // Full city assignment for a date and status — used by M5 (GET /grid/assignments).
     List<DaTileAssignment> findByValidDateAndStatus(LocalDate validDate, AssignmentStatus status);
+
+    // City-scoped active assignments: fetch only tiles belonging to a specific city grid.
+    List<DaTileAssignment> findByTileIdInAndValidDateAndStatus(
+            Collection<UUID> tileIds, LocalDate validDate, AssignmentStatus status);
 }

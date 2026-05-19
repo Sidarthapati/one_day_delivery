@@ -33,8 +33,8 @@ class IntradayLoadScoreServiceImpl implements IntradayLoadScoreService {
         unservedByTile.putAll(unservedByTileMap);
     }
 
-    // Called by IntradayMonitorJob at shift start (07:00) to zero out the previous shift's data.
-    void resetForShift() {
+    @Override
+    public void resetForShift() {
         unservedByTile.clear();
     }
 

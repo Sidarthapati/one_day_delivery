@@ -4,6 +4,10 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
 @Component
 @ConfigurationProperties(prefix = "grid")
 @Data
@@ -15,6 +19,8 @@ public class GridProperties {
     private Shift shift = new Shift();
     private Da da = new Da();
     private Intraday intraday = new Intraday();
+    // Maps cityCode (e.g. "delhi") → fixed cityId UUID used throughout the system.
+    private Map<String, UUID> cities = new HashMap<>();
 
     @Data
     public static class Osrm {
