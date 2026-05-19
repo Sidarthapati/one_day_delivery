@@ -99,7 +99,7 @@ Phase 7 (Observability)
   - `ShipmentCreatedEvent` (fields: `customerType`, `paymentMode`, `deliveryType`, `originCity`, `destCity`, `originTileId`, `chargeableWeightGrams`, `slaCommitmentMinutes`, `etaPromised`, `receiverPhone`, `receiverName`, `b2bAccountId`)
   - `ShipmentStateChangedEvent` (fields: `fromState`, `toState`, `triggeredBy`, `triggerSource`, `etaUpdated`)
   - `ShipmentCancelledEvent` (fields: `cancelledAtState`, `reason`, `refundInitiated`, `refundAmountPaise`)
-- `ShipmentState` enum (all 24 values) moved to `common` so all consumers can deserialize state fields
+- `ShipmentState` enum (all 27 values) moved to `common` so all consumers can deserialize state fields
 - `EventType` enum per topic (e.g. `DaEventType { PICKUP_ASSIGNED, PICKUP_COMPLETED, ... }`)
 - **`@JsonIgnoreProperties(ignoreUnknown = true)` on every event POJO and `BaseShipmentEvent` (inherited by all subclasses).** This is non-negotiable: without it, any new field added by another team to a produced event will throw `UnrecognizedPropertyException` on the M4 consumer side and park the message on the DLQ. Forward-compatible deserialization must be the default from day one.
 
@@ -145,8 +145,8 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **Module:** `orders` (`db/migration/orders/`)
 
 **What:**
-- PostgreSQL ENUMs: `shipment_state` (24 values), `customer_type`, `delivery_type`, `payment_mode`, `trigger_source`
-- Tables: `shipments`, `shipment_state_history`, `payment_transactions`, `b2b_accounts`, `idempotency_keys`, `shipment_ref_counters`
+- PostgreSQL ENUMs: `shipment_state` (27 values — includes `AWAITING_SELF_DROP`, `AWAITING_HUB_COLLECT`, `HUB_COLLECTED`), `customer_type`, `delivery_type`, `payment_mode`, `pickup_type` (`DA_PICKUP`, `SELF_DROP`), `drop_type` (`DA_DELIVERY`, `HUB_COLLECT`), `trigger_source`
+- Tables: `shipments` (with `pickup_type` and `drop_type` columns, both NOT NULL DEFAULT), `shipment_state_history`, `payment_transactions`, `b2b_accounts`, `idempotency_keys`, `shipment_ref_counters`
 - All indexes (shipment_ref, parcel_id, state, b2b_account_id, origin_tile_id)
 - DB trigger for `updated_at` auto-management on `shipments`, `payment_transactions`, `b2b_accounts`
 - No Java code in this PR
@@ -166,7 +166,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **What:**
 - Remaining enums local to `orders`: `PaymentStatus`, `RefundStatus`, `TriggerSource`
 - JPA entities: `Shipment` (extends `MutableBaseEntity`), `ShipmentStateHistory` (extends `BaseEntity`), `PaymentTransaction` (extends `MutableBaseEntity`), `B2bAccount` (extends `MutableBaseEntity`), `IdempotencyKey` (extends `BaseEntity`), `ShipmentRefCounter`
-- `ShipmentState` and customer/delivery/payment enums imported from `common` (defined in PR #2)
+- `ShipmentState`, `PickupType`, `DropType`, and customer/delivery/payment enums imported from `common` (defined in PR #2)
 - `@Column(updatable = false)` on all immutable fields; `@Column(name = "created_at", updatable = false)` inherited
 - No repositories, no services
 
@@ -203,6 +203,8 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **What:**
 - `ShipmentStateMachine` (package-private implementation, public interface)
 - **`TransitionRegistry` bean** — replaces a static `Map<State, Set<State>>`. Transitions are registered as named entries (`registry.register(BOOKED, PICKUP_ASSIGNED)`). This makes the registry open for extension: a future module (or a new V2 flow) can contribute additional transitions via a `TransitionRegistryConfigurer` without modifying the state machine class itself. The state machine validates against whatever is in the registry at startup.
+- `pickup_type` branching at `BOOKED` (DA_PICKUP → PICKUP_ASSIGNED; SELF_DROP → AWAITING_SELF_DROP)
+- `drop_type` branching at `DEST_HUB_PROCESSING` (DA_DELIVERY → HANDED_TO_DROP_VAN; HUB_COLLECT → AWAITING_HUB_COLLECT)
 - `delivery_type` branching at `IN_TAKEOFF_BAG` and `RTO_INITIATED`
 - `transition()` method: `SELECT FOR UPDATE` → validate → update state → insert `ShipmentStateHistory`
 - `IllegalStateTransitionException` → mapped to `409 Conflict`
@@ -233,6 +235,10 @@ NotificationPort     → notification service implements; M4 calls on every stat
 - `ShipmentRefService`: generates `1DD-{CITY}-{YYYYMMDD}-{NNNNN}` using `SELECT FOR UPDATE` on `ShipmentRefCounter`; documents the Redis upgrade path at high volume
 - `DeliveryTypeResolver`: `origin_city == dest_city` → `SAME_CITY`, else `INTERCITY` — pure function, zero DB calls
 - `PaymentPort` (local to `orders`): `verifySignature()`, `capture()`, `initiateRefund()` — Razorpay-specific, not in `common` since no other module touches payments
+- `PickupOtpService`: generates 4-digit OTP, stores hashed in `pickup_otps` table with 10-minute TTL; exposes `generate()`, `verify()`, `resend()` (max 3); called as a side-effect when state machine enters `PICKUP_ASSIGNED`
+- `POST /internal/v1/shipments/{ref}/pickup-otp/verify` — on success, directly transitions `PICKUP_ASSIGNED → PICKED_UP`; returns `422` on wrong OTP or expired; returns `409` if state is not `PICKUP_ASSIGNED`
+- `POST /internal/v1/shipments/{ref}/pickup-otp/resend` — invalidates previous OTP; generates fresh one; returns `429` after 3 resends
+- Flyway migration for `pickup_otps` table: `(id, shipment_id, otp_hash, expires_at, used, resend_count, created_at)`
 
 ---
 
@@ -292,7 +298,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **What:**
 - `DELETE /api/v1/b2c/shipments/{ref}` and `DELETE /api/v1/b2b/shipments/{ref}`
 - State guard via state machine — only states permitted by BD-001 (currently up to `PICKED_UP`)
-- **[BD-SEAM] Cancellation eligibility is behind a `CancellationPolicy` interface** with a single method `isCancellable(ShipmentState, CustomerType): boolean`. The V1 implementation encodes the BD-001 decision. When BD-001 is revised (e.g. allowing cancellation up to `AT_ORIGIN_HUB`), only the `CancellationPolicy` bean changes — the cancellation API and service layer are untouched.
+- **[BD-SEAM] Cancellation eligibility is behind a `CancellationPolicy` interface** with method `isCancellable(ShipmentState, CustomerType, PickupType): boolean`. The V1 implementation encodes per-path cutoffs: DA_PICKUP cancellable up to `PICKED_UP`; SELF_DROP cancellable up to `AWAITING_SELF_DROP`. When cutoffs are revised, only the `CancellationPolicy` bean changes.
 - PREPAID → `PaymentPort.initiateRefund()`; COD → no refund; B2B → decrement `outstanding_balance_paise` atomically
 - Transition to `CANCELLED` via state machine; emit `ShipmentCancelledEvent`
 
@@ -339,7 +345,9 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 **What:**
 - Extend `ShipmentEventConsumer` to subscribe to `oneday.scan.events`, `oneday.flight.events`, `oneday.cron.events`, `oneday.exceptions.events`
-- `HUB_ORIGIN_IN` handler: transition + call `EtaPort.fetchEta(AT_ORIGIN_HUB)` + update `eta_updated` + publish `STATE_CHANGED` with updated ETA
+- `HUB_ORIGIN_IN` handler: `HANDED_TO_PICKUP_VAN → AT_ORIGIN_HUB` + call `EtaPort.fetchEta(AT_ORIGIN_HUB)` + update `eta_updated` + publish `STATE_CHANGED`
+- `SELF_DROP_ACCEPTED` handler: `AWAITING_SELF_DROP → AT_ORIGIN_HUB` + same ETA side-effects as `HUB_ORIGIN_IN`
+- `HUB_COLLECT_COMPLETED` handler: `AWAITING_HUB_COLLECT → HUB_COLLECTED` + publish `STATE_CHANGED`
 - RTO transitions: `RTO_INITIATED` branches on `delivery_type` (`INTERCITY` → await `RTO_IN_TRANSIT`; `SAME_CITY` → direct to `RTO_COMPLETED`)
 - `PICKUP_RESCHEDULED` / `DELIVERY_RESCHEDULED` from M11 wired into state machine
 
@@ -483,7 +491,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 |---|---|---|
 | Unit | JUnit 5 + Mockito | Every PR |
 | Repository | `@DataJpaTest` + Testcontainers (PostgreSQL) | PR #6 onwards |
-| State machine | Parameterized JUnit5 (all 24×24 transition matrix) | PR #7 |
+| State machine | Parameterized JUnit5 (all 27×27 transition matrix) | PR #7 |
 | Kafka | `@EmbeddedKafka` | PR #14 onwards |
 | API | `@SpringBootTest` + MockMvc + stub ports via `@TestConfiguration` | PR #10 onwards |
 | Concurrency | `CountDownLatch` multi-thread test for B2B credit check | PR #12 |
