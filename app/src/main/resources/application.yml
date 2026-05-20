@@ -13,3 +13,6 @@ spring:
     locations:
       - classpath:db/migration/auth
       - classpath:db/migration/grid
+      - classpath:db/migration/orders
+  jackson:
+    property-naming-strategy: SNAKE_CASE
