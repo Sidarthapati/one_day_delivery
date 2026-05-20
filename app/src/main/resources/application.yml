@@ -13,3 +13,4 @@ spring:
     locations:
       - classpath:db/migration/auth
       - classpath:db/migration/grid
+      - classpath:db/migration/orders
