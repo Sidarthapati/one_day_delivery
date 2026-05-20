@@ -41,4 +41,7 @@ public class ShipmentCreatedEvent extends BaseShipmentEvent {
     private String receiverPhone;
     private String receiverName;
     private UUID b2bAccountId;
+    private String senderName;
+    private String senderAddressLine;
+    private String receiverAddressLine;
 }
