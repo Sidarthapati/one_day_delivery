@@ -1493,7 +1493,22 @@ Each DLQ message includes original message headers plus:
 
 ## 10. Database Schema
 
-### 10.1 Flyway Migration: `V1__create_orders_schema.sql`
+### 10.1 Flyway Migrations (`orders/src/main/resources/db/migration/orders/`)
+
+Files follow the `V4_N__description.sql` convention (M4 = module 4). Location registered in `app/src/main/resources/application.yml` as `classpath:db/migration/orders`.
+
+| File | Contents |
+|---|---|
+| `V4_1__create_orders_enums.sql` | `shipment_state`, `customer_type`, `delivery_type`, `payment_mode`, `pickup_type`, `drop_type` |
+| `V4_2__create_updated_at_function.sql` | `set_updated_at()` trigger function (reused by V4_3, V4_5, V4_6) |
+| `V4_3__create_shipments.sql` | `shipments` table, 10 indexes, `trg_shipments_updated_at` trigger |
+| `V4_4__create_shipment_state_history.sql` | `shipment_state_history` table (append-only), 2 indexes |
+| `V4_5__create_payment_transactions.sql` | `payment_transactions` table, `trg_payments_updated_at` trigger |
+| `V4_6__create_b2b_accounts.sql` | `b2b_accounts` table, `trg_b2b_accounts_updated_at` trigger |
+| `V4_7__create_idempotency_keys.sql` | `idempotency_keys` table, expiry index |
+| `V4_8__create_shipment_ref_counters.sql` | `shipment_ref_counters` table |
+
+Full SQL for reference:
 
 ```sql
 -- ENUMs
