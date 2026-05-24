@@ -142,10 +142,11 @@ Every other module either feeds state into M4 via Kafka or reads shipment data f
 **EtaPort interface:**
 ```java
 public interface EtaPort {
-    EtaResult fetchEta(UUID shipmentId, ShipmentState state, EtaContext context);
-    // state: the current or target state at the time of the call
-    // context: origin_city, dest_city, delivery_type, booked_at, assigned_flight_id (if known)
-    // M9 interprets state and context to decide which ETA logic to apply
+    EtaResult fetchEta(EtaRequest request);
+    // EtaRequest: shipmentId, currentState, occurredAt, EtaContext
+    // occurredAt: when the current state was entered — NOT wall-clock now; critical when Kafka has lag
+    // EtaContext: origin_city, dest_city, delivery_type, booked_at, assigned_flight_id (if known)
+    // M9 interprets currentState and context to decide which ETA logic to apply
 }
 ```
 
