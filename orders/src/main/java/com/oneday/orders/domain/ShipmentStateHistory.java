@@ -7,6 +7,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -56,4 +57,11 @@ public class ShipmentStateHistory {
 
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private Instant occurredAt;
+
+    @PrePersist
+    protected void prePersist() {
+        if (this.occurredAt == null) {
+            this.occurredAt = Instant.now();
+        }
+    }
 }
