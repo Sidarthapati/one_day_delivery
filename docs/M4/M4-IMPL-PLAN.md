@@ -145,7 +145,8 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **Module:** `orders` (`db/migration/orders/`)
 
 **What:**
-- PostgreSQL ENUMs: `shipment_state` (27 values — includes `AWAITING_SELF_DROP`, `AWAITING_HUB_COLLECT`, `HUB_COLLECTED`), `customer_type`, `delivery_type`, `payment_mode`, `pickup_type` (`DA_PICKUP`, `SELF_DROP`), `drop_type` (`DA_DELIVERY`, `HUB_COLLECT`), `trigger_source`
+- PostgreSQL ENUMs: `shipment_state` (27 values — includes `AWAITING_SELF_DROP`, `AWAITING_HUB_COLLECT`, `HUB_COLLECTED`), `customer_type`, `delivery_type`, `payment_mode`, `pickup_type` (`DA_PICKUP`, `SELF_DROP`), `drop_type` (`DA_DELIVERY`, `HUB_COLLECT`)
+- `trigger_source` is **not** a PG ENUM — stored as `VARCHAR(20)` in `shipment_state_history`. It is an M4-internal audit classification (API, KAFKA_EVENT, SYSTEM), not a shared business domain type. Adding a new source requires only a Java enum value, not a DB migration.
 - Tables: `shipments` (with `pickup_type` and `drop_type` columns, both NOT NULL DEFAULT), `shipment_state_history`, `payment_transactions`, `b2b_accounts`, `idempotency_keys`, `shipment_ref_counters`
 - All indexes (shipment_ref, parcel_id, state, b2b_account_id, origin_tile_id)
 - DB trigger for `updated_at` auto-management on `shipments`, `payment_transactions`, `b2b_accounts`
@@ -165,7 +166,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 **What:**
 - Remaining enums local to `orders`: `PaymentStatus`, `RefundStatus`, `TriggerSource`
-- JPA entities: `Shipment` (extends `MutableBaseEntity`), `ShipmentStateHistory` (extends `BaseEntity`), `PaymentTransaction` (extends `MutableBaseEntity`), `B2bAccount` (extends `MutableBaseEntity`), `IdempotencyKey` (extends `BaseEntity`), `ShipmentRefCounter`
+- JPA entities: `Shipment` (extends `MutableBaseEntity`), `ShipmentStateHistory` (standalone — has `occurred_at` not `created_at`; extending `BaseEntity` would fail schema validation), `PaymentTransaction` (extends `MutableBaseEntity`), `B2bAccount` (extends `MutableBaseEntity`), `IdempotencyKey` (standalone with `@EmbeddedId` for composite PK `(key, user_id)` — cannot extend `BaseEntity`), `ShipmentRefCounter` (standalone with `@EmbeddedId` for composite PK `(city_code, date_key)`)
 - `ShipmentState`, `PickupType`, `DropType`, and customer/delivery/payment enums imported from `common` (defined in PR #2)
 - `@Column(updatable = false)` on all immutable fields; `@Column(name = "created_at", updatable = false)` inherited
 - No repositories, no services
