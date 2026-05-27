@@ -15,6 +15,7 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -32,10 +33,12 @@ public class Shipment extends MutableBaseEntity {
     private String shipmentRef;
 
     @Enumerated(EnumType.STRING)
+    @ColumnTransformer(write = "CAST(? AS customer_type)")
     @Column(name = "customer_type", nullable = false, updatable = false, columnDefinition = "customer_type")
     private CustomerType customerType;
 
     @Enumerated(EnumType.STRING)
+    @ColumnTransformer(write = "CAST(? AS delivery_type)")
     @Column(name = "delivery_type", nullable = false, updatable = false, columnDefinition = "delivery_type")
     private DeliveryType deliveryType;
 
@@ -128,16 +131,19 @@ public class Shipment extends MutableBaseEntity {
     // ── Routing ───────────────────────────────────────────────────────────
 
     @Enumerated(EnumType.STRING)
+    @ColumnTransformer(write = "CAST(? AS pickup_type)")
     @Column(name = "pickup_type", nullable = false, columnDefinition = "pickup_type", updatable = false)
     private PickupType pickupType;
 
     @Enumerated(EnumType.STRING)
+    @ColumnTransformer(write = "CAST(? AS drop_type)")
     @Column(name = "drop_type", nullable = false, columnDefinition = "drop_type", updatable = false)
     private DropType dropType;
 
     // ── State machine ─────────────────────────────────────────────────────
 
     @Enumerated(EnumType.STRING)
+    @ColumnTransformer(read = "state::text", write = "CAST(? AS shipment_state)")
     @Column(name = "state", nullable = false, columnDefinition = "shipment_state")
     private ShipmentState state;
 
@@ -170,6 +176,7 @@ public class Shipment extends MutableBaseEntity {
 
     // Null for B2B (credit); non-null for B2C/C2C prepaid and COD
     @Enumerated(EnumType.STRING)
+    @ColumnTransformer(write = "CAST(? AS payment_mode)")
     @Column(name = "payment_mode", columnDefinition = "payment_mode", updatable = false)
     private PaymentMode paymentMode;
 
