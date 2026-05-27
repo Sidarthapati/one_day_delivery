@@ -688,3 +688,86 @@ Phase 9  ○  Integration tests (TestContainers + real PostgreSQL) — not start
 | M4 `shipment_leg_events` not yet implemented | DemandScoringService will use bootstrap defaults universally — this is correct behavior. No code changes needed |
 | OSRM unreachable in local dev | Use geometric fallback (`GEOMETRIC_FALLBACK`) — all code paths handle this |
 | Proposal not approved before 07:00 | Auto-fallback path must be smoke-tested in integration tests; use a test clock to advance time |
+
+---
+
+## What M3 Needs From Other Modules (and doesn't have yet)
+
+M3 is fully built but several of its code paths are running in degraded / stub mode because the modules it depends on haven't shipped yet. This section documents every dependency, what currently happens without it, and what needs to happen when each module lands.
+
+---
+
+### From M1 — Auth / Identity
+
+#### 1. DA roster (`DaRosterPort`)
+
+| Item | Detail |
+|------|--------|
+| Interface | `DaRosterPort.getAvailableDaIds(UUID cityId, LocalDate date)` |
+| Used by | `NightlyReplanJob` — to know how many DAs are available per city each morning |
+| Current state | `NoOpDaRosterPort` always returns an empty list. The nightly job runs, demand scoring happens, but the solver receives zero DAs → all tiles flagged understaffed → no assignment proposal is useful |
+| What to do when M1 ships | Write a real `M1DaRosterPortImpl` that queries M1's `users` table for users with role `DA` and city = cityId and shift date = date. Annotate it `@Primary` to override `NoOpDaRosterPort`. |
+| File | `grid/src/main/java/com/oneday/grid/batch/DaRosterPort.java` + new impl |
+
+#### 2. DA UUIDs (implicit FK)
+
+| Item | Detail |
+|------|--------|
+| Where used | `da_tile_assignment.da_id` column |
+| Current state | The demo and tests use randomly generated UUIDs. No DB-level FK constraint exists (by design — avoids cross-module coupling), but in production these must be valid user UUIDs with DA role from M1. |
+| Risk | If a DA UUID in an assignment has no corresponding M1 user, M5 won't be able to look up the DA's contact info, app login, or shift schedule. |
+| What to do when M1 ships | Validate DA UUIDs in `ProposalServiceImpl` before writing `DaTileAssignment` rows: reject UUIDs that don't exist in M1. |
+
+---
+
+### From M4 — Orders
+
+#### 3. Shipment leg events table (demand scoring)
+
+| Item | Detail |
+|------|--------|
+| Table | `shipment_leg_events` |
+| Columns needed | `da_id`, `shift_date`, `stop_sequence`, `arrived_at_pickup`, `pickup_completed_at`, `tile_id` |
+| Used by | `DemandScoringServiceImpl` — to compute per-tile service time, inter-stop travel time, historical avg orders, and current day orders |
+| Current state | Table does not exist. All M4DataLoader calls fail silently (caught by `safeCall` → returns empty map). The service falls back to bootstrap defaults: all tiles get `serviceTimeMin = 12.0`, `interStopTravelMin = 5.0`, `histAvgOrders = 0`, `currentOrders = 0` → `demandScoreMinutes = 0` for every tile. The CP-SAT solver still runs but produces arbitrary equal-load territories since all tiles look identical. |
+| Impact | Territories are not demand-weighted until M4 ships. The 70/30 demand model cannot activate. |
+| What to do when M4 ships | Flip `grid.bootstrap.min-pickups-for-real-data` down from 20 once there is enough data. No code changes needed — the queries are already written and will start returning data automatically once the table exists with the right columns. Run a backfill for the first 7-day rolling window before enabling. |
+| File | `M4DataLoader.java` — all 4 query methods |
+
+#### 4. Tile queue depth (intraday load monitoring)
+
+| Item | Detail |
+|------|--------|
+| Kafka topic | `orders.tile_queue_depth` |
+| Direction | M4 → M3 |
+| Event schema | `TileQueueDepthEvent { tileId, cityId, date, unservedOrders, bookedOrders, recordedAt }` |
+| Used by | `TileQueueDepthConsumer` → `IntradayLoadScoreServiceImpl` → `IntradayMonitorJob` |
+| Current state | `TileQueueDepthConsumer` has `autoStartup = false` in `application.yml`. The consumer never starts. `IntradayMonitorJob` runs but sees 0 unserved orders everywhere → no `TILE_OVERLOAD_ALERT` events are ever fired. |
+| Impact | The intraday alerting pipeline is completely silent until M4 ships. M5 and M10 never receive overload alerts. |
+| What to do when M4 ships | Flip `grid.kafka.consumer.auto-startup: true` in `application.yml`. No code changes needed. Verify the event schema matches `TileQueueDepthEvent` before enabling. |
+| File | `application.yml` — one config change. `TileQueueDepthConsumer.java` already written. |
+
+> **Note — topic name discrepancy:** The implementation uses topic `orders.tile_queue_depth` (M4 → M3). The cross-module contracts section above references `dispatch.tile_queue_depth` with M5. These need to be aligned before M4 ships. Likely resolution: M4 orders module publishes it (`orders.` prefix); M5 dispatch was listed by mistake.
+
+---
+
+### What M3 Produces for Other Modules
+
+| Output | Topic / mechanism | Consumed by | Status |
+|--------|------------------|-------------|--------|
+| No-DA alert | `grid.no_da_alert` Kafka | M5 (stops accepting pickups for the tile), M11 (flags for call center) | Fires correctly today, but consumers not yet built |
+| Tile overload alert | `grid.tile_overload_alert` Kafka | M5 (may trigger intraday reassignment request), M10 (SLA tracking) | Fires correctly today, but consumers not yet built |
+| DA tile assignments | `da_tile_assignment` table (DB read) | M5 reads this to know which DA to route each order to | Table populated on proposal approval; M5 must refresh after each approval |
+| Assignment updated event | Not yet implemented | M5 needs a push notification when the active plan changes so it doesn't serve stale routing | **Gap:** `grid.assignment_updated` Kafka event should be published from `ProposalServiceImpl.approve()`. Referenced in design docs but not yet coded. |
+
+---
+
+### Dependency Summary
+
+| Dependency | From | Without it | Fix when module ships |
+|-----------|------|-----------|----------------------|
+| DA roster | M1 | All tiles understaffed, no usable assignments | Real `DaRosterPort` impl annotated `@Primary` |
+| DA UUID validation | M1 | Phantom DA UUIDs in assignments | Validate before writing `DaTileAssignment` |
+| `shipment_leg_events` | M4 | Bootstrap defaults for all tiles, equal-weight territories | Automatic — queries already written |
+| `orders.tile_queue_depth` Kafka | M4 | Intraday alerting silent, no overload events | Flip `auto-startup: true` in config |
+| `grid.assignment_updated` event | M3 → M5 | M5 serves stale routing after plan changes | Add Kafka publish in `ProposalServiceImpl.approve()` |

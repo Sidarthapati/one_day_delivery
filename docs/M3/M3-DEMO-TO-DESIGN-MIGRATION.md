@@ -1,27 +1,29 @@
-# M3 Demo Branch → Design Branch: Logic Changes to Port
+# M3 Demo Branch → Design Branch: Completed Migration Record
 
 Branch: `f-M3-demo` → `f-m3-design`
 
-This document lists only raw logic changes from the demo branch that need to be ported to the
-design branch. Demo-specific code (UI, DemoController, DemoSecurityConfig, seed SQL, application.yml
-overrides, delhi.yaml) is intentionally excluded.
+Migration completed 2026-05-28. This document records all logic changes that were ported from the
+demo branch to the design branch. Demo-specific code (UI, DemoController, DemoSecurityConfig, seed
+SQL, application.yml overrides, delhi.yaml) was intentionally left in the demo branch.
 
 ---
 
 ## Summary Table
 
-| File | Change Type | Priority |
-|------|-------------|----------|
-| `CpSatAssignmentServiceImpl` | Complete rework — two-phase solve, geographic seeds, distance penalty, warm-start, BFS repair | High |
-| `BfsAssignmentServiceImpl` | 3 bug fixes — target load, hard ceiling, util% | High |
-| `DemandScoringServiceImpl` | M4DataLoader extraction + snapshot existence check + safeCall | High |
-| `M4DataLoader` (new class) | REQUIRES_NEW transaction isolation for M4 SQL queries | High |
-| `BalancedBfsAssignmentServiceImpl` (new class) | New solver variant: BFS init + local swap refinement | Medium |
-| `SolverType` | Add `BALANCED_BFS` enum value | Medium |
-| `AssignmentProposal` | `@JdbcTypeCode(SqlTypes.JSON)` on `understaffedTileIds` | Medium |
-| `DaTileAssignmentRepository` | Two new query methods for multi-status lookups | Medium |
-| `GridProperties` | Solver time limit 60s → 45s | Low |
-| `GridReplanServiceImpl` | Rename field `cpSatAssignmentService` → `assignmentService` | Low (cosmetic) |
+| File | Change Type | Priority | Status |
+|------|-------------|----------|--------|
+| `CpSatAssignmentServiceImpl` | Complete rework — two-phase solve, geographic seeds, distance penalty, warm-start, BFS repair | High | ✅ Done |
+| `BfsAssignmentServiceImpl` | 3 bug fixes — target load, hard ceiling, util% | High | ✅ Done |
+| `DemandScoringServiceImpl` | M4DataLoader extraction + snapshot existence check + safeCall | High | ✅ Done |
+| `M4DataLoader` (new class) | REQUIRES_NEW transaction isolation for M4 SQL queries | High | ✅ Done |
+| `BalancedBfsAssignmentServiceImpl` (new class) | New solver variant: competitive flooding + local swap refinement | Medium | ✅ Done |
+| `SolverType` | Add `BALANCED_BFS` enum value | Medium | ✅ Done |
+| `AssignmentProposal` | `@JdbcTypeCode(SqlTypes.JSON)` on `understaffedTileIds` | Medium | ✅ Done |
+| `DaTileAssignmentRepository` | Two new query methods for multi-status lookups | Medium | ✅ Done |
+| `GridProperties` | Solver time limit 60s → 45s | Low | ✅ Done |
+| `GridReplanServiceImpl` | Rename field `cpSatAssignmentService` → `assignmentService` | Low (cosmetic) | ✅ Done |
+
+**All 10 items implemented. 108/108 unit tests passing.**
 
 ---
 
@@ -50,10 +52,10 @@ double daTargetLoad = totalDemandMinutes > 0 ? totalDemandMinutes / K : daCapaci
 ### Fix 2: Remove hard ceiling check
 
 **Problem:** The hard ceiling `if (!territory.isEmpty() && load + tileLoad > daMaxLoad) continue;`
-worked together with the old fixed `daTargetLoad`. With the dynamic target, it causes the same
+worked together with the old fixed `daTargetLoad`. With the dynamic target, it caused the same
 early-stop problem on high-demand tiles.
 
-**Fix:** Remove the hard ceiling entirely. BFS expands until it hits `daTargetLoad`, then stops.
+**Fix:** Removed the hard ceiling entirely. BFS expands until it hits `daTargetLoad`, then stops.
 
 ### Fix 3: Util% uses capacity, not dynamic target
 
@@ -66,37 +68,28 @@ giving util% > 1.0 for overloaded DAs and making the metric uninterpretable.
 
 ## 2. CpSatAssignmentServiceImpl — Complete Rework
 
-This is the largest change. The old lazy-cuts contiguity loop is gone. Replaced by a two-phase
-approach that produces contiguous territories without the solver running a multi-round loop.
+The old lazy-cuts contiguity loop is gone. Replaced by a two-phase approach that produces contiguous
+territories without the solver running a multi-round loop. See `M3-CPSAT-ISSUE.md` for the full
+history of approaches tried before landing on this architecture.
 
 ### 2.1 New dependency: `TileRepository`
 
 The solver now needs tile geometry (rowIdx, colIdx) for seed selection and isolated-tile stapling.
-Add `TileRepository tileRepository` to constructor and field.
+`TileRepository tileRepository` was added to the constructor and field.
 
 ### 2.2 Isolated tile detection (pre-solve)
 
-Before calling CP-SAT, split `demand` into two lists:
+Before calling CP-SAT, tiles are split into:
 - `connectedDemand`: tiles that appear in the adjacency graph with at least one neighbor
 - `isolatedDemand`: tiles with no road neighbors (no edges in the adjacency graph)
 
-CP-SAT only runs on `connectedDemand`. Isolated tiles are handled post-solve (see §2.5).
-
-```java
-connectedDemand = demand.stream()
-        .filter(d -> !adjacencyGraph.getOrDefault(d.getTileId(), List.of()).isEmpty())
-        .toList();
-isolatedDemand = demand.stream()
-        .filter(d -> adjacencyGraph.getOrDefault(d.getTileId(), List.of()).isEmpty())
-        .toList();
-```
+CP-SAT only runs on `connectedDemand`. Isolated tiles are handled post-solve (§2.8).
 
 When `adjacencyGraph` is empty (geometric fallback), all tiles go into `connectedDemand`.
 
 ### 2.3 Travel overhead in effective demand
 
-Each tile added to a territory implies inter-tile travel. Add a constant overhead per tile
-(`INTER_TILE_TRAVEL_MIN = 25.0 min`) to effective demand so that sprawling territories
+Added `INTER_TILE_TRAVEL_MIN = 25.0 min` per tile to effective demand so sprawling territories
 are genuinely costlier for the solver.
 
 ```java
@@ -108,17 +101,14 @@ for (int i = 0; i < nConnected; i++)
     effectiveScaledDemand[i] = scaledDemand[i] + overheadPerTile;
 ```
 
-`daTargetLoad` also shifts to include overhead: `effectiveTotalDemand / K` where
-`effectiveTotalDemand = totalDemandMinutes + nConnected × INTER_TILE_TRAVEL_MIN`.
-
-### 2.4 New seed selection: furthest-first geographic (replaces top-K demand)
+### 2.4 Geographic furthest-first seed selection (replaces top-K demand)
 
 Old: seeds were the K highest-demand tiles — all could be in the same dense area.
 
 New: furthest-first (k-means++ style). Start from the tile nearest the bounding-box center,
 then pick each next seed as the tile that maximizes minimum distance to all existing seeds.
-Returns a `SeedResult` record that also carries `tileRows[]` and `tileCols[]` arrays (reused
-for the objective penalty and warm-start).
+Returns a `SeedResult` record carrying `tileRows[]` and `tileCols[]` arrays (reused for the
+objective penalty and warm-start).
 
 ```java
 private record SeedResult(int[] seeds, int[] tileRows, int[] tileCols) {}
@@ -130,13 +120,11 @@ private SeedResult computeSeedIndices(List<TileDemandSnapshot> demand, Map<UUID,
 Old: hard contiguity was enforced via iterative lazy cuts (up to 10 rounds of re-solve).
 
 New: soft distance penalty added to the objective. For each tile `i` and DA `k`:
-`penalty = β × dist(tile_i, seed_k) × b[i][k]` where `β = DIST_PENALTY_SCALE = 700L` (scaled
-as demand units). This discourages assigning distant tiles to a DA, naturally producing compact
-territories without any flow constraint or re-solve loop.
+`penalty = β × dist(tile_i, seed_k) × b[i][k]` where `β = DIST_PENALTY_SCALE = 700L`.
+This discourages assigning distant tiles to a DA, naturally producing compact territories.
 
 ```java
 private static final long DIST_PENALTY_SCALE = 700L;
-// In trySolve():
 var objExpr = LinearExpr.newBuilder().add(maxLoad).addTerm(minLoad, -1L);
 for (int i = 0; i < nTiles; i++) {
     for (int k = 0; k < K; k++) {
@@ -151,56 +139,35 @@ model.minimize(objExpr);
 
 ### 2.6 Voronoi warm-start hint
 
-Before calling `solver.solve()`, hint each tile to its nearest seed (pure geometric Voronoi).
-This gives CP-SAT a good initial feasible solution and cuts wall-clock time.
+Before calling `solver.solve()`, each tile is hinted to its nearest seed (pure geometric Voronoi).
+Gives CP-SAT a good initial feasible solution and cuts wall-clock time.
 
-```java
-for (int i = 0; i < nTiles; i++) {
-    int nearestK = /* argmin over k of dist(tile_i, seed_k) */;
-    for (int k = 0; k < K; k++) model.addHint(b[i][k], k == nearestK ? 1 : 0);
-}
-```
-
-### 2.7 Phase 2: BFS connectivity repair (new method `repairConnectivity`)
+### 2.7 Phase 2: BFS connectivity repair (`repairConnectivity`)
 
 After CP-SAT returns, the distance penalty greatly reduces disconnected territories but doesn't
-guarantee zero. Phase 2 repairs any remaining disconnections.
+guarantee zero. Phase 2 repairs remaining disconnections:
 
-**Algorithm:**
-1. BFS from each DA's seed through tiles currently in its territory. Record which tiles are
-   reachable (`reachable[k][t]`).
-2. Collect all tiles that are in a DA's territory but not reachable from its seed.
-3. For each disconnected tile `t` (currently in DA `fromDA`): find a neighbor DA `j` such that
-   the neighbor tile through which `t` connects to `j` is itself reachable from `j`'s seed.
-   Among valid candidate DAs, pick the one with the most remaining capacity.
-4. Repeat until no disconnected tiles remain or no progress is made (stuck island).
-
-This guarantees the reassignment produces a provably connected territory, not just shifts the
-disconnection somewhere else.
-
-```java
-private Map<Integer, List<Integer>> repairConnectivity(
-        Map<Integer, List<Integer>> territories, List<UUID> tileIds,
-        Map<UUID, List<UUID>> adjacencyGraph, Map<UUID, Integer> tileIndexMap,
-        int[] seedIndices, long[] scaledDemand, long daCapacityScaled, int nTiles, int K)
-```
+1. BFS from each DA's seed through its current territory. Record which tiles are reachable.
+2. Collect tiles in a DA's territory but not reachable from its seed.
+3. For each disconnected tile: find a neighbor DA whose entry tile is reachable from that DA's seed.
+   Among valid candidates, pick the DA with the most remaining capacity.
+4. Repeat until no disconnected tiles remain or no progress is made.
 
 ### 2.8 Isolated tile stapling (post-solve)
 
-After the repair step, attach each isolated tile to the DA whose seed is geographically nearest
-(Euclidean distance in row/col space). These tiles are appended to the combined tile list and
-included in `persistProposal`.
+After the repair step, each isolated tile is attached to the DA whose seed is geographically
+nearest (Euclidean distance in row/col space).
 
 ### 2.9 estimatedDemandMin includes travel overhead
 
-In `persistProposal`, the region's `estimatedDemandMin` now adds `nTiles × INTER_TILE_TRAVEL_MIN`
-to the raw demand sum (consistent with how `daTargetLoad` was computed).
+In `persistProposal`, the region's `estimatedDemandMin` adds `nTiles × INTER_TILE_TRAVEL_MIN`
+to the raw demand sum, consistent with how `daTargetLoad` was computed.
 
 ### 2.10 Removed constants/methods
 
 - `MAX_LAZY_CUT_ROUNDS = 10` — removed (lazy-cut loop gone)
 - Old `computeSeedIndices(long[] scaledDemand, int K)` — replaced by geographic version
-- Log format: `"gap={:.1f}%"` → `"gap={}%"` (Java String.format placeholder, not SLF4J)
+- Log format: `"gap={:.1f}%"` → `"gap={}%"` (fix: Java SLF4J uses `{}`, not `{:.1f}`)
 
 ---
 
@@ -208,18 +175,13 @@ to the raw demand sum (consistent with how `daTargetLoad` was computed).
 
 ### 3.1 Extract M4 queries to `M4DataLoader`
 
-The 4 private query methods (`loadServiceTimeMins`, `loadInterStopTravelMins`, `loadCurrentOrders`,
-`loadHistAvgOrders`) are moved out of `DemandScoringServiceImpl` into a new package-private
-`@Service` class `M4DataLoader`.
+The 4 private query methods were moved into a new package-private `@Service` class `M4DataLoader`.
+Each method carries `@Transactional(propagation = Propagation.REQUIRES_NEW)` — this is the key
+fix: when `shipment_leg_events` doesn't exist, the inner transaction rolls back by itself without
+corrupting the outer transaction (previously caused `UnexpectedRollbackException`).
 
-Each method in `M4DataLoader` carries `@Transactional(propagation = Propagation.REQUIRES_NEW)`.
-This is the key fix: when `shipment_leg_events` doesn't exist, the inner REQUIRES_NEW transaction
-rolls back by itself without corrupting the outer `DemandScoringServiceImpl` transaction.
-Previously, the outer transaction was also getting marked rollback-only, causing
-`UnexpectedRollbackException` to bubble up.
+`EntityManager entityManager` was replaced with `M4DataLoader m4`. Call sites:
 
-Replace the `EntityManager entityManager` field/constructor arg in `DemandScoringServiceImpl` with
-`M4DataLoader m4`. Call sites become:
 ```java
 Map<UUID, Double> serviceTimeMins = safeCall(() -> m4.loadServiceTimeMins(properties.getBootstrap().getMinPickupsForRealData()), Map.of());
 Map<UUID, Double> interStopTravelMins = safeCall(() -> m4.loadInterStopTravelMins(properties.getSolver().getMinInterStopPairsPerWindow()), Map.of());
@@ -229,9 +191,9 @@ Map<UUID, Double> histAvgOrders = safeCall(() -> m4.loadHistAvgOrders(date), Map
 
 ### 3.2 Snapshot existence check
 
-At the top of `computeDemandSnapshots`, before running any queries, check if all active tiles
-already have demand snapshots for the requested date. If yes, return them immediately. This
-preserves any manual demand overrides and avoids redundant recomputation on same-day reruns.
+At the top of `computeDemandSnapshots`, before any queries run, checks if all active tiles already
+have demand snapshots for the requested date. If yes, returns immediately — preserves manual
+demand overrides and avoids redundant recomputation on same-day reruns.
 
 ```java
 Set<UUID> activeTileIds = activeTiles.stream().map(Tile::getId).collect(Collectors.toSet());
@@ -243,13 +205,9 @@ if (existingByTile.keySet().containsAll(activeTileIds)) {
 }
 ```
 
-Note the `(a, b) -> b` merge function in `toMap` — deduplicates in case of multiple snapshots
-per tile (possible from manual demo inserts).
+The `(a, b) -> b` merge function deduplicates in case of multiple snapshots per tile.
 
 ### 3.3 safeCall wrapper
-
-Add a private helper to `DemandScoringServiceImpl` that catches any exception from an M4DataLoader
-call and returns the fallback instead:
 
 ```java
 private <T> T safeCall(Supplier<T> fn, T fallback) {
@@ -265,11 +223,8 @@ private <T> T safeCall(Supplier<T> fn, T fallback) {
 
 ## 4. M4DataLoader — New Class
 
-New package-private `@Service` class in `com.oneday.grid.service.impl`.
-
-Wraps the 4 native SQL queries that query M4's `shipment_leg_events` table, each in its own
-`REQUIRES_NEW` transaction. Methods accept threshold params instead of reading from properties
-internally (easier to test).
+New package-private `@Service` in `com.oneday.grid.service.impl`. Wraps 4 native SQL queries that
+query M4's `shipment_leg_events` table, each in its own `REQUIRES_NEW` transaction.
 
 ```java
 @Service
@@ -294,60 +249,110 @@ SQL bodies are identical to what was in `DemandScoringServiceImpl` before.
 
 ## 5. BalancedBfsAssignmentServiceImpl — New Class
 
-468-line new `@Service` (`@Qualifier("balancedBfsAssignmentService")`). A third solver variant
-between plain BFS and CP-SAT:
+`@Service` (`@Qualifier("balancedBfsAssignmentService")`). A third solver variant between plain
+BFS and CP-SAT:
 
 **Algorithm:**
-1. BFS initial partition — same greedy expansion as `BfsAssignmentServiceImpl` to get K starting
-   territories.
-2. Local swap refinement — up to `MAX_SWAP_PASSES = 300` passes where boundary tiles are
-   considered for reassignment between adjacent DA territories if the swap reduces load imbalance.
+1. Competitive flooding — all K seeds expand simultaneously (via a `PriorityQueue` ordered by
+   remaining capacity); the DA with the most remaining capacity expands first each round.
+2. Boundary swap refinement — up to `MAX_SWAP_PASSES = 300` passes where border tiles are moved
+   to adjacent DA territories if the swap reduces load imbalance. Donor connectivity is verified
+   via BFS from seed before each swap is accepted.
 
-Use case: when CP-SAT is overkill (small K or time-sensitive) but plain BFS produces visibly
-unbalanced territories. The `GridReplanServiceImpl` `@Qualifier` still points at CP-SAT as the
-primary solver; this class is available but not yet wired in as default.
+Seed selection uses BFS graph-distance furthest-first (not geometric Euclidean like CP-SAT).
+
+The `GridReplanServiceImpl` `@Qualifier` still points at CP-SAT as the primary solver. This class
+is available but not yet wired in as default.
 
 ---
 
 ## 6. Supporting Changes
 
 ### `SolverType.java`
-Add `BALANCED_BFS` to the enum:
+
 ```java
 public enum SolverType { CP_SAT, BFS_FALLBACK, BALANCED_BFS, MANUAL }
 ```
 
 ### `AssignmentProposal.java`
-Add Hibernate JSON type hint on `understaffedTileIds` to avoid serialization warnings on JSONB
-columns:
+
+Hibernate JSON type hint to avoid serialization warnings on the JSONB column:
+
 ```java
 @JdbcTypeCode(SqlTypes.JSON)
 @Column(name = "understaffed_tile_ids", columnDefinition = "jsonb")
 private String understaffedTileIds;
 ```
-Imports: `org.hibernate.annotations.JdbcTypeCode`, `org.hibernate.type.SqlTypes`.
+
+Imports added: `org.hibernate.annotations.JdbcTypeCode`, `org.hibernate.type.SqlTypes`.
 
 ### `DaTileAssignmentRepository.java`
-Add two new query methods:
+
 ```java
-// Single tile, multiple statuses (e.g. tile detail panel)
 List<DaTileAssignment> findByTileIdAndValidDateAndStatusIn(
         UUID tileId, LocalDate validDate, Collection<AssignmentStatus> statuses);
 
-// City-scoped, multiple statuses (e.g. APPROVED + ACTIVE both count as "live")
 List<DaTileAssignment> findByTileIdInAndValidDateAndStatusIn(
         Collection<UUID> tileIds, LocalDate validDate, Collection<AssignmentStatus> statuses);
 ```
 
 ### `GridProperties.java`
+
 Solver time limit: `timeLimitSeconds = 60` → `timeLimitSeconds = 45`.
 
 ### `GridReplanServiceImpl.java`
+
 Cosmetic rename: field `cpSatAssignmentService` → `assignmentService`. No behavior change.
 
 ---
 
-## What NOT to port
+## 7. Test Changes Required During Migration
+
+Three test files required updates to compile and pass after the logic changes:
+
+### 7.1 `CpSatAssignmentServiceImplTest` — new `TileRepository` dependency
+
+**Error:** Constructor mismatch — `CpSatAssignmentServiceImpl` gained a `TileRepository` param.
+
+**Fix:**
+- Added `@Mock TileRepository tileRepository;` field
+- Added `import com.oneday.grid.repository.TileRepository;`
+- Updated constructor call to include `tileRepository` as the 4th arg
+
+### 7.2 `DemandScoringServiceImplTest` — `EntityManager` → `M4DataLoader` mock
+
+**Error:** `incompatible types: EntityManager cannot be converted to M4DataLoader`
+
+**Fix:** Complete test rewrite. Replaced `@Mock EntityManager entityManager` with
+`@Mock M4DataLoader m4`. Removed `Query`/`jakarta.persistence.EntityManager` imports and the
+`queryReturning()`/`stubQueries()` helpers. Added `stubM4()`:
+
+```java
+private void stubM4(Map<UUID, Double> svcData, Map<UUID, Double> interData,
+                    Map<UUID, Integer> currentData, Map<UUID, Double> histData) {
+    lenient().when(m4.loadServiceTimeMins(anyInt())).thenReturn(svcData);
+    lenient().when(m4.loadInterStopTravelMins(anyInt())).thenReturn(interData);
+    lenient().when(m4.loadCurrentOrders(date)).thenReturn(currentData);
+    lenient().when(m4.loadHistAvgOrders(date)).thenReturn(histData);
+}
+```
+
+The `noActiveTiles` test no longer stubs M4 (early return from snapshot check prevents those
+calls). The `queryThrows` test now stubs M4 methods to throw directly instead of stubbing
+`EntityManager` query chains.
+
+### 7.3 `BfsAssignmentServiceImplTest` — test was asserting a bug, not correct behavior
+
+**Error:** `Expected size: 1 but was: 2` — test `secondTileExceedsMaxLoad_tileIsUnderstaffed`
+was asserting that the old hard-ceiling behavior prevented a second tile from being assigned when
+load would exceed `daMaxLoad`. The hard ceiling was intentionally removed as a bug fix.
+
+**Fix:** Renamed test to `singleDa_twoadjacentTiles_bothAssigned`. Updated assertions to
+expect both tiles assigned and `coveragePct = 100.0` (correct post-fix behavior).
+
+---
+
+## What Was NOT Ported (Demo-Only)
 
 | File | Reason |
 |------|--------|
@@ -360,4 +365,12 @@ Cosmetic rename: field `cpSatAssignmentService` → `assignmentService`. No beha
 | `application.yml` changes | Demo DB URL / cors overrides |
 | `delhi.yaml` changes | Demo serviceability config tweaks |
 | `demo-ui/` | Entire React frontend |
-| `M4DataLoader` test changes | Demo-specific test setup; keep existing unit tests |
+
+### Tests still only in `f-M3-demo`
+
+| Test | Status |
+|------|--------|
+| `BalancedBfsConvergenceTest.java` | Integration/convergence test for `BalancedBfsAssignmentServiceImpl`. Port separately when Phase 9 integration tests are added. |
+| `CpSatLazyCutConvergenceTest.java` | Tests the old lazy-cut architecture that was removed. No longer relevant; do not port. |
+| `GridControllerTest.java` updates | Demo-specific controller test changes. |
+| `GridTestApplication.java` updates | Demo test runner changes. |
