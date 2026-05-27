@@ -30,7 +30,7 @@ public class GridProperties {
 
     @Data
     public static class Solver {
-        private int timeLimitSeconds = 60;
+        private int timeLimitSeconds = 45;
         private double loadTolerance = 0.30;
         private int minInterStopPairsPerWindow = 5;
     }

@@ -118,14 +118,15 @@ class BfsAssignmentServiceImplTest {
                 .allMatch(a -> a.getStatus() == AssignmentStatus.PROPOSED);
     }
 
-    // ---- max-load ceiling hard constraint ----------------------------------
+    // ---- dynamic target load: all tiles partitioned even when total > shift capacity ----
 
     @Test
-    void secondTileExceedsMaxLoad_tileIsUnderstaffed() {
+    void singleDa_twoadjacentTiles_bothAssigned() {
+        // daTargetLoad = totalDemand / K = 800 / 1 = 800.
+        // No hard ceiling — BFS assigns until load >= target, so both tiles are assigned.
         UUID daId = UUID.randomUUID();
         UUID tA = UUID.randomUUID();
         UUID tB = UUID.randomUUID();
-        // A=500 assigned fine (500 < 702). B would make 800 > 702 → skipped.
         Map<UUID, List<UUID>> adj = Map.of(tA, List.of(tB), tB, List.of(tA));
 
         AssignmentProposal proposal = service.computeProposal(cityId, date,
@@ -134,11 +135,9 @@ class BfsAssignmentServiceImplTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<DaTileAssignment>> assignCaptor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(assignCaptor.capture());
-        // Only A is assigned; B is understaffed
-        assertThat(assignCaptor.getValue()).hasSize(1);
-        assertThat(assignCaptor.getValue().get(0).getTileId()).isEqualTo(tA);
-        // Coverage = 1/2 = 50%
-        assertThat(proposal.getCoveragePct()).isEqualTo(50.0);
+        // Both tiles assigned to the single DA
+        assertThat(assignCaptor.getValue()).hasSize(2);
+        assertThat(proposal.getCoveragePct()).isEqualTo(100.0);
     }
 
     // ---- contiguity: asymmetric graph discards non-adjacent tile ----------

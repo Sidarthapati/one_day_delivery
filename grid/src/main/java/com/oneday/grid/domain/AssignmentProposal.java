@@ -6,7 +6,9 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -63,6 +65,7 @@ public class AssignmentProposal {
     private Double coveragePct;
 
     // JSON array of tile UUID strings for tiles where K_available < K_needed
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "understaffed_tile_ids", columnDefinition = "jsonb")
     private String understaffedTileIds;
 

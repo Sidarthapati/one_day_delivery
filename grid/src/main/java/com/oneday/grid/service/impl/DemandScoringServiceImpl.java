@@ -8,7 +8,6 @@ import com.oneday.grid.repository.TileDemandSnapshotRepository;
 import com.oneday.grid.repository.TileRepository;
 import com.oneday.grid.service.DemandScoringService;
 import com.oneday.grid.service.GridService;
-import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -16,10 +15,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 @Service
 public class DemandScoringServiceImpl implements DemandScoringService {
@@ -30,18 +31,18 @@ public class DemandScoringServiceImpl implements DemandScoringService {
     private final TileRepository tileRepository;
     private final TileDemandSnapshotRepository snapshotRepository;
     private final GridProperties properties;
-    private final EntityManager entityManager;
+    private final M4DataLoader m4;
 
     DemandScoringServiceImpl(GridService gridService,
                              TileRepository tileRepository,
                              TileDemandSnapshotRepository snapshotRepository,
                              GridProperties properties,
-                             EntityManager entityManager) {
+                             M4DataLoader m4) {
         this.gridService = gridService;
         this.tileRepository = tileRepository;
         this.snapshotRepository = snapshotRepository;
         this.properties = properties;
-        this.entityManager = entityManager;
+        this.m4 = m4;
     }
 
     @Override
@@ -50,10 +51,27 @@ public class DemandScoringServiceImpl implements DemandScoringService {
         Grid grid = gridService.getGrid(cityId);
         List<Tile> activeTiles = tileRepository.findByGridIdAndActiveTrue(grid.getId());
 
-        Map<UUID, Double> serviceTimeMins = loadServiceTimeMins();
-        Map<UUID, Double> interStopTravelMins = loadInterStopTravelMins();
-        Map<UUID, Integer> currentOrders = loadCurrentOrders(date);
-        Map<UUID, Double> histAvgOrders = loadHistAvgOrders(date);
+        // If snapshots already exist for all active tiles for this date, return them as-is.
+        // This preserves manual demand overrides made via the demo endpoint.
+        // Deduplicate by tileId so that manual overrides (delete+insert) don't break the check.
+        Set<UUID> activeTileIds = activeTiles.stream().map(Tile::getId).collect(Collectors.toSet());
+        Map<UUID, TileDemandSnapshot> existingByTile = snapshotRepository.findBySnapshotDate(date).stream()
+                .filter(s -> activeTileIds.contains(s.getTileId()))
+                .collect(Collectors.toMap(TileDemandSnapshot::getTileId, s -> s, (a, b) -> b));
+        if (existingByTile.keySet().containsAll(activeTileIds)) {
+            log.info("Demand snapshots already present for cityId={} date={} — skipping recomputation", cityId, date);
+            return new ArrayList<>(existingByTile.values());
+        }
+
+        // M4 queries run in their own REQUIRES_NEW transactions. The inner catch in
+        // M4DataLoader intercepts the SQL error, but Hibernate still marks the REQUIRES_NEW
+        // transaction as rollback-only, so Spring throws UnexpectedRollbackException when it
+        // tries to commit that inner transaction. We catch it here so the outer transaction
+        // is not affected.
+        Map<UUID, Double> serviceTimeMins = safeCall(() -> m4.loadServiceTimeMins(properties.getBootstrap().getMinPickupsForRealData()), Map.of());
+        Map<UUID, Double> interStopTravelMins = safeCall(() -> m4.loadInterStopTravelMins(properties.getSolver().getMinInterStopPairsPerWindow()), Map.of());
+        Map<UUID, Integer> currentOrders = safeCall(() -> m4.loadCurrentOrders(date), Map.of());
+        Map<UUID, Double> histAvgOrders = safeCall(() -> m4.loadHistAvgOrders(date), Map.of());
 
         double cityWideSvcTime = cityWideAvg(serviceTimeMins, properties.getBootstrap().getServiceTimeMin());
         double cityWideInterStop = cityWideAvg(interStopTravelMins, properties.getBootstrap().getInterStopTravelMin());
@@ -96,121 +114,17 @@ public class DemandScoringServiceImpl implements DemandScoringService {
         return snapshotRepository.saveAll(snapshots);
     }
 
-    // service_time_min per tile: avg(pickup_completed_at - arrived_at_pickup) for tiles
-    // with >= minPickups samples in the last 7 days.
-    @SuppressWarnings("unchecked")
-    private Map<UUID, Double> loadServiceTimeMins() {
-        try {
-            List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT tile_id,
-                           AVG(EXTRACT(EPOCH FROM (pickup_completed_at - arrived_at_pickup))/60.0)
-                    FROM shipment_leg_events
-                    WHERE arrived_at_pickup IS NOT NULL
-                      AND pickup_completed_at IS NOT NULL
-                      AND created_at >= now() - interval '7 days'
-                    GROUP BY tile_id
-                    HAVING COUNT(*) >= :minPickups
-                    """)
-                    .setParameter("minPickups", properties.getBootstrap().getMinPickupsForRealData())
-                    .getResultList();
-            Map<UUID, Double> result = new HashMap<>();
-            for (Object[] row : rows) {
-                result.put(UUID.fromString(row[0].toString()), ((Number) row[1]).doubleValue());
-            }
-            return result;
-        } catch (Exception e) {
-            log.debug("M4 service_time data unavailable (expected before M4 launch): {}", e.getMessage());
-            return Map.of();
-        }
-    }
-
-    // inter_stop_travel_min per tile: avg time between consecutive same-DA same-tile pickups,
-    // winsorised at traversal_cap_sec to remove detour outliers.
-    @SuppressWarnings("unchecked")
-    private Map<UUID, Double> loadInterStopTravelMins() {
-        try {
-            List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT e2.tile_id,
-                           AVG(LEAST(
-                               EXTRACT(EPOCH FROM (e2.arrived_at_pickup - e1.pickup_completed_at))/60.0,
-                               COALESCE(t.traversal_cap_sec, 600) / 60.0
-                           ))
-                    FROM shipment_leg_events e1
-                    JOIN shipment_leg_events e2
-                        ON e1.da_id        = e2.da_id
-                       AND e1.shift_date   = e2.shift_date
-                       AND e1.tile_id      = e2.tile_id
-                       AND e2.stop_sequence = e1.stop_sequence + 1
-                    JOIN tile t ON t.id = e2.tile_id
-                    WHERE e1.created_at >= now() - interval '7 days'
-                      AND e2.arrived_at_pickup > e1.pickup_completed_at
-                    GROUP BY e2.tile_id
-                    HAVING COUNT(*) >= :minPairs
-                    """)
-                    .setParameter("minPairs", properties.getSolver().getMinInterStopPairsPerWindow())
-                    .getResultList();
-            Map<UUID, Double> result = new HashMap<>();
-            for (Object[] row : rows) {
-                result.put(UUID.fromString(row[0].toString()), ((Number) row[1]).doubleValue());
-            }
-            return result;
-        } catch (Exception e) {
-            log.debug("M4 inter_stop_travel data unavailable: {}", e.getMessage());
-            return Map.of();
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<UUID, Integer> loadCurrentOrders(LocalDate date) {
-        try {
-            List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT tile_id, COUNT(*)
-                    FROM shipment_leg_events
-                    WHERE shift_date = :date
-                    GROUP BY tile_id
-                    """)
-                    .setParameter("date", date)
-                    .getResultList();
-            Map<UUID, Integer> result = new HashMap<>();
-            for (Object[] row : rows) {
-                result.put(UUID.fromString(row[0].toString()), ((Number) row[1]).intValue());
-            }
-            return result;
-        } catch (Exception e) {
-            log.debug("M4 current orders unavailable: {}", e.getMessage());
-            return Map.of();
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<UUID, Double> loadHistAvgOrders(LocalDate date) {
-        try {
-            List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT tile_id, AVG(daily_count)
-                    FROM (
-                        SELECT tile_id, shift_date, COUNT(*) AS daily_count
-                        FROM shipment_leg_events
-                        WHERE shift_date >= :startDate AND shift_date < :date
-                        GROUP BY tile_id, shift_date
-                    ) daily
-                    GROUP BY tile_id
-                    """)
-                    .setParameter("startDate", date.minusDays(7))
-                    .setParameter("date", date)
-                    .getResultList();
-            Map<UUID, Double> result = new HashMap<>();
-            for (Object[] row : rows) {
-                result.put(UUID.fromString(row[0].toString()), ((Number) row[1]).doubleValue());
-            }
-            return result;
-        } catch (Exception e) {
-            log.debug("M4 historical order data unavailable: {}", e.getMessage());
-            return Map.of();
-        }
-    }
-
     private double cityWideAvg(Map<UUID, Double> values, double bootstrapDefault) {
         if (values.isEmpty()) return bootstrapDefault;
         return values.values().stream().mapToDouble(Double::doubleValue).average().orElse(bootstrapDefault);
+    }
+
+    private <T> T safeCall(Supplier<T> fn, T fallback) {
+        try {
+            return fn.get();
+        } catch (Exception e) {
+            log.debug("M4 data loader failed (treating as unavailable): {}", e.getMessage());
+            return fallback;
+        }
     }
 }

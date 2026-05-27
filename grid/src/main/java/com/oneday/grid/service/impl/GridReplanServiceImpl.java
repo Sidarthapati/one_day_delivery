@@ -43,7 +43,7 @@ class GridReplanServiceImpl implements GridReplanService {
     private final TileRepository tileRepository;
     private final TileTravelTimeRepository travelTimeRepository;
     private final DemandScoringService demandScoringService;
-    private final AssignmentService cpSatAssignmentService;
+    private final AssignmentService assignmentService;
     private final AssignmentProposalRepository proposalRepository;
     private final ProposalService proposalService;
     private final GridProperties properties;
@@ -52,7 +52,7 @@ class GridReplanServiceImpl implements GridReplanService {
                           TileRepository tileRepository,
                           TileTravelTimeRepository travelTimeRepository,
                           DemandScoringService demandScoringService,
-                          @Qualifier("cpSatAssignmentService") AssignmentService cpSatAssignmentService,
+                          @Qualifier("cpSatAssignmentService") AssignmentService assignmentService,
                           AssignmentProposalRepository proposalRepository,
                           ProposalService proposalService,
                           GridProperties properties) {
@@ -60,7 +60,7 @@ class GridReplanServiceImpl implements GridReplanService {
         this.tileRepository = tileRepository;
         this.travelTimeRepository = travelTimeRepository;
         this.demandScoringService = demandScoringService;
-        this.cpSatAssignmentService = cpSatAssignmentService;
+        this.assignmentService = assignmentService;
         this.proposalRepository = proposalRepository;
         this.proposalService = proposalService;
         this.properties = properties;
@@ -92,7 +92,7 @@ class GridReplanServiceImpl implements GridReplanService {
             log.warn("COMPONENT_C: {} tiles exceed DA_max_load — multi-DA splitting deferred", multiDaTiles);
         }
 
-        AssignmentProposal proposal = cpSatAssignmentService.computeProposal(
+        AssignmentProposal proposal = assignmentService.computeProposal(
                 cityId, validForDate, demand, adjacencyGraph, daIds);
 
         if (adjacencySource == AdjacencySource.GEOMETRIC_FALLBACK

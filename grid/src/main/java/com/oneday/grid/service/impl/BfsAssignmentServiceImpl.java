@@ -69,11 +69,16 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
                 .collect(Collectors.toMap(TileDemandSnapshot::getTileId, TileDemandSnapshot::isBootstrapped));
 
         int shiftMin = (properties.getShift().getEndHour() - properties.getShift().getStartHour()) * 60;
-        double daMaxLoad = shiftMin * properties.getDa().getMaxUtilisation();
-        double daTargetLoad = shiftMin * properties.getDa().getTargetUtilisation();
+        double daCapacity = shiftMin * properties.getDa().getTargetUtilisation();
 
         Set<UUID> unassigned = new HashSet<>(demandMap.keySet());
         int K = availableDaIds.size();
+
+        // Use actual average demand per DA so BFS partitions all tiles, not just center tiles.
+        // When total demand > K × shift capacity (common with seed data), using shift capacity
+        // as the target causes BFS to stop after 2-3 high-demand tiles and leave most tiles unassigned.
+        double totalDemandMinutes = demandMap.values().stream().mapToDouble(Double::doubleValue).sum();
+        double daTargetLoad = totalDemandMinutes > 0 ? totalDemandMinutes / K : daCapacity;
 
         // da_id → list of tile_ids in territory
         Map<UUID, List<UUID>> territories = new LinkedHashMap<>();
@@ -109,8 +114,6 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
                 }
 
                 double tileLoad = demandMap.getOrDefault(tile, 0.0);
-                // Enforce hard ceiling — only skip if territory is already non-empty
-                if (!territory.isEmpty() && load + tileLoad > daMaxLoad) continue;
 
                 territory.add(tile);
                 unassigned.remove(tile);
@@ -165,7 +168,7 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
                     .daId(daId)
                     .nDasRequired(1)
                     .estimatedDemandMin(totalDemand)
-                    .estimatedUtilPct(totalDemand / daTargetLoad)
+                    .estimatedUtilPct(totalDemand / daCapacity)
                     .hasBootstrappedTiles(hasBootstrapped)
                     .build());
 

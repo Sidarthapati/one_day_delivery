@@ -7,8 +7,6 @@ import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.repository.TileDemandSnapshotRepository;
 import com.oneday.grid.repository.TileRepository;
 import com.oneday.grid.service.GridService;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.Query;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,14 +16,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -34,7 +31,7 @@ class DemandScoringServiceImplTest {
     @Mock GridService gridService;
     @Mock TileRepository tileRepository;
     @Mock TileDemandSnapshotRepository snapshotRepository;
-    @Mock EntityManager entityManager;
+    @Mock M4DataLoader m4;
     // Grid extends BaseEntity (id is read-only), so we mock it as a @Mock field
     @Mock Grid grid;
 
@@ -52,7 +49,7 @@ class DemandScoringServiceImplTest {
         lenient().when(snapshotRepository.saveAll(any()))
                 .thenAnswer(inv -> inv.getArgument(0));
         service = new DemandScoringServiceImpl(gridService, tileRepository,
-                snapshotRepository, properties, entityManager);
+                snapshotRepository, properties, m4);
     }
 
     // ---- helpers ----------------------------------------------------------
@@ -64,43 +61,13 @@ class DemandScoringServiceImplTest {
         return t;
     }
 
-    /** Returns a mock Query whose chain (.setParameter().getResultList()) yields {@code rows}. */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private Query queryReturning(List<Object[]> rows) {
-        Query q = mock(Query.class);
-        lenient().when(q.setParameter(anyString(), any())).thenReturn(q);
-        lenient().when(q.getResultList()).thenReturn((List) rows);
-        return q;
-    }
-
-    /** Stub the four native queries used by the service, matched by a distinctive SQL substring. */
-    private void stubQueries(List<Object[]> svcRows,
-                             List<Object[]> interRows,
-                             List<Object[]> currentRows,
-                             List<Object[]> histRows) {
-        // Build Query mocks first so the nested stubbing doesn't interleave with the outer when().
-        Query svcQ = queryReturning(svcRows);
-        Query interQ = queryReturning(interRows);
-        Query currentQ = queryReturning(currentRows);
-        Query histQ = queryReturning(histRows);
-
-        lenient().when(entityManager.createNativeQuery(argThat((String s) ->
-                s != null && s.contains("pickup_completed_at - arrived_at_pickup")
-                          && !s.contains("e1.pickup_completed_at"))))
-                .thenReturn(svcQ);
-        lenient().when(entityManager.createNativeQuery(argThat((String s) ->
-                s != null && s.contains("e1.pickup_completed_at"))))
-                .thenReturn(interQ);
-        lenient().when(entityManager.createNativeQuery(argThat((String s) ->
-                s != null && s.contains("WHERE shift_date = :date"))))
-                .thenReturn(currentQ);
-        lenient().when(entityManager.createNativeQuery(argThat((String s) ->
-                s != null && s.contains("AVG(daily_count)"))))
-                .thenReturn(histQ);
-    }
-
-    private static List<Object[]> rows(Object[]... rs) {
-        return List.of(rs);
+    /** Stubs the four M4DataLoader methods with the given per-tile data maps. */
+    private void stubM4(Map<UUID, Double> svcData, Map<UUID, Double> interData,
+                        Map<UUID, Integer> currentData, Map<UUID, Double> histData) {
+        lenient().when(m4.loadServiceTimeMins(anyInt())).thenReturn(svcData);
+        lenient().when(m4.loadInterStopTravelMins(anyInt())).thenReturn(interData);
+        lenient().when(m4.loadCurrentOrders(date)).thenReturn(currentData);
+        lenient().when(m4.loadHistAvgOrders(date)).thenReturn(histData);
     }
 
     // ---- bootstrap mode ---------------------------------------------------
@@ -109,8 +76,7 @@ class DemandScoringServiceImplTest {
     void computeAndPersistDemand_allM4DataMissing_runsInFullBootstrapMode() {
         UUID tileId = UUID.randomUUID();
         when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile(tileId)));
-        // All four queries return empty result lists → bootstrap defaults apply.
-        stubQueries(List.of(), List.of(), List.of(), List.of());
+        stubM4(Map.of(), Map.of(), Map.of(), Map.of());
 
         List<TileDemandSnapshot> snapshots = service.computeAndPersistDemand(cityId, date);
 
@@ -118,7 +84,7 @@ class DemandScoringServiceImplTest {
         TileDemandSnapshot snap = snapshots.get(0);
         assertThat(snap.getTileId()).isEqualTo(tileId);
         assertThat(snap.getSnapshotDate()).isEqualTo(date);
-        assertThat(snap.getServiceTimeMin()).isEqualTo(12.0);   // bootstrap default
+        assertThat(snap.getServiceTimeMin()).isEqualTo(12.0);    // bootstrap default
         assertThat(snap.getInterStopTravelMin()).isEqualTo(5.0); // bootstrap default
         assertThat(snap.getOrderEngagedMin()).isEqualTo(17.0);
         assertThat(snap.getHistAvgOrders()).isEqualTo(0.0);
@@ -132,9 +98,11 @@ class DemandScoringServiceImplTest {
     void computeAndPersistDemand_queryThrows_fallsBackToBootstrap() {
         UUID tileId = UUID.randomUUID();
         when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile(tileId)));
-        // Simulate every native query blowing up (e.g. table doesn't exist pre-M4).
-        when(entityManager.createNativeQuery(anyString()))
-                .thenThrow(new RuntimeException("relation does not exist"));
+        // Simulate every M4DataLoader method blowing up (e.g. table doesn't exist pre-M4).
+        when(m4.loadServiceTimeMins(anyInt())).thenThrow(new RuntimeException("relation does not exist"));
+        when(m4.loadInterStopTravelMins(anyInt())).thenThrow(new RuntimeException("relation does not exist"));
+        when(m4.loadCurrentOrders(any())).thenThrow(new RuntimeException("relation does not exist"));
+        when(m4.loadHistAvgOrders(any())).thenThrow(new RuntimeException("relation does not exist"));
 
         List<TileDemandSnapshot> snapshots = service.computeAndPersistDemand(cityId, date);
 
@@ -150,12 +118,11 @@ class DemandScoringServiceImplTest {
     void computeAndPersistDemand_realData_appliesDemandFormulas() {
         UUID tileId = UUID.randomUUID();
         when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile(tileId)));
-
-        stubQueries(
-                rows(new Object[]{tileId.toString(), 15.0}),   // svc time = 15 min
-                rows(new Object[]{tileId.toString(), 8.0}),    // inter-stop = 8 min
-                rows(new Object[]{tileId.toString(), 20}),     // current orders = 20
-                rows(new Object[]{tileId.toString(), 10.0})    // hist avg = 10
+        stubM4(
+                Map.of(tileId, 15.0),   // svc time = 15 min
+                Map.of(tileId, 8.0),    // inter-stop = 8 min
+                Map.of(tileId, 20),     // current orders = 20
+                Map.of(tileId, 10.0)    // hist avg = 10
         );
 
         List<TileDemandSnapshot> snapshots = service.computeAndPersistDemand(cityId, date);
@@ -181,12 +148,11 @@ class DemandScoringServiceImplTest {
         UUID tileB = UUID.randomUUID();
         when(tileRepository.findByGridIdAndActiveTrue(gridId))
                 .thenReturn(List.of(tile(tileA), tile(tileB)));
-
-        stubQueries(
-                rows(new Object[]{tileA.toString(), 20.0}),
-                rows(new Object[]{tileA.toString(), 6.0}),
-                List.of(),                                          // no current orders
-                rows(new Object[]{tileA.toString(), 5.0})           // only tileA has hist
+        stubM4(
+                Map.of(tileA, 20.0),
+                Map.of(tileA, 6.0),
+                Map.of(),                       // no current orders
+                Map.of(tileA, 5.0)              // only tileA has hist
         );
 
         List<TileDemandSnapshot> snapshots = service.computeAndPersistDemand(cityId, date);
@@ -213,7 +179,6 @@ class DemandScoringServiceImplTest {
     @Test
     void computeAndPersistDemand_noActiveTiles_returnsEmptyAndSavesEmpty() {
         when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of());
-        stubQueries(List.of(), List.of(), List.of(), List.of());
 
         List<TileDemandSnapshot> snapshots = service.computeAndPersistDemand(cityId, date);
 
@@ -224,11 +189,11 @@ class DemandScoringServiceImplTest {
     void computeAndPersistDemand_passesSavedSnapshotsToRepository() {
         UUID tileId = UUID.randomUUID();
         when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile(tileId)));
-        stubQueries(
-                rows(new Object[]{tileId.toString(), 10.0}),
-                rows(new Object[]{tileId.toString(), 4.0}),
-                rows(new Object[]{tileId.toString(), 5}),
-                rows(new Object[]{tileId.toString(), 8.0})
+        stubM4(
+                Map.of(tileId, 10.0),
+                Map.of(tileId, 4.0),
+                Map.of(tileId, 5),
+                Map.of(tileId, 8.0)
         );
 
         service.computeAndPersistDemand(cityId, date);
@@ -248,11 +213,11 @@ class DemandScoringServiceImplTest {
         // and reports bootstrapped=false (operational data drives the bootstrap flag).
         UUID tileId = UUID.randomUUID();
         when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile(tileId)));
-        stubQueries(
-                rows(new Object[]{tileId.toString(), 12.0}),
-                rows(new Object[]{tileId.toString(), 5.0}),
-                List.of(),
-                List.of()
+        stubM4(
+                Map.of(tileId, 12.0),
+                Map.of(tileId, 5.0),
+                Map.of(),
+                Map.of()
         );
 
         List<TileDemandSnapshot> snapshots = service.computeAndPersistDemand(cityId, date);

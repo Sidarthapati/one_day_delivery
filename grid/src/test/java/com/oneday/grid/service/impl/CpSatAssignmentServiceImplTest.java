@@ -10,6 +10,7 @@ import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
 import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.TileRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +36,7 @@ class CpSatAssignmentServiceImplTest {
     @Mock AssignmentProposalRepository proposalRepository;
     @Mock AssignmentProposalRegionRepository regionRepository;
     @Mock DaTileAssignmentRepository assignmentRepository;
+    @Mock TileRepository tileRepository;
 
     BfsAssignmentServiceImpl bfsFallback;
     GridProperties properties = new GridProperties();
@@ -48,7 +50,7 @@ class CpSatAssignmentServiceImplTest {
         // BFS fallback is mocked as a concrete class — Mockito uses CGLIB subclassing
         bfsFallback = Mockito.mock(BfsAssignmentServiceImpl.class);
         service = new CpSatAssignmentServiceImpl(proposalRepository, regionRepository,
-                assignmentRepository, bfsFallback, properties);
+                assignmentRepository, tileRepository, bfsFallback, properties);
     }
 
     private void stubPersistenceLayer() {
