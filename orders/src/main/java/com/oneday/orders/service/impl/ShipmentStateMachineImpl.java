@@ -51,7 +51,8 @@ class ShipmentStateMachineImpl implements ShipmentStateMachine {
         }
 
         shipment.setState(target);
-        shipmentRepo.save(shipment);
+        // No explicit save() — shipment is a managed entity; Hibernate dirty-checks
+        // and flushes the UPDATE automatically when the transaction commits.
 
         historyRepo.save(ShipmentStateHistory.of(shipmentId, current, target, ctx));
     }
