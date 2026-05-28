@@ -124,6 +124,27 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
             }
         }
 
+        // Mop-up: absorb any tiles stranded when the main BFS cut the graph into disconnected
+        // components. Repeat until no tile can be claimed by an adjacent territory.
+        if (!unassigned.isEmpty() && !territories.isEmpty()) {
+            boolean progress = true;
+            while (progress && !unassigned.isEmpty()) {
+                progress = false;
+                for (UUID hex : new ArrayList<>(unassigned)) {
+                    for (List<UUID> territory : territories.values()) {
+                        boolean adjacent = adjacencyGraph.getOrDefault(hex, List.of())
+                                .stream().anyMatch(territory::contains);
+                        if (adjacent) {
+                            territory.add(hex);
+                            unassigned.remove(hex);
+                            progress = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         List<UUID> understaffedHexes = new ArrayList<>(unassigned);
         if (!understaffedHexes.isEmpty()) {
             log.warn("BFS: {} hexes understaffed after assigning {} DAs", understaffedHexes.size(), K);
