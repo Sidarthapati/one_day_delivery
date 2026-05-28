@@ -55,7 +55,7 @@ class GridReplanServiceImpl implements GridReplanService {
                           HexRepository hexRepository,
                           HexTravelTimeRepository travelTimeRepository,
                           DemandScoringService demandScoringService,
-                          @Qualifier("cpSatAssignmentService") AssignmentService assignmentService,
+                          @Qualifier("balancedBfsAssignmentService") AssignmentService assignmentService,
                           AssignmentProposalRepository proposalRepository,
                           ProposalService proposalService,
                           GridProperties properties,
@@ -82,13 +82,9 @@ class GridReplanServiceImpl implements GridReplanService {
         }
 
         Grid grid = gridService.getGrid(cityId);
-        AdjacencySource adjacencySource = AdjacencySource.OSRM;
-        Map<UUID, List<UUID>> adjacencyGraph = loadAdjacencyGraph(grid);
-        if (adjacencyGraph == null) {
-            adjacencyGraph = buildGeometricAdjacency(cityId, grid);
-            adjacencySource = AdjacencySource.GEOMETRIC_FALLBACK;
-            log.warn("GEOMETRIC_FALLBACK activated for cityId={} — OSRM matrix absent or stale", cityId);
-        }
+        AdjacencySource adjacencySource = AdjacencySource.GEOMETRIC_FALLBACK;
+        Map<UUID, List<UUID>> adjacencyGraph = buildGeometricAdjacency(cityId, grid);
+        log.info("Using H3 geometric (1-ring) adjacency for cityId={}", cityId);
 
         double shiftMinutes = (properties.getShift().getEndHour() - properties.getShift().getStartHour()) * 60.0;
         double daMaxLoad = shiftMinutes * properties.getDa().getMaxUtilisation();

@@ -140,6 +140,7 @@ public class GridServiceImpl implements GridService {
                     center.lat,
                     center.lng,
                     snap != null ? snap.getDemandScoreOrders() : 0.0,
+                    snap != null ? snap.getDemandScoreMinutes() : 0.0,
                     snap != null && snap.isBootstrapped()
             );
         }).toList();

@@ -154,18 +154,9 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
         double daTargetLoad = effectiveTotalDemand > 0 ? effectiveTotalDemand / K : daCapacity;
 
         SeedResult sr = computeSeedIndices(connectedDemand, hexMap, K);
-        double loadTolerance = properties.getSolver().getLoadTolerance();
 
-        SolveResult result = null;
-        for (int attempt = 0; attempt <= MAX_INFEASIBLE_RETRIES; attempt++) {
-            if (attempt > 0) {
-                loadTolerance += 0.05;
-                log.warn("CP-SAT infeasible on attempt {}, widening load tolerance to {}", attempt, loadTolerance);
-            }
-            result = trySolve(hexIds, effectiveScaledDemand, K, daTargetLoad, loadTolerance,
-                    adjacencyGraph, hexIndexMap, sr.seeds(), sr.hexLats(), sr.hexLons());
-            if (result.status != SolveResult.Status.INFEASIBLE) break;
-        }
+        SolveResult result = trySolve(hexIds, effectiveScaledDemand, K,
+                adjacencyGraph, hexIndexMap, sr.seeds(), sr.hexLats(), sr.hexLons());
 
         if (result == null || result.territories == null) {
             log.warn("CP-SAT failed for city={} date={}, delegating to BFS", cityId, validForDate);
@@ -221,13 +212,10 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
     private record SeedResult(int[] seeds, double[] hexLats, double[] hexLons) {}
 
     private SolveResult trySolve(List<UUID> hexIds, long[] scaledDemand, int K,
-                                  double daTargetLoad, double loadTolerance,
                                   Map<UUID, List<UUID>> adjacencyGraph,
                                   Map<UUID, Integer> hexIndexMap,
                                   int[] seedIndices, double[] hexLats, double[] hexLons) {
         int nHexes = hexIds.size();
-        long scaledLb = Math.round(daTargetLoad * (1.0 - loadTolerance) * DEMAND_SCALE);
-        long scaledUb = Math.round(daTargetLoad * (1.0 + loadTolerance) * DEMAND_SCALE);
         long maxPossibleLoad = Arrays.stream(scaledDemand).sum();
 
         CpModel model = new CpModel();
@@ -250,7 +238,6 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
             var expr = LinearExpr.newBuilder();
             for (int i = 0; i < nHexes; i++) expr.addTerm(b[i][k], scaledDemand[i]);
             model.addEquality(loads[k], expr);
-            model.addLinearConstraint(loads[k], scaledLb, scaledUb);
         }
 
         // Seed positions — shared by objective penalty and warm-start hint
