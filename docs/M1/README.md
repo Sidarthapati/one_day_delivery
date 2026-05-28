@@ -91,3 +91,24 @@ PGPASSWORD=oneday psql -h localhost -U oneday -d oneday
 ```
 
 See [POSTGRES.md](./POSTGRES.md) for the full query reference and psql command cheatsheet.
+
+## 7. Code Coverage (JaCoCo)
+
+JaCoCo is wired into the root `pom.xml` — it runs automatically on every `mvn test`. No extra flags needed.
+
+```bash
+# Run tests + generate coverage report
+mvn test -pl auth
+
+# Open the HTML report in your browser
+open auth/target/site/jacoco/index.html
+```
+
+**VS Code inline gutters (recommended):**
+1. Install the **Coverage Gutters** extension (`ryanluker.vscode-coverage-gutters`)
+2. Run `mvn test -pl auth` once to generate `auth/target/site/jacoco/jacoco.xml`
+3. Open any source file — Coverage Gutters auto-detects the XML and paints green (covered) / red (uncovered) gutters line-by-line
+
+**After writing unit tests:** always run `mvn clean install -pl auth` first to confirm build + all tests pass, then check the coverage report. A test that compiles but never calls the target method will not improve coverage.
+
+**Repository interface note:** derived query methods like `findByActorIdOrderByCreatedAtDesc` appear as covered only when a test calls that method through the service. Spring Data generates the implementation at runtime; JaCoCo tracks the call correctly.
