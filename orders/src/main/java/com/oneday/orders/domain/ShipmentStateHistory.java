@@ -37,12 +37,12 @@ public class ShipmentStateHistory {
     private UUID shipmentId;
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS shipment_state)")
+    @ColumnTransformer(read = "from_state::text", write = "CAST(? AS shipment_state)")
     @Column(name = "from_state", columnDefinition = "shipment_state", updatable = false)
     private ShipmentState fromState;
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS shipment_state)")
+    @ColumnTransformer(read = "to_state::text", write = "CAST(? AS shipment_state)")
     @Column(name = "to_state", nullable = false, columnDefinition = "shipment_state", updatable = false)
     private ShipmentState toState;
 
