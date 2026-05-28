@@ -6,14 +6,16 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
 
 // Append-only. One proposal per city per date per run.
-// understaffedTileIds is stored as a JSONB array of UUID strings;
+// understaffedHexIds: JSONB array of UUID strings for hexes where K_available < K_needed;
 // the service layer serializes/deserializes with Jackson.
 @Entity
 @Table(name = "assignment_proposal")
@@ -63,8 +65,9 @@ public class AssignmentProposal {
     private Double coveragePct;
 
     // JSON array of tile UUID strings for tiles where K_available < K_needed
-    @Column(name = "understaffed_tile_ids", columnDefinition = "jsonb")
-    private String understaffedTileIds;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "understaffed_hex_ids", columnDefinition = "jsonb")
+    private String understaffedHexIds;
 
     @Column(name = "proposed_at", nullable = false, updatable = false)
     private Instant proposedAt;

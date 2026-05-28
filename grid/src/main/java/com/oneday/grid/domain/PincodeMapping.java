@@ -11,7 +11,7 @@ import org.hibernate.annotations.UuidGenerator;
 import java.util.UUID;
 
 @Entity
-@Table(name = "pincode_mapping")
+@Table(name = "h3_pincode_mapping")
 @Getter
 @Setter
 @Builder
@@ -30,9 +30,9 @@ public class PincodeMapping {
     @Column(name = "pincode", nullable = false, length = 10, updatable = false)
     private String pincode;
 
-    // Null if the pincode centroid falls outside all active tiles (edge of grid).
-    @Column(name = "tile_id")
-    private UUID tileId;
+    // Null if the pincode centroid falls outside all active hexes (edge of grid).
+    @Column(name = "hex_id")
+    private UUID hexId;
 
     @Column(name = "is_serviceable", nullable = false)
     private boolean serviceable;

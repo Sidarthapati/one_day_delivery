@@ -1,7 +1,5 @@
 city_id: "city-hyderabad"
 city_name: "Hyderabad"
-center_lat: 17.3850
-center_lon: 78.4867
 serviceable_pincodes:
   - pincode: "500001"
     lat: 17.3763

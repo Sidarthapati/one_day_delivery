@@ -8,7 +8,7 @@ import java.util.UUID;
 public record TileShareResponse(
         UUID proposalId,
         UUID daId,
-        UUID tileId,
+        UUID hexId,
         ProposalStatus status,
         Instant proposedAt
 ) {}

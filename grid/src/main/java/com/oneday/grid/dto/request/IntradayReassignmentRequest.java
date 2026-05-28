@@ -9,6 +9,6 @@ public record IntradayReassignmentRequest(
         UUID cityId,
         UUID fromDaId,
         UUID toDaId,
-        List<UUID> tileIdsToMove,
+        List<UUID> hexIdsToMove,
         UUID requestedBy
 ) {}

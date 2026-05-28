@@ -6,5 +6,5 @@ public record ServiceabilityResponse(
         UUID cityId,
         String pincode,
         boolean serviceable,
-        UUID tileId
+        UUID hexId
 ) {}

@@ -65,7 +65,7 @@ com.oneday.{module}/
 | Module | Status |
 |--------|--------|
 | `common` | `BaseEntity` (@MappedSuperclass, UUID id + createdAt) — done |
-| `grid` (M3) | Phases 1–3 done. Phase 4 (DTOs) next. See `docs/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
+| `grid` (M3) | **Phases 1–8 done.** Phase 9 (integration tests) is next. See `docs/M3/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
 | All others | Not started |
 
 ## Local Dev Setup
