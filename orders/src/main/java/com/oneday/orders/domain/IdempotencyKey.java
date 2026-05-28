@@ -23,6 +23,15 @@ public class IdempotencyKey {
     @EmbeddedId
     private IdempotencyKeyId id;
 
+    /**
+     * SHA-256 hex digest of the original request body (64 lowercase hex chars).
+     * Set on first insert; used by {@link com.oneday.orders.api.filter.IdempotencyFilter}
+     * to detect body mismatches on replay (→ 422).
+     * NULL for rows created before V4_10 migration.
+     */
+    @Column(name = "request_fingerprint", length = 64, updatable = false)
+    private String requestFingerprint;
+
     @Column(name = "response_status", nullable = false, updatable = false)
     private Short responseStatus;
 
