@@ -119,7 +119,8 @@ public class DemoController {
     public SeedResult seedDemand(
             @RequestParam String cityCode,
             @RequestParam(defaultValue = "30") double minMinutes,
-            @RequestParam(defaultValue = "150") double maxMinutes) {
+            @RequestParam(defaultValue = "150") double maxMinutes,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 
         UUID cityId = gridService.resolveCityId(cityCode);
         Grid grid = gridService.getGrid(cityId);
@@ -129,7 +130,7 @@ public class DemoController {
                     "No hexes found for cityCode=" + cityCode + ". Initialize the grid first.");
         }
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = date != null ? date : LocalDate.now();
         ThreadLocalRandom rng = ThreadLocalRandom.current();
 
         List<UUID> hexIds = hexes.stream().map(Hex::getId).toList();
