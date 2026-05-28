@@ -1,0 +1,49 @@
+{
+  "hash": "93ba25fb",
+  "configHash": "6fb8ac05",
+  "lockfileHash": "c1669503",
+  "browserHash": "a434c13d",
+  "optimized": {
+    "react": {
+      "src": "../../node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "114931d0",
+      "needsInterop": true
+    },
+    "react-dom/client": {
+      "src": "../../node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "6d209b3e",
+      "needsInterop": true
+    },
+    "@tanstack/react-query": {
+      "src": "../../node_modules/@tanstack/react-query/build/modern/index.js",
+      "file": "@tanstack_react-query.js",
+      "fileHash": "e09c3b37",
+      "needsInterop": false
+    },
+    "react-leaflet": {
+      "src": "../../node_modules/react-leaflet/lib/index.js",
+      "file": "react-leaflet.js",
+      "fileHash": "49e95f65",
+      "needsInterop": false
+    },
+    "h3-js": {
+      "src": "../../node_modules/h3-js/dist/browser/h3-js.es.js",
+      "file": "h3-js.js",
+      "fileHash": "43fadb70",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-6EKSBHVF": {
+      "file": "chunk-6EKSBHVF.js"
+    },
+    "chunk-3EX3NYWH": {
+      "file": "chunk-3EX3NYWH.js"
+    },
+    "chunk-3O7X656O": {
+      "file": "chunk-3O7X656O.js"
+    }
+  }
+}

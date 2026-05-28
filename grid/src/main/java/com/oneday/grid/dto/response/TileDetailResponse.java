@@ -9,5 +9,6 @@ public record TileDetailResponse(
         double centerLat,
         double centerLon,
         double demandScoreOrders,
+        double demandScoreMinutes,
         boolean bootstrapped
 ) {}

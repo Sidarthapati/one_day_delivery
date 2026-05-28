@@ -62,7 +62,7 @@ class GridControllerTest {
     void getTiles_knownCity_returns200WithTileList() throws Exception {
         when(gridService.resolveCityId("delhi")).thenReturn(cityId);
         when(gridService.getTileDetails(eq(cityId), any(LocalDate.class)))
-                .thenReturn(List.of(new TileDetailResponse(tileId, "872be10cafffffff", true, 28.5, 77.0, 5.0, false)));
+                .thenReturn(List.of(new TileDetailResponse(tileId, "872be10cafffffff", true, 28.5, 77.0, 5.0, 75.0, false)));
 
         mvc.perform(get("/api/grid/delhi/tiles").param("date", "2026-05-20"))
                 .andExpect(status().isOk())
