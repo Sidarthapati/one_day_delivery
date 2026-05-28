@@ -33,12 +33,12 @@ public class Shipment extends MutableBaseEntity {
     private String shipmentRef;
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS customer_type)")
+    @ColumnTransformer(read = "customer_type::text", write = "CAST(? AS customer_type)")
     @Column(name = "customer_type", nullable = false, updatable = false, columnDefinition = "customer_type")
     private CustomerType customerType;
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS delivery_type)")
+    @ColumnTransformer(read = "delivery_type::text", write = "CAST(? AS delivery_type)")
     @Column(name = "delivery_type", nullable = false, updatable = false, columnDefinition = "delivery_type")
     private DeliveryType deliveryType;
 
@@ -131,12 +131,12 @@ public class Shipment extends MutableBaseEntity {
     // ── Routing ───────────────────────────────────────────────────────────
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS pickup_type)")
+    @ColumnTransformer(read = "pickup_type::text", write = "CAST(? AS pickup_type)")
     @Column(name = "pickup_type", nullable = false, columnDefinition = "pickup_type", updatable = false)
     private PickupType pickupType;
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS drop_type)")
+    @ColumnTransformer(read = "drop_type::text", write = "CAST(? AS drop_type)")
     @Column(name = "drop_type", nullable = false, columnDefinition = "drop_type", updatable = false)
     private DropType dropType;
 
@@ -176,7 +176,7 @@ public class Shipment extends MutableBaseEntity {
 
     // Null for B2B (credit); non-null for B2C/C2C prepaid and COD
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS payment_mode)")
+    @ColumnTransformer(read = "payment_mode::text", write = "CAST(? AS payment_mode)")
     @Column(name = "payment_mode", columnDefinition = "payment_mode", updatable = false)
     private PaymentMode paymentMode;
 
