@@ -10,5 +10,5 @@ public record RegionResponse(
         double estimatedDemandMin,
         double estimatedUtilPct,
         boolean hasBootstrappedTiles,
-        List<UUID> tileIds
+        List<UUID> hexIds
 ) {}

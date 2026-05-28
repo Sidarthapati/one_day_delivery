@@ -2,12 +2,15 @@ package com.oneday.grid.service.impl;
 
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.Grid;
-import com.oneday.grid.domain.Tile;
-import com.oneday.grid.repository.TileRepository;
+import com.oneday.grid.domain.Hex;
+import com.oneday.grid.repository.HexRepository;
 import com.oneday.grid.service.GridService;
 import com.oneday.grid.service.OsrmMatrixService;
 import com.oneday.grid.service.osrm.OsrmClient;
 import com.oneday.grid.service.osrm.TileEdge;
+import com.uber.h3core.H3Core;
+import com.uber.h3core.LengthUnit;
+import com.uber.h3core.util.LatLng;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -25,30 +28,33 @@ public class OsrmMatrixServiceImpl implements OsrmMatrixService {
     private static final Logger log = LoggerFactory.getLogger(OsrmMatrixServiceImpl.class);
 
     private final GridService gridService;
-    private final TileRepository tileRepository;
+    private final HexRepository hexRepository;
     private final GridProperties properties;
+    private final H3Core h3Core;
     private final OsrmClient osrmClient;
 
     OsrmMatrixServiceImpl(GridService gridService,
-                          TileRepository tileRepository,
-                          GridProperties properties) {
+                          HexRepository hexRepository,
+                          GridProperties properties,
+                          H3Core h3Core) {
         this.gridService = gridService;
-        this.tileRepository = tileRepository;
+        this.hexRepository = hexRepository;
         this.properties = properties;
+        this.h3Core = h3Core;
         this.osrmClient = new OsrmClient(properties.getOsrm().getBaseUrl(), new RestTemplate());
     }
 
     @Override
     public Map<UUID, List<TileEdge>> computeAdjacencyMatrix(UUID cityId) {
         Grid grid = gridService.getGrid(cityId);
-        List<Tile> activeTiles = tileRepository.findByGridIdAndActiveTrue(grid.getId());
+        List<Hex> activeHexes = hexRepository.findByH3GridIdAndActiveTrue(grid.getId());
 
-        if (activeTiles.isEmpty()) return Map.of();
+        if (activeHexes.isEmpty()) return Map.of();
 
-        List<double[]> centroids = activeTiles.stream()
-                .map(t -> new double[]{
-                        grid.getOriginLat() + (t.getRowIdx() + 0.5) * grid.getTileDeltaLat(),
-                        grid.getOriginLon() + (t.getColIdx() + 0.5) * grid.getTileDeltaLon()
+        List<double[]> centroids = activeHexes.stream()
+                .map(h -> {
+                    LatLng c = h3Core.cellToLatLng(h.getH3Index());
+                    return new double[]{c.lat, c.lng};
                 })
                 .toList();
 
@@ -57,14 +63,14 @@ public class OsrmMatrixServiceImpl implements OsrmMatrixService {
 
         Map<UUID, List<TileEdge>> result = new HashMap<>();
         int isolated = 0;
-        for (int i = 0; i < activeTiles.size(); i++) {
-            UUID fromId = activeTiles.get(i).getId();
+        for (int i = 0; i < activeHexes.size(); i++) {
+            UUID fromId = activeHexes.get(i).getId();
             List<TileEdge> edges = new ArrayList<>();
-            for (int j = 0; j < activeTiles.size(); j++) {
+            for (int j = 0; j < activeHexes.size(); j++) {
                 if (i == j) continue;
                 double d = durations[i][j];
                 if (d > 0 && d <= threshold) {
-                    edges.add(new TileEdge(activeTiles.get(j).getId(), (int) d));
+                    edges.add(new TileEdge(activeHexes.get(j).getId(), (int) d));
                 }
             }
             if (edges.isEmpty()) {
@@ -73,26 +79,28 @@ public class OsrmMatrixServiceImpl implements OsrmMatrixService {
             }
             result.put(fromId, edges);
         }
-        log.info("computeAdjacencyMatrix: {} active tiles, {} isolated, threshold={}s", activeTiles.size(), isolated, threshold);
+        log.info("computeAdjacencyMatrix: {} active hexes, {} isolated, threshold={}s",
+                activeHexes.size(), isolated, threshold);
         return result;
     }
 
     @Override
     public Map<UUID, Integer> computeTraversalCaps(UUID cityId) {
         Grid grid = gridService.getGrid(cityId);
-        List<Tile> activeTiles = tileRepository.findByGridIdAndActiveTrue(grid.getId());
+        List<Hex> activeHexes = hexRepository.findByH3GridIdAndActiveTrue(grid.getId());
+
+        // Use H3 edge length as the traversal distance; OSRM routes centroid ± half edge.
+        double edgeLengthDeg = h3Core.getHexagonEdgeLengthAvg(grid.getH3Resolution(), LengthUnit.m) / 111320.0;
 
         Map<UUID, Integer> caps = new HashMap<>();
-        for (Tile t : activeTiles) {
-            double swLat = grid.getOriginLat() + t.getRowIdx() * grid.getTileDeltaLat();
-            double swLon = grid.getOriginLon() + t.getColIdx() * grid.getTileDeltaLon();
-            double neLat = swLat + grid.getTileDeltaLat();
-            double neLon = swLon + grid.getTileDeltaLon();
-
-            Integer cap = osrmClient.getTileTraversalCap(swLat, swLon, neLat, neLon);
-            if (cap != null) caps.put(t.getId(), cap);
+        for (Hex h : activeHexes) {
+            LatLng c = h3Core.cellToLatLng(h.getH3Index());
+            double swLat = c.lat - edgeLengthDeg / 2;
+            double neLat = c.lat + edgeLengthDeg / 2;
+            Integer cap = osrmClient.getTileTraversalCap(swLat, c.lng, neLat, c.lng);
+            if (cap != null) caps.put(h.getId(), cap);
         }
-        log.info("computeTraversalCaps: {}/{} tiles got a cap", caps.size(), activeTiles.size());
+        log.info("computeTraversalCaps: {}/{} hexes got a cap", caps.size(), activeHexes.size());
         return caps;
     }
 }

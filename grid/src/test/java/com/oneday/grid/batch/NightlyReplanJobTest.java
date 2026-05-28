@@ -4,14 +4,14 @@ import com.oneday.grid.domain.AdjacencySource;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
 import com.oneday.grid.domain.Grid;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.ProposalType;
 import com.oneday.grid.domain.SolverType;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
 import com.oneday.grid.service.GridReplanService;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,7 +42,7 @@ class NightlyReplanJobTest {
     @Mock GridReplanService gridReplanService;
     @Mock AssignmentProposalRepository proposalRepository;
     @Mock AssignmentProposalRegionRepository proposalRegionRepository;
-    @Mock DaTileAssignmentRepository assignmentRepository;
+    @Mock DaHexAssignmentRepository assignmentRepository;
     @Mock DaRosterPort daRosterPort;
 
     NightlyReplanJob job;
@@ -118,8 +118,8 @@ class NightlyReplanJobTest {
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(yesterdayProposal));
 
-        DaTileAssignment activeAssignment = DaTileAssignment.builder()
-                .proposalId(yesterdayProposalId).daId(UUID.randomUUID()).tileId(UUID.randomUUID())
+        DaHexAssignment activeAssignment = DaHexAssignment.builder()
+                .proposalId(yesterdayProposalId).daId(UUID.randomUUID()).hexId(UUID.randomUUID())
                 .validDate(LocalDate.now().minusDays(1)).status(AssignmentStatus.ACTIVE).build();
         when(assignmentRepository.findByProposalId(yesterdayProposalId))
                 .thenReturn(List.of(activeAssignment));

@@ -14,16 +14,18 @@ import com.oneday.grid.domain.AdjacencySource;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
+import com.oneday.grid.domain.Hex;
+import com.oneday.grid.domain.HexDemandSnapshot;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.Tile;
-import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
-import com.oneday.grid.repository.TileRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
+import com.oneday.grid.repository.HexRepository;
 import com.oneday.grid.service.AssignmentService;
+import com.uber.h3core.H3Core;
+import com.uber.h3core.util.LatLng;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -51,37 +53,42 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
     }
 
     private static final Logger log = LoggerFactory.getLogger(CpSatAssignmentServiceImpl.class);
-    private static final int MAX_INFEASIBLE_RETRIES = 3;
+    private static final int    MAX_INFEASIBLE_RETRIES = 3;
     private static final double DEMAND_SCALE           = 100.0;
-    private static final double INTER_TILE_TRAVEL_MIN  = 25.0;  // minutes overhead per tile in territory
-    private static final long   DIST_PENALTY_SCALE     = 700L;  // 7 demand-minutes per grid-hop from seed
+    private static final double INTER_HEX_TRAVEL_MIN   = 25.0;   // minutes overhead per hex in territory
+    private static final long   DIST_PENALTY_SCALE     = 700L;   // 7 demand-minutes per hex-step from seed
+    // H3 resolution-7 center-to-center ≈ 2.1 km ≈ 0.019° — normalises lat/lon to hex-step units
+    private static final double H3_STEP_DEG            = 0.019;
 
     private final AssignmentProposalRepository proposalRepository;
     private final AssignmentProposalRegionRepository regionRepository;
-    private final DaTileAssignmentRepository assignmentRepository;
-    private final TileRepository tileRepository;
+    private final DaHexAssignmentRepository assignmentRepository;
+    private final HexRepository hexRepository;
     private final BfsAssignmentServiceImpl bfsFallback;
     private final GridProperties properties;
+    private final H3Core h3Core;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     CpSatAssignmentServiceImpl(AssignmentProposalRepository proposalRepository,
                                AssignmentProposalRegionRepository regionRepository,
-                               DaTileAssignmentRepository assignmentRepository,
-                               TileRepository tileRepository,
+                               DaHexAssignmentRepository assignmentRepository,
+                               HexRepository hexRepository,
                                BfsAssignmentServiceImpl bfsFallback,
-                               GridProperties properties) {
+                               GridProperties properties,
+                               H3Core h3Core) {
         this.proposalRepository = proposalRepository;
         this.regionRepository = regionRepository;
         this.assignmentRepository = assignmentRepository;
-        this.tileRepository = tileRepository;
+        this.hexRepository = hexRepository;
         this.bfsFallback = bfsFallback;
         this.properties = properties;
+        this.h3Core = h3Core;
     }
 
     @Override
     @Transactional
     public AssignmentProposal computeProposal(UUID cityId, LocalDate validForDate,
-                                              List<TileDemandSnapshot> demand,
+                                              List<HexDemandSnapshot> demand,
                                               Map<UUID, List<UUID>> adjacencyGraph,
                                               List<UUID> availableDaIds) {
         if (demand.isEmpty() || availableDaIds.isEmpty()) {
@@ -90,43 +97,43 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
 
         int K = availableDaIds.size();
 
-        // When the adjacency graph is non-empty, tiles with 0 active neighbours cannot be
+        // When the adjacency graph is non-empty, hexes with 0 active neighbours cannot be
         // seeds (no flow edges) and make the load-balance constraint INFEASIBLE for any
-        // realistic DA count. Solve CP-SAT on connected tiles only; staple isolated tiles
+        // realistic DA count. Solve CP-SAT on connected hexes only; staple isolated hexes
         // to the nearest-seed DA post-solve.
-        List<TileDemandSnapshot> connectedDemand;
-        List<TileDemandSnapshot> isolatedDemand;
+        List<HexDemandSnapshot> connectedDemand;
+        List<HexDemandSnapshot> isolatedDemand;
         if (adjacencyGraph.isEmpty()) {
             connectedDemand = demand;
             isolatedDemand = List.of();
         } else {
             connectedDemand = demand.stream()
-                    .filter(d -> !adjacencyGraph.getOrDefault(d.getTileId(), List.of()).isEmpty())
+                    .filter(d -> !adjacencyGraph.getOrDefault(d.getHexId(), List.of()).isEmpty())
                     .toList();
             isolatedDemand = demand.stream()
-                    .filter(d -> adjacencyGraph.getOrDefault(d.getTileId(), List.of()).isEmpty())
+                    .filter(d -> adjacencyGraph.getOrDefault(d.getHexId(), List.of()).isEmpty())
                     .toList();
         }
 
         int nConnected = connectedDemand.size();
         if (nConnected == 0 || K > nConnected) {
-            log.warn("CP-SAT: K={} DAs vs {} connected tiles — delegating to BFS", K, nConnected);
+            log.warn("CP-SAT: K={} DAs vs {} connected hexes — delegating to BFS", K, nConnected);
             return bfsFallback.computeProposal(cityId, validForDate, demand, adjacencyGraph, availableDaIds);
         }
 
         if (!isolatedDemand.isEmpty()) {
-            log.info("CP-SAT: {} isolated tile(s) excluded from solver, will be stapled post-solve",
+            log.info("CP-SAT: {} isolated hex(es) excluded from solver, will be stapled post-solve",
                     isolatedDemand.size());
         }
 
-        List<UUID> tileIds = connectedDemand.stream().map(TileDemandSnapshot::getTileId).toList();
-        Map<UUID, Integer> tileIndexMap = new HashMap<>();
-        for (int i = 0; i < nConnected; i++) tileIndexMap.put(tileIds.get(i), i);
+        List<UUID> hexIds = connectedDemand.stream().map(HexDemandSnapshot::getHexId).toList();
+        Map<UUID, Integer> hexIndexMap = new HashMap<>();
+        for (int i = 0; i < nConnected; i++) hexIndexMap.put(hexIds.get(i), i);
 
-        // Load geometry for all tiles — needed for seed selection and isolated-tile stapling.
-        List<UUID> allTileIds = demand.stream().map(TileDemandSnapshot::getTileId).toList();
-        Map<UUID, Tile> tileMap = tileRepository.findAllById(allTileIds)
-                .stream().collect(Collectors.toMap(Tile::getId, t -> t));
+        // Load geometry for all hexes — needed for seed selection and isolated-hex stapling.
+        List<UUID> allHexIds = demand.stream().map(HexDemandSnapshot::getHexId).toList();
+        Map<UUID, Hex> hexMap = hexRepository.findAllById(allHexIds)
+                .stream().collect(Collectors.toMap(Hex::getId, h -> h));
 
         int shiftMin = (properties.getShift().getEndHour() - properties.getShift().getStartHour()) * 60;
         double daCapacity = shiftMin * properties.getDa().getTargetUtilisation();
@@ -137,18 +144,16 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
         }
 
         // Each DA routes across its territory: (N-1) hops × λ min overhead, approximated as N×λ.
-        // This makes large sprawling territories genuinely costlier, keeping the solver honest
-        // about actual shift utilisation.
-        long overheadPerTile = Math.round(INTER_TILE_TRAVEL_MIN * DEMAND_SCALE);
+        long overheadPerHex = Math.round(INTER_HEX_TRAVEL_MIN * DEMAND_SCALE);
         long[] effectiveScaledDemand = new long[nConnected];
-        for (int i = 0; i < nConnected; i++) effectiveScaledDemand[i] = scaledDemand[i] + overheadPerTile;
+        for (int i = 0; i < nConnected; i++) effectiveScaledDemand[i] = scaledDemand[i] + overheadPerHex;
 
         double totalDemandMinutes = connectedDemand.stream()
-                .mapToDouble(TileDemandSnapshot::getDemandScoreMinutes).sum();
-        double effectiveTotalDemand = totalDemandMinutes + nConnected * INTER_TILE_TRAVEL_MIN;
+                .mapToDouble(HexDemandSnapshot::getDemandScoreMinutes).sum();
+        double effectiveTotalDemand = totalDemandMinutes + nConnected * INTER_HEX_TRAVEL_MIN;
         double daTargetLoad = effectiveTotalDemand > 0 ? effectiveTotalDemand / K : daCapacity;
 
-        SeedResult sr = computeSeedIndices(connectedDemand, tileMap, K);
+        SeedResult sr = computeSeedIndices(connectedDemand, hexMap, K);
         double loadTolerance = properties.getSolver().getLoadTolerance();
 
         SolveResult result = null;
@@ -157,8 +162,8 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
                 loadTolerance += 0.05;
                 log.warn("CP-SAT infeasible on attempt {}, widening load tolerance to {}", attempt, loadTolerance);
             }
-            result = trySolve(tileIds, effectiveScaledDemand, K, daTargetLoad, loadTolerance,
-                    adjacencyGraph, tileIndexMap, sr.seeds(), sr.tileRows(), sr.tileCols());
+            result = trySolve(hexIds, effectiveScaledDemand, K, daTargetLoad, loadTolerance,
+                    adjacencyGraph, hexIndexMap, sr.seeds(), sr.hexLats(), sr.hexLons());
             if (result.status != SolveResult.Status.INFEASIBLE) break;
         }
 
@@ -168,30 +173,33 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
         }
 
         // Phase 2: BFS connectivity repair.
-        // For each DA, BFS from its seed through assigned tiles. Any tile not reached is
-        // "disconnected" — reassign it to an adjacent DA whose neighbour tile IS reachable
-        // from that DA's seed. This guarantees the move produces a connected territory.
-        // Islands are absorbed layer-by-layer across iterations.
+        // For each DA, BFS from its seed through assigned hexes. Any hex not reached is
+        // "disconnected" — reassign it to an adjacent DA whose entry hex IS reachable
+        // from that DA's seed.
         if (!adjacencyGraph.isEmpty()) {
             long daCapacityScaled = Math.round(daCapacity * DEMAND_SCALE);
             Map<Integer, List<Integer>> repaired = repairConnectivity(
-                    result.territories, tileIds, adjacencyGraph, tileIndexMap,
+                    result.territories, hexIds, adjacencyGraph, hexIndexMap,
                     sr.seeds(), scaledDemand, daCapacityScaled, nConnected, K);
             result = new SolveResult(result.status, repaired, result.objectiveValue, result.bestBound);
         }
 
-        // Staple each isolated tile to the DA whose seed is geographically nearest.
+        // Staple each isolated hex to the DA whose seed is geographically nearest.
         if (!isolatedDemand.isEmpty()) {
             for (int j = 0; j < isolatedDemand.size(); j++) {
-                Tile isoTile = tileMap.get(isolatedDemand.get(j).getTileId());
-                int isoRow = isoTile != null ? isoTile.getRowIdx() : 0;
-                int isoCol = isoTile != null ? isoTile.getColIdx() : 0;
+                Hex isoHex = hexMap.get(isolatedDemand.get(j).getHexId());
+                double isoLat = 0, isoLon = 0;
+                if (isoHex != null) {
+                    LatLng c = h3Core.cellToLatLng(isoHex.getH3Index());
+                    isoLat = c.lat;
+                    isoLon = c.lng;
+                }
                 int nearestK = 0;
                 double minDist = Double.MAX_VALUE;
                 for (int k = 0; k < K; k++) {
                     int seedIdx = sr.seeds()[k];
-                    double dr = isoRow - sr.tileRows()[seedIdx];
-                    double dc = isoCol - sr.tileCols()[seedIdx];
+                    double dr = isoLat - sr.hexLats()[seedIdx];
+                    double dc = isoLon - sr.hexLons()[seedIdx];
                     double d = dr * dr + dc * dc;
                     if (d < minDist) { minDist = d; nearestK = k; }
                 }
@@ -199,34 +207,34 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
             }
         }
 
-        // Build combined lists: connected tiles first, isolated tiles appended.
-        List<TileDemandSnapshot> combinedDemand = new ArrayList<>(connectedDemand);
+        // Build combined lists: connected hexes first, isolated hexes appended.
+        List<HexDemandSnapshot> combinedDemand = new ArrayList<>(connectedDemand);
         combinedDemand.addAll(isolatedDemand);
-        List<UUID> combinedTileIds = new ArrayList<>(tileIds);
-        isolatedDemand.forEach(d -> combinedTileIds.add(d.getTileId()));
+        List<UUID> combinedHexIds = new ArrayList<>(hexIds);
+        isolatedDemand.forEach(d -> combinedHexIds.add(d.getHexId()));
 
-        return persistProposal(cityId, validForDate, availableDaIds, combinedDemand, combinedTileIds,
-                adjacencyGraph, result, daCapacity, combinedTileIds.size(), K);
+        return persistProposal(cityId, validForDate, availableDaIds, combinedDemand, combinedHexIds,
+                adjacencyGraph, result, daCapacity, combinedHexIds.size(), K);
     }
 
-    /** Carries seed indices plus per-tile position arrays (reused for warm-start hints). */
-    private record SeedResult(int[] seeds, int[] tileRows, int[] tileCols) {}
+    /** Carries seed indices plus per-hex centroid arrays (reused for warm-start hints). */
+    private record SeedResult(int[] seeds, double[] hexLats, double[] hexLons) {}
 
-    private SolveResult trySolve(List<UUID> tileIds, long[] scaledDemand, int K,
+    private SolveResult trySolve(List<UUID> hexIds, long[] scaledDemand, int K,
                                   double daTargetLoad, double loadTolerance,
                                   Map<UUID, List<UUID>> adjacencyGraph,
-                                  Map<UUID, Integer> tileIndexMap,
-                                  int[] seedIndices, int[] tileRows, int[] tileCols) {
-        int nTiles = tileIds.size();
+                                  Map<UUID, Integer> hexIndexMap,
+                                  int[] seedIndices, double[] hexLats, double[] hexLons) {
+        int nHexes = hexIds.size();
         long scaledLb = Math.round(daTargetLoad * (1.0 - loadTolerance) * DEMAND_SCALE);
         long scaledUb = Math.round(daTargetLoad * (1.0 + loadTolerance) * DEMAND_SCALE);
         long maxPossibleLoad = Arrays.stream(scaledDemand).sum();
 
         CpModel model = new CpModel();
 
-        // b[i][k] = true iff tile i is assigned to DA k
-        BoolVar[][] b = new BoolVar[nTiles][K];
-        for (int i = 0; i < nTiles; i++) {
+        // b[i][k] = true iff hex i is assigned to DA k
+        BoolVar[][] b = new BoolVar[nHexes][K];
+        for (int i = 0; i < nHexes; i++) {
             for (int k = 0; k < K; k++) {
                 b[i][k] = model.newBoolVar("b_" + i + "_" + k);
             }
@@ -235,57 +243,58 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
             model.addExactlyOne(row);
         }
 
-        // Load variable per DA — weighted sum of demand for assigned tiles
+        // Load variable per DA — weighted sum of demand for assigned hexes
         IntVar[] loads = new IntVar[K];
         for (int k = 0; k < K; k++) {
             loads[k] = model.newIntVar(0, maxPossibleLoad, "load_" + k);
             var expr = LinearExpr.newBuilder();
-            for (int i = 0; i < nTiles; i++) expr.addTerm(b[i][k], scaledDemand[i]);
+            for (int i = 0; i < nHexes; i++) expr.addTerm(b[i][k], scaledDemand[i]);
             model.addEquality(loads[k], expr);
             model.addLinearConstraint(loads[k], scaledLb, scaledUb);
         }
 
         // Seed positions — shared by objective penalty and warm-start hint
-        int[] seedRows = new int[K];
-        int[] seedCols = new int[K];
+        double[] seedLats = new double[K];
+        double[] seedLons = new double[K];
         for (int k = 0; k < K; k++) {
-            seedRows[k] = tileRows[seedIndices[k]];
-            seedCols[k] = tileCols[seedIndices[k]];
+            seedLats[k] = hexLats[seedIndices[k]];
+            seedLons[k] = hexLons[seedIndices[k]];
         }
 
         // Objective: minimise load spread + soft distance penalty (compactness proxy for connectivity).
-        // β × dist(tile_i, seed_k) × b[i][k] makes assigning a far tile to DA k increasingly costly,
-        // encouraging compact territories without any hard flow constraint.
+        // β × dist(hex_i, seed_k) × b[i][k] makes assigning a far hex to DA k increasingly costly,
+        // encouraging compact territories. Distance is normalised to hex-step units so
+        // DIST_PENALTY_SCALE keeps its original meaning (7 demand-minutes per hex-step).
         IntVar maxLoad = model.newIntVar(0, maxPossibleLoad, "maxLoad");
         IntVar minLoad = model.newIntVar(0, maxPossibleLoad, "minLoad");
         model.addMaxEquality(maxLoad, Arrays.asList(loads));
         model.addMinEquality(minLoad, Arrays.asList(loads));
         var objExpr = LinearExpr.newBuilder().add(maxLoad).addTerm(minLoad, -1L);
-        for (int i = 0; i < nTiles; i++) {
+        for (int i = 0; i < nHexes; i++) {
             for (int k = 0; k < K; k++) {
-                double dr = tileRows[i] - seedRows[k];
-                double dc = tileCols[i] - seedCols[k];
+                double dr = (hexLats[i] - seedLats[k]) / H3_STEP_DEG;
+                double dc = (hexLons[i] - seedLons[k]) / H3_STEP_DEG;
                 long penalty = Math.round(Math.sqrt(dr * dr + dc * dc) * DIST_PENALTY_SCALE);
                 if (penalty > 0) objExpr.addTerm(b[i][k], penalty);
             }
         }
         model.minimize(objExpr);
 
-        // Symmetry breaking: seed tile k must be assigned to DA k
+        // Symmetry breaking: seed hex k must be assigned to DA k
         for (int k = 0; k < K; k++) {
             model.addBoolAnd(new Literal[]{b[seedIndices[k]][k]});
         }
 
-        log.info("CP-SAT: load-balance + distance-penalty ({} tiles, {} DAs, avg {} tiles/DA)",
-                nTiles, K, nTiles / K);
+        log.info("CP-SAT: load-balance + distance-penalty ({} hexes, {} DAs, avg {} hexes/DA)",
+                nHexes, K, nHexes / K);
 
-        // Warm-start: assign each tile to its nearest seed (Voronoi)
-        for (int i = 0; i < nTiles; i++) {
+        // Warm-start: assign each hex to its nearest seed (Voronoi)
+        for (int i = 0; i < nHexes; i++) {
             int nearestK = 0;
             double minDist = Double.MAX_VALUE;
             for (int k = 0; k < K; k++) {
-                double dr = tileRows[i] - seedRows[k];
-                double dc = tileCols[i] - seedCols[k];
+                double dr = hexLats[i] - seedLats[k];
+                double dc = hexLons[i] - seedLons[k];
                 double d = dr * dr + dc * dc;
                 if (d < minDist) { minDist = d; nearestK = k; }
             }
@@ -305,7 +314,7 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
             return SolveResult.timeout();
         }
 
-        Map<Integer, List<Integer>> territories = extractTerritories(solver, b, nTiles, K);
+        Map<Integer, List<Integer>> territories = extractTerritories(solver, b, nHexes, K);
         return new SolveResult(SolveResult.Status.SOLVED, territories,
                 solver.objectiveValue(), solver.bestObjectiveBound());
     }
@@ -315,35 +324,35 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
      *
      * CP-SAT Phase 1 (load balance + distance penalty) occasionally produces disconnected
      * territories. This method repairs them by BFS-ing from each seed and reassigning
-     * unreachable tiles to adjacent DAs whose entry tile IS reachable from their seed.
+     * unreachable hexes to adjacent DAs whose entry hex IS reachable from their seed.
      * Islands are absorbed layer-by-layer across iterations.
      */
     private Map<Integer, List<Integer>> repairConnectivity(
             Map<Integer, List<Integer>> territories,
-            List<UUID> tileIds,
+            List<UUID> hexIds,
             Map<UUID, List<UUID>> adjacencyGraph,
-            Map<UUID, Integer> tileIndexMap,
+            Map<UUID, Integer> hexIndexMap,
             int[] seedIndices,
             long[] scaledDemand,
             long daCapacityScaled,
-            int nTiles, int K) {
+            int nHexes, int K) {
 
-        List<List<Integer>> adj = new ArrayList<>(nTiles);
-        for (int i = 0; i < nTiles; i++) {
+        List<List<Integer>> adj = new ArrayList<>(nHexes);
+        for (int i = 0; i < nHexes; i++) {
             List<Integer> nbrs = new ArrayList<>();
-            for (UUID nbId : adjacencyGraph.getOrDefault(tileIds.get(i), List.of())) {
-                Integer j = tileIndexMap.get(nbId);
+            for (UUID nbId : adjacencyGraph.getOrDefault(hexIds.get(i), List.of())) {
+                Integer j = hexIndexMap.get(nbId);
                 if (j != null) nbrs.add(j);
             }
             adj.add(nbrs);
         }
 
-        int[] tileToDA = new int[nTiles];
-        Arrays.fill(tileToDA, -1);
+        int[] hexToDA = new int[nHexes];
+        Arrays.fill(hexToDA, -1);
         List<Set<Integer>> terSets = new ArrayList<>(K);
         for (int k = 0; k < K; k++) {
             terSets.add(new HashSet<>(territories.get(k)));
-            for (int t : territories.get(k)) tileToDA[t] = k;
+            for (int t : territories.get(k)) hexToDA[t] = k;
         }
 
         long[] remainingCap = new long[K];
@@ -354,8 +363,8 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
         }
 
         int totalReassigned = 0;
-        for (int iter = 0; iter < nTiles; iter++) {
-            boolean[][] reachable = new boolean[K][nTiles];
+        for (int iter = 0; iter < nHexes; iter++) {
+            boolean[][] reachable = new boolean[K][nHexes];
             for (int k = 0; k < K; k++) {
                 int seed = seedIndices[k];
                 if (!terSets.get(k).contains(seed)) continue;
@@ -390,7 +399,7 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
                 int bestDA = -1;
                 long bestCap = Long.MIN_VALUE;
                 for (int nb : adj.get(t)) {
-                    int j = tileToDA[nb];
+                    int j = hexToDA[nb];
                     if (j != fromDA && j >= 0 && reachable[j][nb] && remainingCap[j] > bestCap) {
                         bestCap = remainingCap[j];
                         bestDA = j;
@@ -401,19 +410,19 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
                     terSets.get(bestDA).add(t);
                     remainingCap[fromDA] += scaledDemand[t];
                     remainingCap[bestDA] -= scaledDemand[t];
-                    tileToDA[t] = bestDA;
+                    hexToDA[t] = bestDA;
                     reassignedThisRound++;
                     totalReassigned++;
                 }
             }
 
             if (reassignedThisRound == 0) {
-                log.warn("CP-SAT repair: {} tiles remain disconnected after exhausting adjacency", disconnected.size());
+                log.warn("CP-SAT repair: {} hexes remain disconnected after exhausting adjacency", disconnected.size());
                 break;
             }
         }
 
-        log.info("CP-SAT Phase 2 repair: {} tiles reassigned for connectivity", totalReassigned);
+        log.info("CP-SAT Phase 2 repair: {} hexes reassigned for connectivity", totalReassigned);
         Map<Integer, List<Integer>> result = new HashMap<>(K);
         for (int k = 0; k < K; k++) result.put(k, new ArrayList<>(terSets.get(k)));
         return result;
@@ -421,27 +430,30 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
 
     /**
      * Furthest-first geographic seed selection.
-     * Picks K tile indices maximally spread across the grid so each DA starts from a
-     * different geographic area. Starts from the tile nearest the bounding-box center
+     * Picks K hex indices maximally spread across the grid so each DA starts from a
+     * different geographic area. Starts from the hex nearest the bounding-box center
      * for a deterministic result.
      */
-    private SeedResult computeSeedIndices(List<TileDemandSnapshot> demand, Map<UUID, Tile> tileMap, int K) {
+    private SeedResult computeSeedIndices(List<HexDemandSnapshot> demand, Map<UUID, Hex> hexMap, int K) {
         int n = demand.size();
-        int[] row = new int[n];
-        int[] col = new int[n];
+        double[] lat = new double[n];
+        double[] lon = new double[n];
         for (int i = 0; i < n; i++) {
-            Tile t = tileMap.get(demand.get(i).getTileId());
-            row[i] = t != null ? t.getRowIdx() : 0;
-            col[i] = t != null ? t.getColIdx() : 0;
+            Hex h = hexMap.get(demand.get(i).getHexId());
+            if (h != null) {
+                LatLng c = h3Core.cellToLatLng(h.getH3Index());
+                lat[i] = c.lat;
+                lon[i] = c.lng;
+            }
         }
 
-        double meanRow = 0, meanCol = 0;
-        for (int i = 0; i < n; i++) { meanRow += row[i]; meanCol += col[i]; }
-        meanRow /= n; meanCol /= n;
+        double meanLat = 0, meanLon = 0;
+        for (int i = 0; i < n; i++) { meanLat += lat[i]; meanLon += lon[i]; }
+        meanLat /= n; meanLon /= n;
         int first = 0;
         double closestDist = Double.MAX_VALUE;
         for (int i = 0; i < n; i++) {
-            double dr = row[i] - meanRow, dc = col[i] - meanCol;
+            double dr = lat[i] - meanLat, dc = lon[i] - meanLon;
             double d = dr * dr + dc * dc;
             if (d < closestDist) { closestDist = d; first = i; }
         }
@@ -454,7 +466,7 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
         seeds[0] = first;
         picked[first] = true;
         for (int i = 0; i < n; i++) {
-            double dr = row[i] - row[first], dc = col[i] - col[first];
+            double dr = lat[i] - lat[first], dc = lon[i] - lon[first];
             minDist[i] = dr * dr + dc * dc;
         }
 
@@ -468,20 +480,20 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
             seeds[k] = next;
             picked[next] = true;
             for (int i = 0; i < n; i++) {
-                double dr = row[i] - row[next], dc = col[i] - col[next];
+                double dr = lat[i] - lat[next], dc = lon[i] - lon[next];
                 double d = dr * dr + dc * dc;
                 if (d < minDist[i]) minDist[i] = d;
             }
         }
-        log.info("CP-SAT geographic seeds (row,col): {}",
-                Arrays.stream(seeds).mapToObj(i -> "(" + row[i] + "," + col[i] + ")").toList());
-        return new SeedResult(seeds, row, col);
+        log.info("CP-SAT geographic seeds (lat,lon): {}",
+                Arrays.stream(seeds).mapToObj(i -> "(" + lat[i] + "," + lon[i] + ")").toList());
+        return new SeedResult(seeds, lat, lon);
     }
 
-    private Map<Integer, List<Integer>> extractTerritories(CpSolver solver, BoolVar[][] b, int nTiles, int K) {
+    private Map<Integer, List<Integer>> extractTerritories(CpSolver solver, BoolVar[][] b, int nHexes, int K) {
         Map<Integer, List<Integer>> territories = new HashMap<>();
         for (int k = 0; k < K; k++) territories.put(k, new ArrayList<>());
-        for (int i = 0; i < nTiles; i++) {
+        for (int i = 0; i < nHexes; i++) {
             for (int k = 0; k < K; k++) {
                 if (solver.booleanValue(b[i][k])) {
                     territories.get(k).add(i);
@@ -494,19 +506,19 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
 
     private AssignmentProposal persistProposal(UUID cityId, LocalDate validForDate,
                                                List<UUID> availableDaIds,
-                                               List<TileDemandSnapshot> demand,
-                                               List<UUID> tileIds,
+                                               List<HexDemandSnapshot> demand,
+                                               List<UUID> hexIds,
                                                Map<UUID, List<UUID>> adjacencyGraph,
                                                SolveResult result,
                                                double daCapacity,
-                                               int nTiles, int K) {
+                                               int nHexes, int K) {
         Map<UUID, Boolean> bootstrappedMap = demand.stream()
-                .collect(Collectors.toMap(TileDemandSnapshot::getTileId, TileDemandSnapshot::isBootstrapped));
+                .collect(Collectors.toMap(HexDemandSnapshot::getHexId, HexDemandSnapshot::isBootstrapped));
 
-        boolean[] assigned = new boolean[nTiles];
+        boolean[] assigned = new boolean[nHexes];
         for (List<Integer> territory : result.territories.values()) territory.forEach(i -> assigned[i] = true);
-        List<UUID> understaffedTileIds = new ArrayList<>();
-        for (int i = 0; i < nTiles; i++) if (!assigned[i]) understaffedTileIds.add(tileIds.get(i));
+        List<UUID> understaffedHexIds = new ArrayList<>();
+        for (int i = 0; i < nHexes; i++) if (!assigned[i]) understaffedHexIds.add(hexIds.get(i));
 
         double optGap = (result.objectiveValue - result.bestBound)
                 / Math.max(result.objectiveValue, 1e-6) * 100.0;
@@ -521,24 +533,24 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
                 .adjacencySource(adjacencySource)
                 .optimalityGapPct(optGap)
                 .totalDas(K)
-                .coveragePct(nTiles == 0 ? 100.0
-                        : (double) (nTiles - understaffedTileIds.size()) / nTiles * 100.0)
-                .understaffedTileIds(serializeUuids(understaffedTileIds))
+                .coveragePct(nHexes == 0 ? 100.0
+                        : (double) (nHexes - understaffedHexIds.size()) / nHexes * 100.0)
+                .understaffedHexIds(serializeUuids(understaffedHexIds))
                 .build());
 
         List<AssignmentProposalRegion> regions = new ArrayList<>();
-        List<DaTileAssignment> assignments = new ArrayList<>();
+        List<DaHexAssignment> assignments = new ArrayList<>();
 
         for (int k = 0; k < K; k++) {
             UUID daId = availableDaIds.get(k);
-            List<Integer> tileIndices = result.territories.getOrDefault(k, List.of());
-            if (tileIndices.isEmpty()) continue;
+            List<Integer> hexIndices = result.territories.getOrDefault(k, List.of());
+            if (hexIndices.isEmpty()) continue;
 
-            double totalDemand = tileIndices.stream()
+            double totalDemand = hexIndices.stream()
                     .mapToDouble(i -> demand.get(i).getDemandScoreMinutes()).sum()
-                    + tileIndices.size() * INTER_TILE_TRAVEL_MIN;
-            boolean hasBootstrapped = tileIndices.stream()
-                    .anyMatch(i -> bootstrappedMap.getOrDefault(tileIds.get(i), true));
+                    + hexIndices.size() * INTER_HEX_TRAVEL_MIN;
+            boolean hasBootstrapped = hexIndices.stream()
+                    .anyMatch(i -> bootstrappedMap.getOrDefault(hexIds.get(i), true));
 
             regions.add(AssignmentProposalRegion.builder()
                     .proposalId(proposal.getId())
@@ -549,13 +561,13 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
                     .hasBootstrappedTiles(hasBootstrapped)
                     .build());
 
-            for (int idx : tileIndices) {
-                assignments.add(DaTileAssignment.builder()
+            for (int idx : hexIndices) {
+                assignments.add(DaHexAssignment.builder()
                         .proposalId(proposal.getId())
                         .daId(daId)
-                        .tileId(tileIds.get(idx))
+                        .hexId(hexIds.get(idx))
                         .validDate(validForDate)
-                        .nDasOnTile(1)
+                        .nDasOnHex(1)
                         .status(AssignmentStatus.PROPOSED)
                         .build());
             }
@@ -564,7 +576,7 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
         regionRepository.saveAll(regions);
         assignmentRepository.saveAll(assignments);
 
-        log.info("CP-SAT proposal {} created: {} DAs, {} tiles, gap={}%",
+        log.info("CP-SAT proposal {} created: {} DAs, {} hexes, gap={}%",
                 proposal.getId(), K, assignments.size(), optGap);
 
         return proposal;

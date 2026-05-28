@@ -7,21 +7,21 @@ import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
 import com.oneday.grid.domain.Grid;
+import com.oneday.grid.domain.HexTravelTime;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.ProposalType;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.TileTravelTime;
 import com.oneday.grid.dto.response.IntradayReassignmentResponse;
 import com.oneday.grid.dto.response.ProposalResponse;
 import com.oneday.grid.dto.response.RegionResponse;
 import com.oneday.grid.dto.response.TileShareResponse;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
-import com.oneday.grid.repository.TileTravelTimeRepository;
+import com.oneday.grid.repository.HexTravelTimeRepository;
 import com.oneday.grid.service.ProposalService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,17 +46,17 @@ class ProposalServiceImpl implements ProposalService {
 
     private final AssignmentProposalRepository proposalRepository;
     private final AssignmentProposalRegionRepository regionRepository;
-    private final DaTileAssignmentRepository assignmentRepository;
+    private final DaHexAssignmentRepository assignmentRepository;
     private final GridRepository gridRepository;
-    private final TileTravelTimeRepository travelTimeRepository;
+    private final HexTravelTimeRepository travelTimeRepository;
     private final GridProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     ProposalServiceImpl(AssignmentProposalRepository proposalRepository,
                         AssignmentProposalRegionRepository regionRepository,
-                        DaTileAssignmentRepository assignmentRepository,
+                        DaHexAssignmentRepository assignmentRepository,
                         GridRepository gridRepository,
-                        TileTravelTimeRepository travelTimeRepository,
+                        HexTravelTimeRepository travelTimeRepository,
                         GridProperties properties) {
         this.proposalRepository = proposalRepository;
         this.regionRepository = regionRepository;
@@ -108,7 +108,7 @@ class ProposalServiceImpl implements ProposalService {
                 });
 
         // Activate this proposal's assignments
-        List<DaTileAssignment> assignments = assignmentRepository.findByProposalId(proposalId);
+        List<DaHexAssignment> assignments = assignmentRepository.findByProposalId(proposalId);
         assignments.forEach(a -> {
             a.setStatus(AssignmentStatus.APPROVED);
             a.setApprovedBy(reviewerId);
@@ -146,30 +146,30 @@ class ProposalServiceImpl implements ProposalService {
 
     @Override
     @Transactional
-    public void editRegionInProposal(UUID proposalId, UUID daId, List<UUID> newTileIds, UUID reviewerId) {
+    public void editRegionInProposal(UUID proposalId, UUID daId, List<UUID> newHexIds, UUID reviewerId) {
         AssignmentProposal proposal = requireProposal(proposalId);
         require(proposal.getStatus() == ProposalStatus.PROPOSED,
                 "editRegionInProposal requires PROPOSED status, got: " + proposal.getStatus());
 
         Map<UUID, List<UUID>> adjacencyGraph = loadAdjacencyGraph(proposal.getCityId());
-        require(ContiguityValidator.isConnected(newTileIds, adjacencyGraph),
-                "New tile set for DA " + daId + " is not contiguous");
+        require(ContiguityValidator.isConnected(newHexIds, adjacencyGraph),
+                "New hex set for DA " + daId + " is not contiguous");
 
         // Supersede existing PROPOSED assignments for this DA under this proposal
-        List<DaTileAssignment> existing = assignmentRepository.findByProposalId(proposalId).stream()
+        List<DaHexAssignment> existing = assignmentRepository.findByProposalId(proposalId).stream()
                 .filter(a -> a.getDaId().equals(daId) && a.getStatus() == AssignmentStatus.PROPOSED)
                 .toList();
         existing.forEach(a -> a.setStatus(AssignmentStatus.SUPERSEDED));
         assignmentRepository.saveAll(existing);
 
-        // Insert new rows for the replacement tile set
-        List<DaTileAssignment> replacements = newTileIds.stream()
-                .map(tileId -> DaTileAssignment.builder()
+        // Insert new rows for the replacement hex set
+        List<DaHexAssignment> replacements = newHexIds.stream()
+                .map(hexId -> DaHexAssignment.builder()
                         .proposalId(proposalId)
                         .daId(daId)
-                        .tileId(tileId)
+                        .hexId(hexId)
                         .validDate(proposal.getValidForDate())
-                        .nDasOnTile(1)
+                        .nDasOnHex(1)
                         .status(AssignmentStatus.PROPOSED)
                         .build())
                 .toList();
@@ -181,45 +181,45 @@ class ProposalServiceImpl implements ProposalService {
             regionRepository.save(region);
         });
 
-        log.info("Region edited in proposal {} for DA {}: {} tiles", proposalId, daId, newTileIds.size());
+        log.info("Region edited in proposal {} for DA {}: {} hexes", proposalId, daId, newHexIds.size());
     }
 
     // -------------------------------------------------------------------------
-    // Scenario B — intraday tile reassignment
+    // Scenario B — intraday hex reassignment
     // -------------------------------------------------------------------------
 
     @Override
     @Transactional
     public IntradayReassignmentResponse requestIntradayReassignment(UUID cityId, UUID fromDaId,
                                                                     UUID toDaId,
-                                                                    List<UUID> tileIdsToMove,
+                                                                    List<UUID> hexIdsToMove,
                                                                     UUID requestedBy) {
         LocalDate today = LocalDate.now();
-        Set<UUID> moveSet = new HashSet<>(tileIdsToMove);
+        Set<UUID> moveSet = new HashSet<>(hexIdsToMove);
 
         // Load current ACTIVE assignments for both DAs
-        List<UUID> fromCurrent = activeAssignedTiles(fromDaId, today);
-        List<UUID> toCurrent   = activeAssignedTiles(toDaId,   today);
+        List<UUID> fromCurrent = activeAssignedHexes(fromDaId, today);
+        List<UUID> toCurrent   = activeAssignedHexes(toDaId,   today);
 
-        // Validate all tiles to move are actively assigned to fromDaId
+        // Validate all hexes to move are actively assigned to fromDaId
         Set<UUID> fromSet = new HashSet<>(fromCurrent);
-        for (UUID tileId : tileIdsToMove) {
-            require(fromSet.contains(tileId),
-                    "Tile " + tileId + " is not ACTIVE under DA " + fromDaId);
+        for (UUID hexId : hexIdsToMove) {
+            require(fromSet.contains(hexId),
+                    "Hex " + hexId + " is not ACTIVE under DA " + fromDaId);
         }
 
         Map<UUID, List<UUID>> adjacencyGraph = loadAdjacencyGraph(cityId);
 
-        // fromDaId's new territory must remain connected after removing tiles
+        // fromDaId's new territory must remain connected after removing hexes
         List<UUID> fromNew = fromCurrent.stream().filter(t -> !moveSet.contains(t)).toList();
         require(fromNew.isEmpty() || ContiguityValidator.isConnected(fromNew, adjacencyGraph),
-                "Removing tiles would disconnect DA " + fromDaId + "'s territory");
+                "Removing hexes would disconnect DA " + fromDaId + "'s territory");
 
-        // toDaId's new territory must be connected after adding tiles
+        // toDaId's new territory must be connected after adding hexes
         List<UUID> toNew = new ArrayList<>(toCurrent);
-        toNew.addAll(tileIdsToMove);
+        toNew.addAll(hexIdsToMove);
         require(ContiguityValidator.isConnected(toNew, adjacencyGraph),
-                "Adding tiles would disconnect DA " + toDaId + "'s territory");
+                "Adding hexes would disconnect DA " + toDaId + "'s territory");
 
         // Create INTRADAY_OVERRIDE proposal (requires separate approval)
         AssignmentProposal overrideProposal = proposalRepository.save(AssignmentProposal.builder()
@@ -233,25 +233,25 @@ class ProposalServiceImpl implements ProposalService {
                         : com.oneday.grid.domain.AdjacencySource.OSRM)
                 .totalDas(2)
                 .coveragePct(100.0)
-                .understaffedTileIds("[]")
+                .understaffedHexIds("[]")
                 .build());
 
-        // Write full new tile sets for both affected DAs (append-only — no mutations to active rows)
-        List<DaTileAssignment> newAssignments = new ArrayList<>();
-        for (UUID tileId : fromNew) {
-            newAssignments.add(buildProposedAssignment(overrideProposal.getId(), fromDaId, tileId, today));
+        // Write full new hex sets for both affected DAs (append-only — no mutations to active rows)
+        List<DaHexAssignment> newAssignments = new ArrayList<>();
+        for (UUID hexId : fromNew) {
+            newAssignments.add(buildProposedAssignment(overrideProposal.getId(), fromDaId, hexId, today));
         }
-        for (UUID tileId : toNew) {
-            newAssignments.add(buildProposedAssignment(overrideProposal.getId(), toDaId, tileId, today));
+        for (UUID hexId : toNew) {
+            newAssignments.add(buildProposedAssignment(overrideProposal.getId(), toDaId, hexId, today));
         }
         assignmentRepository.saveAll(newAssignments);
 
-        log.info("Intraday override proposal {} created: {} tiles moved from {} to {}",
-                overrideProposal.getId(), tileIdsToMove.size(), fromDaId, toDaId);
+        log.info("Intraday override proposal {} created: {} hexes moved from {} to {}",
+                overrideProposal.getId(), hexIdsToMove.size(), fromDaId, toDaId);
 
         return new IntradayReassignmentResponse(
                 overrideProposal.getId(), cityId, fromDaId, toDaId,
-                tileIdsToMove, ProposalStatus.PROPOSED, overrideProposal.getProposedAt());
+                hexIdsToMove, ProposalStatus.PROPOSED, overrideProposal.getProposedAt());
     }
 
     @Override
@@ -266,9 +266,9 @@ class ProposalServiceImpl implements ProposalService {
         Instant now = Instant.now();
 
         // Collect the DAs affected by this override proposal
-        List<DaTileAssignment> overrideAssignments = assignmentRepository.findByProposalId(proposalId);
+        List<DaHexAssignment> overrideAssignments = assignmentRepository.findByProposalId(proposalId);
         Set<UUID> affectedDaIds = overrideAssignments.stream()
-                .map(DaTileAssignment::getDaId)
+                .map(DaHexAssignment::getDaId)
                 .collect(Collectors.toSet());
 
         // Supersede ACTIVE assignments for the affected DAs on today's date
@@ -299,18 +299,18 @@ class ProposalServiceImpl implements ProposalService {
     }
 
     // -------------------------------------------------------------------------
-    // Tile share
+    // Hex share
     // -------------------------------------------------------------------------
 
     @Override
     @Transactional
-    public TileShareResponse requestTileShare(UUID cityId, UUID daId, UUID tileId, UUID requestedBy) {
+    public TileShareResponse requestTileShare(UUID cityId, UUID daId, UUID hexId, UUID requestedBy) {
         LocalDate today = LocalDate.now();
 
-        // Validate the tile is currently ACTIVE (at least one DA covers it)
-        List<DaTileAssignment> active = assignmentRepository
-                .findByTileIdAndValidDateAndStatus(tileId, today, AssignmentStatus.ACTIVE);
-        require(!active.isEmpty(), "Tile " + tileId + " has no ACTIVE assignment to share");
+        // Validate the hex is currently ACTIVE (at least one DA covers it)
+        List<DaHexAssignment> active = assignmentRepository
+                .findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.ACTIVE);
+        require(!active.isEmpty(), "Hex " + hexId + " has no ACTIVE assignment to share");
 
         AssignmentProposal shareProposal = proposalRepository.save(AssignmentProposal.builder()
                 .cityId(cityId)
@@ -321,21 +321,21 @@ class ProposalServiceImpl implements ProposalService {
                 .adjacencySource(com.oneday.grid.domain.AdjacencySource.OSRM)
                 .totalDas(1)
                 .coveragePct(100.0)
-                .understaffedTileIds("[]")
+                .understaffedHexIds("[]")
                 .build());
 
-        DaTileAssignment shareAssignment = assignmentRepository.save(DaTileAssignment.builder()
+        DaHexAssignment shareAssignment = assignmentRepository.save(DaHexAssignment.builder()
                 .proposalId(shareProposal.getId())
                 .daId(daId)
-                .tileId(tileId)
+                .hexId(hexId)
                 .validDate(today)
-                .nDasOnTile(active.size() + 1)
+                .nDasOnHex(active.size() + 1)
                 .status(AssignmentStatus.PROPOSED)
                 .build());
 
-        log.info("Tile share proposal {} created for tile {} with DA {}", shareProposal.getId(), tileId, daId);
+        log.info("Hex share proposal {} created for hex {} with DA {}", shareProposal.getId(), hexId, daId);
 
-        return new TileShareResponse(shareProposal.getId(), daId, tileId,
+        return new TileShareResponse(shareProposal.getId(), daId, hexId,
                 ProposalStatus.PROPOSED, shareAssignment.getProposedAt());
     }
 
@@ -350,7 +350,7 @@ class ProposalServiceImpl implements ProposalService {
 
         Instant now = Instant.now();
 
-        List<DaTileAssignment> shareAssignments = assignmentRepository.findByProposalId(proposalId);
+        List<DaHexAssignment> shareAssignments = assignmentRepository.findByProposalId(proposalId);
         shareAssignments.forEach(a -> {
             a.setStatus(AssignmentStatus.ACTIVE);
             a.setApprovedBy(reviewerId);
@@ -363,7 +363,7 @@ class ProposalServiceImpl implements ProposalService {
         proposal.setReviewedAt(now);
         proposalRepository.save(proposal);
 
-        log.info("Tile share {} approved by {}", proposalId, reviewerId);
+        log.info("Hex share {} approved by {}", proposalId, reviewerId);
     }
 
     // -------------------------------------------------------------------------
@@ -373,37 +373,37 @@ class ProposalServiceImpl implements ProposalService {
     private Map<UUID, List<UUID>> loadAdjacencyGraph(UUID cityId) {
         Grid grid = gridRepository.findByCityId(cityId)
                 .orElseThrow(() -> new IllegalArgumentException("Grid not found for city: " + cityId));
-        List<TileTravelTime> travelTimes = travelTimeRepository
-                .findByGridIdAndTravelTimeSecondsLessThanEqual(
+        List<HexTravelTime> travelTimes = travelTimeRepository
+                .findByH3GridIdAndTravelTimeSecondsLessThanEqual(
                         grid.getId(), properties.getOsrm().getAdjacencyThresholdSeconds());
         Map<UUID, List<UUID>> graph = new HashMap<>();
-        for (TileTravelTime tt : travelTimes) {
-            graph.computeIfAbsent(tt.getFromTileId(), k -> new ArrayList<>()).add(tt.getToTileId());
+        for (HexTravelTime tt : travelTimes) {
+            graph.computeIfAbsent(tt.getFromHexId(), k -> new ArrayList<>()).add(tt.getToHexId());
         }
         return graph;
     }
 
-    private List<UUID> activeAssignedTiles(UUID daId, LocalDate date) {
+    private List<UUID> activeAssignedHexes(UUID daId, LocalDate date) {
         return assignmentRepository.findByDaIdAndValidDate(daId, date).stream()
                 .filter(a -> a.getStatus() == AssignmentStatus.ACTIVE
                           || a.getStatus() == AssignmentStatus.APPROVED)
-                .map(DaTileAssignment::getTileId)
+                .map(DaHexAssignment::getHexId)
                 .toList();
     }
 
     private void supersedeAssignments(UUID proposalId) {
-        List<DaTileAssignment> assignments = assignmentRepository.findByProposalId(proposalId);
+        List<DaHexAssignment> assignments = assignmentRepository.findByProposalId(proposalId);
         assignments.forEach(a -> a.setStatus(AssignmentStatus.SUPERSEDED));
         assignmentRepository.saveAll(assignments);
     }
 
-    private DaTileAssignment buildProposedAssignment(UUID proposalId, UUID daId, UUID tileId, LocalDate date) {
-        return DaTileAssignment.builder()
+    private DaHexAssignment buildProposedAssignment(UUID proposalId, UUID daId, UUID hexId, LocalDate date) {
+        return DaHexAssignment.builder()
                 .proposalId(proposalId)
                 .daId(daId)
-                .tileId(tileId)
+                .hexId(hexId)
                 .validDate(date)
-                .nDasOnTile(1)
+                .nDasOnHex(1)
                 .status(AssignmentStatus.PROPOSED)
                 .build();
     }
@@ -412,14 +412,14 @@ class ProposalServiceImpl implements ProposalService {
         List<AssignmentProposalRegion> regions = regionRepository.findByProposalId(proposal.getId());
         List<RegionResponse> regionResponses = regions.stream()
                 .map(r -> {
-                    List<UUID> tileIds = assignmentRepository.findByProposalId(proposal.getId()).stream()
+                    List<UUID> hexIds = assignmentRepository.findByProposalId(proposal.getId()).stream()
                             .filter(a -> a.getDaId().equals(r.getDaId())
                                       && a.getStatus() != AssignmentStatus.SUPERSEDED)
-                            .map(DaTileAssignment::getTileId)
+                            .map(DaHexAssignment::getHexId)
                             .toList();
                     return new RegionResponse(r.getId(), r.getDaId(), r.getNDasRequired(),
                             r.getEstimatedDemandMin(), r.getEstimatedUtilPct(),
-                            r.isHasBootstrappedTiles(), tileIds);
+                            r.isHasBootstrappedTiles(), hexIds);
                 })
                 .toList();
 
@@ -428,7 +428,7 @@ class ProposalServiceImpl implements ProposalService {
                 proposal.getStatus(), proposal.getProposalType(), proposal.getSolverType(),
                 proposal.getAdjacencySource(), proposal.getOptimalityGapPct(),
                 proposal.getTotalDas(), proposal.getCoveragePct(),
-                deserializeUuids(proposal.getUnderstaffedTileIds()),
+                deserializeUuids(proposal.getUnderstaffedHexIds()),
                 proposal.getProposedAt(), proposal.getReviewedBy(), proposal.getReviewedAt(),
                 proposal.getNotes(), regionResponses);
     }

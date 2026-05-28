@@ -1,7 +1,7 @@
 package com.oneday.grid.service;
 
 import com.oneday.grid.domain.AssignmentProposal;
-import com.oneday.grid.domain.TileDemandSnapshot;
+import com.oneday.grid.domain.HexDemandSnapshot;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -12,7 +12,7 @@ public interface AssignmentService {
     // Computes, persists, and returns the AssignmentProposal (with linked regions + assignments).
     AssignmentProposal computeProposal(UUID cityId,
                                        LocalDate validForDate,
-                                       List<TileDemandSnapshot> demand,
+                                       List<HexDemandSnapshot> demand,
                                        Map<UUID, List<UUID>> adjacencyGraph,
                                        List<UUID> availableDaIds);
 }

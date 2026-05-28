@@ -1,7 +1,5 @@
 city_id: "city-chennai"
 city_name: "Chennai"
-center_lat: 13.0827
-center_lon: 80.2707
 serviceable_pincodes:
   - pincode: "600001"
     lat: 13.0878

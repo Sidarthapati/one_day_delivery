@@ -2,10 +2,10 @@ package com.oneday.grid.service.impl;
 
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.Grid;
-import com.oneday.grid.domain.Tile;
-import com.oneday.grid.domain.TileDemandSnapshot;
-import com.oneday.grid.repository.TileDemandSnapshotRepository;
-import com.oneday.grid.repository.TileRepository;
+import com.oneday.grid.domain.Hex;
+import com.oneday.grid.domain.HexDemandSnapshot;
+import com.oneday.grid.repository.HexDemandSnapshotRepository;
+import com.oneday.grid.repository.HexRepository;
 import com.oneday.grid.service.DemandScoringService;
 import com.oneday.grid.service.GridService;
 import org.slf4j.Logger;
@@ -28,18 +28,18 @@ public class DemandScoringServiceImpl implements DemandScoringService {
     private static final Logger log = LoggerFactory.getLogger(DemandScoringServiceImpl.class);
 
     private final GridService gridService;
-    private final TileRepository tileRepository;
-    private final TileDemandSnapshotRepository snapshotRepository;
+    private final HexRepository hexRepository;
+    private final HexDemandSnapshotRepository snapshotRepository;
     private final GridProperties properties;
     private final M4DataLoader m4;
 
     DemandScoringServiceImpl(GridService gridService,
-                             TileRepository tileRepository,
-                             TileDemandSnapshotRepository snapshotRepository,
+                             HexRepository hexRepository,
+                             HexDemandSnapshotRepository snapshotRepository,
                              GridProperties properties,
                              M4DataLoader m4) {
         this.gridService = gridService;
-        this.tileRepository = tileRepository;
+        this.hexRepository = hexRepository;
         this.snapshotRepository = snapshotRepository;
         this.properties = properties;
         this.m4 = m4;
@@ -47,27 +47,19 @@ public class DemandScoringServiceImpl implements DemandScoringService {
 
     @Override
     @Transactional
-    public List<TileDemandSnapshot> computeAndPersistDemand(UUID cityId, LocalDate date) {
+    public List<HexDemandSnapshot> computeAndPersistDemand(UUID cityId, LocalDate date) {
         Grid grid = gridService.getGrid(cityId);
-        List<Tile> activeTiles = tileRepository.findByGridIdAndActiveTrue(grid.getId());
+        List<Hex> activeHexes = hexRepository.findByH3GridIdAndActiveTrue(grid.getId());
 
-        // If snapshots already exist for all active tiles for this date, return them as-is.
-        // This preserves manual demand overrides made via the demo endpoint.
-        // Deduplicate by tileId so that manual overrides (delete+insert) don't break the check.
-        Set<UUID> activeTileIds = activeTiles.stream().map(Tile::getId).collect(Collectors.toSet());
-        Map<UUID, TileDemandSnapshot> existingByTile = snapshotRepository.findBySnapshotDate(date).stream()
-                .filter(s -> activeTileIds.contains(s.getTileId()))
-                .collect(Collectors.toMap(TileDemandSnapshot::getTileId, s -> s, (a, b) -> b));
-        if (existingByTile.keySet().containsAll(activeTileIds)) {
+        Set<UUID> activeHexIds = activeHexes.stream().map(Hex::getId).collect(Collectors.toSet());
+        Map<UUID, HexDemandSnapshot> existingByHex = snapshotRepository.findBySnapshotDate(date).stream()
+                .filter(s -> activeHexIds.contains(s.getHexId()))
+                .collect(Collectors.toMap(HexDemandSnapshot::getHexId, s -> s, (a, b) -> b));
+        if (existingByHex.keySet().containsAll(activeHexIds)) {
             log.info("Demand snapshots already present for cityId={} date={} — skipping recomputation", cityId, date);
-            return new ArrayList<>(existingByTile.values());
+            return new ArrayList<>(existingByHex.values());
         }
 
-        // M4 queries run in their own REQUIRES_NEW transactions. The inner catch in
-        // M4DataLoader intercepts the SQL error, but Hibernate still marks the REQUIRES_NEW
-        // transaction as rollback-only, so Spring throws UnexpectedRollbackException when it
-        // tries to commit that inner transaction. We catch it here so the outer transaction
-        // is not affected.
         Map<UUID, Double> serviceTimeMins = safeCall(() -> m4.loadServiceTimeMins(properties.getBootstrap().getMinPickupsForRealData()), Map.of());
         Map<UUID, Double> interStopTravelMins = safeCall(() -> m4.loadInterStopTravelMins(properties.getSolver().getMinInterStopPairsPerWindow()), Map.of());
         Map<UUID, Integer> currentOrders = safeCall(() -> m4.loadCurrentOrders(date), Map.of());
@@ -81,24 +73,24 @@ public class DemandScoringServiceImpl implements DemandScoringService {
             log.info("Demand scoring: M4 data unavailable — running in full bootstrap mode for cityId={}", cityId);
         }
 
-        List<TileDemandSnapshot> snapshots = new ArrayList<>(activeTiles.size());
-        for (Tile tile : activeTiles) {
-            UUID tid = tile.getId();
+        List<HexDemandSnapshot> snapshots = new ArrayList<>(activeHexes.size());
+        for (Hex hex : activeHexes) {
+            UUID hid = hex.getId();
 
-            boolean svcBootstrapped = !serviceTimeMins.containsKey(tid);
-            boolean interBootstrapped = !interStopTravelMins.containsKey(tid);
+            boolean svcBootstrapped = !serviceTimeMins.containsKey(hid);
+            boolean interBootstrapped = !interStopTravelMins.containsKey(hid);
 
-            double svcTime = svcBootstrapped ? cityWideSvcTime : serviceTimeMins.get(tid);
-            double interStop = interBootstrapped ? cityWideInterStop : interStopTravelMins.get(tid);
+            double svcTime = svcBootstrapped ? cityWideSvcTime : serviceTimeMins.get(hid);
+            double interStop = interBootstrapped ? cityWideInterStop : interStopTravelMins.get(hid);
 
-            double histAvg = histAvgOrders.getOrDefault(tid, 0.0);
-            int current = currentOrders.getOrDefault(tid, 0);
+            double histAvg = histAvgOrders.getOrDefault(hid, 0.0);
+            int current = currentOrders.getOrDefault(hid, 0);
             double demandOrders = 0.70 * histAvg + 0.30 * current;
             double orderEngagedMin = svcTime + interStop;
             double demandMinutes = demandOrders * orderEngagedMin;
 
-            snapshots.add(TileDemandSnapshot.builder()
-                    .tileId(tid)
+            snapshots.add(HexDemandSnapshot.builder()
+                    .hexId(hid)
                     .snapshotDate(date)
                     .histAvgOrders(histAvg)
                     .currentOrders(current)

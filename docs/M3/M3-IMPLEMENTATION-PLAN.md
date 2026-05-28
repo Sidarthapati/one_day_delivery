@@ -3,23 +3,23 @@
 | Field | Value |
 |-------|-------|
 | Module | `grid` (M3) |
-| Status | **Phases 1–8 complete. Phase 9 (integration tests) is next.** |
-| Stack | Java 21, Spring Boot 3.2, PostgreSQL, Kafka, OR-Tools 9.9, OSRM (self-hosted) |
+| Status | **Phases 1–8 + H3 Refactor (Phases A–I) complete. Phase 9 (integration tests) is next.** |
+| Stack | Java 21, Spring Boot 3.2, PostgreSQL, Kafka, OR-Tools 9.9, OSRM (self-hosted), h3-java 4.1.1 |
 | Depends on | `common` only (no M4/M5 at compile time — consumed via DB reads and Kafka) |
 
 ---
 
 ## Guiding principles for this implementation
 
-- **Append-only tables**: `da_tile_assignment`, `assignment_proposal`, `assignment_proposal_region`,
-  `grid_vertex` — never issue UPDATE or DELETE on these. Only `tile_travel_time` is replace-in-place.
+- **Append-only tables**: `da_hex_assignment`, `assignment_proposal`, `assignment_proposal_region`,
+  `h3_hex_vertex` — never issue UPDATE or DELETE on these. Only `h3_hex_travel_time` is replace-in-place.
 - **Interface-first services**: every service class has a public interface in `service/`. Implementations
   are package-private. CP-SAT and BFS impls both implement `AssignmentService`.
-- **No live OSRM at replan time**: the nightly job reads `tile_travel_time` from the DB. OSRM is only
+- **No live OSRM at replan time**: the nightly job reads `h3_hex_travel_time` from the DB. OSRM is only
   called in `OsrmMatrixRefreshJob` and `GridInitializationJob`.
 - **Bootstrap mode from day one**: all demand scoring paths handle the is-bootstrapped flag. The solver
   runs even without M4 GPS data.
-- **No PostGIS**: all geometry is pure arithmetic (integer division for GPS → tile, Δlat/Δlon).
+- **No PostGIS**: all geometry is handled by h3-java (GPS → H3 cell index, centroid extraction, vertex extraction).
 
 ---
 
@@ -74,24 +74,33 @@ Add the following dependencies:
 Create `grid/src/main/resources/db/migration/` with one file per concern.
 Order matters — FK references must come after their targets.
 
+**Original rectangular tile migrations (V1–V10) — left on disk, tables inert:**
+
+| File | Creates (legacy, unused) |
+|------|---------|
+| `V1__create_grid.sql` | `grid` table (origin_lat/lon/delta) |
+| `V2__create_tile.sql` | `tile` table (row_idx/col_idx) |
+| `V3__create_tile_travel_time.sql` | `tile_travel_time` table |
+| `V4__create_pincode_mapping.sql` | `pincode_mapping` table (tile_id FK) |
+| `V5__create_grid_vertex.sql` | `grid_vertex` table (row_idx/col_idx) |
+| `V6__create_tile_demand_snapshot.sql` | `tile_demand_snapshot` table |
+| `V7__create_assignment_proposal.sql` | `assignment_proposal` table |
+| `V8__create_assignment_proposal_region.sql` | `assignment_proposal_region` |
+| `V9__create_da_tile_assignment.sql` | `da_tile_assignment` (old, tile FK) |
+| `V10__fix_da_tile_assignment_unique.sql` | UNIQUE(proposal_id, da_id, tile_id, valid_date) |
+
+**H3 migrations (V11–V18) — active:**
+
 | File | Creates |
 |------|---------|
-| `V1__create_grid.sql` | `grid` table |
-| `V2__create_tile.sql` | `tile` table (FK → grid) |
-| `V3__create_tile_travel_time.sql` | `tile_travel_time` table (FK → grid, tile) |
-| `V4__create_pincode_mapping.sql` | `pincode_mapping` table (FK → tile) |
-| `V5__create_grid_vertex.sql` | `grid_vertex` table (FK → grid) |
-| `V6__create_tile_demand_snapshot.sql` | `tile_demand_snapshot` table (FK → tile) |
-| `V7__create_assignment_proposal.sql` | `assignment_proposal` table |
-| `V8__create_assignment_proposal_region.sql` | `assignment_proposal_region` (FK → proposal) |
-| `V9__create_da_tile_assignment.sql` | `da_tile_assignment` (FK → proposal, tile) |
-
-Use the exact DDL from M3-GRID-DESIGN.md §6. Key things to check:
-- `grid`: UNIQUE(city_id)
-- `tile`: UNIQUE(grid_id, row_idx, col_idx); `traversal_cap_sec INT` nullable
-- `tile_travel_time`: no long-term append — this is the one replace-in-place table
-- `da_tile_assignment`: UNIQUE(da_id, tile_id, valid_date)
-- `assignment_proposal_region`: UNIQUE(proposal_id, da_id)
+| `V11__create_h3_grid.sql` | `h3_grid` — `h3_resolution INT` replaces origin/delta |
+| `V12__create_h3_hex.sql` | `h3_hex` — `h3_index BIGINT` replaces row_idx/col_idx |
+| `V13__create_h3_hex_travel_time.sql` | `h3_hex_travel_time` — FKs to h3_hex |
+| `V14__create_h3_pincode_mapping.sql` | `h3_pincode_mapping` — `hex_id` FK |
+| `V15__create_h3_hex_vertex.sql` | `h3_hex_vertex` — `h3_vertex_index BIGINT` |
+| `V16__create_h3_hex_demand_snapshot.sql` | `h3_hex_demand_snapshot` — `hex_id` FK |
+| `V17__create_da_hex_assignment.sql` | `da_hex_assignment` — `hex_id` FK, reuses `assignment_proposal` |
+| `V18__rename_understaffed_tile_ids.sql` | Rename `understaffed_tile_ids` → `understaffed_hex_ids` in `assignment_proposal` |
 
 ### Step 1.3 — Application config
 
@@ -144,17 +153,17 @@ Package: `com.oneday.grid.domain`
 Create one file per entity. Each should extend `BaseEntity` from `common` if it provides
 `id` (UUID) + `createdAt`. If `BaseEntity` doesn't cover it, define fields explicitly.
 
-| Class | Key fields | Notes |
-|-------|-----------|-------|
-| `Grid` | `cityId, originLat, originLon, tileDeltaLat, tileDeltaLon` | Immutable after create |
-| `Tile` | `gridId, rowIdx, colIdx, isActive, traversalCapSec` | `traversalCapSec` nullable |
-| `TileTravelTime` | `gridId, fromTileId, toTileId, travelTimeSeconds, computedAt` | Replaced not appended |
-| `PincodeMapping` | `cityId, pincode, tileId, isServiceable` | Serviceability lookup |
-| `GridVertex` | `gridId, rowIdx, colIdx, lat, lon` | Pre-computed for M6 |
-| `TileDemandSnapshot` | `tileId, snapshotDate, histAvgOrders, currentOrders, demandScoreOrders, serviceTimeMin, interStopTravelMin, orderEngagedMin, demandScoreMinutes, isBootstrapped` | One row per tile per day |
-| `AssignmentProposal` | `cityId, validForDate, status, solverType, adjacencySource, optimalityGapPct, totalDas, coveragePct, understaffedTileIds (JSONB), proposedAt, reviewedBy, reviewedAt, notes` | Append-only |
-| `AssignmentProposalRegion` | `proposalId, daId, nDasRequired, estimatedDemandMin, estimatedUtilPct, hasBootstrappedTiles` | Append-only |
-| `DaTileAssignment` | `proposalId, daId, tileId, validDate, nDasOnTile, status, proposedAt, approvedBy, approvedAt` | Append-only |
+| Class | Table | Key fields | Notes |
+|-------|-------|-----------|-------|
+| `Grid` | `h3_grid` | `cityId, h3Resolution` | Immutable after create |
+| `Hex` | `h3_hex` | `h3GridId, h3Index (long), active, traversalCapSec` | `traversalCapSec` nullable |
+| `HexTravelTime` | `h3_hex_travel_time` | `h3GridId, fromHexId, toHexId, travelTimeSeconds, computedAt` | Replaced not appended |
+| `PincodeMapping` | `h3_pincode_mapping` | `cityId, pincode, hexId, isServiceable` | Serviceability lookup |
+| `HexVertex` | `h3_hex_vertex` | `h3GridId, h3VertexIndex (long), lat, lon` | Pre-computed for M6 |
+| `HexDemandSnapshot` | `h3_hex_demand_snapshot` | `hexId, snapshotDate, histAvgOrders, currentOrders, demandScoreOrders, serviceTimeMin, interStopTravelMin, orderEngagedMin, demandScoreMinutes, isBootstrapped` | One row per hex per day |
+| `AssignmentProposal` | `assignment_proposal` | `cityId, validForDate, status, solverType, adjacencySource, optimalityGapPct, totalDas, coveragePct, understaffedHexIds (JSONB), proposedAt, reviewedBy, reviewedAt, notes` | Append-only; reused from original design |
+| `AssignmentProposalRegion` | `assignment_proposal_region` | `proposalId, daId, nDasRequired, estimatedDemandMin, estimatedUtilPct, hasBootstrappedTiles` | Append-only; reused |
+| `DaHexAssignment` | `da_hex_assignment` | `proposalId, daId, hexId, validDate, nDasOnHex, status, proposedAt, approvedBy, approvedAt` | Append-only |
 
 **Enums to create:**
 
@@ -182,14 +191,14 @@ Spring Data JPA interfaces only — no custom SQL unless a named query is genuin
 | Repository | Key custom queries |
 |-----------|-------------------|
 | `GridRepository` | `findByCityId(UUID)` |
-| `TileRepository` | `findByGridIdAndIsActiveTrue(UUID)`, `findByGridIdAndRowIdxAndColIdx(...)` |
-| `TileTravelTimeRepository` | `deleteByGridId(UUID)` (for OSRM refresh), `findByGridIdAndTravelTimeSecondsLessThanEqual(UUID, int)` |
+| `HexRepository` | `findByH3GridIdAndActiveTrue(UUID)`, `findByH3GridIdAndH3Index(UUID, long)` |
+| `HexTravelTimeRepository` | `deleteByH3GridId(UUID)` (for OSRM refresh) |
 | `PincodeMappingRepository` | `findByCityIdAndPincode(UUID, String)` |
-| `GridVertexRepository` | `findByGridId(UUID)` |
-| `TileDemandSnapshotRepository` | `findByTileIdAndSnapshotDate(UUID, LocalDate)` |
+| `HexVertexRepository` | `findByH3GridId(UUID)` |
+| `HexDemandSnapshotRepository` | `findByHexIdAndSnapshotDate(UUID, LocalDate)` |
 | `AssignmentProposalRepository` | `findByCityIdAndValidForDate(UUID, LocalDate)`, `findByCityIdAndStatusOrderByProposedAtDesc(UUID, ProposalStatus)` |
 | `AssignmentProposalRegionRepository` | `findByProposalId(UUID)`, `findByProposalIdAndDaId(UUID, UUID)` |
-| `DaTileAssignmentRepository` | `findByProposalId(UUID)`, `findByDaIdAndValidDate(UUID, LocalDate)`, `findByTileIdAndValidDateAndStatus(UUID, LocalDate, AssignmentStatus)` |
+| `DaHexAssignmentRepository` | `findByProposalId(UUID)`, `findByDaIdAndValidDate(UUID, LocalDate)`, `findByHexIdAndValidDateAndStatus(UUID, LocalDate, AssignmentStatus)`, `findByHexIdInAndValidDateAndStatus(...)` |
 
 ---
 
@@ -238,7 +247,7 @@ public interface GridService {
     UUID resolveCityId(String cityCode);                               // cityCode → UUID from grid.cities config
     List<TileDetailResponse> getTileDetails(UUID cityId, LocalDate);   // all tiles with lat/lng bounds + demand
     List<GridVertexResponse> getVertices(UUID cityId);                 // all vertices for map grid-lines
-    void setTileActive(UUID tileId, boolean active);                   // map UI tile toggle
+    void setHexActive(UUID hexId, boolean active);                     // map UI hex toggle
     List<AssignmentResponse> getActiveAssignments(UUID cityId, LocalDate); // city-scoped ACTIVE assignments
 }
 ```
@@ -246,25 +255,25 @@ public interface GridService {
 `GridServiceImpl`:
 - On startup (`@PostConstruct`), loads all `Grid` rows into a `Map<UUID, Grid>` (in-memory cache).
 - `resolveCityId`: reads from `grid.cities` config map (e.g., `"delhi"` → fixed UUID). Returns 404 if unknown.
-- `getTileDetails`: loads all tiles for the city, joins with `TileDemandSnapshot` for the requested date (one batch query), computes SW/NE lat/lon bounds from `grid.originLat + rowIdx * tileDeltaLat`.
-- `getActiveAssignments`: loads city tile IDs, queries `DaTileAssignmentRepository.findByTileIdInAndValidDateAndStatus(...)` — avoids cross-city contamination.
+- `getTileDetails`: loads all hexes for the city, joins with `HexDemandSnapshot` for the requested date (one batch query), computes centroid lat/lon via H3 `cellToLatLng`.
+- `getActiveAssignments`: loads city hex IDs, queries `DaHexAssignmentRepository.findByHexIdInAndValidDateAndStatus(...)` — avoids cross-city contamination.
 
 ### Step 5.2 — OsrmMatrixService
 
 ```java
 public interface OsrmMatrixService {
-    // Returns map: fromTileId → list of (toTileId, travelTimeSec) within threshold
+    // Returns map: fromHexId → list of (toHexId, travelTimeSec) within threshold
     Map<UUID, List<TileEdge>> computeAdjacencyMatrix(UUID cityId);
 }
 ```
 
 `OsrmMatrixServiceImpl` (package-private):
-- Loads active tile centroids for city.
+- Loads active hex centroids for city (via H3 `cellToLatLng`).
 - POST to `{osrm.base-url}/table/v1/driving/{coords}` (OSRM table API format: lon,lat pairs).
 - Parses `durations[][]` matrix.
 - Filters pairs `<= adjacency-threshold-seconds`.
 - Returns as a list of edges.
-- Also computes `traversal_cap_sec` for each tile (SW corner → NE corner OSRM call).
+- Also computes `traversal_cap_sec` for each hex (H3 `edgeLengthAvg` at the grid resolution).
 
 Implement a simple `OsrmClient` HTTP helper using `RestTemplate` or `WebClient`. Keep it in
 `service/osrm/` as a package-private helper — not exposed as a Spring bean.
@@ -273,8 +282,8 @@ Implement a simple `OsrmClient` HTTP helper using `RestTemplate` or `WebClient`.
 
 ```java
 public interface DemandScoringService {
-    // Computes and persists TileDemandSnapshot for all active tiles in city for given date
-    List<TileDemandSnapshot> computeAndPersistDemand(UUID cityId, LocalDate date);
+    // Computes and persists HexDemandSnapshot for all active hexes in city for given date
+    List<HexDemandSnapshot> computeAndPersistDemand(UUID cityId, LocalDate date);
 }
 ```
 
@@ -283,7 +292,7 @@ public interface DemandScoringService {
   since M4 and grid share the same PostgreSQL instance in v1.
 - Apply bootstrap rules: if < 20 pickups → use city-wide service time average.
 - Apply inter-stop guards: winsorise at `traversal_cap_sec`, fallback if < 5 pairs in window.
-- Write `TileDemandSnapshot` rows.
+- Write `HexDemandSnapshot` rows.
 
 **Important**: these SQL queries are in M3-GRID-DESIGN.md §8 steps 3a and 3b. Copy them verbatim into
 named native queries on the repository.
@@ -293,7 +302,7 @@ named native queries on the repository.
 ```java
 public interface AssignmentService {
     AssignmentProposal computeProposal(UUID cityId, LocalDate validForDate,
-                                       List<TileDemandSnapshot> demand,
+                                       List<HexDemandSnapshot> demand,
                                        Map<UUID, List<UUID>> adjacencyGraph,
                                        List<UUID> availableDaIds);
 }
@@ -301,9 +310,9 @@ public interface AssignmentService {
 
 Implement `BfsAssignmentServiceImpl` first — it is simpler and serves as the integration test baseline.
 BFS algorithm:
-1. Sort tiles by `demandScoreMinutes` descending.
-2. Greedily assign tiles to DAs via BFS from highest-demand seed, respecting `DA_max_load` hard ceiling.
-3. Guarantee contiguity by only BFS-expanding into road-adjacent tiles.
+1. Sort hexes by `demandScoreMinutes` descending.
+2. Greedily assign hexes to DAs via BFS from highest-demand seed, respecting `DA_max_load` hard ceiling.
+3. Guarantee contiguity by only BFS-expanding into road-adjacent hexes.
 4. Return `AssignmentProposal` with `solverType = BFS_FALLBACK`.
 
 ### Step 5.5 — AssignmentService (CP-SAT — implement second)
@@ -313,9 +322,9 @@ BFS algorithm:
 Follow the formulation in M3-GRID-DESIGN.md §5.4 Component B exactly:
 
 ```
-Variables:     assignment[i] ∈ {0, K-1}  one per active tile
+Variables:     assignment[i] ∈ {0, K-1}  one per active hex
 Constraints:   load-balance per DA (min ≤ Σdemand ≤ max)
-               symmetry-breaking: assignment[seed_tile_k] == k
+               symmetry-breaking: assignment[seed_hex_k] == k
 Objective:     minimize (max_load - min_load) over all DAs
 Contiguity:    lazy-cuts loop (BFS per territory, add cut on disconnected sub-assignment, re-solve)
 ```
@@ -323,9 +332,9 @@ Contiguity:    lazy-cuts loop (BFS per territory, add cut on disconnected sub-as
 OR-Tools key calls:
 ```java
 CpModel model = new CpModel();
-IntVar[] assignment = new IntVar[nTiles];
-for (int i = 0; i < nTiles; i++)
-    assignment[i] = model.newIntVar(0, K - 1, "a_" + tileIds.get(i));
+IntVar[] assignment = new IntVar[nHexes];
+for (int i = 0; i < nHexes; i++)
+    assignment[i] = model.newIntVar(0, K - 1, "a_" + hexIds.get(i));
 
 // Load balance per DA k: lb <= sum(demand[i] * (assignment[i] == k)) <= ub
 // Use model.newBoolVar + model.addEquality for indicator vars
@@ -368,40 +377,40 @@ public interface ProposalService {
     void reject(UUID proposalId, UUID reviewerId, String notes);
 
     // Scenario A: edit a DA's region inside an existing PROPOSED (pre-approval) proposal
-    void editRegionInProposal(UUID proposalId, UUID daId, List<UUID> newTileIds, UUID reviewerId);
+    void editRegionInProposal(UUID proposalId, UUID daId, List<UUID> newHexIds, UUID reviewerId);
 
-    // Scenario B: station manager reassigns tiles on an already-ACTIVE plan (intraday)
+    // Scenario B: station manager reassigns hexes on an already-ACTIVE plan (intraday)
     ProposalDto requestIntradayReassignment(UUID cityId, UUID fromDaId, UUID toDaId,
-                                            List<UUID> tileIdsToMove, UUID requestedBy);
+                                            List<UUID> hexIdsToMove, UUID requestedBy);
     void approveIntradayReassignment(UUID proposalId, UUID reviewerId);
 
-    // Tile share: add a second DA to a tile without removing the existing DA
-    TileShareResponse requestTileShare(UUID cityId, UUID daId, UUID tileId, UUID requestedBy);
+    // Hex share: add a second DA to a hex without removing the existing DA
+    TileShareResponse requestTileShare(UUID cityId, UUID daId, UUID hexId, UUID requestedBy);
     void approveTileShare(UUID proposalId, UUID reviewerId);
 }
 ```
 
 `ProposalServiceImpl` (package-private):
-- `approve`: set `status = APPROVED`, set all linked `DaTileAssignment.status = APPROVED`,
+- `approve`: set `status = APPROVED`, set all linked `DaHexAssignment.status = APPROVED`,
   SUPERSEDE previous ACTIVE assignments for same city + date.
-- `reject`: set `status = REJECTED`. Do not touch DaTileAssignment rows.
-- `editRegionInProposal`: validate tile set contiguity for the DA (BFS), validate remaining
-  tiles for affected neighbors, write new `DaTileAssignment` rows with the same `proposal_id`.
+- `reject`: set `status = REJECTED`. Do not touch `DaHexAssignment` rows.
+- `editRegionInProposal`: validate hex set contiguity for the DA (BFS), validate remaining
+  hexes for affected neighbors, write new `DaHexAssignment` rows with the same `proposal_id`.
 - `requestIntradayReassignment`:
-  1. Validate that tiles to move are currently ACTIVE and assigned to `fromDaId`.
-  2. BFS-validate contiguity: `fromDaId` territory minus the moved tiles must still be connected.
-  3. BFS-validate: `toDaId` territory plus the moved tiles must be connected (uses road-adjacency
-     graph — the moved tiles must be road-adjacent to at least one of `toDaId`'s current tiles).
+  1. Validate that hexes to move are currently ACTIVE and assigned to `fromDaId`.
+  2. BFS-validate contiguity: `fromDaId` territory minus the moved hexes must still be connected.
+  3. BFS-validate: `toDaId` territory plus the moved hexes must be connected (uses road-adjacency
+     graph — the moved hexes must be road-adjacent to at least one of `toDaId`'s current hexes).
   4. Create a new `AssignmentProposal` with `proposalType = INTRADAY_OVERRIDE, status = PROPOSED`.
-  5. Write new `DaTileAssignment` rows (status = PROPOSED) for both affected DAs' full new
-     tile sets — not just the moved tiles.
+  5. Write new `DaHexAssignment` rows (status = PROPOSED) for both affected DAs' full new
+     hex sets — not just the moved hexes.
   6. Return the new proposal so the caller can immediately show "approve this?" in the UI.
   7. If not approved within 10 minutes, the override request expires (status = SUPERSEDED).
 - `approveIntradayReassignment`:
   1. Set override proposal `status = APPROVED`.
-  2. Set new `DaTileAssignment` rows for the override to `status = ACTIVE`.
-  3. Set the old `DaTileAssignment` rows for both affected DAs to `status = SUPERSEDED`.
-  4. Log audit event: `{overrideProposalId, fromDaId, toDaId, tilesMoved, reviewedBy, at}`.
+  2. Set new `DaHexAssignment` rows for the override to `status = ACTIVE`.
+  3. Set the old `DaHexAssignment` rows for both affected DAs to `status = SUPERSEDED`.
+  4. Log audit event: `{overrideProposalId, fromDaId, toDaId, hexesMoved, reviewedBy, at}`.
 - Auto-fallback at 07:00: implemented as a check inside `NightlyReplanJob` — if no APPROVED
   proposal exists for today by 07:00, copy yesterday's ACTIVE assignments.
 
@@ -409,12 +418,12 @@ public interface ProposalService {
 
 ```java
 public interface IntradayLoadScoreService {
-    TileLoadScoreResponse getLoadScore(UUID tileId, LocalDate date);
-    void updateQueueDepth(UUID cityId, LocalDate date, Map<UUID, Integer> unservedByTile);
+    TileLoadScoreResponse getLoadScore(UUID hexId, LocalDate date);
+    void updateQueueDepth(UUID cityId, LocalDate date, Map<UUID, Integer> unservedByHex);
 }
 ```
 
-Backed entirely by a `ConcurrentHashMap<UUID, Integer>` (tile_id → unserved_orders).
+Backed entirely by a `ConcurrentHashMap<UUID, Integer>` (hex_id → unserved_orders).
 No DB hit on reads. Map is zeroed at shift-start by `IntradayMonitorJob`.
 
 ### Step 5.8 — GridReplanService (replan logic, shared by job and API)
@@ -450,7 +459,7 @@ public class GridInitializationJob {
 Sequence (from M3-GRID-DESIGN.md §10):
 1. Load serviceability YAML for city.
 2. Compute bounding box + tile geometry.
-3. Insert Grid + Tile + GridVertex rows.
+3. Insert `h3_grid`, `h3_hex`, and `h3_hex_vertex` rows.
 4. Insert PincodeMapping rows.
 5. Trigger `OsrmMatrixRefreshJob.refresh(cityId)`.
 
@@ -620,22 +629,21 @@ All approve endpoints take body `{ "reviewerId": "uuid" }` (`ApproveRequest` rec
 
 | Test class | What it tests |
 |-----------|--------------|
-| `TileArithmeticTest` | GPS → tile row/col conversion; edge cases (exactly on boundary) |
-| `BfsAssignmentServiceTest` | BFS produces contiguous, load-balanced territories on a small synthetic grid |
-| `CpSatAssignmentServiceTest` | CP-SAT produces valid contiguous partition; lazy-cuts converge in ≤5 rounds |
-| `DemandScoringBootstrapTest` | Bootstrap rules fire correctly when pickup count < 20; city-wide average fallback |
-| `IntradayMonitorLogicTest` | `adjustedLoadScore` formula; hysteresis counter; re-alert suppression |
+| `BfsAssignmentServiceImplTest` | BFS produces contiguous, load-balanced territories on a small synthetic H3 grid |
+| `CpSatAssignmentServiceImplTest` | CP-SAT produces valid contiguous partition; lazy-cuts converge in ≤5 rounds |
+| `DemandScoringServiceImplTest` | Bootstrap rules fire correctly when pickup count < 20; city-wide average fallback |
+| `IntradayMonitorJobTest` | `adjustedLoadScore` formula; hysteresis counter; re-alert suppression |
 | `ContiguityValidatorTest` | Connected subgraph detection; disconnected territory correctly flagged |
-| `IntradayReassignmentTest` | Move tiles between DAs; contiguity validated on both source and destination; expired override not applied |
+| `ProposalServiceImplTest` | Move hexes between DAs; contiguity validated on both source and destination; expired override not applied |
 
 ### Integration tests (TestContainers + real PostgreSQL)
 
 | Test class | What it tests |
 |-----------|--------------|
-| `GridInitializationIT` | Full city init from YAML → Grid/Tile/GridVertex rows correct |
-| `NightlyReplanIT` | End-to-end: demand snapshot → proposal → DaTileAssignment rows persisted |
+| `GridInitializationIT` | Full city init from YAML → `h3_grid`, `h3_hex`, `h3_hex_vertex` rows correct |
+| `NightlyReplanIT` | End-to-end: demand snapshot → proposal → `da_hex_assignment` rows persisted |
 | `ProposalApprovalIT` | Approve flow: PROPOSED → APPROVED, previous ACTIVE superseded |
-| `OsrmMatrixRefreshIT` | Refresh deletes old rows, inserts new ones; isolation warning logged |
+| `OsrmMatrixRefreshIT` | Refresh deletes old `h3_hex_travel_time` rows, inserts new ones; isolation warning logged |
 
 ### OSRM mock
 
@@ -647,7 +655,7 @@ Do not test against a live OSRM instance in CI.
 ## Implementation Order Summary
 
 ```
-Phase 1  ✓  pom.xml + Flyway migrations (V1–V10) + config + YAML stubs
+Phase 1  ✓  pom.xml + Flyway migrations (V1–V10 legacy + V11–V18 H3) + config + YAML stubs
 Phase 2  ✓  9 JPA entities + 5 enums
 Phase 3  ✓  9 repository interfaces
 Phase 4  ✓  17 DTO records (request/ + response/ subpackages)
@@ -658,13 +666,28 @@ Phase 5  ✓  Services: GridService, OsrmMatrixService, DemandScoringService,
 Phase 6  ✓  Batch jobs: GridInitializationJob, OsrmMatrixRefreshJob,
               NightlyReplanJob (delegates to GridReplanService), IntradayMonitorJob
 Phase 7  ✓  Kafka: TileQueueDepthConsumer (autoStartup=false), NoDaAlertProducer,
-              TileOverloadAlertProducer, KafkaTopics constants, 3 event POJOs
+              HexOverloadAlertProducer, KafkaTopics constants, 3 event POJOs
 Phase 8  ✓  REST: GridController (9 endpoints), ProposalController (8 endpoints)
               Swagger UI at /swagger-ui.html
+
+H3 Refactor (Phases A–I) ✓
+           A  h3-java 4.1.1 dep + H3Config bean + Flyway V11–V17
+           B  Domain: Grid(h3Resolution), Hex, HexVertex, HexTravelTime,
+                HexDemandSnapshot, DaHexAssignment entities
+           C  Repositories: Hex/HexVertex/HexTravelTime/HexDemandSnapshot/DaHexAssignment
+           D  GridService: initializeGrid (polyfill), getTileAt (h3Index), getTileDetails (centroids)
+           E  OsrmMatrixService: centroid via cellToLatLng, traversal cap via edgeLengthAvg
+           F  CP-SAT + BFS seed selection: lat/lon centroids replace row/col
+           G  DTOs + API: h3Index string, centerLat/centerLon, hexId
+           H  All 108 unit tests updated and green
+           I  Config cleanup (removed centerLat from city YAMLs, h3.resolution in application.yml)
+              Code cleanup: 10 old Tile/GridVertex entity + repo files deleted;
+              understaffedHexIds (renamed column + V18 migration); TileEdge.toHexId renamed
+
 Phase 9  ○  Integration tests (TestContainers + real PostgreSQL) — not started
 ```
 
-**Next up:** real serviceability data + DA seed data, then map UI demo (for Sunday demo).
+**Next up:** Phase 9 integration tests.
 
 ---
 
@@ -673,9 +696,9 @@ Phase 9  ○  Integration tests (TestContainers + real PostgreSQL) — not start
 | Contract | With module | What to align on |
 |----------|-------------|-----------------|
 | `dispatch.tile_queue_depth` Kafka topic | M5 | Exact JSON schema (§16.2.1); 5-minute cadence confirmed |
-| `shipment_leg_events` table read | M4 | Column names (`da_id`, `shift_date`, `stop_sequence`, `arrived_at_pickup`, `pickup_completed_at`, `tile_id`); must exist before DemandScoringService can run |
+| `shipment_leg_events` table read | M4 | Column names (`da_id`, `shift_date`, `stop_sequence`, `arrived_at_pickup`, `pickup_completed_at`, `hex_id`); must exist before DemandScoringService can run |
 | `grid.no_da_alert` | M10 | M10 needs this to be wired into its SLA consumer before end-to-end testing |
-| DA IDs in `da_tile_assignment` | M1/auth | `da_id` is a UUID from M1's `users` table — no FK constraint in M3 schema (avoids cross-module DB coupling), but document the implicit reference |
+| DA IDs in `da_hex_assignment` | M1/auth | `da_id` is a UUID from M1's `users` table — no FK constraint in M3 schema (avoids cross-module DB coupling), but document the implicit reference |
 
 ---
 
@@ -713,10 +736,10 @@ M3 is fully built but several of its code paths are running in degraded / stub m
 
 | Item | Detail |
 |------|--------|
-| Where used | `da_tile_assignment.da_id` column |
+| Where used | `da_hex_assignment.da_id` column |
 | Current state | The demo and tests use randomly generated UUIDs. No DB-level FK constraint exists (by design — avoids cross-module coupling), but in production these must be valid user UUIDs with DA role from M1. |
 | Risk | If a DA UUID in an assignment has no corresponding M1 user, M5 won't be able to look up the DA's contact info, app login, or shift schedule. |
-| What to do when M1 ships | Validate DA UUIDs in `ProposalServiceImpl` before writing `DaTileAssignment` rows: reject UUIDs that don't exist in M1. |
+| What to do when M1 ships | Validate DA UUIDs in `ProposalServiceImpl` before writing `DaHexAssignment` rows: reject UUIDs that don't exist in M1. |
 
 ---
 
@@ -727,7 +750,7 @@ M3 is fully built but several of its code paths are running in degraded / stub m
 | Item | Detail |
 |------|--------|
 | Table | `shipment_leg_events` |
-| Columns needed | `da_id`, `shift_date`, `stop_sequence`, `arrived_at_pickup`, `pickup_completed_at`, `tile_id` |
+| Columns needed | `da_id`, `shift_date`, `stop_sequence`, `arrived_at_pickup`, `pickup_completed_at`, `hex_id` |
 | Used by | `DemandScoringServiceImpl` — to compute per-tile service time, inter-stop travel time, historical avg orders, and current day orders |
 | Current state | Table does not exist. All M4DataLoader calls fail silently (caught by `safeCall` → returns empty map). The service falls back to bootstrap defaults: all tiles get `serviceTimeMin = 12.0`, `interStopTravelMin = 5.0`, `histAvgOrders = 0`, `currentOrders = 0` → `demandScoreMinutes = 0` for every tile. The CP-SAT solver still runs but produces arbitrary equal-load territories since all tiles look identical. |
 | Impact | Territories are not demand-weighted until M4 ships. The 70/30 demand model cannot activate. |
@@ -740,9 +763,9 @@ M3 is fully built but several of its code paths are running in degraded / stub m
 |------|--------|
 | Kafka topic | `orders.tile_queue_depth` |
 | Direction | M4 → M3 |
-| Event schema | `TileQueueDepthEvent { tileId, cityId, date, unservedOrders, bookedOrders, recordedAt }` |
+| Event schema | `TileQueueDepthEvent { hexId, cityId, date, unservedOrders, bookedOrders, recordedAt }` |
 | Used by | `TileQueueDepthConsumer` → `IntradayLoadScoreServiceImpl` → `IntradayMonitorJob` |
-| Current state | `TileQueueDepthConsumer` has `autoStartup = false` in `application.yml`. The consumer never starts. `IntradayMonitorJob` runs but sees 0 unserved orders everywhere → no `TILE_OVERLOAD_ALERT` events are ever fired. |
+| Current state | `TileQueueDepthConsumer` has `autoStartup = false` in `application.yml`. The consumer never starts. `IntradayMonitorJob` runs but sees 0 unserved orders everywhere → no `HEX_OVERLOAD_ALERT` events are ever fired. |
 | Impact | The intraday alerting pipeline is completely silent until M4 ships. M5 and M10 never receive overload alerts. |
 | What to do when M4 ships | Flip `grid.kafka.consumer.auto-startup: true` in `application.yml`. No code changes needed. Verify the event schema matches `TileQueueDepthEvent` before enabling. |
 | File | `application.yml` — one config change. `TileQueueDepthConsumer.java` already written. |
@@ -755,9 +778,9 @@ M3 is fully built but several of its code paths are running in degraded / stub m
 
 | Output | Topic / mechanism | Consumed by | Status |
 |--------|------------------|-------------|--------|
-| No-DA alert | `grid.no_da_alert` Kafka | M5 (stops accepting pickups for the tile), M11 (flags for call center) | Fires correctly today, but consumers not yet built |
-| Tile overload alert | `grid.tile_overload_alert` Kafka | M5 (may trigger intraday reassignment request), M10 (SLA tracking) | Fires correctly today, but consumers not yet built |
-| DA tile assignments | `da_tile_assignment` table (DB read) | M5 reads this to know which DA to route each order to | Table populated on proposal approval; M5 must refresh after each approval |
+| No-DA alert | `grid.no_da_alert` Kafka | M5 (stops accepting pickups for the hex), M11 (flags for call center) | Fires correctly today, but consumers not yet built |
+| Hex overload alert | `grid.tile_overload_alert` Kafka | M5 (may trigger intraday reassignment request), M10 (SLA tracking) | Fires correctly today, but consumers not yet built |
+| DA hex assignments | `da_hex_assignment` table (DB read) | M5 reads this to know which DA to route each order to | Table populated on proposal approval; M5 must refresh after each approval |
 | Assignment updated event | Not yet implemented | M5 needs a push notification when the active plan changes so it doesn't serve stale routing | **Gap:** `grid.assignment_updated` Kafka event should be published from `ProposalServiceImpl.approve()`. Referenced in design docs but not yet coded. |
 
 ---
@@ -766,8 +789,8 @@ M3 is fully built but several of its code paths are running in degraded / stub m
 
 | Dependency | From | Without it | Fix when module ships |
 |-----------|------|-----------|----------------------|
-| DA roster | M1 | All tiles understaffed, no usable assignments | Real `DaRosterPort` impl annotated `@Primary` |
-| DA UUID validation | M1 | Phantom DA UUIDs in assignments | Validate before writing `DaTileAssignment` |
-| `shipment_leg_events` | M4 | Bootstrap defaults for all tiles, equal-weight territories | Automatic — queries already written |
+| DA roster | M1 | All hexes understaffed, no usable assignments | Real `DaRosterPort` impl annotated `@Primary` |
+| DA UUID validation | M1 | Phantom DA UUIDs in assignments | Validate before writing `DaHexAssignment` |
+| `shipment_leg_events` | M4 | Bootstrap defaults for all hexes, equal-weight territories | Automatic — queries already written |
 | `orders.tile_queue_depth` Kafka | M4 | Intraday alerting silent, no overload events | Flip `auto-startup: true` in config |
 | `grid.assignment_updated` event | M3 → M5 | M5 serves stale routing after plan changes | Add Kafka publish in `ProposalServiceImpl.approve()` |

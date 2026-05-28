@@ -3,14 +3,15 @@ package com.oneday.grid.service.impl;
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
+import com.oneday.grid.domain.HexDemandSnapshot;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
-import com.oneday.grid.repository.TileRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
+import com.oneday.grid.repository.HexRepository;
+import com.uber.h3core.H3Core;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,8 +36,9 @@ class CpSatAssignmentServiceImplTest {
 
     @Mock AssignmentProposalRepository proposalRepository;
     @Mock AssignmentProposalRegionRepository regionRepository;
-    @Mock DaTileAssignmentRepository assignmentRepository;
-    @Mock TileRepository tileRepository;
+    @Mock DaHexAssignmentRepository assignmentRepository;
+    @Mock HexRepository hexRepository;
+    @Mock H3Core h3Core;
 
     BfsAssignmentServiceImpl bfsFallback;
     GridProperties properties = new GridProperties();
@@ -50,7 +52,7 @@ class CpSatAssignmentServiceImplTest {
         // BFS fallback is mocked as a concrete class — Mockito uses CGLIB subclassing
         bfsFallback = Mockito.mock(BfsAssignmentServiceImpl.class);
         service = new CpSatAssignmentServiceImpl(proposalRepository, regionRepository,
-                assignmentRepository, tileRepository, bfsFallback, properties);
+                assignmentRepository, hexRepository, bfsFallback, properties, h3Core);
     }
 
     private void stubPersistenceLayer() {
@@ -64,9 +66,9 @@ class CpSatAssignmentServiceImplTest {
         when(assignmentRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
-    private TileDemandSnapshot snap(UUID tileId, double demandMin) {
-        return TileDemandSnapshot.builder()
-                .tileId(tileId).snapshotDate(date)
+    private HexDemandSnapshot snap(UUID hexId, double demandMin) {
+        return HexDemandSnapshot.builder()
+                .hexId(hexId).snapshotDate(date)
                 .histAvgOrders(demandMin / 17.0).currentOrders(0)
                 .demandScoreOrders(demandMin / 17.0).serviceTimeMin(12).interStopTravelMin(5)
                 .orderEngagedMin(17).demandScoreMinutes(demandMin).bootstrapped(false)
@@ -78,7 +80,7 @@ class CpSatAssignmentServiceImplTest {
                 .cityId(cityId).validForDate(date).status(ProposalStatus.PROPOSED)
                 .solverType(SolverType.BFS_FALLBACK)
                 .adjacencySource(com.oneday.grid.domain.AdjacencySource.GEOMETRIC_FALLBACK)
-                .totalDas(0).coveragePct(0.0).understaffedTileIds("[]").build();
+                .totalDas(0).coveragePct(0.0).understaffedHexIds("[]").build();
         p.setId(UUID.randomUUID());
         p.setProposedAt(Instant.now());
         return p;
@@ -109,7 +111,7 @@ class CpSatAssignmentServiceImplTest {
 
     @Test
     void moreDasThanTiles_delegatesToBfs() {
-        // 1 tile, 2 DAs → K > nTiles → BFS
+        // 1 hex, 2 DAs → K > nTiles → BFS
         when(bfsFallback.computeProposal(any(), any(), any(), any(), any()))
                 .thenReturn(fakeBfsProposal());
 
@@ -121,7 +123,7 @@ class CpSatAssignmentServiceImplTest {
         verify(bfsFallback).computeProposal(any(), any(), any(), any(), any());
     }
 
-    // ---- real CP-SAT run: 2 tiles, 2 DAs, equal demand -------------------
+    // ---- real CP-SAT run: 2 hexes, 2 DAs, equal demand -------------------
 
     @Test
     void twoTilesTwoDas_equalDemand_cpSatSolvesAndPersists() {
@@ -130,9 +132,8 @@ class CpSatAssignmentServiceImplTest {
         UUID da0 = UUID.randomUUID(), da1 = UUID.randomUUID();
         UUID t0  = UUID.randomUUID(), t1  = UUID.randomUUID();
 
-        // demand=400 per tile: within [38220, 70980] scaled tolerance band
-        // (shift=780min, target=546, lb=546*0.70*100=38220, ub=546*1.30*100=70980; 400*100=40000 ✓)
-        List<TileDemandSnapshot> demand = List.of(snap(t0, 400.0), snap(t1, 400.0));
+        // demand=400 per hex: within [38220, 70980] scaled tolerance band
+        List<HexDemandSnapshot> demand = List.of(snap(t0, 400.0), snap(t1, 400.0));
 
         // Empty adjacency → CP-SAT skips contiguity checks (accepted without cuts)
         AssignmentProposal proposal = service.computeProposal(cityId, date,
@@ -142,20 +143,20 @@ class CpSatAssignmentServiceImplTest {
         assertThat(proposal.getStatus()).isEqualTo(ProposalStatus.PROPOSED);
         assertThat(proposal.getSolverType()).isEqualTo(SolverType.CP_SAT);
         assertThat(proposal.getTotalDas()).isEqualTo(2);
-        // Both tiles assigned → coverage = 100%
+        // Both hexes assigned → coverage = 100%
         assertThat(proposal.getCoveragePct()).isEqualTo(100.0);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(captor.capture());
-        List<DaTileAssignment> assignments = captor.getValue();
+        List<DaHexAssignment> assignments = captor.getValue();
 
-        // Each DA gets exactly one tile
+        // Each DA gets exactly one hex
         assertThat(assignments).hasSize(2);
         assertThat(assignments).allMatch(a -> a.getStatus() == AssignmentStatus.PROPOSED);
-        // The two DAs cover different tiles
-        assertThat(assignments.stream().map(DaTileAssignment::getTileId).distinct().count()).isEqualTo(2);
-        assertThat(assignments.stream().map(DaTileAssignment::getDaId).distinct().count()).isEqualTo(2);
+        // The two DAs cover different hexes
+        assertThat(assignments.stream().map(DaHexAssignment::getHexId).distinct().count()).isEqualTo(2);
+        assertThat(assignments.stream().map(DaHexAssignment::getDaId).distinct().count()).isEqualTo(2);
     }
 
     // ---- real CP-SAT run: contiguity with road graph ----------------------
@@ -167,7 +168,7 @@ class CpSatAssignmentServiceImplTest {
         UUID da0 = UUID.randomUUID(), da1 = UUID.randomUUID();
         UUID t0  = UUID.randomUUID(), t1  = UUID.randomUUID();
 
-        // Symmetric adjacency: each tile is its own connected territory (size=1 → trivially connected)
+        // Symmetric adjacency: each hex is its own connected territory (size=1 → trivially connected)
         Map<UUID, List<UUID>> adj = Map.of(t0, List.of(t1), t1, List.of(t0));
 
         AssignmentProposal proposal = service.computeProposal(cityId, date,

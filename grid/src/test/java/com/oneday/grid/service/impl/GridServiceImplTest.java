@@ -2,16 +2,17 @@ package com.oneday.grid.service.impl;
 
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.Grid;
+import com.oneday.grid.domain.Hex;
 import com.oneday.grid.domain.PincodeMapping;
-import com.oneday.grid.domain.Tile;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
-import com.oneday.grid.repository.GridVertexRepository;
+import com.oneday.grid.repository.HexDemandSnapshotRepository;
+import com.oneday.grid.repository.HexRepository;
+import com.oneday.grid.repository.HexVertexRepository;
 import com.oneday.grid.repository.PincodeMappingRepository;
-import com.oneday.grid.repository.TileDemandSnapshotRepository;
-import com.oneday.grid.repository.TileRepository;
+import com.uber.h3core.H3Core;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,14 +33,14 @@ import static org.mockito.Mockito.when;
 class GridServiceImplTest {
 
     @Mock GridRepository gridRepository;
-    @Mock TileRepository tileRepository;
+    @Mock HexRepository hexRepository;
     @Mock PincodeMappingRepository pincodeMappingRepository;
-    @Mock GridVertexRepository gridVertexRepository;
-    @Mock TileDemandSnapshotRepository demandSnapshotRepository;
-    @Mock DaTileAssignmentRepository assignmentRepository;
+    @Mock HexVertexRepository hexVertexRepository;
+    @Mock HexDemandSnapshotRepository demandSnapshotRepository;
+    @Mock DaHexAssignmentRepository assignmentRepository;
     @Mock ResourceLoader resourceLoader;
     @Mock GridProperties gridProperties;
-    // Grid extends BaseEntity (id is read-only), so we mock it as a @Mock field
+    @Mock H3Core h3Core;
     @Mock Grid grid;
 
     GridServiceImpl service;
@@ -47,18 +48,19 @@ class GridServiceImplTest {
     private final UUID cityId = UUID.randomUUID();
     private final UUID gridId  = UUID.randomUUID();
 
-    private static final double DELTA_LAT = 2.0 / 111.32;
-    private static final double DELTA_LON = 2.0 / (111.32 * Math.cos(Math.toRadians(12.9)));
+    // Pre-computed H3 index constant — avoids real H3Core calls in unit tests
+    private static final long TEST_HEX_INDEX = 0x872be10caffffe0L;
 
     @BeforeEach
     void setUp() {
         lenient().when(grid.getCityId()).thenReturn(cityId);
         lenient().when(grid.getId()).thenReturn(gridId);
+        lenient().when(grid.getH3Resolution()).thenReturn(7);
         when(gridRepository.findAll()).thenReturn(List.of(grid));
-        service = new GridServiceImpl(gridRepository, tileRepository,
-                pincodeMappingRepository, gridVertexRepository,
+        service = new GridServiceImpl(gridRepository, hexRepository,
+                pincodeMappingRepository, hexVertexRepository,
                 demandSnapshotRepository, assignmentRepository,
-                resourceLoader, gridProperties);
+                resourceLoader, gridProperties, h3Core);
         service.loadGridCache();
     }
 
@@ -80,9 +82,9 @@ class GridServiceImplTest {
 
     @Test
     void checkServiceability_knownServiceablePincode_returnsTrue() {
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
         PincodeMapping pm = PincodeMapping.builder()
-                .cityId(cityId).pincode("110001").tileId(tileId).serviceable(true).build();
+                .cityId(cityId).pincode("110001").hexId(hexId).serviceable(true).build();
 
         when(pincodeMappingRepository.findByCityIdAndPincode(cityId, "110001"))
                 .thenReturn(Optional.of(pm));
@@ -90,7 +92,7 @@ class GridServiceImplTest {
         ServiceabilityResponse resp = service.checkServiceability(cityId, "110001");
 
         assertThat(resp.serviceable()).isTrue();
-        assertThat(resp.tileId()).isEqualTo(tileId);
+        assertThat(resp.hexId()).isEqualTo(hexId);
     }
 
     @Test
@@ -101,13 +103,13 @@ class GridServiceImplTest {
         ServiceabilityResponse resp = service.checkServiceability(cityId, "999999");
 
         assertThat(resp.serviceable()).isFalse();
-        assertThat(resp.tileId()).isNull();
+        assertThat(resp.hexId()).isNull();
     }
 
     @Test
     void checkServiceability_knownButNotServiceable_returnsFalse() {
         PincodeMapping pm = PincodeMapping.builder()
-                .cityId(cityId).pincode("110002").tileId(null).serviceable(false).build();
+                .cityId(cityId).pincode("110002").hexId(null).serviceable(false).build();
 
         when(pincodeMappingRepository.findByCityIdAndPincode(cityId, "110002"))
                 .thenReturn(Optional.of(pm));
@@ -117,63 +119,48 @@ class GridServiceImplTest {
 
     // ---- getTileAt ---------------------------------------------------------
 
-    private void stubGridCoords() {
-        when(grid.getOriginLat()).thenReturn(12.0);
-        when(grid.getOriginLon()).thenReturn(77.0);
-        when(grid.getTileDeltaLat()).thenReturn(DELTA_LAT);
-        when(grid.getTileDeltaLon()).thenReturn(DELTA_LON);
-    }
-
     @Test
-    void getTileAt_coordsInFirstTile_returnsTileAt00() {
-        stubGridCoords();
-        // Point inside tile (row=0, col=0): origin + 0.5 * delta
-        double lat = 12.0 + 0.5 * DELTA_LAT;
-        double lon = 77.0 + 0.5 * DELTA_LON;
+    void getTileAt_coordsMappedToHex_returnsHexResponse() {
+        double lat = 28.6, lon = 77.2;
+        when(h3Core.latLngToCell(lat, lon, 7)).thenReturn(TEST_HEX_INDEX);
 
-        UUID tileId = UUID.randomUUID();
-        Tile tile = Tile.builder().gridId(gridId).rowIdx(0).colIdx(0).active(true).build();
-        tile.setId(tileId);
-
-        when(tileRepository.findByGridIdAndRowIdxAndColIdx(gridId, 0, 0))
-                .thenReturn(Optional.of(tile));
+        UUID hexId = UUID.randomUUID();
+        Hex hex = Hex.builder().h3GridId(gridId).h3Index(TEST_HEX_INDEX).active(true).build();
+        hex.setId(hexId);
+        when(hexRepository.findByH3GridIdAndH3Index(gridId, TEST_HEX_INDEX))
+                .thenReturn(Optional.of(hex));
 
         TileAtResponse resp = service.getTileAt(cityId, lat, lon);
 
-        assertThat(resp.rowIdx()).isEqualTo(0);
-        assertThat(resp.colIdx()).isEqualTo(0);
+        assertThat(resp.hexId()).isEqualTo(hexId);
+        assertThat(resp.h3Index()).isEqualTo(Long.toHexString(TEST_HEX_INDEX));
         assertThat(resp.active()).isTrue();
     }
 
     @Test
-    void getTileAt_coordsInTile23_returnsTileAt23() {
-        stubGridCoords();
-        double lat = 12.0 + 2.7 * DELTA_LAT; // row = floor(2.7) = 2
-        double lon = 77.0 + 3.4 * DELTA_LON; // col = floor(3.4) = 3
+    void getTileAt_inactiveHex_returnsInactiveFlag() {
+        double lat = 28.6, lon = 77.2;
+        when(h3Core.latLngToCell(lat, lon, 7)).thenReturn(TEST_HEX_INDEX);
 
-        Tile tile = Tile.builder().gridId(gridId).rowIdx(2).colIdx(3).active(true).build();
-        tile.setId(UUID.randomUUID());
-
-        when(tileRepository.findByGridIdAndRowIdxAndColIdx(gridId, 2, 3))
-                .thenReturn(Optional.of(tile));
+        Hex hex = Hex.builder().h3GridId(gridId).h3Index(TEST_HEX_INDEX).active(false).build();
+        hex.setId(UUID.randomUUID());
+        when(hexRepository.findByH3GridIdAndH3Index(gridId, TEST_HEX_INDEX))
+                .thenReturn(Optional.of(hex));
 
         TileAtResponse resp = service.getTileAt(cityId, lat, lon);
 
-        assertThat(resp.rowIdx()).isEqualTo(2);
-        assertThat(resp.colIdx()).isEqualTo(3);
+        assertThat(resp.active()).isFalse();
     }
 
     @Test
-    void getTileAt_noTileInRepository_throwsIllegalArgument() {
-        stubGridCoords();
-        double lat = 12.0 + 0.5 * DELTA_LAT;
-        double lon = 77.0 + 0.5 * DELTA_LON;
-
-        when(tileRepository.findByGridIdAndRowIdxAndColIdx(gridId, 0, 0))
+    void getTileAt_noHexInRepository_throwsIllegalArgument() {
+        double lat = 28.6, lon = 77.2;
+        when(h3Core.latLngToCell(lat, lon, 7)).thenReturn(TEST_HEX_INDEX);
+        when(hexRepository.findByH3GridIdAndH3Index(gridId, TEST_HEX_INDEX))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getTileAt(cityId, lat, lon))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("No tile at row=0, col=0");
+                .hasMessageContaining("No hex at");
     }
 }

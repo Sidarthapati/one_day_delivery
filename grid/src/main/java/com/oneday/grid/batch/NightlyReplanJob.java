@@ -3,14 +3,14 @@ package com.oneday.grid.batch;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
 import com.oneday.grid.domain.Grid;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.ProposalType;
 import com.oneday.grid.domain.SolverType;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
 import com.oneday.grid.service.GridReplanService;
 import org.slf4j.Logger;
@@ -38,14 +38,14 @@ public class NightlyReplanJob {
     private final GridReplanService gridReplanService;
     private final AssignmentProposalRepository proposalRepository;
     private final AssignmentProposalRegionRepository proposalRegionRepository;
-    private final DaTileAssignmentRepository assignmentRepository;
+    private final DaHexAssignmentRepository assignmentRepository;
     private final DaRosterPort daRosterPort;
 
     NightlyReplanJob(GridRepository gridRepository,
                      GridReplanService gridReplanService,
                      AssignmentProposalRepository proposalRepository,
                      AssignmentProposalRegionRepository proposalRegionRepository,
-                     DaTileAssignmentRepository assignmentRepository,
+                     DaHexAssignmentRepository assignmentRepository,
                      DaRosterPort daRosterPort) {
         this.gridRepository = gridRepository;
         this.gridReplanService = gridReplanService;
@@ -114,11 +114,11 @@ public class NightlyReplanJob {
 
     @Transactional
     void applyFallback(UUID cityId, LocalDate today, AssignmentProposal yesterdayProposal) {
-        List<DaTileAssignment> yesterdayActive = assignmentRepository
+        List<DaHexAssignment> yesterdayActive = assignmentRepository
                 .findByProposalId(yesterdayProposal.getId())
                 .stream().filter(a -> a.getStatus() == AssignmentStatus.ACTIVE).toList();
 
-        long daCount = yesterdayActive.stream().map(DaTileAssignment::getDaId).distinct().count();
+        long daCount = yesterdayActive.stream().map(DaHexAssignment::getDaId).distinct().count();
 
         AssignmentProposal fallback = AssignmentProposal.builder()
                 .cityId(cityId)
@@ -133,13 +133,13 @@ public class NightlyReplanJob {
         fallback = proposalRepository.save(fallback);
 
         UUID fallbackId = fallback.getId();
-        List<DaTileAssignment> todayAssignments = yesterdayActive.stream()
-                .map(a -> DaTileAssignment.builder()
+        List<DaHexAssignment> todayAssignments = yesterdayActive.stream()
+                .map(a -> DaHexAssignment.builder()
                         .proposalId(fallbackId)
                         .daId(a.getDaId())
-                        .tileId(a.getTileId())
+                        .hexId(a.getHexId())
                         .validDate(today)
-                        .nDasOnTile(a.getNDasOnTile())
+                        .nDasOnHex(a.getNDasOnHex())
                         .status(AssignmentStatus.ACTIVE)
                         .build())
                 .collect(Collectors.toList());

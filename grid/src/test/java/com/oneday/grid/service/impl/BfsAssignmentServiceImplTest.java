@@ -4,13 +4,13 @@ import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
+import com.oneday.grid.domain.HexDemandSnapshot;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,7 +34,7 @@ class BfsAssignmentServiceImplTest {
 
     @Mock AssignmentProposalRepository proposalRepository;
     @Mock AssignmentProposalRegionRepository regionRepository;
-    @Mock DaTileAssignmentRepository assignmentRepository;
+    @Mock DaHexAssignmentRepository assignmentRepository;
 
     GridProperties properties = new GridProperties();
     BfsAssignmentServiceImpl service;
@@ -61,24 +61,24 @@ class BfsAssignmentServiceImplTest {
         });
     }
 
-    private TileDemandSnapshot snap(UUID tileId, double demandMin) {
-        return TileDemandSnapshot.builder()
-                .tileId(tileId).snapshotDate(date)
+    private HexDemandSnapshot snap(UUID hexId, double demandMin) {
+        return HexDemandSnapshot.builder()
+                .hexId(hexId).snapshotDate(date)
                 .histAvgOrders(demandMin / 17.0).currentOrders(0)
                 .demandScoreOrders(demandMin / 17.0).serviceTimeMin(12).interStopTravelMin(5)
                 .orderEngagedMin(17).demandScoreMinutes(demandMin).bootstrapped(true)
                 .build();
     }
 
-    // ---- single DA, single tile -------------------------------------------
+    // ---- single DA, single hex -------------------------------------------
 
     @Test
     void singleDaSingleTile_tileAssignedToDA() {
         UUID daId = UUID.randomUUID();
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
 
         AssignmentProposal proposal = service.computeProposal(cityId, date,
-                List.of(snap(tileId, 200.0)), Map.of(), List.of(daId));
+                List.of(snap(hexId, 200.0)), Map.of(), List.of(daId));
 
         assertThat(proposal.getStatus()).isEqualTo(ProposalStatus.PROPOSED);
         assertThat(proposal.getSolverType()).isEqualTo(SolverType.BFS_FALLBACK);
@@ -86,17 +86,17 @@ class BfsAssignmentServiceImplTest {
         assertThat(proposal.getCoveragePct()).isEqualTo(100.0);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(captor.capture());
-        List<DaTileAssignment> saved = captor.getValue();
+        List<DaHexAssignment> saved = captor.getValue();
 
         assertThat(saved).hasSize(1);
         assertThat(saved.get(0).getDaId()).isEqualTo(daId);
-        assertThat(saved.get(0).getTileId()).isEqualTo(tileId);
+        assertThat(saved.get(0).getHexId()).isEqualTo(hexId);
         assertThat(saved.get(0).getStatus()).isEqualTo(AssignmentStatus.PROPOSED);
     }
 
-    // ---- two adjacent tiles, one DA ---------------------------------------
+    // ---- two adjacent hexes, one DA ---------------------------------------
 
     @Test
     void twoAdjacentTiles_oneDa_bothAssigned() {
@@ -110,7 +110,7 @@ class BfsAssignmentServiceImplTest {
                 List.of(snap(tA, 300.0), snap(tB, 200.0)), adj, List.of(daId));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(captor.capture());
 
         assertThat(captor.getValue()).hasSize(2)
@@ -118,12 +118,12 @@ class BfsAssignmentServiceImplTest {
                 .allMatch(a -> a.getStatus() == AssignmentStatus.PROPOSED);
     }
 
-    // ---- dynamic target load: all tiles partitioned even when total > shift capacity ----
+    // ---- dynamic target load: all hexes partitioned even when total > shift capacity ----
 
     @Test
     void singleDa_twoadjacentTiles_bothAssigned() {
         // daTargetLoad = totalDemand / K = 800 / 1 = 800.
-        // No hard ceiling — BFS assigns until load >= target, so both tiles are assigned.
+        // No hard ceiling — BFS assigns until load >= target, so both hexes are assigned.
         UUID daId = UUID.randomUUID();
         UUID tA = UUID.randomUUID();
         UUID tB = UUID.randomUUID();
@@ -133,14 +133,14 @@ class BfsAssignmentServiceImplTest {
                 List.of(snap(tA, 500.0), snap(tB, 300.0)), adj, List.of(daId));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> assignCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> assignCaptor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(assignCaptor.capture());
-        // Both tiles assigned to the single DA
+        // Both hexes assigned to the single DA
         assertThat(assignCaptor.getValue()).hasSize(2);
         assertThat(proposal.getCoveragePct()).isEqualTo(100.0);
     }
 
-    // ---- contiguity: asymmetric graph discards non-adjacent tile ----------
+    // ---- contiguity: asymmetric graph discards non-adjacent hex ----------
 
     @Test
     void asymmetricAdjacency_nonAdjacentTileSkipped() {
@@ -156,28 +156,28 @@ class BfsAssignmentServiceImplTest {
                 List.of(snap(tA, 400.0), snap(tB, 200.0)), adj, List.of(daId));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(captor.capture());
 
         // Only A should be assigned; B fails contiguity
         assertThat(captor.getValue()).hasSize(1);
-        assertThat(captor.getValue().get(0).getTileId()).isEqualTo(tA);
+        assertThat(captor.getValue().get(0).getHexId()).isEqualTo(tA);
     }
 
-    // ---- no DAs → all tiles understaffed ----------------------------------
+    // ---- no DAs → all hexes understaffed ----------------------------------
 
     @Test
     void zeroDas_allTilesUnderstaffed() {
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
 
         AssignmentProposal proposal = service.computeProposal(cityId, date,
-                List.of(snap(tileId, 200.0)), Map.of(), List.of());
+                List.of(snap(hexId, 200.0)), Map.of(), List.of());
 
         assertThat(proposal.getTotalDas()).isEqualTo(0);
         assertThat(proposal.getCoveragePct()).isEqualTo(0.0);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(captor.capture());
         assertThat(captor.getValue()).isEmpty();
     }
@@ -193,12 +193,12 @@ class BfsAssignmentServiceImplTest {
         assertThat(proposal.getCoveragePct()).isEqualTo(0.0);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(captor.capture());
         assertThat(captor.getValue()).isEmpty();
     }
 
-    // ---- two DAs, four tiles, balanced distribution ----------------------
+    // ---- two DAs, four hexes, balanced distribution ----------------------
 
     @Test
     void twoDasFourTiles_tilesDistributedBetweenDas() {
@@ -206,8 +206,6 @@ class BfsAssignmentServiceImplTest {
         UUID t0 = UUID.randomUUID(), t1 = UUID.randomUUID();
         UUID t2 = UUID.randomUUID(), t3 = UUID.randomUUID();
         // Chain: t0-t1-t2-t3, demand=200 each (total=800)
-        // DA 0 seeds on t0 (all equal demand — first in stream wins tie).
-        // DA 1 seeds on the next highest among remaining.
         Map<UUID, List<UUID>> adj = Map.of(
                 t0, List.of(t1), t1, List.of(t0, t2),
                 t2, List.of(t1, t3), t3, List.of(t2)
@@ -218,12 +216,9 @@ class BfsAssignmentServiceImplTest {
                 adj, List.of(da0, da1));
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> assignCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> assignCaptor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(assignCaptor.capture());
-        // All 4 tiles assigned (total demand 800 < max 702 per DA... hmm, 4*200=800, each DA gets 2: 400)
-        // Actually target=546. 2 tiles=400 < 546 → DA 0 keeps expanding until frontier empty or target reached.
-        // DA 0 might get 3 tiles (600 ≥ 546 → stops), DA 1 gets 1.
-        // Regardless: all 4 tiles should be assigned
+        // All 4 hexes assigned
         assertThat(assignCaptor.getValue()).hasSize(4);
         assertThat(proposal.getCoveragePct()).isEqualTo(100.0);
 

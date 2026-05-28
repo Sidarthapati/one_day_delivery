@@ -19,6 +19,7 @@ public class GridProperties {
     private Shift shift = new Shift();
     private Da da = new Da();
     private Intraday intraday = new Intraday();
+    private H3 h3 = new H3();
     // Maps cityCode (e.g. "delhi") → fixed cityId UUID used throughout the system.
     private Map<String, UUID> cities = new HashMap<>();
 
@@ -61,5 +62,10 @@ public class GridProperties {
         private int warningSustainedMinutes = 15;
         private int criticalSustainedMinutes = 10;
         private int reAlertSuppressionMinutes = 30;
+    }
+
+    @Data
+    public static class H3 {
+        private int resolution = 8;
     }
 }

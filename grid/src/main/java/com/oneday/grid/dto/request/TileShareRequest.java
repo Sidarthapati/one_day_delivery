@@ -5,6 +5,6 @@ import java.util.UUID;
 public record TileShareRequest(
         UUID cityId,
         UUID daId,
-        UUID tileId,
+        UUID hexId,
         UUID requestedBy
 ) {}

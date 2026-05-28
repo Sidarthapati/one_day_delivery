@@ -32,13 +32,13 @@ class M4DataLoader {
     public Map<UUID, Double> loadServiceTimeMins(int minPickups) {
         try {
             List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT tile_id,
+                    SELECT hex_id,
                            AVG(EXTRACT(EPOCH FROM (pickup_completed_at - arrived_at_pickup))/60.0)
                     FROM shipment_leg_events
                     WHERE arrived_at_pickup IS NOT NULL
                       AND pickup_completed_at IS NOT NULL
                       AND created_at >= now() - interval '7 days'
-                    GROUP BY tile_id
+                    GROUP BY hex_id
                     HAVING COUNT(*) >= :minPickups
                     """)
                     .setParameter("minPickups", minPickups)
@@ -59,7 +59,7 @@ class M4DataLoader {
     public Map<UUID, Double> loadInterStopTravelMins(int minPairs) {
         try {
             List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT e2.tile_id,
+                    SELECT e2.hex_id,
                            AVG(LEAST(
                                EXTRACT(EPOCH FROM (e2.arrived_at_pickup - e1.pickup_completed_at))/60.0,
                                COALESCE(t.traversal_cap_sec, 600) / 60.0
@@ -68,12 +68,12 @@ class M4DataLoader {
                     JOIN shipment_leg_events e2
                         ON e1.da_id        = e2.da_id
                        AND e1.shift_date   = e2.shift_date
-                       AND e1.tile_id      = e2.tile_id
+                       AND e1.hex_id       = e2.hex_id
                        AND e2.stop_sequence = e1.stop_sequence + 1
-                    JOIN tile t ON t.id = e2.tile_id
+                    JOIN h3_hex t ON t.id = e2.hex_id
                     WHERE e1.created_at >= now() - interval '7 days'
                       AND e2.arrived_at_pickup > e1.pickup_completed_at
-                    GROUP BY e2.tile_id
+                    GROUP BY e2.hex_id
                     HAVING COUNT(*) >= :minPairs
                     """)
                     .setParameter("minPairs", minPairs)
@@ -94,10 +94,10 @@ class M4DataLoader {
     public Map<UUID, Integer> loadCurrentOrders(LocalDate date) {
         try {
             List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT tile_id, COUNT(*)
+                    SELECT hex_id, COUNT(*)
                     FROM shipment_leg_events
                     WHERE shift_date = :date
-                    GROUP BY tile_id
+                    GROUP BY hex_id
                     """)
                     .setParameter("date", date)
                     .getResultList();
@@ -117,14 +117,14 @@ class M4DataLoader {
     public Map<UUID, Double> loadHistAvgOrders(LocalDate date) {
         try {
             List<Object[]> rows = entityManager.createNativeQuery("""
-                    SELECT tile_id, AVG(daily_count)
+                    SELECT hex_id, AVG(daily_count)
                     FROM (
-                        SELECT tile_id, shift_date, COUNT(*) AS daily_count
+                        SELECT hex_id, shift_date, COUNT(*) AS daily_count
                         FROM shipment_leg_events
                         WHERE shift_date >= :startDate AND shift_date < :date
-                        GROUP BY tile_id, shift_date
+                        GROUP BY hex_id, shift_date
                     ) daily
-                    GROUP BY tile_id
+                    GROUP BY hex_id
                     """)
                     .setParameter("startDate", date.minusDays(7))
                     .setParameter("date", date)

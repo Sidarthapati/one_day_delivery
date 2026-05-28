@@ -7,13 +7,13 @@ import com.oneday.grid.domain.AdjacencySource;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
+import com.oneday.grid.domain.HexDemandSnapshot;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.service.AssignmentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,13 +42,13 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
 
     private final AssignmentProposalRepository proposalRepository;
     private final AssignmentProposalRegionRepository regionRepository;
-    private final DaTileAssignmentRepository assignmentRepository;
+    private final DaHexAssignmentRepository assignmentRepository;
     private final GridProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     BalancedBfsAssignmentServiceImpl(AssignmentProposalRepository proposalRepository,
                                      AssignmentProposalRegionRepository regionRepository,
-                                     DaTileAssignmentRepository assignmentRepository,
+                                     DaHexAssignmentRepository assignmentRepository,
                                      GridProperties properties) {
         this.proposalRepository = proposalRepository;
         this.regionRepository = regionRepository;
@@ -59,7 +59,7 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
     @Override
     @Transactional
     public AssignmentProposal computeProposal(UUID cityId, LocalDate validForDate,
-                                              List<TileDemandSnapshot> demand,
+                                              List<HexDemandSnapshot> demand,
                                               Map<UUID, List<UUID>> adjacencyGraph,
                                               List<UUID> availableDaIds) {
         if (demand.isEmpty() || availableDaIds.isEmpty()) {
@@ -71,14 +71,14 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
         int n = demand.size();
         int K = availableDaIds.size();
 
-        List<UUID> tileIds = demand.stream().map(TileDemandSnapshot::getTileId).toList();
-        Map<UUID, Integer> tileIndexMap = new HashMap<>();
-        for (int i = 0; i < n; i++) tileIndexMap.put(tileIds.get(i), i);
+        List<UUID> hexIds = demand.stream().map(HexDemandSnapshot::getHexId).toList();
+        Map<UUID, Integer> hexIndexMap = new HashMap<>();
+        for (int i = 0; i < n; i++) hexIndexMap.put(hexIds.get(i), i);
 
         double[] demandArr = new double[n];
         for (int i = 0; i < n; i++) demandArr[i] = demand.get(i).getDemandScoreMinutes();
 
-        List<List<Integer>> adj = buildIndexedAdjacency(n, tileIds, tileIndexMap, adjacencyGraph);
+        List<List<Integer>> adj = buildIndexedAdjacency(n, hexIds, hexIndexMap, adjacencyGraph);
 
         int shiftMin = (properties.getShift().getEndHour() - properties.getShift().getStartHour()) * 60;
         double daCapacity = shiftMin * properties.getDa().getTargetUtilisation();
@@ -89,34 +89,34 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
 
         // Phase 1: competitive flooding — all DAs grow simultaneously from seeds.
         // The DA with the most remaining capacity always expands first, which drives load balance.
-        int[] tileToDA = competitiveFlooding(n, K, adj, demandArr, seeds, target);
+        int[] hexToDA = competitiveFlooding(n, K, adj, demandArr, seeds, target);
 
-        // Phase 2: boundary swap refinement — iteratively move border tiles between adjacent
+        // Phase 2: boundary swap refinement — iteratively move border hexes between adjacent
         // DAs when the move improves load balance and the donor territory stays connected.
         if (!adjacencyGraph.isEmpty()) {
-            boundarySwapRefinement(n, K, adj, demandArr, seeds, tileToDA, target);
+            boundarySwapRefinement(n, K, adj, demandArr, seeds, hexToDA, target);
         }
 
         Map<Integer, List<Integer>> territories = new HashMap<>();
         for (int k = 0; k < K; k++) territories.put(k, new ArrayList<>());
         List<Integer> understaffedIndices = new ArrayList<>();
         for (int i = 0; i < n; i++) {
-            if (tileToDA[i] >= 0) territories.get(tileToDA[i]).add(i);
+            if (hexToDA[i] >= 0) territories.get(hexToDA[i]).add(i);
             else understaffedIndices.add(i);
         }
 
-        return persistProposal(cityId, validForDate, availableDaIds, demand, tileIds,
+        return persistProposal(cityId, validForDate, availableDaIds, demand, hexIds,
                 territories, understaffedIndices, daCapacity, target, n, K, adjacencyGraph);
     }
 
-    private List<List<Integer>> buildIndexedAdjacency(int n, List<UUID> tileIds,
-                                                       Map<UUID, Integer> tileIndexMap,
+    private List<List<Integer>> buildIndexedAdjacency(int n, List<UUID> hexIds,
+                                                       Map<UUID, Integer> hexIndexMap,
                                                        Map<UUID, List<UUID>> adjacencyGraph) {
         List<List<Integer>> adj = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             List<Integer> nbrs = new ArrayList<>();
-            for (UUID nbId : adjacencyGraph.getOrDefault(tileIds.get(i), List.of())) {
-                Integer j = tileIndexMap.get(nbId);
+            for (UUID nbId : adjacencyGraph.getOrDefault(hexIds.get(i), List.of())) {
+                Integer j = hexIndexMap.get(nbId);
                 if (j != null) nbrs.add(j);
             }
             adj.add(nbrs);
@@ -125,8 +125,8 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
     }
 
     /**
-     * Selects K seeds spread maximally across the tile graph.
-     * Seed 0 = highest-demand tile. Each subsequent seed = tile with the greatest
+     * Selects K seeds spread maximally across the hex graph.
+     * Seed 0 = highest-demand hex. Each subsequent seed = hex with the greatest
      * minimum BFS distance to any existing seed.
      */
     private int[] computeSeeds(int n, List<List<Integer>> adj, double[] demand, int K) {
@@ -183,12 +183,12 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
 
     /**
      * All K seeds expand simultaneously. At each step, the DA with the most remaining
-     * capacity grabs its highest-demand adjacent unassigned tile.
+     * capacity grabs its highest-demand adjacent unassigned hex.
      */
     private int[] competitiveFlooding(int n, int K, List<List<Integer>> adj,
                                        double[] demand, int[] seeds, double target) {
-        int[] tileToDA = new int[n];
-        Arrays.fill(tileToDA, -1);
+        int[] hexToDA = new int[n];
+        Arrays.fill(hexToDA, -1);
         double[] remaining = new double[K];
         Arrays.fill(remaining, target);
 
@@ -198,15 +198,15 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
 
         for (int k = 0; k < K; k++) {
             int s = seeds[k];
-            tileToDA[s] = k;
+            hexToDA[s] = k;
             remaining[k] -= demand[s];
             for (int nb : adj.get(s)) {
-                if (tileToDA[nb] == -1) frontiers[k].add(nb);
+                if (hexToDA[nb] == -1) frontiers[k].add(nb);
             }
         }
 
         int unassigned = 0;
-        for (int i = 0; i < n; i++) if (tileToDA[i] == -1) unassigned++;
+        for (int i = 0; i < n; i++) if (hexToDA[i] == -1) unassigned++;
 
         while (unassigned > 0) {
             int bestDA = -1;
@@ -220,10 +220,10 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
 
             if (bestDA == -1) {
                 for (int i = 0; i < n; i++) {
-                    if (tileToDA[i] == -1) {
+                    if (hexToDA[i] == -1) {
                         int bestK = 0;
                         for (int k = 1; k < K; k++) if (remaining[k] > remaining[bestK]) bestK = k;
-                        tileToDA[i] = bestK;
+                        hexToDA[i] = bestK;
                         remaining[bestK] -= demand[i];
                         unassigned--;
                     }
@@ -231,61 +231,61 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
                 break;
             }
 
-            int bestTile = -1;
+            int bestHex = -1;
             double bestDemand = Double.NEGATIVE_INFINITY;
             Set<Integer> stale = new HashSet<>();
             for (int t : frontiers[bestDA]) {
-                if (tileToDA[t] != -1) { stale.add(t); continue; }
-                if (demand[t] > bestDemand) { bestDemand = demand[t]; bestTile = t; }
+                if (hexToDA[t] != -1) { stale.add(t); continue; }
+                if (demand[t] > bestDemand) { bestDemand = demand[t]; bestHex = t; }
             }
             frontiers[bestDA].removeAll(stale);
 
-            if (bestTile == -1) {
+            if (bestHex == -1) {
                 frontiers[bestDA].clear();
                 continue;
             }
 
-            tileToDA[bestTile] = bestDA;
-            remaining[bestDA] -= demand[bestTile];
+            hexToDA[bestHex] = bestDA;
+            remaining[bestDA] -= demand[bestHex];
             unassigned--;
 
-            for (int nb : adj.get(bestTile)) {
-                if (tileToDA[nb] == -1) frontiers[bestDA].add(nb);
+            for (int nb : adj.get(bestHex)) {
+                if (hexToDA[nb] == -1) frontiers[bestDA].add(nb);
             }
         }
 
         double[] loads = new double[K];
-        for (int i = 0; i < n; i++) if (tileToDA[i] >= 0) loads[tileToDA[i]] += demand[i];
+        for (int i = 0; i < n; i++) if (hexToDA[i] >= 0) loads[hexToDA[i]] += demand[i];
         double maxL = Arrays.stream(loads).max().orElse(0);
         double minL = Arrays.stream(loads).min().orElse(0);
         log.info("Phase 1 (competitive flooding): spread={} min  min={}  max={}  target={}",
                 String.format("%.1f", maxL - minL), String.format("%.1f", minL),
                 String.format("%.1f", maxL), String.format("%.1f", target));
-        return tileToDA;
+        return hexToDA;
     }
 
     /**
-     * For each border tile, evaluate moving it to an adjacent DA. Accept the move if it
+     * For each border hex, evaluate moving it to an adjacent DA. Accept the move if it
      * strictly improves pairwise balance and the donor territory remains connected.
      */
     private void boundarySwapRefinement(int n, int K, List<List<Integer>> adj,
                                          double[] demand, int[] seeds,
-                                         int[] tileToDA, double target) {
+                                         int[] hexToDA, double target) {
         double[] loads = new double[K];
-        for (int i = 0; i < n; i++) if (tileToDA[i] >= 0) loads[tileToDA[i]] += demand[i];
+        for (int i = 0; i < n; i++) if (hexToDA[i] >= 0) loads[hexToDA[i]] += demand[i];
 
         int totalSwaps = 0;
         for (int pass = 0; pass < MAX_SWAP_PASSES; pass++) {
-            int bestTile = -1, bestFrom = -1, bestTo = -1;
+            int bestHex = -1, bestFrom = -1, bestTo = -1;
             double bestImprovement = 1e-9;
 
             for (int t = 0; t < n; t++) {
-                int from = tileToDA[t];
+                int from = hexToDA[t];
                 if (from < 0) continue;
 
                 Set<Integer> adjDAs = new HashSet<>();
                 for (int nb : adj.get(t)) {
-                    int j = tileToDA[nb];
+                    int j = hexToDA[nb];
                     if (j >= 0 && j != from) adjDAs.add(j);
                 }
                 if (adjDAs.isEmpty()) continue;
@@ -300,20 +300,20 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
                     double improvement = before - after;
 
                     if (improvement > bestImprovement
-                            && donorRemainsConnected(t, from, n, adj, tileToDA, seeds)) {
+                            && donorRemainsConnected(t, from, n, adj, hexToDA, seeds)) {
                         bestImprovement = improvement;
-                        bestTile = t;
+                        bestHex = t;
                         bestFrom = from;
                         bestTo = to;
                     }
                 }
             }
 
-            if (bestTile == -1) break;
+            if (bestHex == -1) break;
 
-            tileToDA[bestTile] = bestTo;
-            loads[bestFrom] -= demand[bestTile];
-            loads[bestTo] += demand[bestTile];
+            hexToDA[bestHex] = bestTo;
+            loads[bestFrom] -= demand[bestHex];
+            loads[bestTo] += demand[bestHex];
             totalSwaps++;
         }
 
@@ -325,12 +325,12 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
     }
 
     private boolean donorRemainsConnected(int t, int from, int n,
-                                           List<List<Integer>> adj, int[] tileToDA, int[] seeds) {
+                                           List<List<Integer>> adj, int[] hexToDA, int[] seeds) {
         int seed = seeds[from];
         if (seed == t) return false;
 
         int count = 0;
-        for (int i = 0; i < n; i++) if (tileToDA[i] == from && i != t) count++;
+        for (int i = 0; i < n; i++) if (hexToDA[i] == from && i != t) count++;
         if (count == 0) return false;
 
         boolean[] visited = new boolean[n];
@@ -342,7 +342,7 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
         while (!queue.isEmpty()) {
             int curr = queue.poll();
             for (int nb : adj.get(curr)) {
-                if (!visited[nb] && tileToDA[nb] == from && nb != t) {
+                if (!visited[nb] && hexToDA[nb] == from && nb != t) {
                     visited[nb] = true;
                     queue.add(nb);
                     reached++;
@@ -354,18 +354,18 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
 
     private AssignmentProposal persistProposal(UUID cityId, LocalDate validForDate,
                                                List<UUID> availableDaIds,
-                                               List<TileDemandSnapshot> demand,
-                                               List<UUID> tileIds,
+                                               List<HexDemandSnapshot> demand,
+                                               List<UUID> hexIds,
                                                Map<Integer, List<Integer>> territories,
                                                List<Integer> understaffedIndices,
                                                double daCapacity, double daTargetLoad,
-                                               int nTiles, int K,
+                                               int nHexes, int K,
                                                Map<UUID, List<UUID>> adjacencyGraph) {
         Map<UUID, Boolean> bootstrappedMap = demand.stream()
-                .collect(Collectors.toMap(TileDemandSnapshot::getTileId,
-                        TileDemandSnapshot::isBootstrapped));
+                .collect(Collectors.toMap(HexDemandSnapshot::getHexId,
+                        HexDemandSnapshot::isBootstrapped));
 
-        List<UUID> understaffedTileIds = understaffedIndices.stream().map(tileIds::get).toList();
+        List<UUID> understaffedHexIds = understaffedIndices.stream().map(hexIds::get).toList();
 
         AdjacencySource adjacencySource = adjacencyGraph.isEmpty()
                 ? AdjacencySource.GEOMETRIC_FALLBACK : AdjacencySource.OSRM;
@@ -378,23 +378,23 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
                 .adjacencySource(adjacencySource)
                 .optimalityGapPct(null)
                 .totalDas(K)
-                .coveragePct(nTiles == 0 ? 100.0
-                        : (double) (nTiles - understaffedTileIds.size()) / nTiles * 100.0)
-                .understaffedTileIds(serializeUuids(understaffedTileIds))
+                .coveragePct(nHexes == 0 ? 100.0
+                        : (double) (nHexes - understaffedHexIds.size()) / nHexes * 100.0)
+                .understaffedHexIds(serializeUuids(understaffedHexIds))
                 .build());
 
         List<AssignmentProposalRegion> regions = new ArrayList<>();
-        List<DaTileAssignment> assignments = new ArrayList<>();
+        List<DaHexAssignment> assignments = new ArrayList<>();
 
         for (int k = 0; k < K; k++) {
             UUID daId = availableDaIds.get(k);
-            List<Integer> tileIndices = territories.getOrDefault(k, List.of());
-            if (tileIndices.isEmpty()) continue;
+            List<Integer> hexIndices = territories.getOrDefault(k, List.of());
+            if (hexIndices.isEmpty()) continue;
 
-            double totalDemand = tileIndices.stream()
+            double totalDemand = hexIndices.stream()
                     .mapToDouble(i -> demand.get(i).getDemandScoreMinutes()).sum();
-            boolean hasBootstrapped = tileIndices.stream()
-                    .anyMatch(i -> bootstrappedMap.getOrDefault(tileIds.get(i), true));
+            boolean hasBootstrapped = hexIndices.stream()
+                    .anyMatch(i -> bootstrappedMap.getOrDefault(hexIds.get(i), true));
 
             regions.add(AssignmentProposalRegion.builder()
                     .proposalId(proposal.getId())
@@ -405,13 +405,13 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
                     .hasBootstrappedTiles(hasBootstrapped)
                     .build());
 
-            for (int idx : tileIndices) {
-                assignments.add(DaTileAssignment.builder()
+            for (int idx : hexIndices) {
+                assignments.add(DaHexAssignment.builder()
                         .proposalId(proposal.getId())
                         .daId(daId)
-                        .tileId(tileIds.get(idx))
+                        .hexId(hexIds.get(idx))
                         .validDate(validForDate)
-                        .nDasOnTile(1)
+                        .nDasOnHex(1)
                         .status(AssignmentStatus.PROPOSED)
                         .build());
             }
@@ -420,8 +420,8 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
         regionRepository.saveAll(regions);
         assignmentRepository.saveAll(assignments);
 
-        log.info("BalancedBFS proposal {} created: {} DAs, {} tiles, {} understaffed",
-                proposal.getId(), K, assignments.size(), understaffedTileIds.size());
+        log.info("BalancedBFS proposal {} created: {} DAs, {} hexes, {} understaffed",
+                proposal.getId(), K, assignments.size(), understaffedHexIds.size());
 
         return proposal;
     }

@@ -2,11 +2,11 @@ package com.oneday.grid.batch;
 
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.Grid;
-import com.oneday.grid.domain.Tile;
-import com.oneday.grid.domain.TileTravelTime;
+import com.oneday.grid.domain.Hex;
+import com.oneday.grid.domain.HexTravelTime;
 import com.oneday.grid.repository.GridRepository;
-import com.oneday.grid.repository.TileRepository;
-import com.oneday.grid.repository.TileTravelTimeRepository;
+import com.oneday.grid.repository.HexRepository;
+import com.oneday.grid.repository.HexTravelTimeRepository;
 import com.oneday.grid.service.GridService;
 import com.oneday.grid.service.OsrmMatrixService;
 import com.oneday.grid.service.osrm.TileEdge;
@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 // Admin-triggered via POST /grid/admin/osrm-refresh?city_id=...
 // Also runs monthly (1st of month, 02:00 IST) to keep travel times current.
-// This is the only job that calls OSRM — the nightly replan reads tile_travel_time from DB.
+// This is the only job that calls OSRM — the nightly replan reads h3_hex_travel_time from DB.
 @Component
 public class OsrmMatrixRefreshJob {
 
@@ -33,21 +33,21 @@ public class OsrmMatrixRefreshJob {
     private final GridService gridService;
     private final GridRepository gridRepository;
     private final OsrmMatrixService osrmMatrixService;
-    private final TileTravelTimeRepository travelTimeRepository;
-    private final TileRepository tileRepository;
+    private final HexTravelTimeRepository travelTimeRepository;
+    private final HexRepository hexRepository;
     private final GridProperties properties;
 
     OsrmMatrixRefreshJob(GridService gridService,
                          GridRepository gridRepository,
                          OsrmMatrixService osrmMatrixService,
-                         TileTravelTimeRepository travelTimeRepository,
-                         TileRepository tileRepository,
+                         HexTravelTimeRepository travelTimeRepository,
+                         HexRepository hexRepository,
                          GridProperties properties) {
         this.gridService = gridService;
         this.gridRepository = gridRepository;
         this.osrmMatrixService = osrmMatrixService;
         this.travelTimeRepository = travelTimeRepository;
-        this.tileRepository = tileRepository;
+        this.hexRepository = hexRepository;
         this.properties = properties;
     }
 
@@ -72,40 +72,40 @@ public class OsrmMatrixRefreshJob {
         Map<UUID, Integer> traversalCaps = osrmMatrixService.computeTraversalCaps(cityId);
 
         // Replace travel-time matrix wholesale (not append-only).
-        travelTimeRepository.deleteByGridId(grid.getId());
+        travelTimeRepository.deleteByH3GridId(grid.getId());
 
-        List<TileTravelTime> newEdges = new ArrayList<>();
+        List<HexTravelTime> newEdges = new ArrayList<>();
         int isolated = 0;
         for (Map.Entry<UUID, List<TileEdge>> entry : adjacency.entrySet()) {
-            UUID fromTileId = entry.getKey();
+            UUID fromHexId = entry.getKey();
             List<TileEdge> edges = entry.getValue();
             if (edges.isEmpty()) isolated++;
             for (TileEdge edge : edges) {
-                newEdges.add(TileTravelTime.builder()
-                        .gridId(grid.getId())
-                        .fromTileId(fromTileId)
-                        .toTileId(edge.toTileId())
+                newEdges.add(HexTravelTime.builder()
+                        .h3GridId(grid.getId())
+                        .fromHexId(fromHexId)
+                        .toHexId(edge.toHexId())
                         .travelTimeSeconds(edge.travelTimeSec())
                         .build());
             }
         }
         travelTimeRepository.saveAll(newEdges);
 
-        // Update traversal caps on each active tile.
-        List<Tile> activeTiles = tileRepository.findByGridIdAndActiveTrue(grid.getId());
-        for (Tile tile : activeTiles) {
-            Integer cap = traversalCaps.get(tile.getId());
+        // Update traversal caps on each active hex.
+        List<Hex> activeHexes = hexRepository.findByH3GridIdAndActiveTrue(grid.getId());
+        for (Hex hex : activeHexes) {
+            Integer cap = traversalCaps.get(hex.getId());
             if (cap != null) {
-                tile.setTraversalCapSec(cap);
+                hex.setTraversalCapSec(cap);
             }
         }
-        tileRepository.saveAll(activeTiles);
+        hexRepository.saveAll(activeHexes);
 
-        log.info("OsrmMatrixRefreshJob complete for cityId={}: {} edges persisted, {} tiles updated, {} isolated",
+        log.info("OsrmMatrixRefreshJob complete for cityId={}: {} edges persisted, {} hexes updated, {} isolated",
                 cityId, newEdges.size(), traversalCaps.size(), isolated);
 
         if (isolated > 0) {
-            log.warn("ISOLATION_WARNING: {} tiles in cityId={} have 0 OSRM-reachable neighbours — each will get its own DA",
+            log.warn("ISOLATION_WARNING: {} hexes in cityId={} have 0 OSRM-reachable neighbours — each will get its own DA",
                     isolated, cityId);
         }
     }

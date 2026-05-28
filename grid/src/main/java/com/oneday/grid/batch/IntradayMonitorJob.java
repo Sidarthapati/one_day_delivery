@@ -2,14 +2,14 @@ package com.oneday.grid.batch;
 
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
 import com.oneday.grid.domain.Grid;
-import com.oneday.grid.domain.Tile;
+import com.oneday.grid.domain.Hex;
 import com.oneday.grid.dto.response.TileLoadScoreResponse;
 import com.oneday.grid.events.TileOverloadAlertProducer;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
-import com.oneday.grid.repository.TileRepository;
+import com.oneday.grid.repository.HexRepository;
 import com.oneday.grid.service.IntradayLoadScoreService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,8 +38,8 @@ public class IntradayMonitorJob {
     private static final int POLL_INTERVAL_MINUTES = 5;
 
     private final GridRepository gridRepository;
-    private final TileRepository tileRepository;
-    private final DaTileAssignmentRepository assignmentRepository;
+    private final HexRepository hexRepository;
+    private final DaHexAssignmentRepository assignmentRepository;
     private final IntradayLoadScoreService loadScoreService;
     private final TileOverloadAlertProducer alertProducer;
     private final GridProperties properties;
@@ -49,13 +49,13 @@ public class IntradayMonitorJob {
     private final Map<UUID, Instant> lastAlertAt = new ConcurrentHashMap<>();
 
     IntradayMonitorJob(GridRepository gridRepository,
-                       TileRepository tileRepository,
-                       DaTileAssignmentRepository assignmentRepository,
+                       HexRepository hexRepository,
+                       DaHexAssignmentRepository assignmentRepository,
                        IntradayLoadScoreService loadScoreService,
                        TileOverloadAlertProducer alertProducer,
                        GridProperties properties) {
         this.gridRepository = gridRepository;
-        this.tileRepository = tileRepository;
+        this.hexRepository = hexRepository;
         this.assignmentRepository = assignmentRepository;
         this.loadScoreService = loadScoreService;
         this.alertProducer = alertProducer;
@@ -88,12 +88,12 @@ public class IntradayMonitorJob {
 
     private void monitorCity(Grid grid, LocalDate today) {
         UUID cityId = grid.getCityId();
-        List<Tile> activeTiles = tileRepository.findByGridIdAndActiveTrue(grid.getId());
+        List<Hex> activeHexes = hexRepository.findByH3GridIdAndActiveTrue(grid.getId());
         GridProperties.Intraday cfg = properties.getIntraday();
 
-        for (Tile tile : activeTiles) {
-            UUID tileId = tile.getId();
-            TileLoadScoreResponse score = loadScoreService.getLoadScore(tileId, today);
+        for (Hex hex : activeHexes) {
+            UUID hexId = hex.getId();
+            TileLoadScoreResponse score = loadScoreService.getLoadScore(hexId, today);
             double adjustedScore = score.adjustedLoadScore();
             String severity = score.severity();
 
@@ -101,41 +101,41 @@ public class IntradayMonitorJob {
             boolean aboveCritical = adjustedScore >= cfg.getOverloadCriticalThreshold();
 
             if (aboveWarning) {
-                int sustained = sustainedMinutes.merge(tileId, POLL_INTERVAL_MINUTES, Integer::sum);
+                int sustained = sustainedMinutes.merge(hexId, POLL_INTERVAL_MINUTES, Integer::sum);
                 int requiredMinutes = aboveCritical
                         ? cfg.getCriticalSustainedMinutes()
                         : cfg.getWarningSustainedMinutes();
 
-                if (sustained >= requiredMinutes && canAlert(tileId, cfg.getReAlertSuppressionMinutes())) {
-                    UUID daId = resolveDaId(tileId, today);
-                    alertProducer.emit(cityId, tileId, daId, today, severity,
+                if (sustained >= requiredMinutes && canAlert(hexId, cfg.getReAlertSuppressionMinutes())) {
+                    UUID daId = resolveDaId(hexId, today);
+                    alertProducer.emit(cityId, hexId, daId, today, severity,
                             0.0, score.unservedOrders(), adjustedScore, sustained);
-                    lastAlertAt.put(tileId, Instant.now());
+                    lastAlertAt.put(hexId, Instant.now());
 
                     if (aboveCritical) {
                         // Level 3 auto-suggestion (BFS rebalance) is not yet implemented.
-                        log.warn("LEVEL3_SUGGESTION_PENDING tileId={}: CRITICAL overload sustained {}min — manual review required",
-                                tileId, sustained);
+                        log.warn("LEVEL3_SUGGESTION_PENDING hexId={}: CRITICAL overload sustained {}min — manual review required",
+                                hexId, sustained);
                     }
                 }
             } else {
                 // Below threshold: reset hysteresis counter.
-                sustainedMinutes.remove(tileId);
+                sustainedMinutes.remove(hexId);
             }
         }
     }
 
-    private boolean canAlert(UUID tileId, int suppressionMinutes) {
-        Instant last = lastAlertAt.get(tileId);
+    private boolean canAlert(UUID hexId, int suppressionMinutes) {
+        Instant last = lastAlertAt.get(hexId);
         if (last == null) return true;
         long minutesSince = java.time.Duration.between(last, Instant.now()).toMinutes();
         return minutesSince >= suppressionMinutes;
     }
 
-    // Returns the first active DA ID assigned to the tile today, or null if none found.
-    private UUID resolveDaId(UUID tileId, LocalDate today) {
-        List<DaTileAssignment> active = assignmentRepository
-                .findByTileIdAndValidDateAndStatus(tileId, today, AssignmentStatus.ACTIVE);
+    // Returns the first active DA ID assigned to the hex today, or null if none found.
+    private UUID resolveDaId(UUID hexId, LocalDate today) {
+        List<DaHexAssignment> active = assignmentRepository
+                .findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.ACTIVE);
         return active.isEmpty() ? null : active.get(0).getDaId();
     }
 

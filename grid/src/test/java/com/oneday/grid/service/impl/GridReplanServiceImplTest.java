@@ -3,21 +3,22 @@ package com.oneday.grid.service.impl;
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.AdjacencySource;
 import com.oneday.grid.domain.AssignmentProposal;
+import com.oneday.grid.domain.Hex;
+import com.oneday.grid.domain.HexDemandSnapshot;
+import com.oneday.grid.domain.HexTravelTime;
+import com.oneday.grid.domain.Grid;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.ProposalType;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.Tile;
-import com.oneday.grid.domain.TileDemandSnapshot;
-import com.oneday.grid.domain.TileTravelTime;
-import com.oneday.grid.domain.Grid;
 import com.oneday.grid.dto.response.ProposalResponse;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.TileRepository;
-import com.oneday.grid.repository.TileTravelTimeRepository;
+import com.oneday.grid.repository.HexRepository;
+import com.oneday.grid.repository.HexTravelTimeRepository;
 import com.oneday.grid.service.AssignmentService;
 import com.oneday.grid.service.DemandScoringService;
 import com.oneday.grid.service.GridService;
 import com.oneday.grid.service.ProposalService;
+import com.uber.h3core.H3Core;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,6 +34,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -44,13 +46,14 @@ import static org.mockito.Mockito.when;
 class GridReplanServiceImplTest {
 
     @Mock GridService gridService;
-    @Mock TileRepository tileRepository;
-    @Mock TileTravelTimeRepository travelTimeRepository;
+    @Mock HexRepository hexRepository;
+    @Mock HexTravelTimeRepository travelTimeRepository;
     @Mock DemandScoringService demandScoringService;
     @Mock AssignmentService cpSatAssignmentService;
     @Mock AssignmentProposalRepository proposalRepository;
     @Mock ProposalService proposalService;
     @Mock GridProperties properties;
+    @Mock H3Core h3Core;
     @Mock Grid grid;
 
     GridReplanServiceImpl service;
@@ -70,16 +73,18 @@ class GridReplanServiceImplTest {
         lenient().when(properties.getOsrm()).thenReturn(osrm);
         lenient().when(grid.getId()).thenReturn(gridId);
         lenient().when(gridService.getGrid(cityId)).thenReturn(grid);
+        // stub h3Core.gridDisk so geometric fallback path doesn't NPE
+        lenient().when(h3Core.gridDisk(anyLong(), any(Integer.class))).thenReturn(List.of());
 
-        service = new GridReplanServiceImpl(gridService, tileRepository, travelTimeRepository,
-                demandScoringService, cpSatAssignmentService, proposalRepository, proposalService, properties);
+        service = new GridReplanServiceImpl(gridService, hexRepository, travelTimeRepository,
+                demandScoringService, cpSatAssignmentService, proposalRepository, proposalService, properties, h3Core);
     }
 
     // ---- helpers -----------------------------------------------------------
 
-    private TileDemandSnapshot demandSnapshot(UUID tileId) {
-        return TileDemandSnapshot.builder()
-                .tileId(tileId)
+    private HexDemandSnapshot demandSnapshot(UUID hexId) {
+        return HexDemandSnapshot.builder()
+                .hexId(hexId)
                 .snapshotDate(date)
                 .histAvgOrders(5.0)
                 .currentOrders(3)
@@ -91,15 +96,15 @@ class GridReplanServiceImplTest {
                 .build();
     }
 
-    private TileTravelTime freshRow(UUID from, UUID to) {
-        return TileTravelTime.builder()
-                .gridId(gridId).fromTileId(from).toTileId(to)
+    private HexTravelTime freshRow(UUID from, UUID to) {
+        return HexTravelTime.builder()
+                .h3GridId(gridId).fromHexId(from).toHexId(to)
                 .travelTimeSeconds(300).computedAt(Instant.now()).build();
     }
 
-    private TileTravelTime staleRow(UUID from, UUID to) {
-        return TileTravelTime.builder()
-                .gridId(gridId).fromTileId(from).toTileId(to)
+    private HexTravelTime staleRow(UUID from, UUID to) {
+        return HexTravelTime.builder()
+                .h3GridId(gridId).fromHexId(from).toHexId(to)
                 .travelTimeSeconds(300)
                 .computedAt(Instant.now().minus(50, ChronoUnit.DAYS)).build();
     }
@@ -123,11 +128,11 @@ class GridReplanServiceImplTest {
 
     @Test
     void replan_withFreshMatrix_usesCpSat() {
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
         when(demandScoringService.computeAndPersistDemand(cityId, date))
-                .thenReturn(List.of(demandSnapshot(tileId)));
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
-                .thenReturn(List.of(freshRow(tileId, UUID.randomUUID())));
+                .thenReturn(List.of(demandSnapshot(hexId)));
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
+                .thenReturn(List.of(freshRow(hexId, UUID.randomUUID())));
 
         AssignmentProposal p = proposal(AdjacencySource.OSRM);
         when(cpSatAssignmentService.computeProposal(eq(cityId), eq(date), anyList(), anyMap(), anyList()))
@@ -137,21 +142,21 @@ class GridReplanServiceImplTest {
         ProposalResponse result = service.replan(cityId, date, List.of(UUID.randomUUID()));
 
         assertThat(result).isNotNull();
-        verify(tileRepository, never()).findByGridIdAndActiveTrue(any());
+        verify(hexRepository, never()).findByH3GridIdAndActiveTrue(any());
         verify(proposalRepository, never()).save(any());
     }
 
     @Test
     void replan_withStaleMatrix_usesGeometricFallback() {
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
         when(demandScoringService.computeAndPersistDemand(cityId, date))
-                .thenReturn(List.of(demandSnapshot(tileId)));
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
-                .thenReturn(List.of(staleRow(tileId, UUID.randomUUID())));
+                .thenReturn(List.of(demandSnapshot(hexId)));
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
+                .thenReturn(List.of(staleRow(hexId, UUID.randomUUID())));
 
-        Tile tile = Tile.builder().gridId(gridId).rowIdx(0).colIdx(0).active(true).build();
-        tile.setId(tileId);
-        when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile));
+        Hex hex = Hex.builder().h3GridId(gridId).h3Index(0L).active(true).build();
+        hex.setId(hexId);
+        when(hexRepository.findByH3GridIdAndActiveTrue(gridId)).thenReturn(List.of(hex));
 
         AssignmentProposal p = proposal(AdjacencySource.OSRM);
         when(cpSatAssignmentService.computeProposal(any(), any(), anyList(), anyMap(), anyList()))
@@ -160,22 +165,22 @@ class GridReplanServiceImplTest {
 
         service.replan(cityId, date, List.of(UUID.randomUUID()));
 
-        verify(tileRepository).findByGridIdAndActiveTrue(gridId);
+        verify(hexRepository).findByH3GridIdAndActiveTrue(gridId);
         assertThat(p.getAdjacencySource()).isEqualTo(AdjacencySource.GEOMETRIC_FALLBACK);
         verify(proposalRepository).save(p);
     }
 
     @Test
     void replan_withNoMatrix_usesGeometricFallback() {
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
         when(demandScoringService.computeAndPersistDemand(cityId, date))
-                .thenReturn(List.of(demandSnapshot(tileId)));
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
+                .thenReturn(List.of(demandSnapshot(hexId)));
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
                 .thenReturn(List.of());
 
-        Tile tile = Tile.builder().gridId(gridId).rowIdx(0).colIdx(0).active(true).build();
-        tile.setId(tileId);
-        when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile));
+        Hex hex = Hex.builder().h3GridId(gridId).h3Index(0L).active(true).build();
+        hex.setId(hexId);
+        when(hexRepository.findByH3GridIdAndActiveTrue(gridId)).thenReturn(List.of(hex));
 
         AssignmentProposal p = proposal(AdjacencySource.OSRM);
         when(cpSatAssignmentService.computeProposal(any(), any(), anyList(), anyMap(), anyList()))
@@ -184,17 +189,17 @@ class GridReplanServiceImplTest {
 
         service.replan(cityId, date, List.of(UUID.randomUUID()));
 
-        verify(tileRepository).findByGridIdAndActiveTrue(gridId);
+        verify(hexRepository).findByH3GridIdAndActiveTrue(gridId);
         assertThat(p.getAdjacencySource()).isEqualTo(AdjacencySource.GEOMETRIC_FALLBACK);
     }
 
     @Test
     void replan_withNoDas_callsComputeProposalWithEmptyList() {
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
         when(demandScoringService.computeAndPersistDemand(cityId, date))
-                .thenReturn(List.of(demandSnapshot(tileId)));
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
-                .thenReturn(List.of(freshRow(tileId, UUID.randomUUID())));
+                .thenReturn(List.of(demandSnapshot(hexId)));
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
+                .thenReturn(List.of(freshRow(hexId, UUID.randomUUID())));
 
         AssignmentProposal p = proposal(AdjacencySource.OSRM);
         p.setTotalDas(0);
@@ -210,11 +215,11 @@ class GridReplanServiceImplTest {
 
     @Test
     void replan_returnsProposalResponseFromProposalService() {
-        UUID tileId = UUID.randomUUID();
+        UUID hexId = UUID.randomUUID();
         when(demandScoringService.computeAndPersistDemand(cityId, date))
-                .thenReturn(List.of(demandSnapshot(tileId)));
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
-                .thenReturn(List.of(freshRow(tileId, UUID.randomUUID())));
+                .thenReturn(List.of(demandSnapshot(hexId)));
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(gridId, 600))
+                .thenReturn(List.of(freshRow(hexId, UUID.randomUUID())));
 
         AssignmentProposal p = proposal(AdjacencySource.OSRM);
         when(cpSatAssignmentService.computeProposal(any(), any(), anyList(), anyMap(), anyList()))

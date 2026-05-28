@@ -13,16 +13,15 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 // Append-only. Old rows are never deleted or mutated.
-// proposal_id links each row to its generating proposal — allows multiple
-// proposals for the same date (e.g. after a rejection + re-run) without ambiguity.
+// proposal_id links each row to its generating proposal.
 @Entity
-@Table(name = "da_tile_assignment")
+@Table(name = "da_hex_assignment")
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class DaTileAssignment {
+public class DaHexAssignment {
 
     @Id
     @UuidGenerator
@@ -35,16 +34,16 @@ public class DaTileAssignment {
     @Column(name = "da_id", nullable = false, updatable = false)
     private UUID daId;
 
-    @Column(name = "tile_id", nullable = false, updatable = false)
-    private UUID tileId;
+    @Column(name = "hex_id", nullable = false, updatable = false)
+    private UUID hexId;
 
     @Column(name = "valid_date", nullable = false, updatable = false)
     private LocalDate validDate;
 
-    // > 1 when this tile is covered by multiple DAs (Component C)
-    @Column(name = "n_das_on_tile", nullable = false)
+    // > 1 when this hex is covered by multiple DAs
+    @Column(name = "n_das_on_hex", nullable = false)
     @Builder.Default
-    private int nDasOnTile = 1;
+    private int nDasOnHex = 1;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)

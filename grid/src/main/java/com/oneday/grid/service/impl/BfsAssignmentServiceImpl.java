@@ -7,13 +7,13 @@ import com.oneday.grid.domain.AdjacencySource;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
+import com.oneday.grid.domain.HexDemandSnapshot;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.service.AssignmentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,13 +42,13 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
 
     private final AssignmentProposalRepository proposalRepository;
     private final AssignmentProposalRegionRepository regionRepository;
-    private final DaTileAssignmentRepository assignmentRepository;
+    private final DaHexAssignmentRepository assignmentRepository;
     private final GridProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     BfsAssignmentServiceImpl(AssignmentProposalRepository proposalRepository,
                              AssignmentProposalRegionRepository regionRepository,
-                             DaTileAssignmentRepository assignmentRepository,
+                             DaHexAssignmentRepository assignmentRepository,
                              GridProperties properties) {
         this.proposalRepository = proposalRepository;
         this.regionRepository = regionRepository;
@@ -60,13 +60,13 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
     @Transactional
     public AssignmentProposal computeProposal(UUID cityId,
                                               LocalDate validForDate,
-                                              List<TileDemandSnapshot> demand,
+                                              List<HexDemandSnapshot> demand,
                                               Map<UUID, List<UUID>> adjacencyGraph,
                                               List<UUID> availableDaIds) {
         Map<UUID, Double> demandMap = demand.stream()
-                .collect(Collectors.toMap(TileDemandSnapshot::getTileId, TileDemandSnapshot::getDemandScoreMinutes));
+                .collect(Collectors.toMap(HexDemandSnapshot::getHexId, HexDemandSnapshot::getDemandScoreMinutes));
         Map<UUID, Boolean> bootstrappedMap = demand.stream()
-                .collect(Collectors.toMap(TileDemandSnapshot::getTileId, TileDemandSnapshot::isBootstrapped));
+                .collect(Collectors.toMap(HexDemandSnapshot::getHexId, HexDemandSnapshot::isBootstrapped));
 
         int shiftMin = (properties.getShift().getEndHour() - properties.getShift().getStartHour()) * 60;
         double daCapacity = shiftMin * properties.getDa().getTargetUtilisation();
@@ -74,13 +74,9 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
         Set<UUID> unassigned = new HashSet<>(demandMap.keySet());
         int K = availableDaIds.size();
 
-        // Use actual average demand per DA so BFS partitions all tiles, not just center tiles.
-        // When total demand > K × shift capacity (common with seed data), using shift capacity
-        // as the target causes BFS to stop after 2-3 high-demand tiles and leave most tiles unassigned.
         double totalDemandMinutes = demandMap.values().stream().mapToDouble(Double::doubleValue).sum();
         double daTargetLoad = totalDemandMinutes > 0 ? totalDemandMinutes / K : daCapacity;
 
-        // da_id → list of tile_ids in territory
         Map<UUID, List<UUID>> territories = new LinkedHashMap<>();
 
         for (int k = 0; k < K && !unassigned.isEmpty(); k++) {
@@ -102,27 +98,25 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
             double load = 0.0;
 
             while (!frontier.isEmpty()) {
-                UUID tile = frontier.poll();
-                inFrontier.remove(tile);
-                if (!unassigned.contains(tile)) continue;
+                UUID hex = frontier.poll();
+                inFrontier.remove(hex);
+                if (!unassigned.contains(hex)) continue;
 
-                // Contiguity check: tile must be road-adjacent to the territory (seed is exempt)
                 if (!territory.isEmpty()) {
-                    boolean adjacent = adjacencyGraph.getOrDefault(tile, List.of())
+                    boolean adjacent = adjacencyGraph.getOrDefault(hex, List.of())
                             .stream().anyMatch(territory::contains);
                     if (!adjacent) continue;
                 }
 
-                double tileLoad = demandMap.getOrDefault(tile, 0.0);
+                double hexLoad = demandMap.getOrDefault(hex, 0.0);
 
-                territory.add(tile);
-                unassigned.remove(tile);
-                load += tileLoad;
+                territory.add(hex);
+                unassigned.remove(hex);
+                load += hexLoad;
 
-                // Stop expanding when target load is reached
                 if (load >= daTargetLoad) break;
 
-                for (UUID neighbor : adjacencyGraph.getOrDefault(tile, List.of())) {
+                for (UUID neighbor : adjacencyGraph.getOrDefault(hex, List.of())) {
                     if (unassigned.contains(neighbor) && inFrontier.add(neighbor)) {
                         frontier.add(neighbor);
                     }
@@ -130,9 +124,9 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
             }
         }
 
-        List<UUID> understaffedTiles = new ArrayList<>(unassigned);
-        if (!understaffedTiles.isEmpty()) {
-            log.warn("BFS: {} tiles understaffed after assigning {} DAs", understaffedTiles.size(), K);
+        List<UUID> understaffedHexes = new ArrayList<>(unassigned);
+        if (!understaffedHexes.isEmpty()) {
+            log.warn("BFS: {} hexes understaffed after assigning {} DAs", understaffedHexes.size(), K);
         }
 
         AdjacencySource adjacencySource = adjacencyGraph.isEmpty()
@@ -148,20 +142,20 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
                 .optimalityGapPct(null)
                 .totalDas(territories.size())
                 .coveragePct(demandMap.isEmpty() ? 0.0 :
-                        (double) (demandMap.size() - understaffedTiles.size()) / demandMap.size() * 100.0)
-                .understaffedTileIds(serializeUuids(understaffedTiles))
+                        (double) (demandMap.size() - understaffedHexes.size()) / demandMap.size() * 100.0)
+                .understaffedHexIds(serializeUuids(understaffedHexes))
                 .build());
 
         List<AssignmentProposalRegion> regions = new ArrayList<>();
-        List<DaTileAssignment> assignments = new ArrayList<>();
+        List<DaHexAssignment> assignments = new ArrayList<>();
 
         for (Map.Entry<UUID, List<UUID>> entry : territories.entrySet()) {
             UUID daId = entry.getKey();
-            List<UUID> tileIds = entry.getValue();
-            if (tileIds.isEmpty()) continue;
+            List<UUID> hexIds = entry.getValue();
+            if (hexIds.isEmpty()) continue;
 
-            double totalDemand = tileIds.stream().mapToDouble(id -> demandMap.getOrDefault(id, 0.0)).sum();
-            boolean hasBootstrapped = tileIds.stream().anyMatch(id -> bootstrappedMap.getOrDefault(id, true));
+            double totalDemand = hexIds.stream().mapToDouble(id -> demandMap.getOrDefault(id, 0.0)).sum();
+            boolean hasBootstrapped = hexIds.stream().anyMatch(id -> bootstrappedMap.getOrDefault(id, true));
 
             regions.add(AssignmentProposalRegion.builder()
                     .proposalId(proposal.getId())
@@ -172,13 +166,13 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
                     .hasBootstrappedTiles(hasBootstrapped)
                     .build());
 
-            for (UUID tileId : tileIds) {
-                assignments.add(DaTileAssignment.builder()
+            for (UUID hexId : hexIds) {
+                assignments.add(DaHexAssignment.builder()
                         .proposalId(proposal.getId())
                         .daId(daId)
-                        .tileId(tileId)
+                        .hexId(hexId)
                         .validDate(validForDate)
-                        .nDasOnTile(1)
+                        .nDasOnHex(1)
                         .status(AssignmentStatus.PROPOSED)
                         .build());
             }
@@ -187,9 +181,9 @@ public class BfsAssignmentServiceImpl implements AssignmentService {
         regionRepository.saveAll(regions);
         assignmentRepository.saveAll(assignments);
 
-        log.info("BFS proposal {} created: {} DAs, {} tiles assigned, {} understaffed",
+        log.info("BFS proposal {} created: {} DAs, {} hexes assigned, {} understaffed",
                 proposal.getId(), territories.size(),
-                assignments.size(), understaffedTiles.size());
+                assignments.size(), understaffedHexes.size());
 
         return proposal;
     }

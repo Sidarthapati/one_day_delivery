@@ -1,7 +1,5 @@
 city_id: "city-delhi"
 city_name: "Delhi"
-center_lat: 28.6139
-center_lon: 77.2090
 serviceable_pincodes:
   - pincode: "110001"
     lat: 28.6315

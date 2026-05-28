@@ -4,8 +4,6 @@ import java.util.UUID;
 
 public record GridVertexResponse(
         UUID id,
-        int rowIdx,
-        int colIdx,
         double lat,
         double lon
 ) {}

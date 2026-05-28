@@ -10,6 +10,6 @@ public record DaAssignmentResponse(
         UUID daId,
         LocalDate validDate,
         UUID proposalId,
-        List<UUID> tileIds,
+        List<UUID> hexIds,
         AssignmentStatus status
 ) {}

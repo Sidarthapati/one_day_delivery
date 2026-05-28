@@ -7,8 +7,6 @@ import java.util.List;
 public record ServiceabilityConfig(
         @JsonProperty("city_id") String cityId,
         @JsonProperty("city_name") String cityName,
-        @JsonProperty("center_lat") double centerLat,
-        @JsonProperty("center_lon") double centerLon,
         @JsonProperty("serviceable_pincodes") List<PincodeEntry> serviceablePincodes
 ) {
     public record PincodeEntry(

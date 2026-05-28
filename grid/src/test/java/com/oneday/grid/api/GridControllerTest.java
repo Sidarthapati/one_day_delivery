@@ -62,13 +62,12 @@ class GridControllerTest {
     void getTiles_knownCity_returns200WithTileList() throws Exception {
         when(gridService.resolveCityId("delhi")).thenReturn(cityId);
         when(gridService.getTileDetails(eq(cityId), any(LocalDate.class)))
-                .thenReturn(List.of(new TileDetailResponse(tileId, 0, 1, true, 28.5, 77.0, 28.52, 77.02, 5.0, false)));
+                .thenReturn(List.of(new TileDetailResponse(tileId, "872be10cafffffff", true, 28.5, 77.0, 5.0, false)));
 
         mvc.perform(get("/api/grid/delhi/tiles").param("date", "2026-05-20"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].rowIdx").value(0))
-                .andExpect(jsonPath("$[0].colIdx").value(1))
-                .andExpect(jsonPath("$[0].swLat").exists());
+                .andExpect(jsonPath("$[0].h3Index").value("872be10cafffffff"))
+                .andExpect(jsonPath("$[0].centerLat").exists());
     }
 
     @Test
@@ -105,7 +104,7 @@ class GridControllerTest {
     void getVertices_returns200() throws Exception {
         when(gridService.resolveCityId("delhi")).thenReturn(cityId);
         when(gridService.getVertices(cityId))
-                .thenReturn(List.of(new GridVertexResponse(UUID.randomUUID(), 0, 0, 28.5, 77.0)));
+                .thenReturn(List.of(new GridVertexResponse(UUID.randomUUID(), 28.5, 77.0)));
 
         mvc.perform(get("/api/grid/delhi/vertices"))
                 .andExpect(status().isOk())
@@ -148,12 +147,12 @@ class GridControllerTest {
     void getTileAt_validCoords_returns200() throws Exception {
         when(gridService.resolveCityId("delhi")).thenReturn(cityId);
         when(gridService.getTileAt(cityId, 28.6, 77.2))
-                .thenReturn(new TileAtResponse(tileId, 1, 2, true));
+                .thenReturn(new TileAtResponse(tileId, "872be10cafffffff", true));
 
         mvc.perform(get("/api/grid/delhi/tile-at").param("lat", "28.6").param("lon", "77.2"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.rowIdx").value(1))
-                .andExpect(jsonPath("$.colIdx").value(2));
+                .andExpect(jsonPath("$.hexId").value(tileId.toString()))
+                .andExpect(jsonPath("$.h3Index").value("872be10cafffffff"));
     }
 
     @Test

@@ -2,14 +2,14 @@ package com.oneday.grid.batch;
 
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
 import com.oneday.grid.domain.Grid;
-import com.oneday.grid.domain.Tile;
+import com.oneday.grid.domain.Hex;
 import com.oneday.grid.dto.response.TileLoadScoreResponse;
 import com.oneday.grid.events.TileOverloadAlertProducer;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
-import com.oneday.grid.repository.TileRepository;
+import com.oneday.grid.repository.HexRepository;
 import com.oneday.grid.service.IntradayLoadScoreService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,8 +36,8 @@ import static org.mockito.Mockito.when;
 class IntradayMonitorJobTest {
 
     @Mock GridRepository gridRepository;
-    @Mock TileRepository tileRepository;
-    @Mock DaTileAssignmentRepository assignmentRepository;
+    @Mock HexRepository hexRepository;
+    @Mock DaHexAssignmentRepository assignmentRepository;
     @Mock IntradayLoadScoreService loadScoreService;
     @Mock TileOverloadAlertProducer alertProducer;
     @Mock GridProperties properties;
@@ -47,7 +47,7 @@ class IntradayMonitorJobTest {
 
     final UUID cityId = UUID.randomUUID();
     final UUID gridId = UUID.randomUUID();
-    final UUID tileId = UUID.randomUUID();
+    final UUID hexId = UUID.randomUUID();
     final LocalDate today = LocalDate.of(2026, 5, 20);
 
     @BeforeEach
@@ -59,11 +59,11 @@ class IntradayMonitorJobTest {
         lenient().when(grid.getCityId()).thenReturn(cityId);
         lenient().when(grid.getId()).thenReturn(gridId);
 
-        Tile tile = Tile.builder().gridId(gridId).rowIdx(0).colIdx(0).active(true).build();
-        tile.setId(tileId);
-        lenient().when(tileRepository.findByGridIdAndActiveTrue(gridId)).thenReturn(List.of(tile));
+        Hex hex = Hex.builder().h3GridId(gridId).h3Index(0L).active(true).build();
+        hex.setId(hexId);
+        lenient().when(hexRepository.findByH3GridIdAndActiveTrue(gridId)).thenReturn(List.of(hex));
 
-        job = new IntradayMonitorJob(gridRepository, tileRepository, assignmentRepository,
+        job = new IntradayMonitorJob(gridRepository, hexRepository, assignmentRepository,
                 loadScoreService, alertProducer, properties);
     }
 
@@ -85,58 +85,58 @@ class IntradayMonitorJobTest {
     @Test
     void monitor_tileExceedsWarningThreshold_incrementsHysteresisCounter() {
         // adjustedLoadScore=1.6 ≥ warning(1.5) but < critical(2.0)
-        when(loadScoreService.getLoadScore(tileId, today))
-                .thenReturn(new TileLoadScoreResponse(tileId, today, 3, 1.6, "WARNING"));
+        when(loadScoreService.getLoadScore(hexId, today))
+                .thenReturn(new TileLoadScoreResponse(hexId, today, 3, 1.6, "WARNING"));
 
         invokeMonitorCity();
 
         // POLL_INTERVAL_MINUTES = 5 → counter increments from 0 to 5
-        assertThat(sustainedMinutes().get(tileId)).isEqualTo(5);
+        assertThat(sustainedMinutes().get(hexId)).isEqualTo(5);
     }
 
     @Test
     void monitor_tileExceedsCriticalSustained_firesOverloadAlert() {
         // Pre-seed: one tick already sustained (5 min), next tick reaches criticalSustained=10
-        preSeed(tileId, 5);
+        preSeed(hexId, 5);
 
-        when(loadScoreService.getLoadScore(tileId, today))
-                .thenReturn(new TileLoadScoreResponse(tileId, today, 5, 2.5, "CRITICAL"));
+        when(loadScoreService.getLoadScore(hexId, today))
+                .thenReturn(new TileLoadScoreResponse(hexId, today, 5, 2.5, "CRITICAL"));
 
-        DaTileAssignment assignment = DaTileAssignment.builder()
-                .daId(UUID.randomUUID()).tileId(tileId).validDate(today)
+        DaHexAssignment assignment = DaHexAssignment.builder()
+                .daId(UUID.randomUUID()).hexId(hexId).validDate(today)
                 .proposalId(UUID.randomUUID()).status(AssignmentStatus.ACTIVE).build();
-        when(assignmentRepository.findByTileIdAndValidDateAndStatus(tileId, today, AssignmentStatus.ACTIVE))
+        when(assignmentRepository.findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.ACTIVE))
                 .thenReturn(List.of(assignment));
 
         invokeMonitorCity();
 
         // sustained = 5 + 5 = 10 ≥ criticalSustainedMinutes(10) → alert fired
-        verify(alertProducer).emit(eq(cityId), eq(tileId), any(), eq(today),
+        verify(alertProducer).emit(eq(cityId), eq(hexId), any(), eq(today),
                 eq("CRITICAL"), any(double.class), any(int.class), any(double.class), any(int.class));
     }
 
     @Test
     void monitor_tileFallsBelowThreshold_resetsHysteresisCounter() {
-        preSeed(tileId, 10);
+        preSeed(hexId, 10);
 
         // adjustedLoadScore=1.0 < warning(1.5) → below threshold
-        when(loadScoreService.getLoadScore(tileId, today))
-                .thenReturn(new TileLoadScoreResponse(tileId, today, 0, 1.0, "OK"));
+        when(loadScoreService.getLoadScore(hexId, today))
+                .thenReturn(new TileLoadScoreResponse(hexId, today, 0, 1.0, "OK"));
 
         invokeMonitorCity();
 
-        assertThat(sustainedMinutes().get(tileId)).isNull();
+        assertThat(sustainedMinutes().get(hexId)).isNull();
     }
 
     @Test
     void monitor_tileWarningNotSustained_noAlertFired() {
         // warningSustainedMinutes=15; first tick gives sustained=5 < 15 → no alert
-        when(loadScoreService.getLoadScore(tileId, today))
-                .thenReturn(new TileLoadScoreResponse(tileId, today, 2, 1.6, "WARNING"));
+        when(loadScoreService.getLoadScore(hexId, today))
+                .thenReturn(new TileLoadScoreResponse(hexId, today, 2, 1.6, "WARNING"));
 
         invokeMonitorCity();
 
-        assertThat(sustainedMinutes().get(tileId)).isEqualTo(5);
+        assertThat(sustainedMinutes().get(hexId)).isEqualTo(5);
         verify(alertProducer, never()).emit(any(), any(), any(), any(), any(),
                 any(double.class), any(int.class), any(double.class), any(int.class));
     }

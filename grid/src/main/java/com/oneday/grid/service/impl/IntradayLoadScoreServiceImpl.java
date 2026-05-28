@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 class IntradayLoadScoreServiceImpl implements IntradayLoadScoreService {
 
-    private final ConcurrentHashMap<UUID, Integer> unservedByTile = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Integer> unservedByHex = new ConcurrentHashMap<>();
     private final GridProperties properties;
 
     IntradayLoadScoreServiceImpl(GridProperties properties) {
@@ -22,20 +22,20 @@ class IntradayLoadScoreServiceImpl implements IntradayLoadScoreService {
 
     @Override
     public TileLoadScoreResponse getLoadScore(UUID tileId, LocalDate date) {
-        int unserved = unservedByTile.getOrDefault(tileId, 0);
+        int unserved = unservedByHex.getOrDefault(tileId, 0);
         // adjustedLoadScore uses raw unserved count until M4 provides expected-by-now data
         double adjustedLoadScore = unserved;
         return new TileLoadScoreResponse(tileId, date, unserved, adjustedLoadScore, severity(adjustedLoadScore));
     }
 
     @Override
-    public void updateQueueDepth(UUID cityId, LocalDate date, Map<UUID, Integer> unservedByTileMap) {
-        unservedByTile.putAll(unservedByTileMap);
+    public void updateQueueDepth(UUID cityId, LocalDate date, Map<UUID, Integer> unservedByHexMap) {
+        unservedByHex.putAll(unservedByHexMap);
     }
 
     @Override
     public void resetForShift() {
-        unservedByTile.clear();
+        unservedByHex.clear();
     }
 
     private String severity(double score) {

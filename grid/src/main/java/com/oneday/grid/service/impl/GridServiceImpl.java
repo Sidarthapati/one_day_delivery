@@ -5,27 +5,29 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.config.ServiceabilityConfig;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
 import com.oneday.grid.domain.Grid;
-import com.oneday.grid.domain.GridVertex;
+import com.oneday.grid.domain.Hex;
+import com.oneday.grid.domain.HexDemandSnapshot;
+import com.oneday.grid.domain.HexVertex;
 import com.oneday.grid.domain.PincodeMapping;
-import com.oneday.grid.domain.Tile;
-import com.oneday.grid.domain.TileDemandSnapshot;
 import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
 import com.oneday.grid.dto.response.TileDetailResponse;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
-import com.oneday.grid.repository.GridVertexRepository;
+import com.oneday.grid.repository.HexDemandSnapshotRepository;
+import com.oneday.grid.repository.HexRepository;
+import com.oneday.grid.repository.HexVertexRepository;
 import com.oneday.grid.repository.PincodeMappingRepository;
-import com.oneday.grid.repository.TileDemandSnapshotRepository;
-import com.oneday.grid.repository.TileRepository;
 import com.oneday.grid.service.GridService;
+import com.uber.h3core.H3Core;
+import com.uber.h3core.util.LatLng;
 import jakarta.annotation.PostConstruct;
-import org.springframework.http.HttpStatus;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -33,7 +35,6 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -45,37 +46,37 @@ import java.util.stream.Collectors;
 @Service
 public class GridServiceImpl implements GridService {
 
-    private static final double KM_PER_DEGREE_LAT = 111.32;
-    private static final double TILE_SIZE_KM = 2.0;
-
     private final GridRepository gridRepository;
-    private final TileRepository tileRepository;
+    private final HexRepository hexRepository;
     private final PincodeMappingRepository pincodeMappingRepository;
-    private final GridVertexRepository gridVertexRepository;
-    private final TileDemandSnapshotRepository demandSnapshotRepository;
-    private final DaTileAssignmentRepository assignmentRepository;
+    private final HexVertexRepository hexVertexRepository;
+    private final HexDemandSnapshotRepository demandSnapshotRepository;
+    private final DaHexAssignmentRepository assignmentRepository;
     private final ResourceLoader resourceLoader;
     private final GridProperties gridProperties;
+    private final H3Core h3Core;
     private final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
 
     private final Map<UUID, Grid> gridCache = new ConcurrentHashMap<>();
 
     GridServiceImpl(GridRepository gridRepository,
-                    TileRepository tileRepository,
+                    HexRepository hexRepository,
                     PincodeMappingRepository pincodeMappingRepository,
-                    GridVertexRepository gridVertexRepository,
-                    TileDemandSnapshotRepository demandSnapshotRepository,
-                    DaTileAssignmentRepository assignmentRepository,
+                    HexVertexRepository hexVertexRepository,
+                    HexDemandSnapshotRepository demandSnapshotRepository,
+                    DaHexAssignmentRepository assignmentRepository,
                     ResourceLoader resourceLoader,
-                    GridProperties gridProperties) {
+                    GridProperties gridProperties,
+                    H3Core h3Core) {
         this.gridRepository = gridRepository;
-        this.tileRepository = tileRepository;
+        this.hexRepository = hexRepository;
         this.pincodeMappingRepository = pincodeMappingRepository;
-        this.gridVertexRepository = gridVertexRepository;
+        this.hexVertexRepository = hexVertexRepository;
         this.demandSnapshotRepository = demandSnapshotRepository;
         this.assignmentRepository = assignmentRepository;
         this.resourceLoader = resourceLoader;
         this.gridProperties = gridProperties;
+        this.h3Core = h3Core;
     }
 
     @PostConstruct
@@ -95,19 +96,18 @@ public class GridServiceImpl implements GridService {
     @Override
     public ServiceabilityResponse checkServiceability(UUID cityId, String pincode) {
         return pincodeMappingRepository.findByCityIdAndPincode(cityId, pincode)
-                .map(pm -> new ServiceabilityResponse(cityId, pincode, pm.isServiceable(), pm.getTileId()))
+                .map(pm -> new ServiceabilityResponse(cityId, pincode, pm.isServiceable(), pm.getHexId()))
                 .orElse(new ServiceabilityResponse(cityId, pincode, false, null));
     }
 
     @Override
     public TileAtResponse getTileAt(UUID cityId, double lat, double lon) {
         Grid grid = getGrid(cityId);
-        int row = (int) Math.floor((lat - grid.getOriginLat()) / grid.getTileDeltaLat());
-        int col = (int) Math.floor((lon - grid.getOriginLon()) / grid.getTileDeltaLon());
-        return tileRepository.findByGridIdAndRowIdxAndColIdx(grid.getId(), row, col)
-                .map(t -> new TileAtResponse(t.getId(), t.getRowIdx(), t.getColIdx(), t.isActive()))
+        long h3Index = h3Core.latLngToCell(lat, lon, grid.getH3Resolution());
+        return hexRepository.findByH3GridIdAndH3Index(grid.getId(), h3Index)
+                .map(hex -> new TileAtResponse(hex.getId(), Long.toHexString(hex.getH3Index()), hex.isActive()))
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "No tile at row=" + row + ", col=" + col + " for cityId=" + cityId));
+                        "No hex at " + Long.toHexString(h3Index) + " for cityId=" + cityId));
     }
 
     @Override
@@ -122,20 +122,21 @@ public class GridServiceImpl implements GridService {
     @Override
     public List<TileDetailResponse> getTileDetails(UUID cityId, LocalDate date) {
         Grid grid = getGrid(cityId);
-        List<Tile> tiles = tileRepository.findByGridId(grid.getId());
+        List<Hex> hexes = hexRepository.findByH3GridId(grid.getId());
 
-        Map<UUID, TileDemandSnapshot> snapshotByTile = demandSnapshotRepository
+        Map<UUID, HexDemandSnapshot> snapshotByHex = demandSnapshotRepository
                 .findBySnapshotDate(date).stream()
-                .collect(Collectors.toMap(TileDemandSnapshot::getTileId, s -> s));
+                .collect(Collectors.toMap(HexDemandSnapshot::getHexId, s -> s));
 
-        return tiles.stream().map(t -> {
-            double swLat = grid.getOriginLat() + t.getRowIdx() * grid.getTileDeltaLat();
-            double swLon = grid.getOriginLon() + t.getColIdx() * grid.getTileDeltaLon();
-            TileDemandSnapshot snap = snapshotByTile.get(t.getId());
+        return hexes.stream().map(hex -> {
+            LatLng center = h3Core.cellToLatLng(hex.getH3Index());
+            HexDemandSnapshot snap = snapshotByHex.get(hex.getId());
             return new TileDetailResponse(
-                    t.getId(), t.getRowIdx(), t.getColIdx(), t.isActive(),
-                    swLat, swLon,
-                    swLat + grid.getTileDeltaLat(), swLon + grid.getTileDeltaLon(),
+                    hex.getId(),
+                    Long.toHexString(hex.getH3Index()),
+                    hex.isActive(),
+                    center.lat,
+                    center.lng,
                     snap != null ? snap.getDemandScoreOrders() : 0.0,
                     snap != null && snap.isBootstrapped()
             );
@@ -145,31 +146,31 @@ public class GridServiceImpl implements GridService {
     @Override
     public List<GridVertexResponse> getVertices(UUID cityId) {
         Grid grid = getGrid(cityId);
-        return gridVertexRepository.findByGridId(grid.getId()).stream()
-                .map(v -> new GridVertexResponse(v.getId(), v.getRowIdx(), v.getColIdx(), v.getLat(), v.getLon()))
+        return hexVertexRepository.findByH3GridId(grid.getId()).stream()
+                .map(v -> new GridVertexResponse(v.getId(), v.getLat(), v.getLon()))
                 .toList();
     }
 
     @Override
     @Transactional
-    public void setTileActive(UUID tileId, boolean active) {
-        Tile tile = tileRepository.findById(tileId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tile not found: " + tileId));
-        tile.setActive(active);
-        tileRepository.save(tile);
+    public void setTileActive(UUID hexId, boolean active) {
+        Hex hex = hexRepository.findById(hexId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Hex not found: " + hexId));
+        hex.setActive(active);
+        hexRepository.save(hex);
     }
 
     @Override
     public List<AssignmentResponse> getActiveAssignments(UUID cityId, LocalDate date) {
         Grid grid = getGrid(cityId);
-        Set<UUID> cityTileIds = tileRepository.findByGridId(grid.getId()).stream()
-                .map(Tile::getId).collect(Collectors.toSet());
+        Set<UUID> cityHexIds = hexRepository.findByH3GridId(grid.getId()).stream()
+                .map(Hex::getId).collect(Collectors.toSet());
         return assignmentRepository
-                .findByTileIdInAndValidDateAndStatus(cityTileIds, date, AssignmentStatus.ACTIVE)
+                .findByHexIdInAndValidDateAndStatus(cityHexIds, date, AssignmentStatus.ACTIVE)
                 .stream()
                 .map(a -> new AssignmentResponse(
-                        a.getId(), a.getProposalId(), a.getDaId(), a.getTileId(),
-                        a.getValidDate(), a.getNDasOnTile(), a.getStatus(),
+                        a.getId(), a.getProposalId(), a.getDaId(), a.getHexId(),
+                        a.getValidDate(), a.getNDasOnHex(), a.getStatus(),
                         a.getProposedAt(), a.getApprovedBy(), a.getApprovedAt()))
                 .toList();
     }
@@ -178,85 +179,65 @@ public class GridServiceImpl implements GridService {
     @Transactional
     public void initializeGrid(UUID cityId, String cityCode) {
         ServiceabilityConfig config = loadConfig(cityCode);
-
-        double tileDeltaLat = TILE_SIZE_KM / KM_PER_DEGREE_LAT;
-        double tileDeltaLon = TILE_SIZE_KM / (KM_PER_DEGREE_LAT * Math.cos(Math.toRadians(config.centerLat())));
+        int resolution = gridProperties.getH3().getResolution();
 
         List<ServiceabilityConfig.PincodeEntry> pincodes = config.serviceablePincodes();
-        double latMin = pincodes.stream().mapToDouble(ServiceabilityConfig.PincodeEntry::lat).min().orElseThrow() - tileDeltaLat;
-        double latMax = pincodes.stream().mapToDouble(ServiceabilityConfig.PincodeEntry::lat).max().orElseThrow() + tileDeltaLat;
-        double lonMin = pincodes.stream().mapToDouble(ServiceabilityConfig.PincodeEntry::lon).min().orElseThrow() - tileDeltaLon;
-        double lonMax = pincodes.stream().mapToDouble(ServiceabilityConfig.PincodeEntry::lon).max().orElseThrow() + tileDeltaLon;
 
-        int nRows = (int) Math.ceil((latMax - latMin) / tileDeltaLat);
-        int nCols = (int) Math.ceil((lonMax - lonMin) / tileDeltaLon);
+        // Collect pincode cells, then buffer each with gridDisk(k=1) — all become active.
+        Set<Long> activeCells = new HashSet<>();
+        for (ServiceabilityConfig.PincodeEntry entry : pincodes) {
+            long cell = h3Core.latLngToCell(entry.lat(), entry.lon(), resolution);
+            activeCells.addAll(h3Core.gridDisk(cell, 1));
+        }
 
         Grid grid = gridRepository.save(Grid.builder()
                 .cityId(cityId)
-                .originLat(latMin)
-                .originLon(lonMin)
-                .tileDeltaLat(tileDeltaLat)
-                .tileDeltaLon(tileDeltaLon)
+                .h3Resolution(resolution)
                 .build());
 
-        List<Tile> tiles = new ArrayList<>(nRows * nCols);
-        for (int r = 0; r < nRows; r++) {
-            for (int c = 0; c < nCols; c++) {
-                tiles.add(Tile.builder().gridId(grid.getId()).rowIdx(r).colIdx(c).active(false).build());
-            }
-        }
-        tiles = tileRepository.saveAll(tiles);
+        List<Hex> hexes = activeCells.stream()
+                .map(h3Index -> Hex.builder()
+                        .h3GridId(grid.getId())
+                        .h3Index(h3Index)
+                        .active(true)
+                        .build())
+                .collect(Collectors.toList());
+        hexes = hexRepository.saveAll(hexes);
 
-        Map<String, Tile> tileIndex = new HashMap<>();
-        for (Tile t : tiles) {
-            tileIndex.put(t.getRowIdx() + "," + t.getColIdx(), t);
-        }
+        Map<Long, Hex> hexByIndex = hexes.stream()
+                .collect(Collectors.toMap(Hex::getH3Index, h -> h));
 
-        // Map pincodes to tiles; track which tiles are directly pincode-activated.
         List<PincodeMapping> mappings = new ArrayList<>();
-        Set<Tile> pincodeActivatedTiles = new HashSet<>();
         for (ServiceabilityConfig.PincodeEntry entry : pincodes) {
-            int row = (int) Math.floor((entry.lat() - latMin) / tileDeltaLat);
-            int col = (int) Math.floor((entry.lon() - lonMin) / tileDeltaLon);
-            Tile tile = tileIndex.get(row + "," + col);
-            if (tile != null) {
-                tile.setActive(true);
-                pincodeActivatedTiles.add(tile);
-                mappings.add(PincodeMapping.builder()
-                        .cityId(cityId).pincode(entry.pincode())
-                        .tileId(tile.getId()).serviceable(true).build());
-            } else {
-                mappings.add(PincodeMapping.builder()
-                        .cityId(cityId).pincode(entry.pincode())
-                        .tileId(null).serviceable(false).build());
-            }
+            long cellIndex = h3Core.latLngToCell(entry.lat(), entry.lon(), resolution);
+            Hex hex = hexByIndex.get(cellIndex);
+            mappings.add(PincodeMapping.builder()
+                    .cityId(cityId)
+                    .pincode(entry.pincode())
+                    .hexId(hex != null ? hex.getId() : null)
+                    .serviceable(hex != null)
+                    .build());
         }
-
-        // Activate N/S/E/W neighbors of every pincode-mapped tile (1-tile geometric buffer, no chain).
-        // Handles pincodes whose coverage area bleeds into an adjacent 2×2 km tile.
-        int[][] neighborOffsets = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-        for (Tile pincodeTile : pincodeActivatedTiles) {
-            int r = pincodeTile.getRowIdx(), c = pincodeTile.getColIdx();
-            for (int[] offset : neighborOffsets) {
-                Tile neighbor = tileIndex.get((r + offset[0]) + "," + (c + offset[1]));
-                if (neighbor != null) neighbor.setActive(true);
-            }
-        }
-
-        tileRepository.saveAll(tiles);
         pincodeMappingRepository.saveAll(mappings);
 
-        List<GridVertex> vertices = new ArrayList<>((nRows + 1) * (nCols + 1));
-        for (int r = 0; r <= nRows; r++) {
-            for (int c = 0; c <= nCols; c++) {
-                vertices.add(GridVertex.builder()
-                        .gridId(grid.getId()).rowIdx(r).colIdx(c)
-                        .lat(latMin + r * tileDeltaLat)
-                        .lon(lonMin + c * tileDeltaLon)
-                        .build());
-            }
+        // Extract unique H3 vertices from all active hexes and persist them.
+        Set<Long> vertexIndexSet = new HashSet<>();
+        for (long cell : activeCells) {
+            vertexIndexSet.addAll(h3Core.cellToVertexes(cell));
         }
-        gridVertexRepository.saveAll(vertices);
+
+        List<HexVertex> vertices = vertexIndexSet.stream()
+                .map(vIdx -> {
+                    LatLng latLng = h3Core.vertexToLatLng(vIdx);
+                    return HexVertex.builder()
+                            .h3GridId(grid.getId())
+                            .h3VertexIndex(vIdx)
+                            .lat(latLng.lat)
+                            .lon(latLng.lng)
+                            .build();
+                })
+                .toList();
+        hexVertexRepository.saveAll(vertices);
 
         gridCache.put(cityId, grid);
     }

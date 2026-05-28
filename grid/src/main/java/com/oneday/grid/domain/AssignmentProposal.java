@@ -15,7 +15,7 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 // Append-only. One proposal per city per date per run.
-// understaffedTileIds is stored as a JSONB array of UUID strings;
+// understaffedHexIds: JSONB array of UUID strings for hexes where K_available < K_needed;
 // the service layer serializes/deserializes with Jackson.
 @Entity
 @Table(name = "assignment_proposal")
@@ -66,8 +66,8 @@ public class AssignmentProposal {
 
     // JSON array of tile UUID strings for tiles where K_available < K_needed
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "understaffed_tile_ids", columnDefinition = "jsonb")
-    private String understaffedTileIds;
+    @Column(name = "understaffed_hex_ids", columnDefinition = "jsonb")
+    private String understaffedHexIds;
 
     @Column(name = "proposed_at", nullable = false, updatable = false)
     private Instant proposedAt;

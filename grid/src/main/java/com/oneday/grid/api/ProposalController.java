@@ -74,7 +74,7 @@ public class ProposalController {
             @PathVariable UUID proposalId,
             @PathVariable UUID daId,
             @RequestBody RegionEditRequest request) {
-        proposalService.editRegionInProposal(proposalId, daId, request.newTileIds(), request.reviewerId());
+        proposalService.editRegionInProposal(proposalId, daId, request.newHexIds(), request.reviewerId());
     }
 
     // ── Intraday reassignment (Scenario B) ───────────────────────────────────
@@ -85,7 +85,7 @@ public class ProposalController {
             @RequestBody IntradayReassignmentRequest request) {
         return proposalService.requestIntradayReassignment(
                 request.cityId(), request.fromDaId(), request.toDaId(),
-                request.tileIdsToMove(), request.requestedBy());
+                request.hexIdsToMove(), request.requestedBy());
     }
 
     @PostMapping("/{proposalId}/approve-reassignment")
@@ -102,7 +102,7 @@ public class ProposalController {
     @ResponseStatus(HttpStatus.CREATED)
     public TileShareResponse requestTileShare(@RequestBody TileShareRequest request) {
         return proposalService.requestTileShare(
-                request.cityId(), request.daId(), request.tileId(), request.requestedBy());
+                request.cityId(), request.daId(), request.hexId(), request.requestedBy());
     }
 
     @PostMapping("/{proposalId}/approve-tile-share")

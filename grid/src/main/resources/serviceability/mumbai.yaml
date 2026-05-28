@@ -1,7 +1,5 @@
 city_id: "city-mumbai"
 city_name: "Mumbai"
-center_lat: 19.0760
-center_lon: 72.8777
 serviceable_pincodes:
   - pincode: "400001"
     lat: 18.9322

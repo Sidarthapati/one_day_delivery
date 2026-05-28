@@ -21,7 +21,7 @@ public record ProposalResponse(
         Double optimalityGapPct,
         int totalDas,
         Double coveragePct,
-        List<UUID> understaffedTileIds,
+        List<UUID> understaffedHexIds,
         Instant proposedAt,
         UUID reviewedBy,
         Instant reviewedAt,

@@ -13,27 +13,27 @@ import java.util.UUID;
 
 // Not append-only — deleted and replaced wholesale on each OSRM matrix refresh.
 @Entity
-@Table(name = "tile_travel_time")
+@Table(name = "h3_hex_travel_time")
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class TileTravelTime {
+public class HexTravelTime {
 
     @Id
     @UuidGenerator
     @Column(updatable = false, nullable = false)
     private UUID id;
 
-    @Column(name = "grid_id", nullable = false, updatable = false)
-    private UUID gridId;
+    @Column(name = "h3_grid_id", nullable = false, updatable = false)
+    private UUID h3GridId;
 
-    @Column(name = "from_tile_id", nullable = false, updatable = false)
-    private UUID fromTileId;
+    @Column(name = "from_hex_id", nullable = false, updatable = false)
+    private UUID fromHexId;
 
-    @Column(name = "to_tile_id", nullable = false, updatable = false)
-    private UUID toTileId;
+    @Column(name = "to_hex_id", nullable = false, updatable = false)
+    private UUID toHexId;
 
     @Column(name = "travel_time_seconds", nullable = false)
     private int travelTimeSeconds;

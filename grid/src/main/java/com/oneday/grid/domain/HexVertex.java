@@ -10,29 +10,26 @@ import org.hibernate.annotations.UuidGenerator;
 
 import java.util.UUID;
 
-// Pre-computed at grid init. A grid with M×N tiles has (M+1)×(N+1) vertices.
+// Pre-computed at grid init. H3 vertex indexes are globally unique.
 @Entity
-@Table(name = "grid_vertex")
+@Table(name = "h3_hex_vertex")
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class GridVertex {
+public class HexVertex {
 
     @Id
     @UuidGenerator
     @Column(updatable = false, nullable = false)
     private UUID id;
 
-    @Column(name = "grid_id", nullable = false, updatable = false)
-    private UUID gridId;
+    @Column(name = "h3_grid_id", nullable = false, updatable = false)
+    private UUID h3GridId;
 
-    @Column(name = "row_idx", nullable = false, updatable = false)
-    private int rowIdx;
-
-    @Column(name = "col_idx", nullable = false, updatable = false)
-    private int colIdx;
+    @Column(name = "h3_vertex_index", nullable = false, updatable = false)
+    private long h3VertexIndex;
 
     @Column(name = "lat", nullable = false, updatable = false)
     private double lat;

@@ -5,19 +5,19 @@ import com.oneday.grid.domain.AdjacencySource;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
-import com.oneday.grid.domain.DaTileAssignment;
+import com.oneday.grid.domain.DaHexAssignment;
 import com.oneday.grid.domain.Grid;
+import com.oneday.grid.domain.HexTravelTime;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.ProposalType;
 import com.oneday.grid.domain.SolverType;
-import com.oneday.grid.domain.TileTravelTime;
 import com.oneday.grid.dto.response.IntradayReassignmentResponse;
 import com.oneday.grid.dto.response.TileShareResponse;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
-import com.oneday.grid.repository.DaTileAssignmentRepository;
+import com.oneday.grid.repository.DaHexAssignmentRepository;
 import com.oneday.grid.repository.GridRepository;
-import com.oneday.grid.repository.TileTravelTimeRepository;
+import com.oneday.grid.repository.HexTravelTimeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,10 +46,9 @@ class ProposalServiceImplTest {
 
     @Mock AssignmentProposalRepository proposalRepository;
     @Mock AssignmentProposalRegionRepository regionRepository;
-    @Mock DaTileAssignmentRepository assignmentRepository;
+    @Mock DaHexAssignmentRepository assignmentRepository;
     @Mock GridRepository gridRepository;
-    @Mock TileTravelTimeRepository travelTimeRepository;
-    // Grid extends BaseEntity (id is read-only), so we mock it as a @Mock field
+    @Mock HexTravelTimeRepository travelTimeRepository;
     @Mock Grid grid;
 
     GridProperties properties = new GridProperties();
@@ -59,7 +58,7 @@ class ProposalServiceImplTest {
     private final UUID gridId     = UUID.randomUUID();
     private final UUID proposalId = UUID.randomUUID();
     private final UUID reviewerId = UUID.randomUUID();
-    private final LocalDate date  = LocalDate.now(); // service uses LocalDate.now() internally
+    private final LocalDate date  = LocalDate.now();
 
     @BeforeEach
     void setUp() {
@@ -77,29 +76,29 @@ class ProposalServiceImplTest {
                 .proposalType(ProposalType.NIGHTLY)
                 .solverType(SolverType.CP_SAT)
                 .adjacencySource(AdjacencySource.OSRM)
-                .totalDas(1).coveragePct(100.0).understaffedTileIds("[]").build();
+                .totalDas(1).coveragePct(100.0).understaffedHexIds("[]").build();
         p.setId(proposalId);
         p.setProposedAt(Instant.now());
         return p;
     }
 
-    private DaTileAssignment proposedAssignment(UUID proposalId, UUID daId, UUID tileId) {
-        DaTileAssignment a = DaTileAssignment.builder()
-                .proposalId(proposalId).daId(daId).tileId(tileId)
+    private DaHexAssignment proposedAssignment(UUID proposalId, UUID daId, UUID hexId) {
+        DaHexAssignment a = DaHexAssignment.builder()
+                .proposalId(proposalId).daId(daId).hexId(hexId)
                 .validDate(date).status(AssignmentStatus.PROPOSED).build();
         a.setId(UUID.randomUUID());
         a.setProposedAt(Instant.now());
         return a;
     }
 
-    private DaTileAssignment activeAssignment(UUID proposalId, UUID daId, UUID tileId) {
-        DaTileAssignment a = proposedAssignment(proposalId, daId, tileId);
+    private DaHexAssignment activeAssignment(UUID proposalId, UUID daId, UUID hexId) {
+        DaHexAssignment a = proposedAssignment(proposalId, daId, hexId);
         a.setStatus(AssignmentStatus.ACTIVE);
         return a;
     }
 
     private Grid grid() {
-        return grid; // the @Mock Grid field — getId() is stubbed in @BeforeEach
+        return grid;
     }
 
     // ---- approve ----------------------------------------------------------
@@ -107,13 +106,13 @@ class ProposalServiceImplTest {
     @Test
     void approve_proposedProposal_setsApprovedAndActivatesAssignments() {
         UUID daId   = UUID.randomUUID();
-        UUID tileId = UUID.randomUUID();
+        UUID hexId  = UUID.randomUUID();
         AssignmentProposal proposal = proposedProposal();
-        DaTileAssignment assignment = proposedAssignment(proposalId, daId, tileId);
+        DaHexAssignment assignment = proposedAssignment(proposalId, daId, hexId);
 
         when(proposalRepository.findById(proposalId)).thenReturn(Optional.of(proposal));
         when(proposalRepository.findByCityIdAndValidForDate(cityId, date))
-                .thenReturn(List.of(proposal)); // only this proposal, no existing APPROVED one
+                .thenReturn(List.of(proposal));
         when(assignmentRepository.findByProposalId(proposalId)).thenReturn(List.of(assignment));
         when(proposalRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(assignmentRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -203,38 +202,35 @@ class ProposalServiceImplTest {
     @Test
     void editRegionInProposal_contiguousTiles_supersedesOldAndInsertsNew() {
         UUID daId    = UUID.randomUUID();
-        UUID oldTile = UUID.randomUUID();
-        UUID newT1   = UUID.randomUUID();
-        UUID newT2   = UUID.randomUUID();
+        UUID oldHex  = UUID.randomUUID();
+        UUID newH1   = UUID.randomUUID();
+        UUID newH2   = UUID.randomUUID();
         AssignmentProposal proposal = proposedProposal();
 
-        // Build adjacency: newT1 ↔ newT2 (symmetric edges via TileTravelTime)
-        TileTravelTime tt1 = TileTravelTime.builder().gridId(gridId)
-                .fromTileId(newT1).toTileId(newT2).travelTimeSeconds(300).build();
-        TileTravelTime tt2 = TileTravelTime.builder().gridId(gridId)
-                .fromTileId(newT2).toTileId(newT1).travelTimeSeconds(300).build();
+        HexTravelTime tt1 = HexTravelTime.builder().h3GridId(gridId)
+                .fromHexId(newH1).toHexId(newH2).travelTimeSeconds(300).build();
+        HexTravelTime tt2 = HexTravelTime.builder().h3GridId(gridId)
+                .fromHexId(newH2).toHexId(newH1).travelTimeSeconds(300).build();
 
-        DaTileAssignment oldAssignment = proposedAssignment(proposalId, daId, oldTile);
+        DaHexAssignment oldAssignment = proposedAssignment(proposalId, daId, oldHex);
 
         when(proposalRepository.findById(proposalId)).thenReturn(Optional.of(proposal));
         when(gridRepository.findByCityId(cityId)).thenReturn(Optional.of(grid()));
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(
                 eq(gridId), anyInt())).thenReturn(List.of(tt1, tt2));
         when(assignmentRepository.findByProposalId(proposalId)).thenReturn(List.of(oldAssignment));
         when(assignmentRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
         when(regionRepository.findByProposalIdAndDaId(proposalId, daId)).thenReturn(Optional.empty());
 
-        service.editRegionInProposal(proposalId, daId, List.of(newT1, newT2), reviewerId);
+        service.editRegionInProposal(proposalId, daId, List.of(newH1, newH2), reviewerId);
 
-        // Old assignment superseded
         assertThat(oldAssignment.getStatus()).isEqualTo(AssignmentStatus.SUPERSEDED);
 
-        // saveAll called twice: first to persist superseded old assignments, second to insert new
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository, times(2)).saveAll(captor.capture());
 
-        List<DaTileAssignment> newAssignments = captor.getAllValues().stream()
+        List<DaHexAssignment> newAssignments = captor.getAllValues().stream()
                 .filter(l -> !l.isEmpty() && l.get(0).getStatus() == AssignmentStatus.PROPOSED)
                 .findFirst().orElseThrow();
         assertThat(newAssignments).hasSize(2);
@@ -245,16 +241,15 @@ class ProposalServiceImplTest {
     @Test
     void editRegionInProposal_nonContiguousTiles_throwsIllegalState() {
         UUID daId = UUID.randomUUID();
-        UUID t1 = UUID.randomUUID(), t2 = UUID.randomUUID();
+        UUID h1 = UUID.randomUUID(), h2 = UUID.randomUUID();
         AssignmentProposal proposal = proposedProposal();
 
         when(proposalRepository.findById(proposalId)).thenReturn(Optional.of(proposal));
         when(gridRepository.findByCityId(cityId)).thenReturn(Optional.of(grid()));
-        // No travel times → empty adjacency graph → t1 and t2 are disconnected
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(
                 eq(gridId), anyInt())).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.editRegionInProposal(proposalId, daId, List.of(t1, t2), reviewerId))
+        assertThatThrownBy(() -> service.editRegionInProposal(proposalId, daId, List.of(h1, h2), reviewerId))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not contiguous");
     }
@@ -278,27 +273,21 @@ class ProposalServiceImplTest {
     void requestIntradayReassignment_validMove_createsOverrideProposal() {
         UUID fromDaId = UUID.randomUUID();
         UUID toDaId   = UUID.randomUUID();
-        UUID sharedTile = UUID.randomUUID();
-        UUID fromOtherTile = UUID.randomUUID();
-        UUID toTile = UUID.randomUUID();
+        UUID sharedHex = UUID.randomUUID();
+        UUID fromOtherHex = UUID.randomUUID();
+        UUID toHex = UUID.randomUUID();
 
-        // fromDa currently has [fromOtherTile, sharedTile]; toDa has [toTile]
-        // Moving sharedTile from fromDa to toDa
-        // fromDa new = [fromOtherTile] (single tile, trivially connected)
-        // toDa new = [toTile, sharedTile] (need adjacency)
-        DaTileAssignment fromActive1 = activeAssignment(proposalId, fromDaId, fromOtherTile);
-        DaTileAssignment fromActive2 = activeAssignment(proposalId, fromDaId, sharedTile);
-        DaTileAssignment toActive    = activeAssignment(proposalId, toDaId, toTile);
+        DaHexAssignment fromActive1 = activeAssignment(proposalId, fromDaId, fromOtherHex);
+        DaHexAssignment fromActive2 = activeAssignment(proposalId, fromDaId, sharedHex);
+        DaHexAssignment toActive    = activeAssignment(proposalId, toDaId, toHex);
 
-        // Make toTile ↔ sharedTile adjacent (so combined toDa territory is connected)
-        TileTravelTime tt1 = TileTravelTime.builder().gridId(gridId)
-                .fromTileId(toTile).toTileId(sharedTile).travelTimeSeconds(300).build();
-        TileTravelTime tt2 = TileTravelTime.builder().gridId(gridId)
-                .fromTileId(sharedTile).toTileId(toTile).travelTimeSeconds(300).build();
-        // fromOtherTile is alone (single tile, trivially connected)
+        HexTravelTime tt1 = HexTravelTime.builder().h3GridId(gridId)
+                .fromHexId(toHex).toHexId(sharedHex).travelTimeSeconds(300).build();
+        HexTravelTime tt2 = HexTravelTime.builder().h3GridId(gridId)
+                .fromHexId(sharedHex).toHexId(toHex).travelTimeSeconds(300).build();
 
         when(gridRepository.findByCityId(cityId)).thenReturn(Optional.of(grid()));
-        when(travelTimeRepository.findByGridIdAndTravelTimeSecondsLessThanEqual(
+        when(travelTimeRepository.findByH3GridIdAndTravelTimeSecondsLessThanEqual(
                 eq(gridId), anyInt())).thenReturn(List.of(tt1, tt2));
         when(assignmentRepository.findByDaIdAndValidDate(eq(fromDaId), any(LocalDate.class)))
                 .thenReturn(List.of(fromActive1, fromActive2));
@@ -313,18 +302,18 @@ class ProposalServiceImplTest {
         when(assignmentRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
         IntradayReassignmentResponse resp = service.requestIntradayReassignment(
-                cityId, fromDaId, toDaId, List.of(sharedTile), reviewerId);
+                cityId, fromDaId, toDaId, List.of(sharedHex), reviewerId);
 
         assertThat(resp).isNotNull();
         assertThat(resp.fromDaId()).isEqualTo(fromDaId);
         assertThat(resp.toDaId()).isEqualTo(toDaId);
-        assertThat(resp.tilesMoved()).containsExactly(sharedTile);
+        assertThat(resp.tilesMoved()).containsExactly(sharedHex);
         assertThat(resp.status()).isEqualTo(ProposalStatus.PROPOSED);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DaTileAssignment>> captor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<DaHexAssignment>> captor = ArgumentCaptor.forClass(List.class);
         verify(assignmentRepository).saveAll(captor.capture());
-        // fromNew = [fromOtherTile], toNew = [toTile, sharedTile] → total 3 proposed assignments
+        // fromNew = [fromOtherHex], toNew = [toHex, sharedHex] → total 3 proposed assignments
         assertThat(captor.getValue()).hasSize(3);
     }
 
@@ -332,15 +321,15 @@ class ProposalServiceImplTest {
     void requestIntradayReassignment_tileNotBelongingToFromDa_throwsIllegalState() {
         UUID fromDaId = UUID.randomUUID();
         UUID toDaId   = UUID.randomUUID();
-        UUID notFromDaTile = UUID.randomUUID();
+        UUID notFromDaHex = UUID.randomUUID();
 
         when(assignmentRepository.findByDaIdAndValidDate(eq(fromDaId), any(LocalDate.class)))
-                .thenReturn(List.of()); // fromDa has no assignments
+                .thenReturn(List.of());
         when(assignmentRepository.findByDaIdAndValidDate(eq(toDaId), any(LocalDate.class)))
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> service.requestIntradayReassignment(
-                cityId, fromDaId, toDaId, List.of(notFromDaTile), reviewerId))
+                cityId, fromDaId, toDaId, List.of(notFromDaHex), reviewerId))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not ACTIVE under DA");
     }
@@ -350,11 +339,11 @@ class ProposalServiceImplTest {
     @Test
     void requestTileShare_activeTile_createsTileShareProposal() {
         UUID daId   = UUID.randomUUID();
-        UUID tileId = UUID.randomUUID();
-        DaTileAssignment existingActive = activeAssignment(UUID.randomUUID(), UUID.randomUUID(), tileId);
+        UUID hexId  = UUID.randomUUID();
+        DaHexAssignment existingActive = activeAssignment(UUID.randomUUID(), UUID.randomUUID(), hexId);
 
-        when(assignmentRepository.findByTileIdAndValidDateAndStatus(
-                eq(tileId), any(LocalDate.class), eq(AssignmentStatus.ACTIVE)))
+        when(assignmentRepository.findByHexIdAndValidDateAndStatus(
+                eq(hexId), any(LocalDate.class), eq(AssignmentStatus.ACTIVE)))
                 .thenReturn(List.of(existingActive));
         when(proposalRepository.save(any())).thenAnswer(inv -> {
             AssignmentProposal p = inv.getArgument(0);
@@ -363,38 +352,38 @@ class ProposalServiceImplTest {
             return p;
         });
         when(assignmentRepository.save(any())).thenAnswer(inv -> {
-            DaTileAssignment a = inv.getArgument(0);
+            DaHexAssignment a = inv.getArgument(0);
             if (a.getId() == null) a.setId(UUID.randomUUID());
             if (a.getProposedAt() == null) a.setProposedAt(Instant.now());
             return a;
         });
 
-        TileShareResponse resp = service.requestTileShare(cityId, daId, tileId, reviewerId);
+        TileShareResponse resp = service.requestTileShare(cityId, daId, hexId, reviewerId);
 
         assertThat(resp.daId()).isEqualTo(daId);
-        assertThat(resp.tileId()).isEqualTo(tileId);
+        assertThat(resp.hexId()).isEqualTo(hexId);
         assertThat(resp.status()).isEqualTo(ProposalStatus.PROPOSED);
 
         ArgumentCaptor<AssignmentProposal> proposalCaptor = ArgumentCaptor.forClass(AssignmentProposal.class);
         verify(proposalRepository).save(proposalCaptor.capture());
         assertThat(proposalCaptor.getValue().getProposalType()).isEqualTo(ProposalType.INTRADAY_SHARE);
 
-        ArgumentCaptor<DaTileAssignment> assignCaptor = ArgumentCaptor.forClass(DaTileAssignment.class);
+        ArgumentCaptor<DaHexAssignment> assignCaptor = ArgumentCaptor.forClass(DaHexAssignment.class);
         verify(assignmentRepository).save(assignCaptor.capture());
-        // nDasOnTile = existing (1) + 1 = 2
-        assertThat(assignCaptor.getValue().getNDasOnTile()).isEqualTo(2);
+        // nDasOnHex = existing (1) + 1 = 2
+        assertThat(assignCaptor.getValue().getNDasOnHex()).isEqualTo(2);
     }
 
     @Test
     void requestTileShare_tileHasNoActiveAssignment_throwsIllegalState() {
         UUID daId   = UUID.randomUUID();
-        UUID tileId = UUID.randomUUID();
+        UUID hexId  = UUID.randomUUID();
 
-        when(assignmentRepository.findByTileIdAndValidDateAndStatus(
-                eq(tileId), any(LocalDate.class), eq(AssignmentStatus.ACTIVE)))
+        when(assignmentRepository.findByHexIdAndValidDateAndStatus(
+                eq(hexId), any(LocalDate.class), eq(AssignmentStatus.ACTIVE)))
                 .thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.requestTileShare(cityId, daId, tileId, reviewerId))
+        assertThatThrownBy(() -> service.requestTileShare(cityId, daId, hexId, reviewerId))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no ACTIVE assignment");
     }
@@ -408,11 +397,11 @@ class ProposalServiceImplTest {
                 .cityId(cityId).validForDate(date).status(ProposalStatus.PROPOSED)
                 .proposalType(ProposalType.INTRADAY_SHARE).solverType(SolverType.MANUAL)
                 .adjacencySource(AdjacencySource.OSRM).totalDas(1).coveragePct(100.0)
-                .understaffedTileIds("[]").build();
+                .understaffedHexIds("[]").build();
         shareProposal.setId(shareProposalId);
         shareProposal.setProposedAt(Instant.now());
 
-        DaTileAssignment shareAssignment = proposedAssignment(shareProposalId,
+        DaHexAssignment shareAssignment = proposedAssignment(shareProposalId,
                 UUID.randomUUID(), UUID.randomUUID());
 
         when(proposalRepository.findById(shareProposalId)).thenReturn(Optional.of(shareProposal));
@@ -429,7 +418,7 @@ class ProposalServiceImplTest {
 
     @Test
     void approveTileShare_wrongProposalType_throwsIllegalState() {
-        AssignmentProposal nightlyProposal = proposedProposal(); // type = NIGHTLY
+        AssignmentProposal nightlyProposal = proposedProposal();
         nightlyProposal.setId(proposalId);
 
         when(proposalRepository.findById(proposalId)).thenReturn(Optional.of(nightlyProposal));
