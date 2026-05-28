@@ -2,6 +2,7 @@ package com.oneday.orders.domain;
 
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.enums.TriggerSource;
+import com.oneday.orders.service.TransitionContext;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -66,5 +67,30 @@ public class ShipmentStateHistory {
         if (this.occurredAt == null) {
             this.occurredAt = Instant.now();
         }
+    }
+
+    /**
+     * Factory method used by the state machine to create a history row from a
+     * completed transition. Maps all fields from {@link TransitionContext} directly.
+     *
+     * @param shipmentId the shipment that transitioned
+     * @param fromState  the state before the transition (null only for the initial BOOKED entry)
+     * @param toState    the state after the transition
+     * @param ctx        transition metadata (who triggered it, source, event ref, notes)
+     */
+    public static ShipmentStateHistory of(UUID shipmentId,
+                                          ShipmentState fromState,
+                                          ShipmentState toState,
+                                          TransitionContext ctx) {
+        return ShipmentStateHistory.builder()
+                .shipmentId(shipmentId)
+                .fromState(fromState)
+                .toState(toState)
+                .triggeredBy(ctx.getTriggeredBy())
+                .triggerSource(ctx.getTriggerSource())
+                .eventRef(ctx.getEventRef())
+                .notes(ctx.getNotes())
+                .occurredAt(ctx.getOccurredAt())
+                .build();
     }
 }
