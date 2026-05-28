@@ -11,4 +11,3 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration/orders
-    out-of-order: true

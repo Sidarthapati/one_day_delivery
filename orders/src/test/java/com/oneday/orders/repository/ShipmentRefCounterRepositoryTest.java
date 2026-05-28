@@ -29,26 +29,30 @@ class ShipmentRefCounterRepositoryTest extends AbstractRepositoryTest {
     }
 
     @Test
-    void increment_incrementsNextValByOne() {
+    void findByIdWithLock_allowsSafeIncrementPattern() {
+        // Simulates what the service layer does: lock → read → increment in Java → flush
         LocalDate today = LocalDate.of(2026, 5, 27);
         ShipmentRefCounterId id = new ShipmentRefCounterId("BOM", today);
         repo.save(TestFixtures.refCounter("BOM", today, 5));
 
-        int updated = repo.increment(id);
+        ShipmentRefCounter counter = repo.findByIdWithLock(id).orElseThrow();
+        counter.setNextVal(counter.getNextVal() + 1);
+        repo.saveAndFlush(counter);
 
-        assertThat(updated).isEqualTo(1);
-        ShipmentRefCounter counter = repo.findById(id).orElseThrow();
-        assertThat(counter.getNextVal()).isEqualTo(6);
+        assertThat(repo.findById(id).orElseThrow().getNextVal()).isEqualTo(6);
     }
 
     @Test
-    void increment_isIsolatedByCityAndDate() {
+    void findByIdWithLock_isIsolatedByCityAndDate() {
         LocalDate d1 = LocalDate.of(2026, 5, 27);
         LocalDate d2 = LocalDate.of(2026, 5, 28);
         repo.save(TestFixtures.refCounter("DEL", d1, 10));
         repo.save(TestFixtures.refCounter("DEL", d2, 20));
 
-        repo.increment(new ShipmentRefCounterId("DEL", d1));
+        // Lock and increment only d1
+        ShipmentRefCounter counter = repo.findByIdWithLock(new ShipmentRefCounterId("DEL", d1)).orElseThrow();
+        counter.setNextVal(counter.getNextVal() + 1);
+        repo.saveAndFlush(counter);
 
         assertThat(repo.findById(new ShipmentRefCounterId("DEL", d1)).orElseThrow().getNextVal()).isEqualTo(11);
         assertThat(repo.findById(new ShipmentRefCounterId("DEL", d2)).orElseThrow().getNextVal()).isEqualTo(20);

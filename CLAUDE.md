@@ -64,8 +64,9 @@ com.oneday.{module}/
 
 | Module | Status |
 |--------|--------|
-| `common` | `BaseEntity` (@MappedSuperclass, UUID id + createdAt) — done |
+| `common` | `BaseEntity` + `MutableBaseEntity` (@MappedSuperclass, UUID id + audit timestamps) — done |
 | `grid` (M3) | **Phases 1–8 done.** Phase 9 (integration tests) is next. See `docs/M3/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
+| `orders` (M4) | PRs 1–6 merged. Flyway migrations (V4_1–V4_8), JPA entities (Shipment, ShipmentStateHistory, IdempotencyKey, ShipmentRefCounter, B2bAccount, PaymentTransaction), Spring Data repositories with `@DataJpaTest` integration tests — all done. Service layer and REST API not yet started. |
 | All others | Not started |
 
 ## Local Dev Setup
