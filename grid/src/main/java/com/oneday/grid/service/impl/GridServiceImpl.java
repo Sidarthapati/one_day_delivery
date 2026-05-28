@@ -1,5 +1,6 @@
 package com.oneday.grid.service.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.oneday.grid.config.GridProperties;
@@ -35,6 +36,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -178,16 +180,14 @@ public class GridServiceImpl implements GridService {
     @Override
     @Transactional
     public void initializeGrid(UUID cityId, String cityCode) {
-        ServiceabilityConfig config = loadConfig(cityCode);
+        if (gridRepository.findByCityId(cityId).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Grid already exists for cityId=" + cityId);
+        }
+
         int resolution = gridProperties.getH3().getResolution();
-
-        List<ServiceabilityConfig.PincodeEntry> pincodes = config.serviceablePincodes();
-
-        // Collect pincode cells, then buffer each with gridDisk(k=1) — all become active.
-        Set<Long> activeCells = new HashSet<>();
-        for (ServiceabilityConfig.PincodeEntry entry : pincodes) {
-            long cell = h3Core.latLngToCell(entry.lat(), entry.lon(), resolution);
-            activeCells.addAll(h3Core.gridDisk(cell, 1));
+        List<Long> cells = polyfillCity(cityCode, resolution);
+        if (cells.isEmpty()) {
+            throw new IllegalStateException("polyfill returned 0 cells for cityCode=" + cityCode);
         }
 
         Grid grid = gridRepository.save(Grid.builder()
@@ -195,7 +195,7 @@ public class GridServiceImpl implements GridService {
                 .h3Resolution(resolution)
                 .build());
 
-        List<Hex> hexes = activeCells.stream()
+        List<Hex> hexes = cells.stream()
                 .map(h3Index -> Hex.builder()
                         .h3GridId(grid.getId())
                         .h3Index(h3Index)
@@ -207,25 +207,26 @@ public class GridServiceImpl implements GridService {
         Map<Long, Hex> hexByIndex = hexes.stream()
                 .collect(Collectors.toMap(Hex::getH3Index, h -> h));
 
-        List<PincodeMapping> mappings = new ArrayList<>();
-        for (ServiceabilityConfig.PincodeEntry entry : pincodes) {
-            long cellIndex = h3Core.latLngToCell(entry.lat(), entry.lon(), resolution);
-            Hex hex = hexByIndex.get(cellIndex);
-            mappings.add(PincodeMapping.builder()
-                    .cityId(cityId)
-                    .pincode(entry.pincode())
-                    .hexId(hex != null ? hex.getId() : null)
-                    .serviceable(hex != null)
-                    .build());
-        }
+        // Map pincodes to their hexes for serviceability lookups (catalogue is optional).
+        List<PincodeMapping> mappings = loadPincodeCatalogue(cityCode).serviceablePincodes().stream()
+                .map(entry -> {
+                    long cellIndex = h3Core.latLngToCell(entry.lat(), entry.lon(), resolution);
+                    Hex hex = hexByIndex.get(cellIndex);
+                    return PincodeMapping.builder()
+                            .cityId(cityId)
+                            .pincode(entry.pincode())
+                            .hexId(hex != null ? hex.getId() : null)
+                            .serviceable(hex != null)
+                            .build();
+                })
+                .collect(Collectors.toList());
         pincodeMappingRepository.saveAll(mappings);
 
-        // Extract unique H3 vertices from all active hexes and persist them.
+        // Extract unique H3 vertices for map rendering.
         Set<Long> vertexIndexSet = new HashSet<>();
-        for (long cell : activeCells) {
+        for (long cell : cells) {
             vertexIndexSet.addAll(h3Core.cellToVertexes(cell));
         }
-
         List<HexVertex> vertices = vertexIndexSet.stream()
                 .map(vIdx -> {
                     LatLng latLng = h3Core.vertexToLatLng(vIdx);
@@ -242,12 +243,38 @@ public class GridServiceImpl implements GridService {
         gridCache.put(cityId, grid);
     }
 
-    private ServiceabilityConfig loadConfig(String cityCode) {
+    private List<Long> polyfillCity(String cityCode, int resolution) {
+        try {
+            var resource = resourceLoader.getResource("classpath:serviceability/" + cityCode + ".geojson");
+            JsonNode root = new ObjectMapper().readTree(resource.getInputStream());
+            JsonNode rings = root.get("coordinates");
+
+            List<LatLng> boundary = new ArrayList<>();
+            for (JsonNode pt : rings.get(0)) {
+                boundary.add(new LatLng(pt.get(1).asDouble(), pt.get(0).asDouble()));
+            }
+
+            List<List<LatLng>> holes = new ArrayList<>();
+            for (int i = 1; i < rings.size(); i++) {
+                List<LatLng> hole = new ArrayList<>();
+                for (JsonNode pt : rings.get(i)) {
+                    hole.add(new LatLng(pt.get(1).asDouble(), pt.get(0).asDouble()));
+                }
+                holes.add(hole);
+            }
+
+            return h3Core.polygonToCells(boundary, holes.isEmpty() ? Collections.emptyList() : holes, resolution);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("No GeoJSON boundary for cityCode=" + cityCode, e);
+        }
+    }
+
+    private ServiceabilityConfig loadPincodeCatalogue(String cityCode) {
         try {
             var resource = resourceLoader.getResource("classpath:serviceability/" + cityCode + ".yaml");
             return yamlMapper.readValue(resource.getInputStream(), ServiceabilityConfig.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException("No serviceability config for cityCode=" + cityCode, e);
+            return new ServiceabilityConfig(null, null, List.of());
         }
     }
 }
