@@ -23,12 +23,20 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -456,6 +464,14 @@ class ShipmentStateMachineTest {
             stateMachine.transition(shipmentId, ShipmentState.RTO_COMPLETED, apiCtx);
             assertHistoryWritten(ShipmentState.RTO_IN_TRANSIT, ShipmentState.RTO_COMPLETED);
         }
+
+        @Test
+        void pickupFailed_to_cancelled_whenM11ClosesShipment() {
+            // M11 may close a shipment after exhausting all pickup reattempts
+            shipmentIn(ShipmentState.PICKUP_FAILED);
+            stateMachine.transition(shipmentId, ShipmentState.CANCELLED, apiCtx);
+            assertHistoryWritten(ShipmentState.PICKUP_FAILED, ShipmentState.CANCELLED);
+        }
     }
 
     // ── Terminal states ───────────────────────────────────────────────────────
@@ -526,6 +542,151 @@ class ShipmentStateMachineTest {
         assertThat(history.getEventRef()).isEqualTo("kafka-msg-001");
         assertThat(history.getNotes()).isEqualTo("DA arrived and customer confirmed OTP");
         assertThat(history.getOccurredAt()).isNotNull();
+    }
+
+    // ── Exhaustive 27×27 transition matrix ───────────────────────────────────
+
+    /**
+     * Parameterized test covering every (from, to) pair across all 27 states.
+     *
+     * <p>Each {@link StateConfig} entry defines one shipment configuration
+     * (pickupType / dropType / deliveryType) and the set of target states that are
+     * legally reachable from {@code from} under that configuration. Branching states
+     * appear twice — once per branch — because different field values yield different
+     * allowed target sets.</p>
+     *
+     * <p>Two parameterized tests are generated from the same data source:</p>
+     * <ul>
+     *   <li>{@code allLegalTransitions_succeed} — one case per entry in legalTargets; ~35 cases</li>
+     *   <li>{@code allIllegalTransitions_throw} — one case per target NOT in legalTargets; ~750 cases</li>
+     * </ul>
+     */
+    @Nested
+    @DisplayName("Exhaustive 27×27 transition matrix")
+    class TransitionMatrix {
+
+        private record StateConfig(
+                ShipmentState from,
+                PickupType pickupType,
+                DropType dropType,
+                DeliveryType deliveryType,
+                Set<ShipmentState> legalTargets) {
+        }
+
+        private static final List<StateConfig> CONFIGS = List.of(
+                // BOOKED — pickup_type branching
+                new StateConfig(ShipmentState.BOOKED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.PICKUP_ASSIGNED, ShipmentState.CANCELLED)),
+                new StateConfig(ShipmentState.BOOKED, PickupType.SELF_DROP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.AWAITING_SELF_DROP, ShipmentState.CANCELLED)),
+                // AWAITING_SELF_DROP
+                new StateConfig(ShipmentState.AWAITING_SELF_DROP, PickupType.SELF_DROP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.AT_ORIGIN_HUB, ShipmentState.CANCELLED)),
+                // PICKUP_ASSIGNED
+                new StateConfig(ShipmentState.PICKUP_ASSIGNED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.PICKED_UP, ShipmentState.PICKUP_FAILED, ShipmentState.CANCELLED)),
+                // PICKED_UP
+                new StateConfig(ShipmentState.PICKED_UP, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.HANDED_TO_PICKUP_VAN, ShipmentState.CANCELLED)),
+                // HANDED_TO_PICKUP_VAN
+                new StateConfig(ShipmentState.HANDED_TO_PICKUP_VAN, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.AT_ORIGIN_HUB)),
+                // AT_ORIGIN_HUB
+                new StateConfig(ShipmentState.AT_ORIGIN_HUB, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.ORIGIN_HUB_PROCESSING)),
+                // ORIGIN_HUB_PROCESSING
+                new StateConfig(ShipmentState.ORIGIN_HUB_PROCESSING, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.IN_TAKEOFF_BAG)),
+                // IN_TAKEOFF_BAG — delivery_type branching
+                new StateConfig(ShipmentState.IN_TAKEOFF_BAG, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.DISPATCHED_TO_AIRPORT)),
+                new StateConfig(ShipmentState.IN_TAKEOFF_BAG, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.SAME_CITY,
+                        Set.of(ShipmentState.HANDED_TO_DROP_VAN)),
+                // DISPATCHED_TO_AIRPORT
+                new StateConfig(ShipmentState.DISPATCHED_TO_AIRPORT, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.AT_AIRPORT)),
+                // AT_AIRPORT
+                new StateConfig(ShipmentState.AT_AIRPORT, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.DEPARTED)),
+                // DEPARTED
+                new StateConfig(ShipmentState.DEPARTED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.LANDED)),
+                // LANDED
+                new StateConfig(ShipmentState.LANDED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.DISPATCHED_TO_HUB)),
+                // DISPATCHED_TO_HUB
+                new StateConfig(ShipmentState.DISPATCHED_TO_HUB, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.AT_DEST_HUB)),
+                // AT_DEST_HUB
+                new StateConfig(ShipmentState.AT_DEST_HUB, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.DEST_HUB_PROCESSING)),
+                // DEST_HUB_PROCESSING — drop_type branching
+                new StateConfig(ShipmentState.DEST_HUB_PROCESSING, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.HANDED_TO_DROP_VAN)),
+                new StateConfig(ShipmentState.DEST_HUB_PROCESSING, PickupType.DA_PICKUP, DropType.HUB_COLLECT, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.AWAITING_HUB_COLLECT)),
+                // AWAITING_HUB_COLLECT
+                new StateConfig(ShipmentState.AWAITING_HUB_COLLECT, PickupType.DA_PICKUP, DropType.HUB_COLLECT, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.HUB_COLLECTED)),
+                // HANDED_TO_DROP_VAN
+                new StateConfig(ShipmentState.HANDED_TO_DROP_VAN, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.DROP_ASSIGNED)),
+                // DROP_ASSIGNED
+                new StateConfig(ShipmentState.DROP_ASSIGNED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.DROP_COLLECTED)),
+                // DROP_COLLECTED
+                new StateConfig(ShipmentState.DROP_COLLECTED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.DROPPED, ShipmentState.DELIVERY_FAILED)),
+                // PICKUP_FAILED
+                new StateConfig(ShipmentState.PICKUP_FAILED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.PICKUP_ASSIGNED, ShipmentState.CANCELLED)),
+                // DELIVERY_FAILED
+                new StateConfig(ShipmentState.DELIVERY_FAILED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.RTO_INITIATED, ShipmentState.DROP_ASSIGNED)),
+                // RTO_INITIATED — delivery_type branching
+                new StateConfig(ShipmentState.RTO_INITIATED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.RTO_IN_TRANSIT)),
+                new StateConfig(ShipmentState.RTO_INITIATED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.SAME_CITY,
+                        Set.of(ShipmentState.RTO_COMPLETED)),
+                // RTO_IN_TRANSIT
+                new StateConfig(ShipmentState.RTO_IN_TRANSIT, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                        Set.of(ShipmentState.RTO_COMPLETED)),
+                // Terminal states — no legal targets out
+                new StateConfig(ShipmentState.DROPPED,       PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY, Set.of()),
+                new StateConfig(ShipmentState.HUB_COLLECTED, PickupType.DA_PICKUP, DropType.HUB_COLLECT, DeliveryType.INTERCITY, Set.of()),
+                new StateConfig(ShipmentState.RTO_COMPLETED, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY, Set.of()),
+                new StateConfig(ShipmentState.CANCELLED,     PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY, Set.of())
+        );
+
+        static Stream<Arguments> legalTransitions() {
+            return CONFIGS.stream()
+                    .flatMap(c -> c.legalTargets().stream()
+                            .map(to -> Arguments.of(c.from(), to, c.pickupType(), c.dropType(), c.deliveryType())));
+        }
+
+        static Stream<Arguments> illegalTransitions() {
+            return CONFIGS.stream()
+                    .flatMap(c -> Arrays.stream(ShipmentState.values())
+                            .filter(to -> !c.legalTargets().contains(to))
+                            .map(to -> Arguments.of(c.from(), to, c.pickupType(), c.dropType(), c.deliveryType())));
+        }
+
+        @ParameterizedTest(name = "[LEGAL]   {0} → {1}  [{2}/{3}/{4}]")
+        @MethodSource("legalTransitions")
+        void allLegalTransitions_succeed(ShipmentState from, ShipmentState to,
+                                          PickupType pt, DropType dt, DeliveryType dv) {
+            shipmentIn(from, pt, dt, dv);
+            assertThatNoException().isThrownBy(() -> stateMachine.transition(shipmentId, to, apiCtx));
+        }
+
+        @ParameterizedTest(name = "[ILLEGAL] {0} → {1}  [{2}/{3}/{4}]")
+        @MethodSource("illegalTransitions")
+        void allIllegalTransitions_throw(ShipmentState from, ShipmentState to,
+                                          PickupType pt, DropType dt, DeliveryType dv) {
+            shipmentIn(from, pt, dt, dv);
+            assertThatThrownBy(() -> stateMachine.transition(shipmentId, to, apiCtx))
+                    .isInstanceOf(IllegalStateTransitionException.class);
+        }
     }
 
     // ── Dynamic registration (extension point) ────────────────────────────────
