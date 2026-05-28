@@ -46,6 +46,8 @@ M5 is a **latency-sensitive, always-on background worker**. It reacts to Kafka e
 
 M5 does **not** draw or reshape DA territories — that is M3's nightly job. M5 only dispatches work within already-approved territory assignments.
 
+> ↩ **Return to implementation plan:** [Phase 0 — What to build](M5-Implementation-Plan.md#phase-0-build)
+
 ---
 
 ## 2. Industry Context
@@ -193,6 +195,8 @@ dropType = HUB_COLLECT  → ignore; M4 transitions to AWAITING_HUB_COLLECT; no D
 
 This routing check is the first thing done in each Kafka consumer handler. Ignored events are acked immediately with no processing.
 
+> ↩ **Return to implementation plan:** [Phase 4 — PR #8 (ShipmentCreatedConsumer)](M5-Implementation-Plan.md#phase-4-pr8-build)
+
 ---
 
 ## 6. Pickup Assignment Flow
@@ -239,6 +243,8 @@ M5 ShipmentCreatedConsumer.onEvent()
                   → DA app re-renders stop list
 ```
 
+> ↩ **Return to implementation plan:** [Phase 3 — PR #7 (DispatchServiceImpl)](M5-Implementation-Plan.md#phase-3-pr7-build)
+
 ### 6.2 OTP pickup flow
 
 After the DA reaches the customer and the customer provides their OTP:
@@ -269,6 +275,8 @@ M5 calls M4 internal endpoint:
               POST /dispatch/da/{da_id}/tasks/{task_id}/resend-otp
 ```
 
+> ↩ **Return to implementation plan:** [Phase 5 — PR #11 (OtpVerificationService)](M5-Implementation-Plan.md#phase-5-pr11-build)
+
 ### 6.3 Van handoff
 
 When the DA scans the parcel QR code in the DA app at the van meeting point:
@@ -287,6 +295,8 @@ M5:
   Retry deferred orders for this DA's tile (if any DeferredDispatch.retry_after has passed)
   Return 200: { "next_task": {...} | null, "deferred_orders_released": int }
 ```
+
+> ↩ **Return to implementation plan:** [Phase 5 — PR #10 (DaDispatchController)](M5-Implementation-Plan.md#phase-5-pr10-build)
 
 ---
 
@@ -360,6 +370,8 @@ If the DA has a task in IN_PROGRESS state (currently travelling to or at a picku
 4. Station manager is alerted via M10 escalation.
 5. Ops resolves manually (direct hub trip by DA or next van run).
 
+> ↩ **Return to implementation plan:** [Phase 3 — PR #6 (CronFeasibilityService)](M5-Implementation-Plan.md#phase-3-pr6-build)
+
 ---
 
 ## 9. Cheapest-Insertion Heuristic
@@ -409,6 +421,8 @@ OSRM is called only when the fast-path estimate is borderline (within 20 minutes
 
 O(n) per assignment, where n = queue depth (typically 3–8 tasks). Negligible.
 
+> ↩ **Return to implementation plan:** [Phase 3 — PR #6 (CronFeasibilityService)](M5-Implementation-Plan.md#phase-3-pr6-build)
+
 ---
 
 ## 10. Cross-Territory Dispatch
@@ -439,6 +453,8 @@ Among eligible candidates → select the one with minimum cheapest-insertion cos
 ### 10.4 Audit
 
 Cross-territory assignments are tagged in `dispatch_queue` with `cross_territory = true` and `home_tile_id` set to the order's originating tile. The station manager dispatch view shows these distinctly.
+
+> ↩ **Return to implementation plan:** [Phase 3 — PR #7 (DispatchServiceImpl)](M5-Implementation-Plan.md#phase-3-pr7-build) · [Phase 6 — PR #12 (StationDispatchController)](M5-Implementation-Plan.md#phase-6-pr12-build)
 
 ---
 
@@ -568,6 +584,8 @@ At `shift_end_time`:
 3. Clear in-memory queue and status for this DA.
 4. Flush final `da_status` to DB.
 
+> ↩ **Return to implementation plan:** [Phase 2 — PR #4 (DaStatusService + ShiftLoadJob)](M5-Implementation-Plan.md#phase-2-pr4-build) · [Phase 2 — PR #5 (CronMonitorJob + ShiftEndJob)](M5-Implementation-Plan.md#phase-2-pr5-build)
+
 ---
 
 ## 13. COD Handling
@@ -615,6 +633,8 @@ CREATE INDEX idx_dispatch_queue_shipment ON dispatch_queue (shipment_id);
 ```
 
 Rows are never deleted (append-only audit trail per XC-D-002).
+
+> ↩ **Return to implementation plan:** [Phase 1 — PR #2 (Flyway migrations)](M5-Implementation-Plan.md#phase-1-pr2-build)
 
 ### 14.2 da_cron_assignment
 
@@ -705,6 +725,8 @@ CREATE TABLE da_assignment_audit (
     decided_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+> ↩ **Return to implementation plan:** [Phase 1 — PR #2 (Flyway migrations)](M5-Implementation-Plan.md#phase-1-pr2-build) · [Phase 1 — PR #3 (JPA entities)](M5-Implementation-Plan.md#phase-1-pr3-build)
 
 ---
 
@@ -820,6 +842,8 @@ Response: {
 }
 ```
 
+> ↩ **Return to implementation plan:** [Phase 5 — PR #10 (DaDispatchController)](M5-Implementation-Plan.md#phase-5-pr10-build) · [Phase 6 — PR #12 (StationDispatchController)](M5-Implementation-Plan.md#phase-6-pr12-build)
+
 ---
 
 ## 16. Kafka Event Contracts
@@ -845,6 +869,8 @@ public static final String DISPATCH_TILE_QUEUE_DEPTH = "oneday.dispatch.tile_que
 | `oneday.exceptions.events` | M11 | `DELIVERY_RESCHEDULED` | Re-run delivery assignment for rescheduled order |
 
 > Note: M6 populates `da_cron_assignment` by emitting a `cron.scheduled` event (not defined in `CronEventType` today — needs to be added) at nightly replan time, not at physical cron departure time. See §12.1.
+
+> ↩ **Return to implementation plan:** [Phase 4 — PR #8 (ShipmentCreatedConsumer)](M5-Implementation-Plan.md#phase-4-pr8-build) · [Phase 4 — PR #9 (StateChangedConsumer)](M5-Implementation-Plan.md#phase-4-pr9-build)
 
 ### 16.2 Events produced by M5
 
@@ -999,6 +1025,8 @@ Published by: `TileQueueDepthPublisher` (@Scheduled every 5 minutes during shift
 
 Full-city snapshot (not per-tile events). M3 replaces its in-memory load-score map entirely on each receipt.
 
+> ↩ **Return to implementation plan:** [Phase 0 — What to build (PR #1)](M5-Implementation-Plan.md#phase-0-build) · [Phase 7 — PR #13 (TileQueueDepthPublisher)](M5-Implementation-Plan.md#phase-7-pr13-build)
+
 ### 16.4 DaEventType additions needed in common
 
 The existing `DaEventType` enum (from `satvik/m4-pr2-kafka-contracts-in-common`) covers the M4-consumed events. M5 also needs to emit the following types that are not yet in the enum — these need to be added before M5 implementation begins:
@@ -1011,6 +1039,8 @@ CRON_MISSED,         // M10 consumer — SLA breach
 COD_COLLECTED,       // Finance consumer — no M4 consumption
 TASK_DEFERRED_SHIFT_ENDED  // M11 consumer — reschedule flow
 ```
+
+> ↩ **Return to implementation plan:** [Phase 0 — What to build (PR #1)](M5-Implementation-Plan.md#phase-0-build)
 
 ---
 

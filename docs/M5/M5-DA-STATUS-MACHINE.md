@@ -93,6 +93,8 @@ ABSENT
 
 Any transition not listed above is rejected; an `IllegalStateException` is logged and an ops alert is emitted.
 
+> ↩ **Return to implementation plan:** [Phase 2 — PR #4 (DaStatusService)](M5-Implementation-Plan.md#phase-2-pr4-build)
+
 ---
 
 ## Part 2 — Task Status State Machine (`DispatchQueue.status`)
@@ -129,6 +131,8 @@ Any transition not listed above is rejected; an `IllegalStateException` is logge
 **No preemption rule:** a task that is `IN_PROGRESS` is **never** moved back to `QUEUED` or reassigned to another DA. The task stays with the current DA to completion or failure. M11 handles any failure recovery.
 
 **DEFERRED rows** are written to the `deferred_dispatch` table with a `defer_reason` and `retry_after` timestamp. `DeferredRetryJob` polls these every 5 minutes and attempts reassignment.
+
+> ↩ **Return to implementation plan:** [Phase 1 — PR #3 (JPA entities)](M5-Implementation-Plan.md#phase-1-pr3-build)
 
 ---
 
@@ -177,6 +181,8 @@ Any transition not listed above is rejected; an `IllegalStateException` is logge
 | `dispatch.gps.heartbeat-interval-seconds` | 30 | Expected DA app GPS ping cadence |
 | `dispatch.gps.flush-interval-seconds` | 120 | How often M5 flushes in-memory GPS state to DB |
 | `dispatch.osrm.confirm-threshold-minutes` | 20 | Cron slack threshold below which OSRM is used instead of Haversine |
+
+> ↩ **Return to implementation plan:** [Phase 2 — PR #4 (DaStatusService + ShiftLoadJob)](M5-Implementation-Plan.md#phase-2-pr4-build)
 
 ---
 

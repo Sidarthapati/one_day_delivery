@@ -108,3 +108,5 @@ erDiagram
   - `shipment_id` → M4 `shipments` table
   - `tile_id`, `cron_vertex_id`, `current_tile_id`, `home_tile_id` → M3 `tile` / `grid_vertex` tables
   - `van_id` → M6 routing tables
+
+> ↩ **Return to implementation plan:** [Phase 1 — PR #2 (Flyway migrations)](M5-Implementation-Plan.md#phase-1-pr2-build)

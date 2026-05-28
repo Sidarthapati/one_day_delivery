@@ -39,6 +39,8 @@ sequenceDiagram
     Kafka-->>M4: BOOKED → PICKUP_ASSIGNED (side-effect: OTP sent to customer)
 ```
 
+> ↩ **Return to implementation plan:** [Phase 3 — PR #6 (CronFeasibilityService)](M5-Implementation-Plan.md#phase-3-pr6-build) · [Phase 3 — PR #7 (DispatchServiceImpl)](M5-Implementation-Plan.md#phase-3-pr7-build)
+
 ---
 
 ## 2. Pickup Assignment — Borderline Cron (OSRM Confirmation)
@@ -63,6 +65,8 @@ sequenceDiagram
     M5D->>DB: INSERT da_assignment_audit (usedOsrm=true)
     M5D->>Kafka: DaEvent(PICKUP_ASSIGNED)
 ```
+
+> ↩ **Return to implementation plan:** [Phase 3 — PR #6 (CronFeasibilityService)](M5-Implementation-Plan.md#phase-3-pr6-build)
 
 ---
 
@@ -99,6 +103,8 @@ sequenceDiagram
     M5D->>DB: UPDATE deferred_dispatch SET status=ASSIGNED
     M5D->>Kafka: DaEvent(PICKUP_ASSIGNED)
 ```
+
+> ↩ **Return to implementation plan:** [Phase 3 — PR #7 (DispatchServiceImpl)](M5-Implementation-Plan.md#phase-3-pr7-build) · [Phase 4 — PR #8 (ShipmentCreatedConsumer)](M5-Implementation-Plan.md#phase-4-pr8-build) · [Phase 7 — PR #13 (DeferredRetryJob)](M5-Implementation-Plan.md#phase-7-pr13-build)
 
 ---
 
@@ -140,6 +146,8 @@ sequenceDiagram
     end
 ```
 
+> ↩ **Return to implementation plan:** [Phase 5 — PR #11 (OtpVerificationService)](M5-Implementation-Plan.md#phase-5-pr11-build)
+
 ---
 
 ## 5. Van Handoff (Cron Meeting)
@@ -169,6 +177,8 @@ sequenceDiagram
     RetryJob->>M5: assignPickup x2 (new cron cycle for next shift or same-day extension)
     M5-->>DaApp: 200 {next_task: {task_id, address, eta}, deferred_orders_released: 2}
 ```
+
+> ↩ **Return to implementation plan:** [Phase 5 — PR #10 (DaDispatchController)](M5-Implementation-Plan.md#phase-5-pr10-build)
 
 ---
 
@@ -283,6 +293,8 @@ sequenceDiagram
     M5Mem->>M5Mem: trigger DeferredRetryJob for DA tile
 ```
 
+> ↩ **Return to implementation plan:** [Phase 2 — PR #4 (DaStatusService + ShiftLoadJob)](M5-Implementation-Plan.md#phase-2-pr4-build)
+
 ---
 
 ## 9. Shift Load (Start of Day)
@@ -315,6 +327,8 @@ sequenceDiagram
     ShiftJob->>M5Mem: store tileServiceTimeMap (tile_id → serviceTimeMin)
     Note over M5Mem: M5 is ready to accept orders for the shift
 ```
+
+> ↩ **Return to implementation plan:** [Phase 2 — PR #4 (DaStatusService + ShiftLoadJob)](M5-Implementation-Plan.md#phase-2-pr4-build)
 
 ---
 
