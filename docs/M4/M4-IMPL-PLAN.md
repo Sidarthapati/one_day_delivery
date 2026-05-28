@@ -3,11 +3,24 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Plan version** | 1.1 |
+| **Plan version** | 1.2 |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-16 |
+| **Last updated** | 2026-05-28 |
 | **Total PRs** | 21 |
 | **Design doc** | [M4-ORDERS-DESIGN.md](M4-ORDERS-DESIGN.md) |
+
+## Progress
+
+| PR | Title | Status |
+|----|-------|--------|
+| #1 | MutableBaseEntity + Flyway multi-module strategy | ✅ Merged |
+| #2 | Kafka event POJOs, topic constants in common | ✅ Merged |
+| #3 | Cross-module port interfaces in common | ✅ Merged |
+| #4 | Flyway migrations for all M4 tables and enums (V4_1–V4_9) | ✅ Merged |
+| #5 | JPA entities for M4 domain model | ✅ Merged |
+| #6 | Spring Data repositories and custom query methods | ✅ Merged |
+| #7 | Shipment state machine with full transition coverage | 🔄 Open — pending review |
+| #8–#21 | Idempotency, booking APIs, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
 
 ---
 
@@ -148,8 +161,9 @@ NotificationPort     → notification service implements; M4 calls on every stat
 - PostgreSQL ENUMs: `shipment_state` (27 values — includes `AWAITING_SELF_DROP`, `AWAITING_HUB_COLLECT`, `HUB_COLLECTED`), `customer_type`, `delivery_type`, `payment_mode`, `pickup_type` (`DA_PICKUP`, `SELF_DROP`), `drop_type` (`DA_DELIVERY`, `HUB_COLLECT`)
 - `trigger_source` is **not** a PG ENUM — stored as `VARCHAR(20)` in `shipment_state_history`. It is an M4-internal audit classification (API, KAFKA_EVENT, SYSTEM), not a shared business domain type. Adding a new source requires only a Java enum value, not a DB migration.
 - Tables: `shipments` (with `pickup_type` and `drop_type` columns, both NOT NULL DEFAULT), `shipment_state_history`, `payment_transactions`, `b2b_accounts`, `idempotency_keys`, `shipment_ref_counters`
-- All indexes (shipment_ref, parcel_id, state, b2b_account_id, origin_tile_id)
+- All indexes (shipment_ref, parcel_id, state, b2b_account_id, origin_tile_id, city_id+state composite, assigned_flight_id, origin_city, dest_city)
 - DB trigger for `updated_at` auto-management on `shipments`, `payment_transactions`, `b2b_accounts`
+- **V4_9 (added during architect review):** `UNIQUE` constraint on `shipments.idempotency_key` — prevents TOCTOU duplicate-creation race under concurrent order requests; NULLs permitted for B2B batch imports
 - No Java code in this PR
 
 **Note:** SQL-only PR. Reviewer should check:
@@ -178,13 +192,13 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **Module:** `orders`
 
 **What:**
-- `ShipmentRepository`: `findByShipmentRef`, `findByIdWithLock` (`@Lock(PESSIMISTIC_WRITE)`), `findByB2bAccountIdAndStateIn`
+- `ShipmentRepository`: `findByIdWithLock` (`@Lock(PESSIMISTIC_WRITE)`), `findByShipmentRef`, `findByState` (list + paginated), `findByStateAndCityId` (list + paginated), `existsByIdempotencyKey`, `findByCustomerType`, `findByAssignedFlightId`
 - `ShipmentStateHistoryRepository`: `findByShipmentIdOrderByOccurredAtAsc`
 - `PaymentTransactionRepository`: `findByShipmentId`, `findByRazorpayOrderId`
-- `B2bAccountRepository`: `findByIdWithLock` (`@Lock(PESSIMISTIC_WRITE)`)
-- `IdempotencyKeyRepository`: `findByKeyAndUserId`, `deleteByExpiresAtBefore`
-- `ShipmentRefCounterRepository`: `findByCityCodeAndDateKeyWithLock`
-- `@DataJpaTest` integration tests for all custom queries
+- `B2bAccountRepository`: `findByCityId`, `findByIsActive`, `findByBillingEmail` — **Note:** `findByIdWithLock` not yet added; needed for B2B credit check in PR #12
+- `IdempotencyKeyRepository`: `deleteExpired(Instant now)` (`@Transactional @Modifying @Query`)
+- `ShipmentRefCounterRepository`: `findByIdWithLock(@Param("id") ShipmentRefCounterId id)` (`@Lock(PESSIMISTIC_WRITE)`)
+- `@DataJpaTest` integration tests against local PostgreSQL (`@AutoConfigureTestDatabase(replace=NONE)`) — see testing strategy note below
 
 ---
 
@@ -491,8 +505,8 @@ NotificationPort     → notification service implements; M4 calls on every stat
 | Layer | Tool | When |
 |---|---|---|
 | Unit | JUnit 5 + Mockito | Every PR |
-| Repository | `@DataJpaTest` + Testcontainers (PostgreSQL) | PR #6 onwards |
-| State machine | Parameterized JUnit5 (all 27×27 transition matrix) | PR #7 |
+| Repository | `@DataJpaTest` + `@AutoConfigureTestDatabase(replace=NONE)` + `@Import(FlywayAutoConfiguration.class)` against **local PostgreSQL 16** (Docker/Testcontainers blocked by Docker Engine API version mismatch in dev environment) | PR #6 onwards |
+| State machine | Parameterized JUnit5 (all 27×27 transition matrix — 841 parameterized + 108 named tests = 949 total in PR #7) | PR #7 |
 | Kafka | `@EmbeddedKafka` | PR #14 onwards |
 | API | `@SpringBootTest` + MockMvc + stub ports via `@TestConfiguration` | PR #10 onwards |
 | Concurrency | `CountDownLatch` multi-thread test for B2B credit check | PR #12 |
