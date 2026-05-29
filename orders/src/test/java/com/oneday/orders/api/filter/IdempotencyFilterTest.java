@@ -125,7 +125,7 @@ class IdempotencyFilterTest {
     }
 
     // -------------------------------------------------------------------------
-    // Missing header
+    // Missing / oversized header
     // -------------------------------------------------------------------------
 
     @Test
@@ -141,6 +141,22 @@ class IdempotencyFilterTest {
         assertThat(response.getStatus()).isEqualTo(400);
         assertThat(response.getContentAsString()).contains(ERROR_CODE_MISSING_HEADER);
         // chain must NOT have been advanced
+        assertThat(chain.getRequest()).isNull();
+    }
+
+    @Test
+    @DisplayName("Idempotency-Key longer than 100 chars → 400 IDEMPOTENCY_KEY_TOO_LONG")
+    void keyTooLong_returns400() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/shipments");
+        request.addHeader(HEADER_IDEMPOTENCY_KEY, "x".repeat(101));
+        request.setContent(REQUEST_BODY.getBytes());
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(response.getContentAsString()).contains(IdempotencyFilter.ERROR_CODE_KEY_TOO_LONG);
         assertThat(chain.getRequest()).isNull();
     }
 
@@ -294,8 +310,8 @@ class IdempotencyFilterTest {
     // -------------------------------------------------------------------------
 
     @Test
-    @DisplayName("hit — expired key → treated as miss, handler runs")
-    void expiredKey_treatedAsMiss() throws Exception {
+    @DisplayName("hit — expired key → deleted, handler runs, fresh response persisted")
+    void expiredKey_deletedAndRepersisted() throws Exception {
         String fingerprint = sha256HexCanonical(REQUEST_BODY.getBytes());
         IdempotencyKey expired = cachedKey(fingerprint, (short) 201, CACHED_BODY);
         expired.setExpiresAt(Instant.now().minusSeconds(1)); // already expired
@@ -307,9 +323,17 @@ class IdempotencyFilterTest {
 
         filter.doFilter(request, response, chain);
 
-        // Expired key → treated as a miss → handler is invoked
+        // Expired key → handler is invoked
         assertThat(chain.getRequest()).isNotNull();
         assertThat(response.getStatus()).isEqualTo(201);
+
+        // Expired row must be deleted before re-insert (guards against the updatable=false silent no-op)
+        verify(repository).deleteById(any());
+
+        // New key must be persisted with a future expiresAt
+        ArgumentCaptor<IdempotencyKey> captor = ArgumentCaptor.forClass(IdempotencyKey.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getExpiresAt()).isAfter(Instant.now());
     }
 
     // -------------------------------------------------------------------------

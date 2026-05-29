@@ -97,12 +97,10 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     /** Maximum allowed length for the Idempotency-Key header value (matches DB column). */
     private static final int MAX_KEY_LENGTH = 100;
 
-    /**
-     * ObjectMapper configured to write JSON with keys sorted alphabetically.
-     * Used to produce the canonical form for fingerprinting.
-     * {@link ObjectMapper} is thread-safe after configuration and safe to share.
-     */
-    /** Shared mapper for reading and writing canonical JSON. Thread-safe after construction. */
+    // Deliberately a bare ObjectMapper (no custom serializers) so the fingerprint is
+    // unaffected by application-level Jackson configuration on the injected objectMapper.
+    // Key sorting is done explicitly in sortKeysRecursively(), not via a mapper feature.
+    // ObjectMapper is thread-safe after construction and safe to share.
     private static final ObjectMapper CANONICAL_MAPPER = new ObjectMapper();
 
     private final IdempotencyKeyRepository repository;
@@ -209,7 +207,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 wrappedResponse.copyBodyToResponse();
                 return;
             }
-            // Key is present but expired — fall through and treat as a miss
+            // Key is present but expired — delete it so the subsequent save() performs
+            // an INSERT rather than a no-op merge() against the updatable=false columns.
+            repository.deleteById(keyId);
         }
 
         // 9. Miss — let the handler run
@@ -266,7 +266,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
      */
     static String sha256HexCanonical(byte[] bytes) {
         if (bytes == null || bytes.length == 0) {
-            return sha256Hex(bytes != null ? bytes : new byte[0]);
+            return sha256Hex(new byte[0]);
         }
         try {
             JsonNode tree = CANONICAL_MAPPER.readTree(bytes);

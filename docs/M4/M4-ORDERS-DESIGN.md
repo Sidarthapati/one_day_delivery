@@ -169,7 +169,7 @@ public interface EtaPort {
 
 ### KDD-6: Idempotency on the booking endpoint
 
-**Decision:** `POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments` accept an `Idempotency-Key` header. Duplicate requests with the same key within 24 hours return the original response (HTTP 200 + original body).
+**Decision:** `POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments` accept an `Idempotency-Key` header. Duplicate requests with the same key within 24 hours return the original response (original HTTP status + original body).
 
 **Rationale:** Network retries and client-side double-clicks are inevitable. Without idempotency, a Razorpay capture could succeed while the DB write fails, leaving the customer charged but without a shipment.
 
@@ -1999,7 +1999,7 @@ oneday:
 
 | ID | Edge Case | How M4 Handles It |
 |---|---|---|
-| E1 | Client submits duplicate booking with same Idempotency-Key | Return original response (200 + original body); no duplicate Shipment created |
+| E1 | Client submits duplicate booking with same Idempotency-Key | Return original response (original HTTP status + original body); no duplicate Shipment created |
 | E2 | Razorpay captured but DB write failed | See §15.4 — retry with same idempotency key; Razorpay idempotency absorbs duplicate capture |
 | E3 | Same pincode for origin and dest | `delivery_type = SAME_CITY`; air leg states are skipped |
 | E4 | Kafka event arrives out of order | State machine rejects; event parked to DLQ with `OUT_OF_ORDER` reason |
