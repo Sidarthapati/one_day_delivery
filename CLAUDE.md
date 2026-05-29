@@ -66,7 +66,7 @@ com.oneday.{module}/
 |--------|--------|
 | `common` | `BaseEntity` + `MutableBaseEntity` (@MappedSuperclass, UUID id + audit timestamps) — done |
 | `grid` (M3) | **Phases 1–8 done.** Phase 9 (integration tests) is next. See `docs/M3/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
-| `orders` (M4) | PRs 1–7 merged + architect-review fixes applied. Flyway migrations (V4_1–V4_9), JPA entities, Spring Data repositories, and service layer (ShipmentStateMachine, TransitionRegistry, TransitionContext, CustomerVisibleStateMapper) — all done. 949 tests passing. REST API (PR8) not yet started. |
+| `orders` (M4) | PRs 1–8 merged + architect-review fixes applied. Flyway migrations (V4_1–V4_10), JPA entities, Spring Data repositories, service layer (ShipmentStateMachine, TransitionRegistry, TransitionContext, CustomerVisibleStateMapper), and idempotency infrastructure (IdempotencyFilter, IdempotencyKeyPurgeJob, IdempotencyProperties, V4_10 fingerprint migration) — all done. REST API booking endpoints (PR9) not yet started. |
 | All others | Not started |
 
 ## Local Dev Setup

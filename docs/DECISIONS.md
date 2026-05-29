@@ -676,7 +676,7 @@ Network retries and client-side double-taps are inevitable. Without idempotency,
 - `idempotency_keys` table: `(key, user_id, response_status, response_body, expires_at)`
 - Key is scoped to the authenticated user to prevent cross-user collision
 - Nightly job purges expired rows (`expires_at < NOW()`)
-- Missing header returns `400 MISSING_IDEMPOTENCY_KEY`
+- Missing header returns `400 IDEMPOTENCY_KEY_REQUIRED`
 
 **Change log:**  
 _(First entry)_

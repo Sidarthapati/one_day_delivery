@@ -16,8 +16,11 @@ import java.time.Instant;
  * Purging expired rows keeps {@code idempotency_keys} small and the
  * {@code idx_idempotency_expires} index lean.</p>
  *
- * <p>Runs at 02:00 server time every day. The exact time is low-traffic by design;
+ * <p>Runs at 02:00 IST every day. The exact time is low-traffic by design;
  * adjust via {@code orders.idempotency.purge-cron} in {@code application.yml} if needed.</p>
+ *
+ * <p>Requires {@code @EnableScheduling} on a {@code @Configuration} class (provided by
+ * {@code app/OneDayDeliveryApplication}) for this method to be invoked by the scheduler.</p>
  */
 @Service
 public class IdempotencyKeyPurgeJob {
@@ -35,7 +38,7 @@ public class IdempotencyKeyPurgeJob {
      * The underlying repository method is {@code @Modifying @Transactional} — the delete
      * runs in its own transaction and commits before this method returns.
      */
-    @Scheduled(cron = "${orders.idempotency.purge-cron:0 0 2 * * *}")
+    @Scheduled(cron = "${orders.idempotency.purge-cron:0 0 2 * * *}", zone = "Asia/Kolkata")
     public void purgeExpiredKeys() {
         Instant now = Instant.now();
         int deleted = repository.deleteExpired(now);

@@ -1,7 +1,10 @@
 package com.oneday.orders.config;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
@@ -20,6 +23,7 @@ import java.time.Duration;
  */
 @Component
 @ConfigurationProperties(prefix = "orders.idempotency")
+@Validated
 public class IdempotencyProperties {
 
     /**
@@ -28,6 +32,7 @@ public class IdempotencyProperties {
      * client that reuses the same key will be treated as a fresh request.
      * Default: 24 hours.
      */
+    @NotNull
     private Duration ttl = Duration.ofHours(24);
 
     /**
@@ -36,6 +41,7 @@ public class IdempotencyProperties {
      * without any idempotency enforcement.
      * Default: all order API paths.
      */
+    @NotBlank
     private String applyToPathPattern = "/api/v1/**";
 
     public Duration getTtl() {
