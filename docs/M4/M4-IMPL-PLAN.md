@@ -3,9 +3,9 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Plan version** | 1.2 |
+| **Plan version** | 1.3 |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-28 |
+| **Last updated** | 2026-05-29 |
 | **Total PRs** | 21 |
 | **Design doc** | [M4-ORDERS-DESIGN.md](M4-ORDERS-DESIGN.md) |
 
@@ -19,8 +19,9 @@
 | #4 | Flyway migrations for all M4 tables and enums (V4_1–V4_9) | ✅ Merged |
 | #5 | JPA entities for M4 domain model | ✅ Merged |
 | #6 | Spring Data repositories and custom query methods | ✅ Merged |
-| #7 | Shipment state machine with full transition coverage | 🔄 Open — pending review |
-| #8–#21 | Idempotency, booking APIs, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
+| #7 | Shipment state machine with full transition coverage | ✅ Merged |
+| #8 | Idempotency infrastructure (IdempotencyFilter, IdempotencyKeyPurgeJob, V4_10 fingerprint migration) | ✅ Merged |
+| #9–#21 | Ref gen + utility services, booking APIs, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
 
 ---
 

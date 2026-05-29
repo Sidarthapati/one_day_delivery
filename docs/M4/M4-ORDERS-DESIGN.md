@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Version** | 0.3 |
-| **Status** | Draft — pending ops sign-off on state machine |
+| **Version** | 0.4 |
+| **Status** | Draft — PRs #1–8 complete; REST API (PR #9+) next |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-12 |
+| **Last updated** | 2026-05-29 |
 | **Depends on** | M1 (auth/JWT), M2 (pricing — sync), M3 (grid/serviceability — sync), M8 (barcode/label — async via Kafka) |
 | **Consumed by** | M5 (dispatch), M6 (routing), M7 (hub), M9 (airline), M10 (SLA), M11 (exceptions) |
 | **Related docs** | [MODULES.md](../MODULES.md) · [DECISIONS.md](../DECISIONS.md) · [M8-BARCODE-DESIGN.md](../M8-BARCODE-DESIGN.md) · [PRD-ONE-DAY-DELIVERY.md](../PRD-ONE-DAY-DELIVERY.md) |
@@ -836,7 +836,7 @@ Validation failures return `400 Bad Request` with a structured error body:
 
 **Booking flow (synchronous):**
 ```
-1.  Check Idempotency-Key → if exists, return cached response (200)
+1.  Check Idempotency-Key → if exists, return cached response (original HTTP status + original body)
 2.  Validate all fields (see §7.2)
 3.  Call M3 ServiceabilityPort.check(originPincode, destPincode)
      → 422 UNSERVICEABLE if either pincode is not covered
@@ -1508,6 +1508,8 @@ Files follow the `V4_N__description.sql` convention (M4 = module 4). Location re
 | `V4_6__create_b2b_accounts.sql` | `b2b_accounts` table, `trg_b2b_accounts_updated_at` trigger |
 | `V4_7__create_idempotency_keys.sql` | `idempotency_keys` table, expiry index |
 | `V4_8__create_shipment_ref_counters.sql` | `shipment_ref_counters` table |
+| `V4_9__add_idempotency_key_unique.sql` | `UNIQUE` constraint on `shipments.idempotency_key`; NULLs permitted for B2B batch imports |
+| `V4_10__add_request_fingerprint_to_idempotency_keys.sql` | `request_fingerprint VARCHAR(64) NULL` column on `idempotency_keys`; SHA-256 of canonical request body for body-mismatch detection |
 
 Full SQL for reference:
 
@@ -1889,13 +1891,26 @@ All M4 log entries include:
 
 ## 14. Configuration Reference
 
-All properties under namespace `oneday.orders.*` in `application.yml`:
+### 14.1 Idempotency (implemented — PR #8)
+
+Bound by `IdempotencyProperties` under `orders.idempotency.*`:
+
+```yaml
+orders:
+  idempotency:
+    ttl: 24h                          # Idempotency key retention period (default: 24h)
+    apply-to-path-pattern: /api/v1/** # Ant path pattern — filter only applies to matching URLs
+    purge-cron: "0 0 2 * * *"         # Nightly purge schedule (default: 02:00 IST)
+```
+
+### 14.2 Planned configuration (future PRs)
+
+All planned properties under namespace `oneday.orders.*` in `application.yml` (not yet implemented):
 
 ```yaml
 oneday:
   orders:
     booking:
-      idempotency-key-ttl-hours: 24       # Idempotency key expiry
       max-weight-grams: 70000             # Hard upper limit; rejects bookings above
     state-machine:
       kafka-consumer-group: m4-shipment-state-consumer
