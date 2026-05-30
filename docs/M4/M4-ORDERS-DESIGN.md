@@ -4,7 +4,7 @@
 |---|---|
 | **Module** | M4 — Orders |
 | **Version** | 0.5 |
-| **Status** | Draft — PRs #1–9 complete; B2C booking API (PR #10+) next |
+| **Status** | Draft — PRs #1–9 merged; PR #10 (B2C PREPAID booking) implemented in working tree (not yet committed); PR #11+ not yet started |
 | **Author** | Satvik |
 | **Last updated** | 2026-05-30 |
 | **Depends on** | M1 (auth/JWT), M2 (pricing — sync), M3 (grid/serviceability — sync), M8 (barcode/label — async via Kafka) |
@@ -807,79 +807,82 @@ Validation failures return `400 Bad Request` with a structured error body:
 **Auth:** JWT with role `B2C_CUSTOMER`  
 **Headers:** `Idempotency-Key: <uuid>` (required)
 
-**Request:**
+> **Implementation note (PR #10 — current state):** The booking endpoint is implemented as PREPAID-only (`BookingRequest` has no `payment_mode` field; `customer_type` is hardcoded to `B2C` in `BookingServiceImpl`). COD support will be added in PR #11. C2C support will be added alongside the C2C rate card. The request shape below shows the full intended design; fields marked *(PR #10)* are implemented; others are planned.
+
+**Request (as implemented in PR #10 — PREPAID only):**
 ```json
 {
-  "customer_type": "B2C",
-  "sender": {
-    "name": "Priya Sharma",
-    "phone": "+919876543210",
-    "email": "priya@example.com",
-    "address": {
-      "line1": "12 MG Road",
-      "line2": "Near Brigade Junction",
-      "landmark": "Opposite HDFC Bank",
-      "city_code": "BLR",
-      "pincode": "560001"
-    }
+  "sender_name": "Priya Sharma",
+  "sender_phone": "+919876543210",
+  "sender_email": "priya@example.com",
+  "origin_address": {
+    "line1": "12 MG Road",
+    "line2": "Near Brigade Junction",
+    "landmark": "Opposite HDFC Bank",
+    "city_code": "BLR",
+    "pincode": "560001"
   },
-  "receiver": {
-    "name": "Rahul Mehta",
-    "phone": "+919999988888",
-    "email": "rahul@example.com",
-    "address": {
-      "line1": "45 Marine Lines",
-      "city_code": "BOM",
-      "pincode": "400002"
-    }
+  "origin_city": "BLR",
+  "origin_pincode": "560001",
+  "receiver_name": "Rahul Mehta",
+  "receiver_phone": "+919999988888",
+  "receiver_email": "rahul@example.com",
+  "dest_address": {
+    "line1": "45 Marine Lines",
+    "city_code": "BOM",
+    "pincode": "400002"
   },
-  "parcel": {
-    "weight_grams": 1200,
-    "length_cm": 30,
-    "width_cm": 20,
-    "height_cm": 15,
-    "description": "Electronics — laptop",
-    "declared_value_paise": 8000000
-  },
-  "payment_mode": "PREPAID",
-  "razorpay_payment_id": "pay_XXXXXXXXXXXXXXXX",
+  "dest_city": "BOM",
+  "dest_pincode": "400002",
+  "weight_grams": 1200,
+  "length_cm": 30,
+  "width_cm": 20,
+  "height_cm": 15,
+  "declared_value_paise": 8000000,
+  "pickup_type": "DA_PICKUP",
+  "drop_type": "DA_DELIVERY",
   "razorpay_order_id": "order_XXXXXXXXXXXXXXXX",
+  "razorpay_payment_id": "pay_XXXXXXXXXXXXXXXX",
   "razorpay_signature": "abc123..."
 }
 ```
 
-> For COD: set `"payment_mode": "COD"` and omit all `razorpay_*` fields. Razorpay fields are required if and only if `payment_mode == "PREPAID"`.
->
-> Set `customer_type: "C2C"` for person-to-person shipments. Same endpoint, same flow — different rate card from M2.
+> **Planned (not yet implemented):** A `payment_mode` field (`PREPAID` | `COD`) will be added in PR #11. For COD, the `razorpay_*` fields will be omitted. A `customer_type` field (`B2C` | `C2C`) will be added when C2C rate card support is introduced.
 
 **Booking flow (synchronous):**
 ```
 1.  Check Idempotency-Key → if exists, return cached response (original HTTP status + original body)
+     [Planned — IdempotencyFilter exists but is not yet wired into the booking path in PR #10]
 2.  Validate all fields (see §7.2)
-3.  Call M3 ServiceabilityPort.check(originPincode, destPincode)
+3.  Call M3 ServiceabilityPort.check(originPincode, destPincode) [circuit breaker, 500ms timeout]
      → 422 UNSERVICEABLE if either pincode is not covered
+     → 503 if circuit open
 4.  Compute volumetric weight; determine delivery_type (INTERCITY / SAME_CITY)
 5.  Call M2 PricingPort.computeQuote(request) [circuit breaker, 500ms timeout]
      → returns {base_amount_paise, tax_paise, total_paise, breakdown, rate_card_version}
      → 503 if circuit open
-6.  Branch on payment_mode:
-     PREPAID → verify Razorpay HMAC-SHA256 signature → 402 PAYMENT_VERIFICATION_FAILED if invalid
-            → capture payment via Razorpay API → 402 PAYMENT_CAPTURE_FAILED if capture fails
-     COD    → skip; no payment interaction at booking time
+6.  Payment (PREPAID — PR #10 implements this path only):
+     verify Razorpay HMAC-SHA256 signature → 402 PAYMENT_VERIFICATION_FAILED if invalid
+     capture payment via Razorpay API [circuit breaker, 3s timeout] → 402 PAYMENT_CAPTURE_FAILED if fails
+     [COD path — planned PR #11: skip steps above; no PaymentTransaction row at booking time]
 7.  Open DB transaction:
-     a. If PREPAID: Insert PaymentTransaction (status=CAPTURED)
-     b. Insert Shipment (state=BOOKED, payment_mode=PREPAID|COD)
+     a. Insert PaymentTransaction (status=CAPTURED)
+     b. Insert Shipment (state=BOOKED, payment_mode=PREPAID)
      c. Insert ShipmentStateHistory (from_state=null, to_state=BOOKED, source=API)
      d. Increment ShipmentRefCounter (SELECT FOR UPDATE)
-     e. Store Idempotency-Key with response
     Commit.
-10. Call EtaPort.fetchEta(shipmentId, BOOKED, context) → store result as eta_promised
-11. Emit shipment.created Kafka event
+    Note: compensating refund is initiated if DB write fails after payment capture.
+8.  Call EtaPort.fetchEta(shipmentId, BOOKED, context) → best-effort; stores eta_promised on Shipment;
+     null ETA does not fail the booking (ETA failure is logged as WARN)
+     ⚠️ **Known issue (DTD-10-A):** In the current PR #10 implementation this call executes inside
+     the DB transaction, holding a connection during the M9 round-trip. Target fix: PR #20.
+     See M4-IMPL-PLAN.md §Deferred Technical Debt → DTD-10-A for the recommended refactor.
+9.  Emit shipment.created Kafka event [Planned — PR #14]
      → M8 consumes this event and generates the label asynchronously
      → M4 will update parcel_id when it receives oneday.label.generated from M8
      → parcel_id is null in the booking response; label_status = "PENDING"
-12. Trigger notifications asynchronously (SMS + Email + WhatsApp)
-13. Return 201 Created
+10. Trigger notifications asynchronously (SMS + Email + WhatsApp) [Planned — PR #14/15]
+11. Return 201 Created
 ```
 
 **Response `201 Created`:**
@@ -1264,13 +1267,24 @@ The listing below shows what exists in the codebase as of PR #9. Files without a
 ```
 com.oneday.orders/
   api/
+    B2cShipmentController.java        ← POST /api/v1/b2c/shipments (PREPAID; PR #10)
     PickupOtpController.java          ← POST /internal/v1/shipments/{ref}/pickup-otp/verify|resend
+                                         ⚠️ Known gap (DTD-10-C/D): verifyOtp carries @Transactional at the controller
+                                         level for atomicity; state-gate checks are also in the controller. Both belong
+                                         in a ShipmentPickupService. Target fix: PR #13. See M4-IMPL-PLAN.md §Deferred.
+    GlobalExceptionHandler.java       ← @RestControllerAdvice; maps service exceptions to HTTP status
     filter/
       IdempotencyFilter.java          ← OncePerRequestFilter; idempotency header enforcement
+                                         ⚠️ Known gap (DTD-10-B): currently imports com.oneday.auth.security.AuthUserDetails
+                                         directly — cross-module boundary violation. Fix planned for PR #18 via a
+                                         OneDayPrincipal interface in common. See M4-IMPL-PLAN.md §Deferred Technical Debt.
   config/
     IdempotencyProperties.java        ← @ConfigurationProperties(prefix="orders.idempotency")
     PickupOtpProperties.java          ← @ConfigurationProperties(prefix="orders.otp")
+    ResilienceConfig.java             ← Resilience4j CircuitBreaker + TimeLimiter beans (PR #10)
+    ResilienceProperties.java         ← @ConfigurationProperties(prefix="orders.resilience")
   domain/
+    Address.java                      ← plain POJO; serialized to JSONB for Shipment.origin_address / dest_address columns
     Shipment.java
     ShipmentStateHistory.java
     PaymentTransaction.java
@@ -1285,6 +1299,8 @@ com.oneday.orders/
       RefundStatus.java
       TriggerSource.java
   dto/
+    BookingRequest.java               ← B2C PREPAID request; pickupType, dropType, Razorpay fields (PR #10)
+    BookingResponse.java              ← shipmentRef, state, stateLabel, deliveryType, pricing, eta (PR #10)
     OtpVerifyRequest.java             ← @NotBlank @Pattern(regexp="\\d{4}") String otp
   repository/
     ShipmentRepository.java
@@ -1295,6 +1311,7 @@ com.oneday.orders/
     ShipmentRefCounterRepository.java ← includes insertIfAbsent native query
     PickupOtpRepository.java          ← findByShipmentId, findByShipmentIdWithLock, deleteByShipmentId
   service/
+    BookingService.java               ← public interface: book(request, idempotencyKey, userId) (PR #10)
     ShipmentStateMachine.java         ← public interface
     TransitionRegistry.java           ← extensible transition map
     TransitionRegistryConfigurer.java ← configures all legal transitions at startup
@@ -1308,6 +1325,7 @@ com.oneday.orders/
     service/exception/
       IllegalStateTransitionException.java
     impl/
+      BookingServiceImpl.java         ← package-private; orchestrates serviceability→pricing→payment→persist→ETA (PR #10)
       ShipmentStateMachineImpl.java   ← package-private
       ShipmentRefServiceImpl.java     ← package-private; Propagation.MANDATORY
       PickupOtpServiceImpl.java       ← package-private; BCrypt(4); pessimistic-lock verify
@@ -1317,9 +1335,9 @@ com.oneday.orders/
   //   common.port.EtaPort            (M9 implements)
   //   common.port.NotificationPort   (notification service implements)
   // M8 (barcode) has no port interface — M8 subscribes to shipment.created via Kafka.
-  // Future PRs add: B2cShipmentController, B2bShipmentController, TrackingController,
-  //   InternalShipmentController, RazorpayWebhookController, ShipmentEventProducer,
-  //   ShipmentEventConsumer, WebhookDeliveryService, and all booking/tracking DTOs.
+  // Future PRs add: B2bShipmentController, TrackingController, InternalShipmentController,
+  //   RazorpayWebhookController, ShipmentEventProducer, ShipmentEventConsumer,
+  //   WebhookDeliveryService, and remaining booking/tracking DTOs.
 ```
 
 ---
@@ -1390,15 +1408,21 @@ public interface NotificationPort {
 
 ### 8.3 Circuit Breakers
 
-| Dependency | Timeout | Circuit threshold | Half-open probe |
-|---|---|---|---|
-| M2 PricingPort | 500ms | 5 failures in 10 calls | 1 call / 30s |
-| M3 ServiceabilityPort | 500ms | 5 failures in 10 calls | 1 call / 30s |
-| Razorpay capture | 3s | 3 failures in 5 calls | 1 call / 60s |
+Implemented in `ResilienceConfig` + `ResilienceProperties` (PR #10). All three circuit breakers share the same `CircuitBreakerRegistry` configuration; only the `TimeLimiter` timeout differs per dependency.
 
-On circuit open: return `503 Service Unavailable` with `Retry-After: 30` header. No stale fallback — a wrong price or serviceability answer would be worse than a clear failure.
+| Dependency | TimeLimiter timeout | Circuit breaker config (defaults) |
+|---|---|---|
+| M3 ServiceabilityPort | 500ms | 50% failure rate; min 10 calls; sliding window 20 |
+| M2 PricingPort | 500ms | same |
+| Razorpay verify + capture | 3s | same |
+
+On circuit open: `CallNotPermittedException` is thrown and the booking fails. `GlobalExceptionHandler` maps this to `503 Service Unavailable`. No stale fallback — a wrong price or serviceability answer would be worse than a clear failure.
+
+All thresholds are `@ConfigurationProperties`-bound under `orders.resilience.*` and can be tuned per environment without code changes. See §14.3 for the full property reference.
 
 **M8 (barcode/label) is not in this table** — label generation is async via Kafka; M8 downtime does not affect the booking path.
+
+> ⚠️ **Known gap (DTD-10-E):** The payment CB currently shares the same `CircuitBreakerConfig` as serviceability and pricing. Per-CB configs (wider window + lower threshold for payment) are planned for PR #20. See M4-IMPL-PLAN.md §Deferred Technical Debt → DTD-10-E.
 
 ---
 
@@ -1954,9 +1978,24 @@ orders:
     max-resend-count: 3   # Maximum resend attempts before 429 is returned (default: 3)
 ```
 
-### 14.3 Planned configuration (future PRs)
+### 14.3 Resilience configuration (implemented — PR #10)
 
-All planned properties under namespace `oneday.orders.*` in `application.yml` (not yet implemented):
+Bound by `ResilienceProperties` under `orders.resilience.*`:
+
+```yaml
+orders:
+  resilience:
+    failure-rate-threshold: 50.0        # % of calls that must fail before circuit opens (default: 50%)
+    minimum-number-of-calls: 10         # Min calls before failure rate is evaluated (default: 10)
+    sliding-window-size: 20             # Call window size for failure rate computation (default: 20)
+    serviceability-timeout-ms: 500      # M3 ServiceabilityPort timeout (default: 500ms)
+    pricing-timeout-ms: 500             # M2 PricingPort timeout (default: 500ms)
+    payment-timeout-ms: 3000            # Razorpay verify+capture timeout (default: 3000ms)
+```
+
+### 14.4 Planned configuration (future PRs)
+
+All planned properties (not yet implemented):
 
 ```yaml
 oneday:
@@ -1968,10 +2007,6 @@ oneday:
       kafka-consumer-threads: 6
       dlq-topic: oneday.shipments.dlq
       max-retry-attempts: 3
-    circuit-breaker:
-      pricing-timeout-ms: 500
-      serviceability-timeout-ms: 500
-      razorpay-timeout-ms: 3000
     payment:
       razorpay-key-id: ${RAZORPAY_KEY_ID}         # Injected from env/secrets
       razorpay-key-secret: ${RAZORPAY_KEY_SECRET}

@@ -149,7 +149,7 @@ public class Shipment extends MutableBaseEntity {
 
     // ── SLA and ETA ───────────────────────────────────────────────────────
 
-    @Column(name = "sla_commitment_minutes", updatable = false)
+    @Column(name = "sla_commitment_minutes")
     private Short slaCommitmentMinutes;
 
     @Column(name = "eta_promised")
