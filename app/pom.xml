@@ -79,11 +79,10 @@
                 <configuration>
                     <url>jdbc:postgresql://localhost:5432/oneday</url>
                     <user>oneday</user>
-                    <password>secret</password>
+                    <password>oneday</password>
                     <locations>
                         <location>filesystem:src/main/resources/db/migration/auth</location>
                         <location>filesystem:${project.basedir}/../grid/src/main/resources/db/migration/grid</location>
-                        <location>filesystem:${project.basedir}/../orders/src/main/resources/db/migration/orders</location>
                     </locations>
                 </configuration>
             </plugin>

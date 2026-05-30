@@ -104,6 +104,7 @@ erDiagram
     IDEMPOTENCY_KEYS {
         varchar key PK
         uuid user_id PK
+        varchar request_fingerprint
         smallint response_status
         jsonb response_body
         timestamptz expires_at
@@ -126,7 +127,7 @@ erDiagram
 - `SHIPMENT_STATE_HISTORY` is append-only — rows are never updated or deleted.
 - `PAYMENT_TRANSACTIONS` has one row per payment attempt; a COD shipment has no row until delivery is confirmed by M5.
 - `B2B_ACCOUNTS.outstanding_balance_paise` is incremented atomically with each B2B booking (same DB transaction, `SELECT FOR UPDATE`).
-- `IDEMPOTENCY_KEYS` rows are purged nightly when `expires_at < NOW()`. The `request_fingerprint` column (SHA-256 of canonicalised request body) is **not in this migration** — it is added in PR #8 (Idempotency infrastructure) alongside the fingerprinting logic that writes it.
+- `IDEMPOTENCY_KEYS` rows are purged nightly when `expires_at < NOW()`.
 - `SHIPMENT_REF_COUNTERS` is a per-city-per-day sequence counter; see design doc §5.1 for the Redis INCR upgrade path at high volume.
 - `assigned_flight_id` references M9's flight table (cross-module, not a DB foreign key — enforced at application level).
 - `origin_tile_id` references M3's grid tile table (same cross-module rule).
