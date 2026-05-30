@@ -3,11 +3,26 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Plan version** | 1.1 |
+| **Plan version** | 1.4 |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-16 |
+| **Last updated** | 2026-05-30 |
 | **Total PRs** | 21 |
 | **Design doc** | [M4-ORDERS-DESIGN.md](M4-ORDERS-DESIGN.md) |
+
+## Progress
+
+| PR | Title | Status |
+|----|-------|--------|
+| #1 | MutableBaseEntity + Flyway multi-module strategy | ✅ Merged |
+| #2 | Kafka event POJOs, topic constants in common | ✅ Merged |
+| #3 | Cross-module port interfaces in common | ✅ Merged |
+| #4 | Flyway migrations for all M4 tables and enums (V4_1–V4_9) | ✅ Merged |
+| #5 | JPA entities for M4 domain model | ✅ Merged |
+| #6 | Spring Data repositories and custom query methods | ✅ Merged |
+| #7 | Shipment state machine with full transition coverage | ✅ Merged |
+| #8 | Idempotency infrastructure (IdempotencyFilter, IdempotencyKeyPurgeJob, V4_10 fingerprint migration) | ✅ Merged |
+| #9 | Ref gen + utility services: ShipmentRefService, DeliveryTypeResolver, PaymentPort, PickupOtpService, PickupOtpController, V4_11 pickup_otps migration, PickupOtpProperties | ✅ Merged |
+| #10–#21 | Booking APIs, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
 
 ---
 
@@ -145,10 +160,12 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **Module:** `orders` (`db/migration/orders/`)
 
 **What:**
-- PostgreSQL ENUMs: `shipment_state` (27 values — includes `AWAITING_SELF_DROP`, `AWAITING_HUB_COLLECT`, `HUB_COLLECTED`), `customer_type`, `delivery_type`, `payment_mode`, `pickup_type` (`DA_PICKUP`, `SELF_DROP`), `drop_type` (`DA_DELIVERY`, `HUB_COLLECT`), `trigger_source`
+- PostgreSQL ENUMs: `shipment_state` (27 values — includes `AWAITING_SELF_DROP`, `AWAITING_HUB_COLLECT`, `HUB_COLLECTED`), `customer_type`, `delivery_type`, `payment_mode`, `pickup_type` (`DA_PICKUP`, `SELF_DROP`), `drop_type` (`DA_DELIVERY`, `HUB_COLLECT`)
+- `trigger_source` is **not** a PG ENUM — stored as `VARCHAR(20)` in `shipment_state_history`. It is an M4-internal audit classification (API, KAFKA_EVENT, SYSTEM), not a shared business domain type. Adding a new source requires only a Java enum value, not a DB migration.
 - Tables: `shipments` (with `pickup_type` and `drop_type` columns, both NOT NULL DEFAULT), `shipment_state_history`, `payment_transactions`, `b2b_accounts`, `idempotency_keys`, `shipment_ref_counters`
-- All indexes (shipment_ref, parcel_id, state, b2b_account_id, origin_tile_id)
+- All indexes (shipment_ref, parcel_id, state, b2b_account_id, origin_tile_id, city_id+state composite, assigned_flight_id, origin_city, dest_city)
 - DB trigger for `updated_at` auto-management on `shipments`, `payment_transactions`, `b2b_accounts`
+- **V4_9 (added during architect review):** `UNIQUE` constraint on `shipments.idempotency_key` — prevents TOCTOU duplicate-creation race under concurrent order requests; NULLs permitted for B2B batch imports
 - No Java code in this PR
 
 **Note:** SQL-only PR. Reviewer should check:
@@ -165,7 +182,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 **What:**
 - Remaining enums local to `orders`: `PaymentStatus`, `RefundStatus`, `TriggerSource`
-- JPA entities: `Shipment` (extends `MutableBaseEntity`), `ShipmentStateHistory` (extends `BaseEntity`), `PaymentTransaction` (extends `MutableBaseEntity`), `B2bAccount` (extends `MutableBaseEntity`), `IdempotencyKey` (extends `BaseEntity`), `ShipmentRefCounter`
+- JPA entities: `Shipment` (extends `MutableBaseEntity`), `ShipmentStateHistory` (standalone — has `occurred_at` not `created_at`; extending `BaseEntity` would fail schema validation), `PaymentTransaction` (extends `MutableBaseEntity`), `B2bAccount` (extends `MutableBaseEntity`), `IdempotencyKey` (standalone with `@EmbeddedId` for composite PK `(key, user_id)` — cannot extend `BaseEntity`), `ShipmentRefCounter` (standalone with `@EmbeddedId` for composite PK `(city_code, date_key)`)
 - `ShipmentState`, `PickupType`, `DropType`, and customer/delivery/payment enums imported from `common` (defined in PR #2)
 - `@Column(updatable = false)` on all immutable fields; `@Column(name = "created_at", updatable = false)` inherited
 - No repositories, no services
@@ -177,13 +194,13 @@ NotificationPort     → notification service implements; M4 calls on every stat
 **Module:** `orders`
 
 **What:**
-- `ShipmentRepository`: `findByShipmentRef`, `findByIdWithLock` (`@Lock(PESSIMISTIC_WRITE)`), `findByB2bAccountIdAndStateIn`
+- `ShipmentRepository`: `findByIdWithLock` (`@Lock(PESSIMISTIC_WRITE)`), `findByShipmentRef`, `findByState` (list + paginated), `findByStateAndCityId` (list + paginated), `existsByIdempotencyKey`, `findByCustomerType`, `findByAssignedFlightId`
 - `ShipmentStateHistoryRepository`: `findByShipmentIdOrderByOccurredAtAsc`
 - `PaymentTransactionRepository`: `findByShipmentId`, `findByRazorpayOrderId`
-- `B2bAccountRepository`: `findByIdWithLock` (`@Lock(PESSIMISTIC_WRITE)`)
-- `IdempotencyKeyRepository`: `findByKeyAndUserId`, `deleteByExpiresAtBefore`
-- `ShipmentRefCounterRepository`: `findByCityCodeAndDateKeyWithLock`
-- `@DataJpaTest` integration tests for all custom queries
+- `B2bAccountRepository`: `findByCityId`, `findByIsActive`, `findByBillingEmail` — **Note:** `findByIdWithLock` not yet added; needed for B2B credit check in PR #12
+- `IdempotencyKeyRepository`: `deleteExpired(Instant now)` (`@Transactional @Modifying @Query`)
+- `ShipmentRefCounterRepository`: `findByIdWithLock(@Param("id") ShipmentRefCounterId id)` (`@Lock(PESSIMISTIC_WRITE)`)
+- `@DataJpaTest` integration tests against local PostgreSQL (`@AutoConfigureTestDatabase(replace=NONE)`) — see testing strategy note below
 
 ---
 
@@ -227,18 +244,21 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ---
 
-### `M4 IMPL - PR #9 - Shipment reference generation and internal utility services`
+### `M4 IMPL - PR #9 - Shipment reference generation and internal utility services` ✅ Merged
 
 **Module:** `orders`
 
-**What:**
-- `ShipmentRefService`: generates `1DD-{CITY}-{YYYYMMDD}-{NNNNN}` using `SELECT FOR UPDATE` on `ShipmentRefCounter`; documents the Redis upgrade path at high volume
-- `DeliveryTypeResolver`: `origin_city == dest_city` → `SAME_CITY`, else `INTERCITY` — pure function, zero DB calls
-- `PaymentPort` (local to `orders`): `verifySignature()`, `capture()`, `initiateRefund()` — Razorpay-specific, not in `common` since no other module touches payments
-- `PickupOtpService`: generates 4-digit OTP, stores hashed in `pickup_otps` table with 10-minute TTL; exposes `generate()`, `verify()`, `resend()` (max 3); called as a side-effect when state machine enters `PICKUP_ASSIGNED`
-- `POST /internal/v1/shipments/{ref}/pickup-otp/verify` — on success, directly transitions `PICKUP_ASSIGNED → PICKED_UP`; returns `422` on wrong OTP or expired; returns `409` if state is not `PICKUP_ASSIGNED`
-- `POST /internal/v1/shipments/{ref}/pickup-otp/resend` — invalidates previous OTP; generates fresh one; returns `429` after 3 resends
-- Flyway migration for `pickup_otps` table: `(id, shipment_id, otp_hash, expires_at, used, resend_count, created_at)`
+**What (all implemented):**
+- `ShipmentRefService` interface + `ShipmentRefServiceImpl`: generates `1DD-{CITY}-{YYYYMMDD}-{NNNNN}` using `insertIfAbsent` + `SELECT FOR UPDATE` on `ShipmentRefCounter`; `Propagation.MANDATORY` — counter increment rolls back with the caller's transaction; documents the Redis upgrade path at high volume
+- `DeliveryTypeResolver` (`@Component`): `resolve(origin, dest)` → `SAME_CITY` if equal ignoring case, else `INTERCITY` — pure function, zero DB calls
+- `PaymentPort` interface (local to `orders/service/` — not in `common`): `verifySignature(orderId, paymentId, signature)`, `void capture(paymentId, amountPaise)`, `String initiateRefund(paymentId, amountPaise)` — Razorpay-specific; inner unchecked exceptions `PaymentVerificationException`, `PaymentCaptureException`, `PaymentRefundException`
+- `PickupOtpService` interface + `PickupOtpServiceImpl`: generates 4-digit OTP using `SecureRandom`, stores BCrypt(cost=4) hash in `pickup_otps` table; exposes `generate()`, `verify()` (pessimistic-lock), `resend()` (max 3, driven by `PickupOtpProperties`); inner exceptions `OtpVerificationException`, `ResendLimitExceededException`
+- `PickupOtpProperties` (`@ConfigurationProperties(prefix="orders.otp")`): `ttlMinutes=10`, `maxResendCount=3`
+- `PickupOtpRepository`: `findByShipmentId`, `findByShipmentIdWithLock` (`SELECT FOR UPDATE`), `deleteByShipmentId`
+- `PickupOtp` JPA entity: `pickup_otps` table; only `used` is mutable after creation
+- `PickupOtpController`: `POST /internal/v1/shipments/{ref}/pickup-otp/verify` → `204 No Content` on success (transitions `PICKUP_ASSIGNED → PICKED_UP`), `409` if wrong state, `422` on wrong/expired OTP; `POST /internal/v1/shipments/{ref}/pickup-otp/resend` → `200 {"otp": "..."}` on success, `429` after 3 resends
+- `OtpVerifyRequest` DTO: `@NotBlank @Pattern(regexp="\\d{4}") String otp`
+- `V4_11__create_pickup_otps.sql`: `pickup_otps` table with unique index on `shipment_id` and expiry index; `ShipmentRefCounterRepository` extended with `insertIfAbsent` native query
 
 ---
 
@@ -453,8 +473,8 @@ NotificationPort     → notification service implements; M4 calls on every stat
                 └─► #5 (JPA entities)
                      └─► #6 (Repositories)
                           └─► #7 (State machine)
-                               ├─► #8 (Idempotency)
-                               └─► #9 (Ref gen + PaymentPort)
+                               ├─► #8 (Idempotency) ✅
+                               └─► #9 (Ref gen + PaymentPort + PickupOtpService) ✅
                                     └─► #10 (B2C/C2C PREPAID booking + circuit breakers)
                                          ├─► #11 (COD path)         ← parallel
                                          ├─► #12 (B2B booking)      ← parallel
@@ -490,8 +510,8 @@ NotificationPort     → notification service implements; M4 calls on every stat
 | Layer | Tool | When |
 |---|---|---|
 | Unit | JUnit 5 + Mockito | Every PR |
-| Repository | `@DataJpaTest` + Testcontainers (PostgreSQL) | PR #6 onwards |
-| State machine | Parameterized JUnit5 (all 27×27 transition matrix) | PR #7 |
+| Repository | `@DataJpaTest` + `@AutoConfigureTestDatabase(replace=NONE)` + `@Import(FlywayAutoConfiguration.class)` against **local PostgreSQL 16** (Docker/Testcontainers blocked by Docker Engine API version mismatch in dev environment) | PR #6 onwards |
+| State machine | Parameterized JUnit5 (all 27×27 transition matrix — 841 parameterized + 108 named tests = 949 total in PR #7) | PR #7 |
 | Kafka | `@EmbeddedKafka` | PR #14 onwards |
 | API | `@SpringBootTest` + MockMvc + stub ports via `@TestConfiguration` | PR #10 onwards |
 | Concurrency | `CountDownLatch` multi-thread test for B2B credit check | PR #12 |

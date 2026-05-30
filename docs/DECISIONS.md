@@ -667,16 +667,18 @@ _(First entry)_
 | **Source** | docs/M4/M4-ORDERS-DESIGN.md §4 (KDD-6) |
 
 **Decision:**  
-`POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments` require an `Idempotency-Key: <uuid>` header. Duplicate requests with the same key within 24 hours return the original response (HTTP 200 + original body).
+`POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments` require an `Idempotency-Key: <uuid>` header. Duplicate requests with the same key within 24 hours return the original response (original HTTP status + original body).
 
 **Rationale:**  
 Network retries and client-side double-taps are inevitable. Without idempotency, a Razorpay capture could succeed while the DB write fails, leaving the customer charged but without a shipment.
 
 **Implications:**
 - `idempotency_keys` table: `(key, user_id, response_status, response_body, expires_at)`
+- `request_fingerprint VARCHAR(64)` stores SHA-256 of the canonicalised request body (JSON keys sorted alphabetically); NULL for rows created before V4_10 (treated as match-all on replay)
+- Body mismatch (same key + same user + different body within TTL) returns `422 IDEMPOTENCY_KEY_BODY_MISMATCH`
 - Key is scoped to the authenticated user to prevent cross-user collision
-- Nightly job purges expired rows (`expires_at < NOW()`)
-- Missing header returns `400 MISSING_IDEMPOTENCY_KEY`
+- Nightly job purges expired rows (`expires_at < NOW()`); TTL also enforced at hit time
+- Missing header returns `400 IDEMPOTENCY_KEY_REQUIRED`; header > 100 chars returns `400 IDEMPOTENCY_KEY_TOO_LONG`
 
 **Change log:**  
 _(First entry)_
