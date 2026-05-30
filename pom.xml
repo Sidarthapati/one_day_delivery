@@ -147,6 +147,16 @@
                     </configuration>
                 </plugin>
                 <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <!-- Java 25 exceeds Byte Buddy's officially supported range;
+                             experimental mode keeps mocking working until Mockito ships
+                             a bundled Byte Buddy that supports Java 25. -->
+                        <argLine>@{argLine} -Dnet.bytebuddy.experimental=true</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
                     <groupId>org.jacoco</groupId>
                     <artifactId>jacoco-maven-plugin</artifactId>
                     <version>0.8.11</version>
@@ -164,11 +174,9 @@
                             <goal>prepare-agent</goal>
                         </goals>
                         <configuration>
-                            <excludes>
-                                <exclude>jdk/**</exclude>
-                                <exclude>sun/**</exclude>
-                                <exclude>com/sun/**</exclude>
-                            </excludes>
+                            <includes>
+                                <include>com/oneday/**</include>
+                            </includes>
                         </configuration>
                     </execution>
                     <execution>
