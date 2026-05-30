@@ -13,7 +13,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Instant;
@@ -36,12 +35,10 @@ public class ShipmentStateHistory {
     private UUID shipmentId;
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS shipment_state)")
     @Column(name = "from_state", columnDefinition = "shipment_state", updatable = false)
     private ShipmentState fromState;
 
     @Enumerated(EnumType.STRING)
-    @ColumnTransformer(write = "CAST(? AS shipment_state)")
     @Column(name = "to_state", nullable = false, columnDefinition = "shipment_state", updatable = false)
     private ShipmentState toState;
 
