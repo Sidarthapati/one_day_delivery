@@ -40,10 +40,13 @@ Module: `grid` | Base path: `/api/grid`, `/api/proposals`
 
 ### Published by M3
 
-| Topic | Key | Payload | Consumed by |
-|-------|-----|---------|-------------|
-| `grid.no_da_alert` | `tileId` | `NoDaAlertEvent(cityId, tileId, validDate, reason, alertedAt)` | M5 (Dispatch) — to attempt emergency assignment; M11 (Exceptions) — to open a call-centre ticket. |
-| `grid.tile_overload_alert` | `tileId` | `TileOverloadAlertEvent(cityId, tileId, daId, date, severity, expectedOrders, unservedOrders, adjustedLoadScore, sustainedMinutes, alertedAt)` | M5 (Dispatch) — for intraday rebalancing suggestions; M10 (SLA) — for overload-driven SLA degradation. |
+All M3-produced events share one topic, `oneday.grid.events`, discriminated by `eventType`
+(`GridEventType`). Consumers subscribe once and `switch` on `eventType`.
+
+| Topic | eventType | Key | Payload | Consumed by |
+|-------|-----------|-----|---------|-------------|
+| `oneday.grid.events` | `NO_DA_ALERT` | `tileId` | `NoDaAlertEvent(eventType, cityId, tileId, validDate, reason, alertedAt)` | M5 (Dispatch) — to attempt emergency assignment; M11 (Exceptions) — to open a call-centre ticket. |
+| `oneday.grid.events` | `TILE_OVERLOAD_ALERT` | `tileId` | `TileOverloadAlertEvent(eventType, cityId, tileId, daId, date, severity, expectedOrders, unservedOrders, adjustedLoadScore, sustainedMinutes, alertedAt)` | M5 (Dispatch) — for intraday rebalancing suggestions; M10 (SLA) — for overload-driven SLA degradation. |
 
 ### Consumed by M3
 
@@ -83,12 +86,12 @@ All four queries run in independent `REQUIRES_NEW` transactions and degrade grac
 | **M4 (Orders)** | `GET /serviceability?pincode=` | At order booking — verify the pickup pincode is in a serviceable hex. |
 | **M4 (Orders)** | `GET /tile-at?lat=&lon=` | At order booking — map pickup/delivery coords to a hex ID for leg creation. |
 | **M5 (Dispatch)** | `GET /assignments?date=` | At DA assignment time — find which DA owns the pickup hex today. |
-| **M5 (Dispatch)** | Kafka `grid.no_da_alert` | Triggers emergency DA sourcing when a hex has no coverage. |
-| **M5 (Dispatch)** | Kafka `grid.tile_overload_alert` | Triggers intraday rebalancing suggestions (Level 3 BFS auto-suggest — not yet implemented). |
+| **M5 (Dispatch)** | Kafka `oneday.grid.events` (`NO_DA_ALERT`) | Triggers emergency DA sourcing when a hex has no coverage. |
+| **M5 (Dispatch)** | Kafka `oneday.grid.events` (`TILE_OVERLOAD_ALERT`) | Triggers intraday rebalancing suggestions (Level 3 BFS auto-suggest — not yet implemented). |
 | **M6 (Routing)** | `GET /tiles?date=` | Nightly route planning — hex centres become graph nodes for van route optimisation. |
 | **M6 (Routing)** | `GET /assignments?date=` | Nightly route planning — DA→hex mapping tells the router which hexes each van must cover. |
-| **M10 (SLA)** | Kafka `grid.tile_overload_alert` | Flags overloaded hexes for SLA degradation tracking. |
-| **M11 (Exceptions)** | Kafka `grid.no_da_alert` | Opens a call-centre queue item when a hex loses DA coverage. |
+| **M10 (SLA)** | Kafka `oneday.grid.events` (`TILE_OVERLOAD_ALERT`) | Flags overloaded hexes for SLA degradation tracking. |
+| **M11 (Exceptions)** | Kafka `oneday.grid.events` (`NO_DA_ALERT`) | Opens a call-centre queue item when a hex loses DA coverage. |
 
 ---
 

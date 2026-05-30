@@ -758,11 +758,11 @@ Unlike `intraday-override` (Scenario B), tile-share does not supersede the exist
 
 ### 7.7 No-DA alert (Kafka, produced by M3, consumed by M10)
 
-Topic: `grid.no_da_alert`
+Topic: `oneday.grid.events` (shared M3 topic; `event_type` discriminates)
 
 ```json
 {
-  "event_type": "grid.no_da_alert",
+  "event_type": "NO_DA_ALERT",
   "city_id": "...",
   "tile_id": "...",
   "valid_date": "2026-05-09",
@@ -792,11 +792,11 @@ The response is computed from in-memory state (no DB hit at query time). M3 main
 
 ### 7.9 Tile overload alert (Kafka, produced by M3, consumed by station manager notification service)
 
-Topic: `grid.tile_overload_alert`
+Topic: `oneday.grid.events` (shared M3 topic; `event_type` discriminates)
 
 ```json
 {
-  "event_type":          "grid.tile_overload_alert",
+  "event_type":          "TILE_OVERLOAD_ALERT",
   "city_id":             "...",
   "tile_id":             "...",
   "da_id":               "...",
@@ -1040,7 +1040,7 @@ M5 (DA Dispatch)
   ← reads n_das_on_tile to split intra-tile dispatch queues for high-demand tiles
   ← reads tile load-score API (§7.8) to decide when cross-territory dispatch is warranted
   ← consumes grid.assignment_updated (Kafka, §7.10): patches in-memory cache for affected DAs only on intraday approval
-  → on no-DA-found, triggers M3 to emit no_da_alert
+  → on no-DA-found, triggers M3 to emit NO_DA_ALERT on oneday.grid.events
   → publishes dispatch.tile_queue_depth (Kafka): per-tile unserved order count, emitted every 5 minutes during shift hours
     Used by M3's IntradayMonitorJob to compute live load scores and detect overloads
 
@@ -1054,7 +1054,7 @@ M6 (Van Routing)
   Uses vertices as the routable node set for the van graph
 
 M10 (SLA Monitoring)
-  ← consumes grid.no_da_alert Kafka events
+  ← consumes oneday.grid.events Kafka events (event_type = NO_DA_ALERT)
   Escalates to station manager if a tile has no DA at shift start
 
 OSRM (external, self-hosted)
@@ -1099,8 +1099,8 @@ com.oneday.grid/
     GridVertexRepository.java
     TileTravelTimeRepository.java
   events/
-    NoDaAlertProducer.java            -- publishes to grid.no_da_alert topic
-    TileOverloadAlertProducer.java    -- publishes to grid.tile_overload_alert topic
+    NoDaAlertProducer.java            -- publishes NO_DA_ALERT on oneday.grid.events
+    TileOverloadAlertProducer.java    -- publishes TILE_OVERLOAD_ALERT on oneday.grid.events
     TileQueueDepthConsumer.java       -- consumes dispatch.tile_queue_depth; updates in-memory load-score map
   dto/
     ServiceabilityResponse.java
@@ -1259,7 +1259,7 @@ For each city:
     if sustained_minutes[T] >= 15 AND last_alert_emitted[T] was > 30 min ago:
         severity = CRITICAL if adjusted_score >= 2.0 OR unserved > DA_daily_capacity
                    else WARNING
-        publish grid.tile_overload_alert (§7.9)
+        publish TILE_OVERLOAD_ALERT on oneday.grid.events (§7.9)
         last_alert_emitted[T] = now
 ```
 
@@ -1347,7 +1347,7 @@ Not planned. The nightly model with Level 2 alerting and Level 1 manual override
 | E1 | **Island tiles**: disconnected active tile clusters break van routing | For gaps ≤ 2 inactive tiles: auto-activate bridge tiles at initialization. For larger gaps: treat as separate service zones with independent van routes. Flag at initialization. |
 | E2 | **Intraday unprocessed pickups** | Failed/unserved orders go through M11 exception flow. M3's demand scoring must count *attempted* orders (not just completed) so the next nightly replan correctly sizes capacity. |
 | E3 | **Large pincode spanning multiple tiles** | Centroid-based mapping is acceptable at 2km tile size. Flag pincodes where centroid-to-edge distance > 1km for manual review. |
-| E4 | **DA absent mid-shift** | M5 detects inactivity (no GPS heartbeat for N minutes), emits `da.absent`. M3 fires `grid.no_da_alert` for affected tiles. Station manager manually reassigns intraday. |
+| E4 | **DA absent mid-shift** | M5 detects inactivity (no GPS heartbeat for N minutes), emits `da.absent`. M3 fires a `NO_DA_ALERT` on `oneday.grid.events` for affected tiles. Station manager manually reassigns intraday. |
 | E5 | **New pincode outside grid bounding box** | `getTileAt()` returns out-of-bounds. Admin triggers grid re-expansion job. Existing tiles and assignments unaffected. |
 | E6 | **Demand score bootstrapping for new tiles** | Seed with average demand of active neighbors, or city-wide average as floor. Flag as `is_bootstrapped = true` in snapshot. |
 | E7 | **Pickup vs delivery grid symmetry** | Same tile definitions apply at origin and destination cities. DA assignments are city-specific and independent for pickup and delivery roles. |

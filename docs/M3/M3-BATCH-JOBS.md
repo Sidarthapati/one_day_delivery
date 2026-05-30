@@ -328,13 +328,16 @@ When M1 ships a real implementation, annotate it `@Primary` and Spring will wire
 
 **Package:** `com.oneday.grid.events`
 
-All three Kafka classes are fully wired. Topic names live in `KafkaTopics.java`. Event payloads are Java records in `com.oneday.grid.events.payload`.
+All three Kafka classes are fully wired. M3's two produced events share the consolidated
+`oneday.grid.events` topic (`com.oneday.common.kafka.KafkaTopics.GRID_EVENTS`), discriminated by the
+`eventType` field (`com.oneday.common.kafka.enums.GridEventType`). The consumed topic name lives in
+the grid-local `KafkaTopics.java`. Event payloads are Java records in `com.oneday.grid.events.payload`.
 
-| Class | Type | Topic | Key | Emitted/consumed by |
-|-------|------|-------|-----|---------------------|
-| `NoDaAlertProducer` | Producer | `grid.no_da_alert` | tileId | M3 → M5, M11 |
-| `TileOverloadAlertProducer` | Producer | `grid.tile_overload_alert` | tileId | M3 → M5, M10 |
-| `TileQueueDepthConsumer` | Consumer | `orders.tile_queue_depth` | — | M4 → M3 |
+| Class | Type | Topic | eventType | Key | Emitted/consumed by |
+|-------|------|-------|-----------|-----|---------------------|
+| `NoDaAlertProducer` | Producer | `oneday.grid.events` | `NO_DA_ALERT` | tileId | M3 → M5, M11 |
+| `TileOverloadAlertProducer` | Producer | `oneday.grid.events` | `TILE_OVERLOAD_ALERT` | tileId | M3 → M5, M10 |
+| `TileQueueDepthConsumer` | Consumer | `orders.tile_queue_depth` | — | — | M4 → M3 |
 
 Both producers inject `KafkaTemplate<String, Object>` and wrap the send in `try/catch` — if no broker is available (local dev), they log a WARN and continue. The consumer has `autoStartup = false` and is a no-op until M4 ships.
 

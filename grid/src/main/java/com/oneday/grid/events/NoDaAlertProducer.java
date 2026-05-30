@@ -1,5 +1,7 @@
 package com.oneday.grid.events;
 
+import com.oneday.common.kafka.KafkaTopics;
+import com.oneday.common.kafka.enums.GridEventType;
 import com.oneday.grid.events.payload.NoDaAlertEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,9 +24,10 @@ public class NoDaAlertProducer {
     }
 
     public void emit(UUID cityId, UUID tileId, LocalDate validDate, String reason) {
-        NoDaAlertEvent event = new NoDaAlertEvent(cityId, tileId, validDate, reason, Instant.now());
+        NoDaAlertEvent event = new NoDaAlertEvent(
+                GridEventType.NO_DA_ALERT, cityId, tileId, validDate, reason, Instant.now());
         try {
-            kafkaTemplate.send(KafkaTopics.NO_DA_ALERT, tileId.toString(), event);
+            kafkaTemplate.send(KafkaTopics.GRID_EVENTS, tileId.toString(), event);
         } catch (Exception e) {
             log.warn("NO_DA_ALERT kafka send failed — city={} tile={} date={} reason={}: {}",
                     cityId, tileId, validDate, reason, e.getMessage());

@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Version** | 0.3 |
-| **Status** | Draft — pending ops sign-off on state machine |
+| **Version** | 0.5 |
+| **Status** | Draft — PRs #1–9 complete; B2C booking API (PR #10+) next |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-12 |
+| **Last updated** | 2026-05-30 |
 | **Depends on** | M1 (auth/JWT), M2 (pricing — sync), M3 (grid/serviceability — sync), M8 (barcode/label — async via Kafka) |
 | **Consumed by** | M5 (dispatch), M6 (routing), M7 (hub), M9 (airline), M10 (SLA), M11 (exceptions) |
 | **Related docs** | [MODULES.md](../MODULES.md) · [DECISIONS.md](../DECISIONS.md) · [M8-BARCODE-DESIGN.md](../M8-BARCODE-DESIGN.md) · [PRD-ONE-DAY-DELIVERY.md](../PRD-ONE-DAY-DELIVERY.md) |
@@ -169,7 +169,7 @@ public interface EtaPort {
 
 ### KDD-6: Idempotency on the booking endpoint
 
-**Decision:** `POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments` accept an `Idempotency-Key` header. Duplicate requests with the same key within 24 hours return the original response (HTTP 200 + original body).
+**Decision:** `POST /api/v1/b2c/shipments` and `POST /api/v1/b2b/shipments` accept an `Idempotency-Key` header. Duplicate requests with the same key within 24 hours return the original response (original HTTP status + original body).
 
 **Rationale:** Network retries and client-side double-clicks are inevitable. Without idempotency, a Razorpay capture could succeed while the DB write fails, leaving the customer charged but without a shipment.
 
@@ -427,6 +427,24 @@ Atomic sequence for generating human-readable shipment references.
 | `next_val` | INTEGER | Incremented with `SELECT ... FOR UPDATE` |
 
 > **Known bottleneck:** Row-level lock on `(city_code, date_key)` serialises concurrent bookings per city per day. At volumes above ~500 bookings/min per city, consider migrating to Redis `INCR` with a Lua script that atomically increments and returns the counter, syncing to DB asynchronously. See §15.5.
+
+---
+
+#### `PickupOtp`
+
+Stores the BCrypt-hashed OTP for DA pickup verification. Exactly one row exists per shipment while an OTP is active. On resend the old row is deleted and a new one inserted — the unique index on `shipment_id` enforces this at the DB level.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | UUID | PK |
+| `shipment_id` | UUID | FK to `shipments`; UNIQUE index (one active OTP per shipment) |
+| `otp_hash` | VARCHAR(60) | BCrypt hash of the 4-digit OTP (cleartext is never stored) |
+| `expires_at` | TIMESTAMPTZ | 10 minutes from generation; checked at verify time |
+| `used` | BOOLEAN | Set to `true` on first successful verification; prevents replay within TTL |
+| `resend_count` | SMALLINT | How many times `/resend` has been called; capped at 3 by application logic |
+| `created_at` | TIMESTAMPTZ | |
+
+> Rows are deleted on resend (not updated). This is the only entity in M4 with a delete-on-replace pattern.
 
 ---
 
@@ -836,7 +854,7 @@ Validation failures return `400 Bad Request` with a structured error body:
 
 **Booking flow (synchronous):**
 ```
-1.  Check Idempotency-Key → if exists, return cached response (200)
+1.  Check Idempotency-Key → if exists, return cached response (original HTTP status + original body)
 2.  Validate all fields (see §7.2)
 3.  Call M3 ServiceabilityPort.check(originPincode, destPincode)
      → 422 UNSERVICEABLE if either pincode is not covered
@@ -1177,10 +1195,10 @@ Called by M5 DA app after customer provides OTP to DA.
 
 **Behaviour:**
 - Looks up active OTP for this shipment; verifies value and TTL
-- On success: transitions `PICKUP_ASSIGNED → PICKED_UP`; marks OTP consumed; returns `200`
-- On wrong OTP: returns `422 INVALID_OTP`
-- On expired OTP: returns `422 OTP_EXPIRED` — DA must call resend endpoint
-- On state not `PICKUP_ASSIGNED`: returns `409 INVALID_STATE`
+- On success: transitions `PICKUP_ASSIGNED → PICKED_UP`; marks OTP consumed; returns `204 No Content`
+- On wrong OTP: returns `422`
+- On expired OTP: returns `422` — DA must call resend endpoint
+- On state not `PICKUP_ASSIGNED`: returns `409`
 
 ---
 
@@ -1241,68 +1259,67 @@ When a B2B account has a registered webhook URL:
 
 ### 8.1 Package Structure
 
+The listing below shows what exists in the codebase as of PR #9. Files without a suffix note are fully implemented. Future PRs add to this structure.
+
 ```
 com.oneday.orders/
   api/
-    B2cShipmentController.java
-    B2bShipmentController.java
-    TrackingController.java
-    InternalShipmentController.java
-    RazorpayWebhookController.java
-  service/
-    ShipmentService.java              ← public interface
-    impl/
-      ShipmentServiceImpl.java        ← package-private
-      ShipmentStateMachine.java       ← package-private
-      CancellationService.java        ← package-private
-      IdempotencyService.java         ← package-private
-      B2bCreditService.java           ← package-private
-      WebhookDeliveryService.java     ← package-private
+    PickupOtpController.java          ← POST /internal/v1/shipments/{ref}/pickup-otp/verify|resend
+    filter/
+      IdempotencyFilter.java          ← OncePerRequestFilter; idempotency header enforcement
+  config/
+    IdempotencyProperties.java        ← @ConfigurationProperties(prefix="orders.idempotency")
+    PickupOtpProperties.java          ← @ConfigurationProperties(prefix="orders.otp")
   domain/
     Shipment.java
-    ShipmentState.java
-    DeliveryType.java
-    CustomerType.java
     ShipmentStateHistory.java
     PaymentTransaction.java
     B2bAccount.java
     IdempotencyKey.java
+    IdempotencyKeyId.java             ← @EmbeddedId for composite PK (key, user_id)
+    ShipmentRefCounter.java
+    ShipmentRefCounterId.java         ← @EmbeddedId for composite PK (city_code, date_key)
+    PickupOtp.java                    ← OTP hash storage; BCrypt; one row per shipment
+    enums/
+      PaymentStatus.java
+      RefundStatus.java
+      TriggerSource.java
+  dto/
+    OtpVerifyRequest.java             ← @NotBlank @Pattern(regexp="\\d{4}") String otp
   repository/
     ShipmentRepository.java
     ShipmentStateHistoryRepository.java
     PaymentTransactionRepository.java
     B2bAccountRepository.java
     IdempotencyKeyRepository.java
-    ShipmentRefCounterRepository.java
-  events/
-    ShipmentEventProducer.java        ← Kafka producer
-    ShipmentEventConsumer.java        ← Kafka consumer
-    WebhookEventQueue.java            ← In-memory queue for B2B webhook dispatch
-  dto/
-    request/
-      BookingRequest.java
-      CancellationRequest.java
-      StateTransitionRequest.java
-    response/
-      BookingResponse.java
-      TrackingResponse.java
-      ShipmentSummaryResponse.java
-  port/
-    ServiceabilityPort.java
-    PricingPort.java
-    EtaPort.java
-    PaymentPort.java
-    NotificationPort.java
-    dto/
-      ServiceabilityResult.java
-      QuoteRequest.java       ← port contract sent to M2; distinct from BookingRequest above
-      QuoteResult.java
-      EtaRequest.java
-      EtaContext.java
-      EtaResult.java
-      NotificationRequest.java
-      NotificationEventType.java
-  // M8 (barcode) has no port interface — M8 subscribes to shipment.created via Kafka
+    ShipmentRefCounterRepository.java ← includes insertIfAbsent native query
+    PickupOtpRepository.java          ← findByShipmentId, findByShipmentIdWithLock, deleteByShipmentId
+  service/
+    ShipmentStateMachine.java         ← public interface
+    TransitionRegistry.java           ← extensible transition map
+    TransitionRegistryConfigurer.java ← configures all legal transitions at startup
+    TransitionContext.java            ← value object: triggeredBy, triggerSource, eventRef
+    CustomerVisibleStateMapper.java   ← maps ShipmentState → customer-facing label
+    IdempotencyKeyPurgeJob.java       ← @Scheduled nightly purge of expired idempotency_keys rows
+    ShipmentRefService.java           ← public interface: generateRef(originCityCode)
+    DeliveryTypeResolver.java         ← @Component; origin==dest → SAME_CITY, else INTERCITY
+    PaymentPort.java                  ← Razorpay port (orders-local; not in common)
+    PickupOtpService.java             ← public interface: generate, verify, resend
+    service/exception/
+      IllegalStateTransitionException.java
+    impl/
+      ShipmentStateMachineImpl.java   ← package-private
+      ShipmentRefServiceImpl.java     ← package-private; Propagation.MANDATORY
+      PickupOtpServiceImpl.java       ← package-private; BCrypt(4); pessimistic-lock verify
+  // Cross-module port interfaces live in common, not here:
+  //   common.port.ServiceabilityPort (M3 implements)
+  //   common.port.PricingPort        (M2 implements)
+  //   common.port.EtaPort            (M9 implements)
+  //   common.port.NotificationPort   (notification service implements)
+  // M8 (barcode) has no port interface — M8 subscribes to shipment.created via Kafka.
+  // Future PRs add: B2cShipmentController, B2bShipmentController, TrackingController,
+  //   InternalShipmentController, RazorpayWebhookController, ShipmentEventProducer,
+  //   ShipmentEventConsumer, WebhookDeliveryService, and all booking/tracking DTOs.
 ```
 
 ---
@@ -1345,12 +1362,18 @@ public interface EtaPort {
 // has everything it needs to generate a complete label without calling back to M4.
 // M8 is NOT in the circuit breaker list; its unavailability does not block bookings.
 
-// Payment — Razorpay
+// Payment — Razorpay (local to orders module — not in common)
+// com.oneday.orders.service.PaymentPort
 public interface PaymentPort {
-    void verifySignature(String orderId, String paymentId, String signature);
-    // Throws PaymentVerificationException on mismatch
-    CaptureResult capture(String paymentId, long amountPaise);
-    RefundResult initiateRefund(String paymentId, long amountPaise, String reason);
+    void verifySignature(String razorpayOrderId, String razorpayPaymentId, String signature);
+    // Throws PaymentPort.PaymentVerificationException on mismatch
+
+    void capture(String razorpayPaymentId, long amountPaise);
+    // Throws PaymentPort.PaymentCaptureException on failure
+
+    String initiateRefund(String razorpayPaymentId, long amountPaise);
+    // Returns Razorpay refund ID (e.g. "rfnd_xxxxxxxx"); throws PaymentPort.PaymentRefundException on failure
+    // Inner unchecked exceptions: PaymentVerificationException, PaymentCaptureException, PaymentRefundException
 }
 
 // Notifications
@@ -1508,6 +1531,9 @@ Files follow the `V4_N__description.sql` convention (M4 = module 4). Location re
 | `V4_6__create_b2b_accounts.sql` | `b2b_accounts` table, `trg_b2b_accounts_updated_at` trigger |
 | `V4_7__create_idempotency_keys.sql` | `idempotency_keys` table, expiry index |
 | `V4_8__create_shipment_ref_counters.sql` | `shipment_ref_counters` table |
+| `V4_9__add_idempotency_key_unique.sql` | `UNIQUE` constraint on `shipments.idempotency_key`; NULLs permitted for B2B batch imports |
+| `V4_10__add_request_fingerprint_to_idempotency_keys.sql` | `request_fingerprint VARCHAR(64) NULL` column on `idempotency_keys`; SHA-256 of canonical request body for body-mismatch detection |
+| `V4_11__create_pickup_otps.sql` | `pickup_otps` table (`id`, `shipment_id` FK, `otp_hash`, `expires_at`, `used`, `resend_count`, `created_at`); unique index on `shipment_id`; expiry index |
 
 Full SQL for reference:
 
@@ -1690,6 +1716,22 @@ CREATE TABLE shipment_ref_counters (
   next_val   INTEGER     NOT NULL DEFAULT 1,
   PRIMARY KEY (city_code, date_key)
 );
+
+-- Pickup OTPs (V4_11 — PR #9)
+CREATE TABLE pickup_otps (
+  id             UUID         NOT NULL DEFAULT gen_random_uuid(),
+  shipment_id    UUID         NOT NULL REFERENCES shipments(id),
+  otp_hash       VARCHAR(60)  NOT NULL,   -- BCrypt output is always 60 chars
+  expires_at     TIMESTAMPTZ  NOT NULL,
+  used           BOOLEAN      NOT NULL DEFAULT FALSE,
+  resend_count   SMALLINT     NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  CONSTRAINT pk_pickup_otps PRIMARY KEY (id)
+);
+
+-- One active OTP row per shipment; deleted and re-inserted on resend.
+CREATE UNIQUE INDEX uq_pickup_otps_shipment ON pickup_otps(shipment_id);
+CREATE INDEX idx_pickup_otps_expires ON pickup_otps(expires_at);
 ```
 
 ---
@@ -1889,13 +1931,37 @@ All M4 log entries include:
 
 ## 14. Configuration Reference
 
-All properties under namespace `oneday.orders.*` in `application.yml`:
+### 14.1 Idempotency (implemented — PR #8)
+
+Bound by `IdempotencyProperties` under `orders.idempotency.*`:
+
+```yaml
+orders:
+  idempotency:
+    ttl: 24h                          # Idempotency key retention period (default: 24h)
+    apply-to-path-pattern: /api/v1/** # Ant path pattern — filter only applies to matching URLs
+    purge-cron: "0 0 2 * * *"         # Nightly purge schedule (default: 02:00 IST)
+```
+
+### 14.2 Pickup OTP (implemented — PR #9)
+
+Bound by `PickupOtpProperties` under `orders.otp.*`:
+
+```yaml
+orders:
+  otp:
+    ttl-minutes: 10       # How long a generated OTP is valid (default: 10 minutes)
+    max-resend-count: 3   # Maximum resend attempts before 429 is returned (default: 3)
+```
+
+### 14.3 Planned configuration (future PRs)
+
+All planned properties under namespace `oneday.orders.*` in `application.yml` (not yet implemented):
 
 ```yaml
 oneday:
   orders:
     booking:
-      idempotency-key-ttl-hours: 24       # Idempotency key expiry
       max-weight-grams: 70000             # Hard upper limit; rejects bookings above
     state-machine:
       kafka-consumer-group: m4-shipment-state-consumer
@@ -1999,7 +2065,7 @@ oneday:
 
 | ID | Edge Case | How M4 Handles It |
 |---|---|---|
-| E1 | Client submits duplicate booking with same Idempotency-Key | Return original response (200 + original body); no duplicate Shipment created |
+| E1 | Client submits duplicate booking with same Idempotency-Key | Return original response (original HTTP status + original body); no duplicate Shipment created |
 | E2 | Razorpay captured but DB write failed | See §15.4 — retry with same idempotency key; Razorpay idempotency absorbs duplicate capture |
 | E3 | Same pincode for origin and dest | `delivery_type = SAME_CITY`; air leg states are skipped |
 | E4 | Kafka event arrives out of order | State machine rejects; event parked to DLQ with `OUT_OF_ORDER` reason |

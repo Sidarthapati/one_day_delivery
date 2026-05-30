@@ -66,7 +66,7 @@ com.oneday.{module}/
 |--------|--------|
 | `common` | `BaseEntity` + `MutableBaseEntity` (@MappedSuperclass, UUID id + audit timestamps) — done |
 | `grid` (M3) | **Phases 1–8 done.** Phase 9 (integration tests) is next. See `docs/M3/M3-IMPLEMENTATION-PLAN.md` for full phase plan. |
-| `orders` (M4) | PRs 1–7 merged + architect-review fixes applied. Flyway migrations (V4_1–V4_9), JPA entities, Spring Data repositories, and service layer (ShipmentStateMachine, TransitionRegistry, TransitionContext, CustomerVisibleStateMapper) — all done. 949 tests passing. REST API (PR8) not yet started. |
+| `orders` (M4) | PRs 1–9 merged + architect-review fixes applied. Flyway migrations (V4_1–V4_11), JPA entities (Shipment, ShipmentStateHistory, PaymentTransaction, B2bAccount, IdempotencyKey, ShipmentRefCounter, PickupOtp), Spring Data repositories (including PickupOtpRepository with pessimistic-lock verify), service layer (ShipmentStateMachine, TransitionRegistry, TransitionContext, CustomerVisibleStateMapper, ShipmentRefService, DeliveryTypeResolver, PaymentPort, PickupOtpService), idempotency infrastructure (IdempotencyFilter, IdempotencyKeyPurgeJob, IdempotencyProperties, V4_10 fingerprint migration), OTP infrastructure (PickupOtpService/Impl with BCrypt(4), PickupOtpProperties, PickupOtpController, V4_11 migration) — all done. B2C booking API (PR #10) not yet started. |
 | All others | Not started |
 
 ## Local Dev Setup

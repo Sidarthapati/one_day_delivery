@@ -59,7 +59,7 @@ BFS `BfsAssignmentServiceImpl` is retained behind the same `AssignmentService` i
 
 The nightly assignment model is deliberately stable. Two intraday layers are added on top:
 
-**Level 2 (committed):** `IntradayMonitorJob` runs every 5 minutes during shift hours. Consumes `dispatch.tile_queue_depth` from M5 (published every 5 min). Computes `adjusted_load_score = unserved_orders / expected_by_now` per tile with hysteresis (15-min sustained threshold for WARNING, 10-min for CRITICAL). Emits `grid.tile_overload_alert` to Kafka. Station manager receives push notification + deep-link to manual override. No automated territory changes.
+**Level 2 (committed):** `IntradayMonitorJob` runs every 5 minutes during shift hours. Consumes `dispatch.tile_queue_depth` from M5 (published every 5 min). Computes `adjusted_load_score = unserved_orders / expected_by_now` per tile with hysteresis (15-min sustained threshold for WARNING, 10-min for CRITICAL). Emits a `TILE_OVERLOAD_ALERT` event on the `oneday.grid.events` Kafka topic. Station manager receives push notification + deep-link to manual override. No automated territory changes.
 
 **Level 3 (optional, good-to-have):** On `CRITICAL` alert, run a local BFS suggestion — find an adjacent DA with spare capacity, check contiguity for both affected territories, surface as an inline approve/reject action on the notification. Build only after Level 2 usage patterns are validated.
 

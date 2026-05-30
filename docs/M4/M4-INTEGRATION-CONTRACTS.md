@@ -4,7 +4,7 @@
 |---|---|
 | **Module** | M4 — Orders |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-24 |
+| **Last updated** | 2026-05-30 |
 | **Status** | Authoritative — must be kept in sync with M4-ORDERS-DESIGN.md |
 
 This document is the single reference for every other module team integrating with M4. It covers exactly what M4 needs from you, what M4 gives you, and the precise contracts (types, fields, topics, endpoints) for both directions.
@@ -584,10 +584,10 @@ M9 uses this to bulk-update states on flight departure and arrival.
 ```
 
 **Behaviour:**
-- Success (`200`): transitions `PICKUP_ASSIGNED → PICKED_UP`; OTP is consumed and invalidated.
-- Wrong OTP (`422 INVALID_OTP`): no state change; DA must retry or call resend.
-- Expired OTP (`422 OTP_EXPIRED`): DA must call the resend endpoint.
-- Wrong state (`409 INVALID_STATE`): shipment is not in `PICKUP_ASSIGNED`.
+- Success (`204 No Content`): transitions `PICKUP_ASSIGNED → PICKED_UP`; OTP is consumed and invalidated.
+- Wrong OTP (`422`): no state change; DA must retry or call resend.
+- Expired OTP (`422`): DA must call the resend endpoint.
+- Wrong state (`409`): shipment is not in `PICKUP_ASSIGNED`.
 
 ---
 

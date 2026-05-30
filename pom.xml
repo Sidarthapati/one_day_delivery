@@ -147,13 +147,53 @@
                     </configuration>
                 </plugin>
                 <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <!-- Java 25 exceeds Byte Buddy's officially supported range;
+                             experimental mode keeps mocking working until Mockito ships
+                             a bundled Byte Buddy that supports Java 25. -->
+                        <argLine>@{argLine} -Dnet.bytebuddy.experimental=true</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
                     <groupId>org.jacoco</groupId>
                     <artifactId>jacoco-maven-plugin</artifactId>
                     <version>0.8.11</version>
                 </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
             </plugins>
         </pluginManagement>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-java-21</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <!-- Compile target is Java 21. JaCoCo/Byte Buddy can't
+                                     instrument newer bytecode (e.g. Java 25 = major 69),
+                                     which silently breaks mocks + coverage. Fail loudly
+                                     if the build JVM drifts off 21 (e.g. Homebrew's
+                                     default openjdk symlink). -->
+                                <requireJavaVersion>
+                                    <version>[21,22)</version>
+                                    <message>This build must run on Java 21. Set JAVA_HOME to the JDK 21 install: export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home</message>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -164,11 +204,9 @@
                             <goal>prepare-agent</goal>
                         </goals>
                         <configuration>
-                            <excludes>
-                                <exclude>jdk/**</exclude>
-                                <exclude>sun/**</exclude>
-                                <exclude>com/sun/**</exclude>
-                            </excludes>
+                            <includes>
+                                <include>com/oneday/**</include>
+                            </includes>
                         </configuration>
                     </execution>
                     <execution>

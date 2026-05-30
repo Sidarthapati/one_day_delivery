@@ -7,6 +7,9 @@ public final class KafkaTopics {
     // ── Produced by M4 ────────────────────────────────────────────────────
     public static final String SHIPMENTS_EVENTS   = "oneday.shipments.events";
 
+    // ── Produced by M3 (grid) → consumed by M5, M10, M11 ──────────────────
+    public static final String GRID_EVENTS        = "oneday.grid.events";       // M3
+
     // ── Consumed by M4 (one topic per source module) ──────────────────────
     public static final String DA_EVENTS          = "oneday.da.events";         // M5
     public static final String HUB_EVENTS         = "oneday.hub.events";        // M7

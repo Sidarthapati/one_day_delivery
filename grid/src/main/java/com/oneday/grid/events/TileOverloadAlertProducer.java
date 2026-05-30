@@ -1,5 +1,7 @@
 package com.oneday.grid.events;
 
+import com.oneday.common.kafka.KafkaTopics;
+import com.oneday.common.kafka.enums.GridEventType;
 import com.oneday.grid.events.payload.TileOverloadAlertEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,12 +27,12 @@ public class TileOverloadAlertProducer {
                      String severity, double expectedOrders, int unservedOrders,
                      double adjustedScore, int sustainedMinutes) {
         TileOverloadAlertEvent event = new TileOverloadAlertEvent(
-                cityId, tileId, daId, date, severity,
+                GridEventType.TILE_OVERLOAD_ALERT, cityId, tileId, daId, date, severity,
                 expectedOrders, unservedOrders, adjustedScore, sustainedMinutes,
                 Instant.now()
         );
         try {
-            kafkaTemplate.send(KafkaTopics.TILE_OVERLOAD_ALERT, tileId.toString(), event);
+            kafkaTemplate.send(KafkaTopics.GRID_EVENTS, tileId.toString(), event);
         } catch (Exception e) {
             log.warn("TILE_OVERLOAD_ALERT kafka send failed — tile={} severity={}: {}",
                     tileId, severity, e.getMessage());
