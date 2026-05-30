@@ -519,7 +519,7 @@ Only runs during shift hours (07:00–20:00 local time). Per city, per active ti
 1. Read `unservedOrders` from in-memory map (populated by `TileQueueDepthConsumer`).
 2. Compute `adjustedLoadScore = unserved / max(expected_by_now, 1)`.
 3. Update `sustainedMinutes[tile]` with hysteresis.
-4. If threshold breached and `lastAlertAt > 30 min ago`: emit `grid.tile_overload_alert`.
+4. If threshold breached and `lastAlertAt > 30 min ago`: emit `TILE_OVERLOAD_ALERT` on `oneday.grid.events`.
 5. If `CRITICAL` and Level 3 is enabled: run local BFS suggestion.
 
 ---
@@ -530,21 +530,22 @@ Package: `com.oneday.grid.events`
 
 ### KafkaTopics constants
 
-`KafkaTopics.java` is the single source of truth for all topic names:
+M3's produced events go to the consolidated `common.KafkaTopics.GRID_EVENTS` topic, discriminated by
+`GridEventType`. The grid-local `KafkaTopics.java` now holds only the consumed topic name:
 
-| Constant | Topic string | Direction |
-|----------|-------------|-----------|
-| `NO_DA_ALERT` | `grid.no_da_alert` | M3 → M5, M11 |
-| `TILE_OVERLOAD_ALERT` | `grid.tile_overload_alert` | M3 → M5, M10 |
-| `TILE_QUEUE_DEPTH` | `orders.tile_queue_depth` | M4 → M3 |
+| Constant | Topic string | eventType | Direction |
+|----------|-------------|-----------|-----------|
+| `common.KafkaTopics.GRID_EVENTS` | `oneday.grid.events` | `NO_DA_ALERT` | M3 → M5, M11 |
+| `common.KafkaTopics.GRID_EVENTS` | `oneday.grid.events` | `TILE_OVERLOAD_ALERT` | M3 → M5, M10 |
+| `KafkaTopics.TILE_QUEUE_DEPTH` (grid-local) | `orders.tile_queue_depth` | — | M4 → M3 |
 
 ### Event POJOs (`events/payload/`)
 
 | Record | Direction | Fields |
 |--------|-----------|--------|
 | `TileQueueDepthEvent` | inbound (M4 → M3) | `tileId, cityId, date, unservedOrders, bookedOrders, recordedAt` |
-| `NoDaAlertEvent` | outbound (M3 → M5/M11) | `cityId, tileId, validDate, reason, alertedAt` |
-| `TileOverloadAlertEvent` | outbound (M3 → M5/M10) | `cityId, tileId, daId, date, severity, expectedOrders, unservedOrders, adjustedLoadScore, sustainedMinutes, alertedAt` |
+| `NoDaAlertEvent` | outbound (M3 → M5/M11) | `eventType, cityId, tileId, validDate, reason, alertedAt` |
+| `TileOverloadAlertEvent` | outbound (M3 → M5/M10) | `eventType, cityId, tileId, daId, date, severity, expectedOrders, unservedOrders, adjustedLoadScore, sustainedMinutes, alertedAt` |
 
 ### Step 7.1 — TileQueueDepthConsumer
 
@@ -552,11 +553,11 @@ Package: `com.oneday.grid.events`
 
 ### Step 7.2 — NoDaAlertProducer
 
-Injects `KafkaTemplate<String, Object>`. Sends `NoDaAlertEvent` to `grid.no_da_alert` keyed by `tileId`. `try/catch` around send — if broker unavailable, logs WARN (app continues without Kafka).
+Injects `KafkaTemplate<String, Object>`. Sends `NoDaAlertEvent` (`eventType = NO_DA_ALERT`) to `common.KafkaTopics.GRID_EVENTS` keyed by `tileId`. `try/catch` around send — if broker unavailable, logs WARN (app continues without Kafka).
 
 ### Step 7.3 — TileOverloadAlertProducer
 
-Same pattern — sends `TileOverloadAlertEvent` to `grid.tile_overload_alert` keyed by `tileId`.
+Same pattern — sends `TileOverloadAlertEvent` (`eventType = TILE_OVERLOAD_ALERT`) to `common.KafkaTopics.GRID_EVENTS` keyed by `tileId`.
 
 ### Kafka config (`application.yml`)
 
@@ -697,7 +698,7 @@ Phase 9  ○  Integration tests (TestContainers + real PostgreSQL) — not start
 |----------|-------------|-----------------|
 | `dispatch.tile_queue_depth` Kafka topic | M5 | Exact JSON schema (§16.2.1); 5-minute cadence confirmed |
 | `shipment_leg_events` table read | M4 | Column names (`da_id`, `shift_date`, `stop_sequence`, `arrived_at_pickup`, `pickup_completed_at`, `hex_id`); must exist before DemandScoringService can run |
-| `grid.no_da_alert` | M10 | M10 needs this to be wired into its SLA consumer before end-to-end testing |
+| `oneday.grid.events` (`NO_DA_ALERT`) | M10 | M10 needs this to be wired into its SLA consumer before end-to-end testing |
 | DA IDs in `da_hex_assignment` | M1/auth | `da_id` is a UUID from M1's `users` table — no FK constraint in M3 schema (avoids cross-module DB coupling), but document the implicit reference |
 
 ---
@@ -778,8 +779,8 @@ M3 is fully built but several of its code paths are running in degraded / stub m
 
 | Output | Topic / mechanism | Consumed by | Status |
 |--------|------------------|-------------|--------|
-| No-DA alert | `grid.no_da_alert` Kafka | M5 (stops accepting pickups for the hex), M11 (flags for call center) | Fires correctly today, but consumers not yet built |
-| Hex overload alert | `grid.tile_overload_alert` Kafka | M5 (may trigger intraday reassignment request), M10 (SLA tracking) | Fires correctly today, but consumers not yet built |
+| No-DA alert | `oneday.grid.events` Kafka (`NO_DA_ALERT`) | M5 (stops accepting pickups for the hex), M11 (flags for call center) | Fires correctly today, but consumers not yet built |
+| Hex overload alert | `oneday.grid.events` Kafka (`TILE_OVERLOAD_ALERT`) | M5 (may trigger intraday reassignment request), M10 (SLA tracking) | Fires correctly today, but consumers not yet built |
 | DA hex assignments | `da_hex_assignment` table (DB read) | M5 reads this to know which DA to route each order to | Table populated on proposal approval; M5 must refresh after each approval |
 | Assignment updated event | Not yet implemented | M5 needs a push notification when the active plan changes so it doesn't serve stale routing | **Gap:** `grid.assignment_updated` Kafka event should be published from `ProposalServiceImpl.approve()`. Referenced in design docs but not yet coded. |
 

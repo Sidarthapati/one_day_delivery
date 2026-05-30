@@ -7,6 +7,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 
+import com.oneday.common.kafka.KafkaTopics;
+
 import java.time.LocalDate;
 import java.util.UUID;
 
@@ -37,7 +39,7 @@ class NoDaAlertProducerTest {
     void send_happyPath_callsKafkaTemplateWithCorrectTopic() {
         producer.emit(cityId, tileId, date, "NO_DA_AVAILABLE");
 
-        verify(kafkaTemplate).send(eq(KafkaTopics.NO_DA_ALERT), eq(tileId.toString()), any());
+        verify(kafkaTemplate).send(eq(KafkaTopics.GRID_EVENTS), eq(tileId.toString()), any());
     }
 
     @Test

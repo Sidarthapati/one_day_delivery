@@ -7,6 +7,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 
+import com.oneday.common.kafka.KafkaTopics;
+
 import java.time.LocalDate;
 import java.util.UUID;
 
@@ -38,7 +40,7 @@ class TileOverloadAlertProducerTest {
     void send_happyPath_callsKafkaTemplateWithCorrectTopic() {
         producer.emit(cityId, tileId, daId, date, "WARNING", 5.0, 3, 1.8, 15);
 
-        verify(kafkaTemplate).send(eq(KafkaTopics.TILE_OVERLOAD_ALERT), eq(tileId.toString()), any());
+        verify(kafkaTemplate).send(eq(KafkaTopics.GRID_EVENTS), eq(tileId.toString()), any());
     }
 
     @Test

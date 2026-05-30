@@ -258,7 +258,7 @@ Uses `@EmbeddedKafka` from `spring-kafka-test`. No broker needed, runs in-proces
 
 | Test | What it verifies |
 |------|----------------|
-| `send_publishesMessageToCorrectTopic` | `NoDaAlertProducer.send()` → message lands on `grid.no_da_alert` topic with correct key (tileId) and deserializable payload |
+| `send_publishesMessageToCorrectTopic` | `NoDaAlertProducer.send()` → message lands on `oneday.grid.events` topic (eventType `NO_DA_ALERT`) with correct key (tileId) and deserializable payload |
 | `send_payloadRoundTrips` | Serialized then deserialized `NoDaAlertEvent` has same cityId, tileId, validDate values |
 
 **~2 tests**
@@ -271,7 +271,7 @@ Uses `@EmbeddedKafka` from `spring-kafka-test`. No broker needed, runs in-proces
 
 | Test | What it verifies |
 |------|----------------|
-| `send_publishesMessageToCorrectTopic` | Message lands on `grid.tile_overload_alert`, key = tileId |
+| `send_publishesMessageToCorrectTopic` | Message lands on `oneday.grid.events` (eventType `TILE_OVERLOAD_ALERT`), key = tileId |
 | `send_severityFieldPreservedInPayload` | `severity = "CRITICAL"` survives serde round-trip |
 
 **~2 tests**
