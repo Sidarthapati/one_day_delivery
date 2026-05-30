@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Plan version** | 1.4 |
+| **Plan version** | 1.5 |
 | **Author** | Satvik |
 | **Last updated** | 2026-05-30 |
 | **Total PRs** | 21 |
@@ -22,7 +22,8 @@
 | #7 | Shipment state machine with full transition coverage | ✅ Merged |
 | #8 | Idempotency infrastructure (IdempotencyFilter, IdempotencyKeyPurgeJob, V4_10 fingerprint migration) | ✅ Merged |
 | #9 | Ref gen + utility services: ShipmentRefService, DeliveryTypeResolver, PaymentPort, PickupOtpService, PickupOtpController, V4_11 pickup_otps migration, PickupOtpProperties | ✅ Merged |
-| #10–#21 | Booking APIs, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
+| #10 | B2C PREPAID booking endpoint with Resilience4j circuit breakers (B2cShipmentController, BookingService/Impl, BookingRequest/Response DTOs, GlobalExceptionHandler, ResilienceConfig/Properties) | 🔧 Implemented — not yet committed |
+| #11–#21 | COD path, B2B booking, cancellation, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
 
 ---
 
@@ -111,7 +112,7 @@ Phase 7 (Observability)
 - Topic name constants: `KafkaTopics.SHIPMENTS_EVENTS`, `KafkaTopics.DA_EVENTS`, `KafkaTopics.HUB_EVENTS`, `KafkaTopics.SCAN_EVENTS`, `KafkaTopics.FLIGHT_EVENTS`, `KafkaTopics.CRON_EVENTS`, `KafkaTopics.EXCEPTIONS_EVENTS`
 - Common event envelope POJO: `BaseShipmentEvent { eventId, eventType, schemaVersion, occurredAt, shipmentId, shipmentRef }`
 - Specific event POJOs extending the envelope:
-  - `ShipmentCreatedEvent` (fields: `customerType`, `paymentMode`, `deliveryType`, `originCity`, `destCity`, `originTileId`, `chargeableWeightGrams`, `slaCommitmentMinutes`, `etaPromised`, `receiverPhone`, `receiverName`, `b2bAccountId`)
+  - `ShipmentCreatedEvent` (fields: `customerType`, `paymentMode`, `deliveryType`, `pickupType`, `dropType`, `originCity`, `originPincode`, `originTileId`, `originLat`, `originLon`, `destCity`, `destPincode`, `destLat`, `destLon`, `chargeableWeightGrams`, `slaCommitmentMinutes`, `etaPromised`, `receiverPhone`, `receiverName`, `b2bAccountId`, `senderName`, `senderAddressLine`, `receiverAddressLine`)
   - `ShipmentStateChangedEvent` (fields: `fromState`, `toState`, `triggeredBy`, `triggerSource`, `etaUpdated`)
   - `ShipmentCancelledEvent` (fields: `cancelledAtState`, `reason`, `refundInitiated`, `refundAmountPaise`)
 - `ShipmentState` enum (all 27 values) moved to `common` so all consumers can deserialize state fields
@@ -270,19 +271,28 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ---
 
-### `M4 IMPL - PR #10 - B2C and C2C PREPAID booking endpoint with circuit breakers`
+### `M4 IMPL - PR #10 - B2C PREPAID booking endpoint with circuit breakers` 🔧 Implemented — not yet committed
 
 **Module:** `orders`
 
-**What:**
-- `POST /api/v1/b2c/shipments` — full PREPAID path
-- `POST /api/v1/b2c/shipments` — note the `/v1/` prefix is mandatory on every endpoint in this module from PR #10 onward; `/api/v1/` is the stable external contract; `/api/v2/` can coexist later without touching this code
-- `BookingService` orchestration: idempotency check → serviceability (`ServiceabilityPort`, circuit breaker 500ms) → pricing (`PricingPort`, circuit breaker 500ms) → Razorpay verify+capture (`PaymentPort`, circuit breaker 3s) → DB transaction (insert `Shipment`, `PaymentTransaction`, `ShipmentStateHistory`, increment ref counter, store idempotency response) → `EtaPort.fetchEta(BOOKED)` → return `201`
-- **Resilience4j circuit breakers configured here** — not in a later phase; booking without circuit breakers is not shippable
-- **All Resilience4j thresholds and timeout values must be `@ConfigurationProperties`-bound** (e.g. `m4.resilience.pricing.timeout-ms=500`, `m4.resilience.razorpay.timeout-ms=3000`). No hardcoded literals. This allows per-environment tuning and V2 SLA renegotiation without code changes.
-- Request validation (DTO + `@Validated`)
-- All error responses: `503` on open circuit, `402` on payment failure, `422` on validation, `400` on missing idempotency key
-- Integration test with stub ports wired via Spring `@TestConfiguration`
+**What (as implemented in working tree):**
+- `POST /api/v1/b2c/shipments` — B2C PREPAID path (COD and C2C deferred to PR #11)
+- `B2cShipmentController`: package-private `@RestController`; accepts `Idempotency-Key` and `X-User-Id` headers; delegates to `BookingService.book()`
+  - Note: JWT auth (`@AuthenticationPrincipal`) is not yet integrated; uses `X-User-Id` header as a placeholder pending M1 integration
+- `BookingService` (public interface) + `BookingServiceImpl` (package-private): orchestrates serviceability → pricing → Razorpay verify+capture → DB transaction → best-effort ETA → return 201
+  - `customer_type` is hardcoded to `B2C` (no `customer_type` field in `BookingRequest`)
+  - `payment_mode` is hardcoded to `PREPAID` (no `payment_mode` field in `BookingRequest`; COD is PR #11)
+  - Kafka event emission (shipment.created) and notification dispatch are **not yet wired** (planned PR #14)
+  - Compensating refund is initiated if DB write fails after successful Razorpay capture
+- `BookingRequest` DTO: `senderName`, `senderPhone`, `senderEmail`, `originAddress`/`originCity`/`originPincode`, `receiverName`, `receiverPhone`, `receiverEmail`, `destAddress`/`destCity`/`destPincode`, `weightGrams`, `lengthCm`, `widthCm`, `heightCm`, `declaredValuePaise`, `pickupType`, `dropType`, `razorpayOrderId`, `razorpayPaymentId`, `razorpaySignature`
+- `BookingResponse` DTO: `shipmentRef`, `state`, `stateLabel`, `deliveryType`, `pricing` (quotedPricePaise, gstPaise, totalPricePaise, currency, breakdown, rateCardVersion), `etaPromised`, `slaCommitmentMinutes`, `trackingUrl`, `parcelId` (null at booking), `labelStatus` ("PENDING"), `payment` (status, razorpayPaymentId)
+- `GlobalExceptionHandler` (`@RestControllerAdvice`): maps `ServiceabilityException`, `DownstreamTimeoutException`, `PaymentPort.*Exception`, `MethodArgumentNotValidException` to appropriate HTTP status codes
+- `ResilienceConfig`: registers `CircuitBreakerRegistry` and `TimeLimiterRegistry` beans; three named circuit breakers (`serviceability`, `pricing`, `payment`) and matching `TimeLimiter`s; `ScheduledExecutorService` bean (`resilienceScheduler`, 4 threads)
+- `ResilienceProperties` (`@ConfigurationProperties(prefix="orders.resilience")`): `failureRateThreshold`, `minimumNumberOfCalls`, `slidingWindowSize`, `serviceabilityTimeoutMs`, `pricingTimeoutMs`, `paymentTimeoutMs`
+- ETA call is best-effort: failure logs a WARN but does not fail the booking; `etaPromised` / `slaCommitmentMinutes` are null in the response if ETA call fails
+- Idempotency key is stored on `Shipment.idempotency_key` but the `IdempotencyFilter` deduplication path is not yet wired into this endpoint (PR #8 filter exists; wiring it to the booking path is a follow-up item)
+- Request validation (`@Valid` + JSR-303 constraints on `BookingRequest`)
+- All Resilience4j thresholds bound to `@ConfigurationProperties` — no hardcoded literals
 
 ---
 
@@ -459,7 +469,108 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ---
 
-## PR Dependency Graph
+## Deferred Technical Debt
+
+Findings from architect reviews that were explicitly **not fixed** in the originating PR and need a dedicated future PR or team discussion. Each entry names the PR where it was found, the severity assigned at the time, and the recommended resolution.
+
+---
+
+### From PR #10 architect review (2026-05-30)
+
+#### [DTD-10-A] `CRITICAL` — ETA network call inside the DB transaction
+
+**File:** `BookingServiceImpl.java` → `persist()`, lines ~227–244
+
+**Problem:** `etaPort.fetchEta(...)` is an outbound network call to M9. It executes inside the `TransactionTemplate.execute()` callback, meaning a DB connection is held open for the full round-trip to M9. Under concurrent bookings, this exhausts the connection pool if M9 is slow. The call is wrapped in `try/catch(Exception)` so it cannot roll back the booking, but the DB connection cost is real. This also violates the stated design invariant: "external calls must happen outside the DB transaction."
+
+**Recommended fix:** Extract ETA from `persist()`. After `tx.execute()` commits, call ETA in a try/catch, then do a narrow second `tx.execute()` to write `eta_promised` and `sla_commitment_minutes` back to the shipment. Return `etaPromised = null` in the response if ETA fails (already the behaviour when the inner try/catch catches).
+
+```java
+// book() after the outer try/catch:
+BookingResponse resp = tx.execute(status -> persist(...));  // no ETA inside
+
+try {
+    EtaResult eta = etaPort.fetchEta(new EtaRequest(...));
+    tx.execute(status -> {
+        Shipment s = shipmentRepository.findById(savedId).orElseThrow();
+        s.setEtaPromised(eta.etaPromised());
+        s.setSlaCommitmentMinutes((short) eta.slaCommitmentMinutes());
+    });
+    resp.setEtaPromised(eta.etaPromised());
+    resp.setSlaCommitmentMinutes(eta.slaCommitmentMinutes());
+} catch (Exception e) {
+    log.warn("ETA fetch failed for shipment {}; booking proceeds without ETA", savedId, e);
+}
+```
+
+**Target PR:** #20 (Resilience hardening) or a dedicated PR before #20.
+
+---
+
+#### [DTD-10-B] `CRITICAL` — Cross-module boundary violation: `IdempotencyFilter` imports `auth` internal class
+
+**File:** `IdempotencyFilter.java:8`
+
+**Problem:** `import com.oneday.auth.security.AuthUserDetails;` imports an internal class from the `auth` module. Per the design invariant: "cross-module imports: only import another module's public service interface, never its internal classes." If `auth` refactors `AuthUserDetails`, `orders` breaks silently. The companion test `IdempotencyFilterTest.java` also imports `com.oneday.auth.domain.User` directly.
+
+**Recommended fix:** Define a thin `OneDayPrincipal` interface in `common` that exposes only what `orders` needs. Have `auth`'s `AuthUserDetails` implement it. `IdempotencyFilter` depends only on `common`.
+
+```java
+// common/src/main/java/com/oneday/common/security/OneDayPrincipal.java
+public interface OneDayPrincipal {
+    UUID getUserId();
+    String getRole();
+}
+
+// auth: AuthUserDetails implements UserDetails, OneDayPrincipal { ... }
+
+// IdempotencyFilter:
+import com.oneday.common.security.OneDayPrincipal;
+// ...
+if (auth.getPrincipal() instanceof OneDayPrincipal p) {
+    userId = p.getUserId().toString();
+}
+```
+
+**Target PR:** #18 (Internal APIs) — when auth integration is formally wired into the orders module.
+
+---
+
+#### [DTD-10-C] `WARNING` — `@Transactional` on controller method hides missing service abstraction
+
+**File:** `PickupOtpController.java:62` (`verifyOtp`)
+
+**Problem:** `verifyOtp()` carries `@Transactional` at the controller level. This is load-bearing — without it, `pickupOtpService.verify()` (commits `used=true`) and `stateMachine.transition()` (commits state change) run in two separate transactions, leaving a window where a crash produces inconsistent state (OTP used, shipment still `PICKUP_ASSIGNED`). The `@Transactional` works at runtime (Spring proxies the controller) but violates the principle that business transactions belong in the service layer.
+
+**Recommended fix:** Introduce `ShipmentPickupService.verifyOtpAndTransition(shipmentId, otp, ctx)` annotated `@Transactional`. The controller becomes a thin delegator with no `@Transactional` of its own.
+
+**Target PR:** #13 (Cancellation) — when the pickup service layer is fleshed out.
+
+---
+
+#### [DTD-10-D] `WARNING` — State-gate business logic in `PickupOtpController`
+
+**File:** `PickupOtpController.java:68`, `PickupOtpController.java:111`
+
+**Problem:** Both `verifyOtp()` and `resendOtp()` check `shipment.getState() != ShipmentState.PICKUP_ASSIGNED` directly in the controller. Business invariants (which states allow OTP operations) belong in the service layer so they are enforced regardless of which entry point triggers the operation.
+
+**Recommended fix:** Move the guard into `PickupOtpService` or the new `ShipmentPickupService` from DTD-10-C. Resolves together with that item.
+
+**Target PR:** #13 (same as DTD-10-C).
+
+---
+
+#### [DTD-10-E] `WARNING` — Single shared `CircuitBreakerConfig` for all three circuit breakers
+
+**File:** `ResilienceConfig.java:22`
+
+**Problem:** `serviceability`, `pricing`, and `payment` circuit breakers are created from one `CircuitBreakerConfig`. Payment deserves a more conservative configuration (larger sliding window, lower failure-rate threshold) than a read-only serviceability check — a false trip on the payment CB means refusing money movement. Each CB is an independent state machine (named correctly), but their thresholds are identical.
+
+**Recommended fix:** Register per-named configs in `CircuitBreakerRegistry` and add corresponding properties to `ResilienceProperties` (`paymentFailureRateThreshold`, `paymentSlidingWindowSize`, etc.). Mirrors what is already done for `TimeLimiterRegistry` (per-named timeout).
+
+**Target PR:** #20 (Resilience hardening).
+
+---
 
 ```
 #1 (MutableBaseEntity + Flyway)
@@ -475,7 +586,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
                           └─► #7 (State machine)
                                ├─► #8 (Idempotency) ✅
                                └─► #9 (Ref gen + PaymentPort + PickupOtpService) ✅
-                                    └─► #10 (B2C/C2C PREPAID booking + circuit breakers)
+                                    └─► #10 (B2C PREPAID booking + circuit breakers) 🔧
                                          ├─► #11 (COD path)         ← parallel
                                          ├─► #12 (B2B booking)      ← parallel
                                          └─► #13 (Cancellation)

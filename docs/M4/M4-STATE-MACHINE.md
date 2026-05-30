@@ -319,6 +319,7 @@ Any transition not listed above is rejected with `409 Conflict`.
 | `PICKUP_ASSIGNED` | Pickup agent assigned |
 | `PICKED_UP` | Parcel collected |
 | `HANDED_TO_PICKUP_VAN` | Parcel handed to transport |
+| `AWAITING_SELF_DROP` | Please bring your parcel to the origin hub |
 | `AT_ORIGIN_HUB` | Arrived at origin hub |
 | `ORIGIN_HUB_PROCESSING` | Being processed at hub |
 | `IN_TAKEOFF_BAG` | Sorted and bagged for dispatch |
@@ -333,6 +334,8 @@ Any transition not listed above is rejected with `409 Conflict`.
 | `DROP_ASSIGNED` | Delivery agent assigned |
 | `DROP_COLLECTED` | Delivery agent en route |
 | `DROPPED` | Delivered |
+| `AWAITING_HUB_COLLECT` | Your parcel is ready — collect from the hub |
+| `HUB_COLLECTED` | Collected from hub |
 | `PICKUP_FAILED` | Pickup unsuccessful |
 | `DELIVERY_FAILED` | Delivery unsuccessful |
 | `RTO_INITIATED` | Return to sender initiated |
