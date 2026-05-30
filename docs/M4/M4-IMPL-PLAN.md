@@ -3,9 +3,9 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Plan version** | 1.3 |
+| **Plan version** | 1.4 |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-29 |
+| **Last updated** | 2026-05-30 |
 | **Total PRs** | 21 |
 | **Design doc** | [M4-ORDERS-DESIGN.md](M4-ORDERS-DESIGN.md) |
 
@@ -21,7 +21,8 @@
 | #6 | Spring Data repositories and custom query methods | ✅ Merged |
 | #7 | Shipment state machine with full transition coverage | ✅ Merged |
 | #8 | Idempotency infrastructure (IdempotencyFilter, IdempotencyKeyPurgeJob, V4_10 fingerprint migration) | ✅ Merged |
-| #9–#21 | Ref gen + utility services, booking APIs, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
+| #9 | Ref gen + utility services: ShipmentRefService, DeliveryTypeResolver, PaymentPort, PickupOtpService, PickupOtpController, V4_11 pickup_otps migration, PickupOtpProperties | ✅ Merged |
+| #10–#21 | Booking APIs, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
 
 ---
 
@@ -243,18 +244,21 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ---
 
-### `M4 IMPL - PR #9 - Shipment reference generation and internal utility services`
+### `M4 IMPL - PR #9 - Shipment reference generation and internal utility services` ✅ Merged
 
 **Module:** `orders`
 
-**What:**
-- `ShipmentRefService`: generates `1DD-{CITY}-{YYYYMMDD}-{NNNNN}` using `SELECT FOR UPDATE` on `ShipmentRefCounter`; documents the Redis upgrade path at high volume
-- `DeliveryTypeResolver`: `origin_city == dest_city` → `SAME_CITY`, else `INTERCITY` — pure function, zero DB calls
-- `PaymentPort` (local to `orders`): `verifySignature()`, `capture()`, `initiateRefund()` — Razorpay-specific, not in `common` since no other module touches payments
-- `PickupOtpService`: generates 4-digit OTP, stores hashed in `pickup_otps` table with 10-minute TTL; exposes `generate()`, `verify()`, `resend()` (max 3); called as a side-effect when state machine enters `PICKUP_ASSIGNED`
-- `POST /internal/v1/shipments/{ref}/pickup-otp/verify` — on success, directly transitions `PICKUP_ASSIGNED → PICKED_UP`; returns `422` on wrong OTP or expired; returns `409` if state is not `PICKUP_ASSIGNED`
-- `POST /internal/v1/shipments/{ref}/pickup-otp/resend` — invalidates previous OTP; generates fresh one; returns `429` after 3 resends
-- Flyway migration for `pickup_otps` table: `(id, shipment_id, otp_hash, expires_at, used, resend_count, created_at)`
+**What (all implemented):**
+- `ShipmentRefService` interface + `ShipmentRefServiceImpl`: generates `1DD-{CITY}-{YYYYMMDD}-{NNNNN}` using `insertIfAbsent` + `SELECT FOR UPDATE` on `ShipmentRefCounter`; `Propagation.MANDATORY` — counter increment rolls back with the caller's transaction; documents the Redis upgrade path at high volume
+- `DeliveryTypeResolver` (`@Component`): `resolve(origin, dest)` → `SAME_CITY` if equal ignoring case, else `INTERCITY` — pure function, zero DB calls
+- `PaymentPort` interface (local to `orders/service/` — not in `common`): `verifySignature(orderId, paymentId, signature)`, `void capture(paymentId, amountPaise)`, `String initiateRefund(paymentId, amountPaise)` — Razorpay-specific; inner unchecked exceptions `PaymentVerificationException`, `PaymentCaptureException`, `PaymentRefundException`
+- `PickupOtpService` interface + `PickupOtpServiceImpl`: generates 4-digit OTP using `SecureRandom`, stores BCrypt(cost=4) hash in `pickup_otps` table; exposes `generate()`, `verify()` (pessimistic-lock), `resend()` (max 3, driven by `PickupOtpProperties`); inner exceptions `OtpVerificationException`, `ResendLimitExceededException`
+- `PickupOtpProperties` (`@ConfigurationProperties(prefix="orders.otp")`): `ttlMinutes=10`, `maxResendCount=3`
+- `PickupOtpRepository`: `findByShipmentId`, `findByShipmentIdWithLock` (`SELECT FOR UPDATE`), `deleteByShipmentId`
+- `PickupOtp` JPA entity: `pickup_otps` table; only `used` is mutable after creation
+- `PickupOtpController`: `POST /internal/v1/shipments/{ref}/pickup-otp/verify` → `204 No Content` on success (transitions `PICKUP_ASSIGNED → PICKED_UP`), `409` if wrong state, `422` on wrong/expired OTP; `POST /internal/v1/shipments/{ref}/pickup-otp/resend` → `200 {"otp": "..."}` on success, `429` after 3 resends
+- `OtpVerifyRequest` DTO: `@NotBlank @Pattern(regexp="\\d{4}") String otp`
+- `V4_11__create_pickup_otps.sql`: `pickup_otps` table with unique index on `shipment_id` and expiry index; `ShipmentRefCounterRepository` extended with `insertIfAbsent` native query
 
 ---
 
@@ -469,8 +473,8 @@ NotificationPort     → notification service implements; M4 calls on every stat
                 └─► #5 (JPA entities)
                      └─► #6 (Repositories)
                           └─► #7 (State machine)
-                               ├─► #8 (Idempotency)
-                               └─► #9 (Ref gen + PaymentPort)
+                               ├─► #8 (Idempotency) ✅
+                               └─► #9 (Ref gen + PaymentPort + PickupOtpService) ✅
                                     └─► #10 (B2C/C2C PREPAID booking + circuit breakers)
                                          ├─► #11 (COD path)         ← parallel
                                          ├─► #12 (B2B booking)      ← parallel
