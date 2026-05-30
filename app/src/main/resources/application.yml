@@ -16,3 +16,17 @@ spring:
       - classpath:db/migration/orders
   jackson:
     property-naming-strategy: SNAKE_CASE
+  kafka:
+    # Default = local. Override KAFKA_BOOTSTRAP_SERVERS (+ activate the 'dev' profile for a
+    # managed cluster's SASL creds — see application-dev.yml).
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        # In-house monolith: every producer is our own code. Tighten to explicit packages
+        # once an external/untrusted producer writes to a topic we consume.
+        spring.json.trusted.packages: "*"
