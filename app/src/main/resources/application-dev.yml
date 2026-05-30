@@ -1,0 +1,20 @@
+# Shared TEAM-TESTING cluster (managed Redpanda Serverless / Confluent Basic).
+# Activate with:  -Dspring.profiles.active=dev   (or SPRING_PROFILES_ACTIVE=dev)
+# Secrets come from env vars — never commit real keys.
+#
+#   export KAFKA_BOOTSTRAP_SERVERS=<your-cluster-bootstrap:9092>
+#   export KAFKA_KEY=<api-key / username>
+#   export KAFKA_SECRET=<api-secret / password>
+#
+# Redpanda Cloud uses SASL_SSL + SCRAM-SHA-256 (shown below).
+# Confluent Cloud uses SASL_SSL + PLAIN — swap sasl.mechanism to PLAIN and the login
+# module to org.apache.kafka.common.security.plain.PlainLoginModule.
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    properties:
+      security.protocol: SASL_SSL
+      sasl.mechanism: SCRAM-SHA-256
+      sasl.jaas.config: >
+        org.apache.kafka.common.security.scram.ScramLoginModule required
+        username="${KAFKA_KEY}" password="${KAFKA_SECRET}";
