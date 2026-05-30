@@ -20,7 +20,9 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <scope>test</scope>
+            <!-- runtime (not test) so the standalone AuthLocalApplication has the JDBC
+                 driver; the @DataJpaTest repository tests still get it transitively. -->
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>com.oneday</groupId>
@@ -60,4 +62,25 @@
             <scope>runtime</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Enables `mvn spring-boot:run -pl auth` for the standalone M1 runner.
+                 repackage is disabled because auth is a library consumed by app/ —
+                 a fat jar here would break that dependency. -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.oneday.auth.local.AuthLocalApplication</mainClass>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>repackage</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
