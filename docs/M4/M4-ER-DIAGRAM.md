@@ -104,7 +104,6 @@ erDiagram
     IDEMPOTENCY_KEYS {
         varchar key PK
         uuid user_id PK
-        varchar request_fingerprint
         smallint response_status
         jsonb response_body
         timestamptz expires_at
