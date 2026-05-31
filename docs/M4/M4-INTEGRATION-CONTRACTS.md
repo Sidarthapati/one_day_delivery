@@ -4,7 +4,7 @@
 |---|---|
 | **Module** | M4 — Orders |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-30 |
+| **Last updated** | 2026-05-31 |
 | **Status** | Authoritative — must be kept in sync with M4-ORDERS-DESIGN.md |
 
 This document is the single reference for every other module team integrating with M4. It covers exactly what M4 needs from you, what M4 gives you, and the precise contracts (types, fields, topics, endpoints) for both directions.

@@ -4,7 +4,7 @@
 |---|---|
 | **Module** | M4 — Orders |
 | **Version** | 0.5 |
-| **Status** | Draft — PRs #1–11 merged; PR #12 (B2B booking) not yet started |
+| **Status** | Draft — PRs #1–12 merged; PR #13 (cancellation) not yet started |
 | **Author** | Satvik |
 | **Last updated** | 2026-05-31 |
 | **Depends on** | M1 (auth/JWT), M2 (pricing — sync), M3 (grid/serviceability — sync), M8 (barcode/label — async via Kafka) |
@@ -1070,41 +1070,61 @@ Validation failures return `400 Bad Request` with a structured error body:
 
 #### `POST /api/v1/b2b/shipments` — Book a B2B shipment
 
-**Auth:** `X-Api-Key` header (B2B machine-to-machine) OR JWT with role `B2B_USER`  
+**Auth:** `X-User-Id` header (placeholder — JWT `@AuthenticationPrincipal` will be wired in PR #18 when M1 auth is integrated)  
 **Headers:** `Idempotency-Key: <uuid>` (required)
 
-**Request:**
+> **Implementation note (PR #12 — current state):** The request body uses a flat structure (no nested `sender`/`receiver`/`parcel` objects). All sender, receiver, parcel, and routing fields are top-level on `B2bBookingRequest`. There is no `paymentMode` field — B2B is always credit.
+
+**Request (as implemented):**
 ```json
 {
   "b2b_account_id": "acct_uuid_here",
   "purchase_order_ref": "PO-2026-XYZ",
-  "sender": { "...": "same structure as B2C" },
-  "receiver": { "...": "same structure as B2C" },
-  "parcel": {
-    "weight_grams": 5000,
-    "length_cm": 50,
-    "width_cm": 40,
-    "height_cm": 30,
-    "description": "Auto parts",
-    "declared_value_paise": 25000000
-  }
+  "sender_name": "Priya Sharma",
+  "sender_phone": "+919876543210",
+  "sender_email": "priya@example.com",
+  "origin_address": {
+    "line1": "12 MG Road",
+    "city_code": "BLR",
+    "pincode": "560001"
+  },
+  "origin_city": "BLR",
+  "origin_pincode": "560001",
+  "receiver_name": "Rahul Mehta",
+  "receiver_phone": "+919999988888",
+  "receiver_email": "rahul@example.com",
+  "dest_address": {
+    "line1": "45 Marine Lines",
+    "city_code": "BOM",
+    "pincode": "400002"
+  },
+  "dest_city": "BOM",
+  "dest_pincode": "400002",
+  "weight_grams": 5000,
+  "length_cm": 50,
+  "width_cm": 40,
+  "height_cm": 30,
+  "declared_value_paise": 25000000,
+  "pickup_type": "DA_PICKUP",
+  "drop_type": "DA_DELIVERY"
 }
 ```
 
-**B2B-specific flow differences:**
-- No Razorpay fields — amount is logged against the account's credit
-- `SELECT ... FOR UPDATE` on `b2b_accounts` row checks: `outstanding_balance_paise + total_price_paise ≤ credit_limit_paise`
-- If credit limit exceeded: `402 CREDIT_LIMIT_EXCEEDED`
-- On success: `outstanding_balance_paise` is atomically incremented in the same transaction
-- Account-specific rate card from M2 (via `rate_card_id` on `B2bAccount`)
+**B2B-specific flow (6 steps as implemented):**
+1. Fetch `B2bAccount` by `b2b_account_id` — `404 AccountNotFoundException` if not found; `409 AccountInactiveException` if `is_active = false`
+2. Check serviceability via `ServiceabilityPort` (circuit breaker + time limiter, same as B2C)
+3. Compute volumetric weight; determine chargeable weight
+4. Call `PricingPort.computeQuote()` with `CustomerType.B2B` and `account.getRateCardId()` (circuit breaker + time limiter)
+5. Open DB transaction: `SELECT FOR UPDATE` on `b2b_accounts` row → pessimistic credit check (`outstanding_balance + total ≤ credit_limit`) → `402 CreditLimitExceededException` if violated → persist `Shipment` (`customerType=B2B`, `b2b_account_id`, `paymentMode=null`) → increment `outstanding_balance_paise` → insert `ShipmentStateHistory`
+6. Best-effort ETA call (failure does not roll back the booking)
 
-**Response `201 Created`:** Same shape as B2C, without `payment` block. Includes `invoice_ref` for the billing cycle.
+**Response `201 Created`:** Same shape as B2C (`BookingResponse`). The `payment` field is annotated `@JsonInclude(NON_NULL)` and is set to `null` for B2B — it is **omitted entirely** from the JSON response. There is no `invoice_ref` field in the response.
 
 **Error responses (additional to B2C errors):**
 | HTTP Code | Error code | Scenario |
 |---|---|---|
 | `402` | `CREDIT_LIMIT_EXCEEDED` | Booking would exceed account credit |
-| `403` | `ACCOUNT_INACTIVE` | B2B account is suspended |
+| `409` | `ACCOUNT_INACTIVE` | B2B account has `is_active = false` |
 | `404` | `ACCOUNT_NOT_FOUND` | `b2b_account_id` not found |
 
 ---
@@ -1269,17 +1289,21 @@ When a B2B account has a registered webhook URL:
 
 ### 8.1 Package Structure
 
-The listing below shows what exists in the codebase as of PR #11. Files without a suffix note are fully implemented. Future PRs add to this structure.
+The listing below shows what exists in the codebase as of PR #12. Files without a suffix note are fully implemented. Future PRs add to this structure.
 
 ```
 com.oneday.orders/
   api/
     B2cShipmentController.java        ← POST /api/v1/b2c/shipments (PREPAID and COD; PRs #10–11)
+    B2bShipmentController.java        ← POST /api/v1/b2b/shipments → 201 Created (PR #12)
     PickupOtpController.java          ← POST /internal/v1/shipments/{ref}/pickup-otp/verify|resend
                                          ⚠️ Known gap (DTD-10-C/D): verifyOtp carries @Transactional at the controller
                                          level for atomicity; state-gate checks are also in the controller. Both belong
                                          in a ShipmentPickupService. Target fix: PR #13. See M4-IMPL-PLAN.md §Deferred.
     GlobalExceptionHandler.java       ← @RestControllerAdvice; maps service exceptions to HTTP status
+                                         Handles B2B exceptions added in PR #12:
+                                         AccountNotFoundException → 404, AccountInactiveException → 409,
+                                         CreditLimitExceededException → 402
     filter/
       IdempotencyFilter.java          ← OncePerRequestFilter; idempotency header enforcement
                                          ⚠️ Known gap (DTD-10-B): currently imports com.oneday.auth.security.AuthUserDetails
@@ -1288,7 +1312,7 @@ com.oneday.orders/
   config/
     IdempotencyProperties.java        ← @ConfigurationProperties(prefix="orders.idempotency")
     PickupOtpProperties.java          ← @ConfigurationProperties(prefix="orders.otp")
-    ResilienceConfig.java             ← Resilience4j CircuitBreaker + TimeLimiter beans (PR #10)
+    ResilienceConfig.java             ← Resilience4j CircuitBreaker + TimeLimiter beans (PR #10; reused by B2bBookingServiceImpl)
     ResilienceProperties.java         ← @ConfigurationProperties(prefix="orders.resilience")
   domain/
     Address.java                      ← plain POJO; serialized to JSONB for Shipment.origin_address / dest_address columns
@@ -1307,18 +1331,20 @@ com.oneday.orders/
       TriggerSource.java
   dto/
     BookingRequest.java               ← B2C PREPAID + COD request; pickupType, dropType, paymentMode (@NotNull), Razorpay fields optional (PRs #10–11)
-    BookingResponse.java              ← shipmentRef, state, stateLabel, deliveryType, pricing, eta, payment (mode, status, razorpayPaymentId @JsonInclude NON_NULL) (PRs #10–11)
+    BookingResponse.java              ← shipmentRef, state, stateLabel, deliveryType, pricing, eta, payment (@JsonInclude NON_NULL — omitted for B2B) (PRs #10–12)
+    B2bBookingRequest.java            ← B2B request: b2bAccountId, purchaseOrderRef, flat sender/receiver/parcel/routing fields; no paymentMode (PR #12)
     OtpVerifyRequest.java             ← @NotBlank @Pattern(regexp="\\d{4}") String otp
   repository/
     ShipmentRepository.java
     ShipmentStateHistoryRepository.java
     PaymentTransactionRepository.java
-    B2bAccountRepository.java
+    B2bAccountRepository.java         ← findByCityId, findByIsActive, findByBillingEmail, findByIdForUpdate(@Lock PESSIMISTIC_WRITE) (PR #12)
     IdempotencyKeyRepository.java
     ShipmentRefCounterRepository.java ← includes insertIfAbsent native query
     PickupOtpRepository.java          ← findByShipmentId, findByShipmentIdWithLock, deleteByShipmentId
   service/
     BookingService.java               ← public interface: book(request, idempotencyKey, userId); inner exceptions: ServiceabilityException, DownstreamTimeoutException, InvalidBookingRequestException (PRs #10–11)
+    B2bBookingService.java            ← public interface: book(B2bBookingRequest, idempotencyKey, userId); inner exceptions: AccountNotFoundException, AccountInactiveException, CreditLimitExceededException (PR #12)
     ShipmentStateMachine.java         ← public interface
     TransitionRegistry.java           ← extensible transition map
     TransitionRegistryConfigurer.java ← configures all legal transitions at startup
@@ -1333,6 +1359,7 @@ com.oneday.orders/
       IllegalStateTransitionException.java
     impl/
       BookingServiceImpl.java         ← package-private; orchestrates serviceability→pricing→payment (PREPAID only)→persist→ETA; branches on payment_mode for PREPAID vs COD; customer_type hardcoded to B2C (PRs #10–11)
+      B2bBookingServiceImpl.java      ← package-private; 6-step flow: account fetch+active check → serviceability CB/TL → weight calc → B2B pricing (CustomerType.B2B + account.getRateCardId()) → DB TX with SELECT FOR UPDATE credit check + Shipment persist (paymentMode=null) + outstandingBalance increment + state history → best-effort ETA → BookingResponse with payment=null (PR #12)
       ShipmentStateMachineImpl.java   ← package-private
       ShipmentRefServiceImpl.java     ← package-private; Propagation.MANDATORY
       PickupOtpServiceImpl.java       ← package-private; BCrypt(4); pessimistic-lock verify
@@ -1342,7 +1369,7 @@ com.oneday.orders/
   //   common.port.EtaPort            (M9 implements)
   //   common.port.NotificationPort   (notification service implements)
   // M8 (barcode) has no port interface — M8 subscribes to shipment.created via Kafka.
-  // Future PRs add: B2bShipmentController, TrackingController, InternalShipmentController,
+  // Future PRs add: TrackingController, InternalShipmentController,
   //   RazorpayWebhookController, ShipmentEventProducer, ShipmentEventConsumer,
   //   WebhookDeliveryService, and remaining booking/tracking DTOs.
 ```
@@ -1435,7 +1462,7 @@ All thresholds are `@ConfigurationProperties`-bound under `orders.resilience.*` 
 
 ### 8.4 Sequence Diagrams
 
-> All sequence diagrams (B2C PREPAID booking, COD booking, Kafka state transition, AT_ORIGIN_HUB ETA update): **[M4-SEQUENCES.md](M4-SEQUENCES.md)**
+> All sequence diagrams (B2C PREPAID booking, COD booking, B2B booking, Kafka state transition, AT_ORIGIN_HUB ETA update): **[M4-SEQUENCES.md](M4-SEQUENCES.md)**
 
 ---
 

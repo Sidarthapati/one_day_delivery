@@ -24,7 +24,8 @@
 | #9 | Ref gen + utility services: ShipmentRefService, DeliveryTypeResolver, PaymentPort, PickupOtpService, PickupOtpController, V4_11 pickup_otps migration, PickupOtpProperties | ✅ Merged |
 | #10 | B2C PREPAID booking endpoint with Resilience4j circuit breakers (B2cShipmentController, BookingService/Impl, BookingRequest/Response DTOs, GlobalExceptionHandler, ResilienceConfig/Properties) | ✅ Merged |
 | #11 | COD booking path: `paymentMode` field added to `BookingRequest`; COD branch in `BookingServiceImpl` (skips Razorpay, no `PaymentTransaction` row); `PaymentSummary.mode` field added to `BookingResponse`; `InvalidBookingRequestException` added to `BookingService`; `V4_12__add_cod_shipment_index.sql` partial index | ✅ Merged |
-| #12–#21 | B2B booking, cancellation, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
+| #12 | B2B booking endpoint with atomic credit check (B2bShipmentController, B2bBookingService/Impl, B2bBookingRequest DTO, findByIdForUpdate on B2bAccountRepository, 3 new GlobalExceptionHandler mappings, BookingResponse.payment @JsonInclude NON_NULL) | ✅ Merged |
+| #13–#21 | Cancellation, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
 
 ---
 
@@ -36,7 +37,7 @@ Before the PR breakdown, these principles govern every decision in this plan:
 M4 is a platform module. Before a single line of M4 business logic is written, the Kafka event schemas, cross-module port interfaces, and topic name constants must be published. Other teams cannot proceed without them.
 
 **2. Cross-module contracts live in `common`, not in `orders`.**
-Port interfaces that other modules implement — `PricingPort` (M2), `ServiceabilityPort` (M3), `EtaPort` (M9), `BarcodePort` (M8), `NotificationPort` — must live in `common`. If they live in `orders`, other modules would need to depend on `orders` to implement them, creating a circular dependency. Only M4-internal ports (e.g. `PaymentPort` for Razorpay) stay in `orders`.
+Port interfaces that other modules implement — `PricingPort` (M2), `ServiceabilityPort` (M3), `EtaPort` (M9), `NotificationPort` — must live in `common`. If they live in `orders`, other modules would need to depend on `orders` to implement them, creating a circular dependency. Only M4-internal ports (e.g. `PaymentPort` for Razorpay) stay in `orders`. M8 (barcode/label) has no port interface — it is integrated fully async via Kafka.
 
 **3. Resilience is not a phase 6 concern.**
 Circuit breakers for M2 and M3 are configured alongside the booking API, not bolted on at the end. A booking endpoint without circuit breakers is not production-ready, even in development.
@@ -128,7 +129,7 @@ Phase 7 (Observability)
 
 **Module:** `common`
 
-**Why third:** M2, M3, M8, M9 need to know what interface to implement. Publishing these now lets those teams work in parallel with M4's implementation. M4 will use stub implementations in tests until real module implementations are wired in `app`.
+**Why third:** M2, M3, and M9 need to know what interface to implement. M8 integration is fully async — no port interface needed (see note below). Publishing these now lets those teams work in parallel with M4's implementation. M4 will use stub implementations in tests until real module implementations are wired in `app`.
 
 **What (as merged):**
 ```java
@@ -201,7 +202,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 - `ShipmentRepository`: `findByIdWithLock` (`@Lock(PESSIMISTIC_WRITE)`), `findByShipmentRef`, `findByState` (list + paginated), `findByStateAndCityId` (list + paginated), `existsByIdempotencyKey`, `findByCustomerType`, `findByAssignedFlightId`
 - `ShipmentStateHistoryRepository`: `findByShipmentIdOrderByOccurredAtAsc`
 - `PaymentTransactionRepository`: `findByShipmentId`, `findByRazorpayOrderId`
-- `B2bAccountRepository`: `findByCityId`, `findByIsActive`, `findByBillingEmail` — **Note:** `findByIdWithLock` not yet added; needed for B2B credit check in PR #12
+- `B2bAccountRepository`: `findByCityId`, `findByIsActive`, `findByBillingEmail` — **Note:** `findByIdForUpdate` (`@Lock(PESSIMISTIC_WRITE)`) was added in PR #12 for the B2B credit check; not part of this PR
 - `IdempotencyKeyRepository`: `deleteExpired(Instant now)` (`@Transactional @Modifying @Query`)
 - `ShipmentRefCounterRepository`: `findByIdWithLock(@Param("id") ShipmentRefCounterId id)` (`@Lock(PESSIMISTIC_WRITE)`)
 - `@DataJpaTest` integration tests against local PostgreSQL (`@AutoConfigureTestDatabase(replace=NONE)`) — see testing strategy note below
@@ -268,7 +269,7 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ## Phase 3 — Booking APIs
 > **End-to-end booking flows with stub ports. Circuit breakers included here, not later.**
-> PRs #10 and #11 are merged. PR #12 (B2B booking) is next; PR #13 (cancellation) can be developed in parallel.
+> PRs #10, #11, and #12 are merged. PR #13 (cancellation) is next.
 >
 > **V2 extension points:** New booking types (e.g. B2C COD with partial prepayment, subscription accounts) are new `BookingService` branches behind the existing port interfaces — not new service classes. New `customer_type` values are added to the `CustomerType` enum in `common` and a new `BookingOrchestrator` implementation is registered.
 
@@ -314,16 +315,29 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ---
 
-### `M4 IMPL - PR #12 - B2B booking endpoint with atomic credit check`
+### `M4 IMPL - PR #12 - B2B booking endpoint with atomic credit check` ✅ Merged
 
 **Module:** `orders`
 
-**What:**
-- `POST /api/v1/b2b/shipments`
-- `SELECT FOR UPDATE` on `b2b_accounts` inside booking DB transaction; credit check: `outstanding_balance + total ≤ credit_limit` → `402 CREDIT_LIMIT_EXCEEDED` if violated
-- `outstanding_balance_paise` incremented atomically with `Shipment` insert
-- No Razorpay; B2B is credit-only
-- Integration test: concurrent booking race condition (two threads, verify only one exceeds limit)
+**What (merged):**
+- `POST /api/v1/b2b/shipments` → `201 Created` (`B2bShipmentController`, package-private)
+  - Accepts `Idempotency-Key` and `X-User-Id` headers; delegates to `B2bBookingService.book()`
+  - Note: JWT auth (`@AuthenticationPrincipal`) is not yet integrated; uses `X-User-Id` header as a placeholder pending M1 integration (same pattern as `B2cShipmentController`)
+- `B2bBookingRequest` DTO: flat structure with `b2bAccountId` (UUID), `purchaseOrderRef` (nullable, max 100), top-level sender/receiver/address/parcel/routing fields; no `paymentMode` field (B2B is always credit)
+- `B2bBookingService` (public interface): `book(B2bBookingRequest, idempotencyKey, userId)` with three inner exception classes: `AccountNotFoundException`, `AccountInactiveException`, `CreditLimitExceededException`
+- `B2bBookingServiceImpl` (package-private): 6-step flow:
+  1. Fetch `B2bAccount` by ID → `AccountNotFoundException` if absent; `AccountInactiveException` if `is_active=false`
+  2. Serviceability check via `ServiceabilityPort` (CB + `TimeLimiter` from existing `ResilienceConfig`)
+  3. Volumetric weight computation; chargeable weight as `max(actual, volumetric)`
+  4. Pricing via `PricingPort.computeQuote()` with `CustomerType.B2B` and `account.getRateCardId()` (CB + `TimeLimiter`)
+  5. DB transaction (`TransactionTemplate`): `SELECT FOR UPDATE` on `b2b_accounts` → pessimistic credit check → persist `Shipment` (`customerType=B2B`, `b2bAccountId`, `paymentMode=null`) → increment `outstanding_balance_paise` on `B2bAccount` → insert `ShipmentStateHistory`
+  6. Best-effort ETA call via `EtaPort` (exception does not roll back the booking)
+  - Reuses `ResilienceConfig` `CircuitBreakerRegistry`, `TimeLimiterRegistry`, and `resilienceScheduler` beans from PR #10; does not add new Resilience4j config
+- `B2bAccountRepository`: `findByIdForUpdate(@Lock PESSIMISTIC_WRITE)` added — `@Query` + `@Lock` for `SELECT FOR UPDATE` inside the DB transaction
+- `GlobalExceptionHandler`: three new `@ExceptionHandler` mappings: `AccountNotFoundException` → `404`, `AccountInactiveException` → `409`, `CreditLimitExceededException` → `402`
+- `BookingResponse.payment` field annotated `@JsonInclude(NON_NULL)`: set to `null` for B2B; the `payment` block is **omitted entirely** from B2B JSON responses
+- No new Flyway migration: `b2b_accounts` table and `shipments.b2b_account_id` column already existed from PR #4; `shipments.payment_mode` is nullable so setting it to `null` for B2B is valid
+- Integration test: `CountDownLatch` concurrent booking race condition (two threads booking simultaneously against the same account, verifying only one succeeds when the second would exceed the credit limit)
 
 ---
 
@@ -585,7 +599,6 @@ if (auth.getPrincipal() instanceof OneDayPrincipal p) {
            ├─► [M2 implements PricingPort]        ← parallel, other team
            ├─► [M3 implements ServiceabilityPort] ← parallel, other team
            ├─► [M9 implements EtaPort]            ← parallel, other team
-           ├─► [M8 implements BarcodePort]        ← parallel, other team
            └─► #4 (Flyway migrations)
                 └─► #5 (JPA entities)
                      └─► #6 (Repositories)
@@ -594,7 +607,7 @@ if (auth.getPrincipal() instanceof OneDayPrincipal p) {
                                └─► #9 (Ref gen + PaymentPort + PickupOtpService) ✅
                                     └─► #10 (B2C PREPAID booking + circuit breakers) ✅
                                          └─► #11 (COD path) ✅
-                                              ├─► #12 (B2B booking)      ← parallel
+                                              ├─► #12 (B2B booking) ✅
                                               └─► #13 (Cancellation)
                                                    └─► #14 (Kafka producer)
                                                         ├─► #15 (Consumers: DA + Hub)
@@ -614,7 +627,7 @@ if (auth.getPrincipal() instanceof OneDayPrincipal p) {
 |---|---|
 | #1 | Write entity code in any module using `MutableBaseEntity`; write Flyway migrations in module-prefixed folders |
 | #2 | Write Kafka producers and consumers using shared event POJOs and topic constants |
-| #3 | M2 implements `PricingPort`; M3 implements `ServiceabilityPort`; M9 implements `EtaPort`; M8 implements `BarcodePort` |
+| #3 | M2 implements `PricingPort`; M3 implements `ServiceabilityPort`; M9 implements `EtaPort` |
 | #7 | M10 (SLA) can build against the state machine's `STATE_CHANGED` events confidently |
 | #10 | M5 can start building DA assignment against `shipment.created` events and the internal `GET /internal/v1/shipments` endpoint |
 | #14 | All modules can verify their events are being consumed correctly by M4 |
