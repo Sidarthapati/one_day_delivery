@@ -1043,7 +1043,7 @@ function renderOtpSummary(status, data, action) {
 // ── Backend health check ─────────────────────────────────────────────────
 async function checkHealth() {
   try {
-    const r = await fetch(`${API}/`, {signal: AbortSignal.timeout(3000)});
+    const r = await fetch(`${API}/api/v1/b2c/shipments`, {method:'GET', signal: AbortSignal.timeout(3000)});
     const ok = r.status < 500;
     document.getElementById('status-dot').className=`w-2.5 h-2.5 rounded-full ${ok?'status-green':'status-offline'} pulse-dot`;
     document.getElementById('status-text').textContent = ok ? 'Backend running ✓' : 'Backend error';
