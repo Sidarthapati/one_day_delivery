@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/oneday
-    username: oneday
-    password: secret
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday}
+    username: ${SPRING_DATASOURCE_USERNAME:oneday}
+    password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -10,10 +10,12 @@ spring:
     show-sql: false
   flyway:
     enabled: true
+    # Single recursive location catches auth/ and orders/ subfolders AND grid's V3_x +
+    # the top-level V10 that the previous per-module list missed.
     locations:
-      - classpath:db/migration/auth
-      - classpath:db/migration/grid
-      - classpath:db/migration/orders
+      - classpath:db/migration
+    # M5 (V5_x) and M6 (V6_x) migrations merge out of order on the shared Render DB.
+    out-of-order: true
   jackson:
     property-naming-strategy: SNAKE_CASE
   kafka:

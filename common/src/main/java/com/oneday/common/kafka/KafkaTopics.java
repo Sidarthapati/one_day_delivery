@@ -18,8 +18,8 @@ public final class KafkaTopics {
     public static final String CRON_EVENTS        = "oneday.cron.events";       // M6
     public static final String EXCEPTIONS_EVENTS  = "oneday.exceptions.events"; // M11
 
-    // ── Command topics (single-consumer, fulfillment-directed) ───────────
-    public static final String NOTIFICATIONS_REQUESTED = "oneday.notifications.requested"; // notification service
+    // ── Notification fan-out (consumed by the notification service) ──────
+    public static final String NOTIFICATIONS_EVENTS = "oneday.notifications.events";
 
     // ── Dead-letter queue ─────────────────────────────────────────────────
     public static final String SHIPMENTS_DLQ      = "oneday.shipments.dlq";

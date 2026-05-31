@@ -32,7 +32,7 @@ public class KafkaErrorConfig {
         // (so the DLQ topic can have a different partition count than the source).
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,
-                (record, ex) -> new TopicPartition(record.topic() + ".dlq", -1));
+                (record, ex) -> new TopicPartition(dlqTopicFor(record.topic()), -1));
 
         DefaultErrorHandler handler =
                 new DefaultErrorHandler(recoverer, new FixedBackOff(RETRY_INTERVAL_MS, MAX_RETRIES));
@@ -42,5 +42,17 @@ public class KafkaErrorConfig {
                         attempt, record.topic(), record.key(), ex.getMessage()));
 
         return handler;
+    }
+
+    /**
+     * Maps an event topic to its dead-letter topic: {@code oneday.<module>.events} →
+     * {@code oneday.<module>.dlq}, matching the .dlq topics provisioned on the cluster.
+     * Topics that don't end in {@code .events} just get a {@code .dlq} suffix.
+     */
+    private static String dlqTopicFor(String topic) {
+        String base = topic.endsWith(".events")
+                ? topic.substring(0, topic.length() - ".events".length())
+                : topic;
+        return base + ".dlq";
     }
 }

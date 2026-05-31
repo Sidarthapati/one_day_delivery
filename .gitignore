@@ -9,3 +9,7 @@ target/
 *.DS_Store
 application-local.yml
 application-local.properties
+
+# Local secrets — real Render/Confluent credentials live here, never in git.
+.env
+.env.local
