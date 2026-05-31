@@ -596,10 +596,12 @@ function buildB2bBody(overLimit=false) {
   const dc = document.getElementById('b2b-dcity').value;
   const op = document.getElementById('b2b-opincode').value;
   const dp = document.getElementById('b2b-dpincode').value;
-  const dval = overLimit ? 4000000 : parseInt(document.getElementById('b2b-dval').value||'0')*100;
-  const weight = overLimit ? 50000 : parseInt(document.getElementById('b2b-weight').value||'2000');
+  const dval = parseInt(document.getElementById('b2b-dval').value||'0')*100;
+  const weight = parseInt(document.getElementById('b2b-weight').value||'2000');
   return {
-    b2b_account_id: document.getElementById('b2b-acct').value,
+    // Over-limit demo uses a separate seeded account (QuickShip Ltd) with only ₹5 remaining.
+    // Any booking — even the minimum — exceeds it and returns 402.
+    b2b_account_id: overLimit ? 'b2b0dead-fade-0000-0000-000000000001' : document.getElementById('b2b-acct').value,
     purchase_order_ref: document.getElementById('b2b-po').value||null,
     sender_name:   document.getElementById('b2b-sname').value,
     sender_phone:  document.getElementById('b2b-sphone').value,

@@ -18,8 +18,8 @@ class StubPricingAdapter implements PricingPort {
     @Override
     public QuoteResult computeQuote(QuoteRequest request) {
         boolean intercity = request.deliveryType() == DeliveryType.INTERCITY;
-        double ratePerGram = intercity ? 0.035 : 0.020; // paise per gram
-        long minBase = intercity ? 5000L : 3000L;       // paise
+        double ratePerGram = intercity ? 3.5 : 2.0; // paise per gram (₹35/kg intercity, ₹20/kg same-city)
+        long minBase = intercity ? 5000L : 3000L;    // paise (₹50 / ₹30 minimum)
 
         long base = Math.max(minBase, (long) (request.chargeableWeightGrams() * ratePerGram));
 
