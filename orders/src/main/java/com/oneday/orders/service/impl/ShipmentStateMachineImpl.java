@@ -11,8 +11,10 @@ import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import com.oneday.orders.service.TransitionRegistry;
+import com.oneday.orders.events.ShipmentTransitioned;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
 import jakarta.persistence.EntityNotFoundException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,13 +29,16 @@ class ShipmentStateMachineImpl implements ShipmentStateMachine {
     private final ShipmentRepository shipmentRepo;
     private final ShipmentStateHistoryRepository historyRepo;
     private final TransitionRegistry registry;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     ShipmentStateMachineImpl(ShipmentRepository shipmentRepo,
                               ShipmentStateHistoryRepository historyRepo,
-                              TransitionRegistry registry) {
+                              TransitionRegistry registry,
+                              ApplicationEventPublisher applicationEventPublisher) {
         this.shipmentRepo = shipmentRepo;
         this.historyRepo = historyRepo;
         this.registry = registry;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @Override
@@ -55,6 +60,13 @@ class ShipmentStateMachineImpl implements ShipmentStateMachine {
         // and flushes the UPDATE automatically when the transaction commits.
 
         historyRepo.save(ShipmentStateHistory.of(shipmentId, current, target, ctx));
+
+        // In-process announcement — ShipmentEventProducer turns this into the outbound Kafka
+        // STATE_CHANGED event after this transaction commits (AFTER_COMMIT). The state machine
+        // stays decoupled from Kafka; it just reports that a transition happened.
+        applicationEventPublisher.publishEvent(new ShipmentTransitioned(
+                shipmentId, shipment.getShipmentRef(), current, target,
+                ctx.getTriggeredBy(), ctx.getTriggerSource(), ctx.getOccurredAt()));
     }
 
     /**

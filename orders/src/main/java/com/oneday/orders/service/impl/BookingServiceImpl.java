@@ -18,6 +18,7 @@ import com.oneday.orders.domain.ShipmentStateHistory;
 import com.oneday.orders.domain.enums.PaymentStatus;
 import com.oneday.orders.dto.BookingRequest;
 import com.oneday.orders.dto.BookingResponse;
+import com.oneday.orders.events.ShipmentBooked;
 import com.oneday.orders.repository.PaymentTransactionRepository;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.ShipmentStateHistoryRepository;
@@ -33,6 +34,7 @@ import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -71,6 +73,7 @@ class BookingServiceImpl implements BookingService {
     private final TimeLimiter paymentTl;
 
     private final ScheduledExecutorService scheduler;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     BookingServiceImpl(ServiceabilityPort serviceabilityPort,
                        PricingPort pricingPort,
@@ -84,7 +87,8 @@ class BookingServiceImpl implements BookingService {
                        TransactionTemplate transactionTemplate,
                        CircuitBreakerRegistry circuitBreakerRegistry,
                        TimeLimiterRegistry timeLimiterRegistry,
-                       @Qualifier("resilienceScheduler") ScheduledExecutorService resilienceScheduler) {
+                       @Qualifier("resilienceScheduler") ScheduledExecutorService resilienceScheduler,
+                       ApplicationEventPublisher applicationEventPublisher) {
         this.serviceabilityPort = serviceabilityPort;
         this.pricingPort = pricingPort;
         this.paymentPort = paymentPort;
@@ -102,6 +106,7 @@ class BookingServiceImpl implements BookingService {
         this.pricingTl        = timeLimiterRegistry.timeLimiter("pricing");
         this.paymentTl        = timeLimiterRegistry.timeLimiter("payment");
         this.scheduler        = resilienceScheduler;
+        this.applicationEventPublisher = applicationEventPublisher;
     }
 
     @Override
@@ -260,6 +265,10 @@ class BookingServiceImpl implements BookingService {
             log.warn("ETA fetch failed for shipment {}; booking proceeds without ETA: {}",
                     shipment.getId(), e.getMessage());
         }
+
+        // ── Emit CREATED — in-process; ShipmentEventProducer publishes to Kafka AFTER_COMMIT,
+        //    so a rolled-back booking never produces a phantom CREATED event. ──────────────
+        applicationEventPublisher.publishEvent(new ShipmentBooked(shipment));
 
         // ── Build response ─────────────────────────────────────────────────────
         BookingResponse.PricingDetails pricing = new BookingResponse.PricingDetails();

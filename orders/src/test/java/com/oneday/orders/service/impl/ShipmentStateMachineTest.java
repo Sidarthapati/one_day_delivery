@@ -22,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -51,6 +52,8 @@ class ShipmentStateMachineTest {
     private ShipmentRepository shipmentRepo;
     @Mock
     private ShipmentStateHistoryRepository historyRepo;
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
 
     private TransitionRegistry registry;
     private ShipmentStateMachine stateMachine;
@@ -63,7 +66,7 @@ class ShipmentStateMachineTest {
         // Real registry (no configurers) — tests the full V1 transition table
         registry = new TransitionRegistry(Collections.emptyList());
         registry.initialise();
-        stateMachine = new ShipmentStateMachineImpl(shipmentRepo, historyRepo, registry);
+        stateMachine = new ShipmentStateMachineImpl(shipmentRepo, historyRepo, registry, applicationEventPublisher);
     }
 
     // ── Helper ────────────────────────────────────────────────────────────────
@@ -699,7 +702,7 @@ class ShipmentStateMachineTest {
 
         TransitionRegistry extendedRegistry = new TransitionRegistry(List.of(extender));
         extendedRegistry.initialise();
-        ShipmentStateMachine extended = new ShipmentStateMachineImpl(shipmentRepo, historyRepo, extendedRegistry);
+        ShipmentStateMachine extended = new ShipmentStateMachineImpl(shipmentRepo, historyRepo, extendedRegistry, applicationEventPublisher);
 
         shipmentIn(ShipmentState.DROPPED);
         // Should NOT throw — transition was registered dynamically
