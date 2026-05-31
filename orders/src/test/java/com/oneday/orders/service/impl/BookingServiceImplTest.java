@@ -37,6 +37,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -67,6 +68,7 @@ class BookingServiceImplTest {
     @Mock private ShipmentRepository shipmentRepository;
     @Mock private PaymentTransactionRepository paymentTransactionRepository;
     @Mock private ShipmentStateHistoryRepository historyRepository;
+    @Mock private ApplicationEventPublisher applicationEventPublisher;
 
     // TransactionTemplate cannot be mocked on Java 25 (Mockito inline-mock restriction on
     // platform module types). Use a real TransactionTemplate backed by a no-op TX manager.
@@ -100,7 +102,7 @@ class BookingServiceImplTest {
                 historyRepository, stateMapper, new TransactionTemplate(NO_OP_TX),
                 CircuitBreakerRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),
-                scheduler);
+                scheduler, applicationEventPublisher);
     }
 
     @AfterEach
