@@ -322,6 +322,76 @@ class BookingServiceImplTest {
         assertThat(hist.getShipmentId()).isEqualTo(SHIPMENT_ID);
     }
 
+    // ── COD tests ──────────────────────────────────────────────────────────
+
+    @Test
+    void book_cod_succeeds_withoutPaymentPortCalls() {
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
+        when(shipmentRepository.save(any())).thenAnswer(inv -> {
+            Shipment s = inv.getArgument(0);
+            ReflectionTestUtils.setField(s, "id", SHIPMENT_ID);
+            return s;
+        });
+        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(etaPort.fetchEta(any())).thenThrow(new RuntimeException("skip"));
+
+        BookingResponse resp = service.book(codBookingRequest(), IDEMPOTENCY_KEY, USER_ID);
+
+        verify(paymentPort, never()).verifySignature(any(), any(), any());
+        verify(paymentPort, never()).capture(any(), anyLong());
+        verify(paymentTransactionRepository, never()).save(any());
+        assertThat(resp.getPayment().getMode()).isEqualTo(PaymentMode.COD);
+        assertThat(resp.getPayment().getStatus()).isEqualTo("COD_PENDING");
+        assertThat(resp.getPayment().getRazorpayPaymentId()).isNull();
+    }
+
+    @Test
+    void book_prepaid_missingRazorpayFields_throwsInvalidRequest() {
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+
+        BookingRequest req = bookingRequest();
+        req.setRazorpayOrderId(null);
+
+        assertThatThrownBy(() -> service.book(req, IDEMPOTENCY_KEY, USER_ID))
+                .isInstanceOf(BookingService.InvalidBookingRequestException.class)
+                .hasMessageContaining("razorpayOrderId");
+
+        verify(paymentPort, never()).verifySignature(any(), any(), any());
+        verify(shipmentRepository, never()).save(any());
+    }
+
+    @Test
+    void book_prepaid_blankRazorpayOrderId_throwsInvalidRequest() {
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+
+        BookingRequest req = bookingRequest();
+        req.setRazorpayOrderId("   ");
+
+        assertThatThrownBy(() -> service.book(req, IDEMPOTENCY_KEY, USER_ID))
+                .isInstanceOf(BookingService.InvalidBookingRequestException.class)
+                .hasMessageContaining("razorpayOrderId");
+
+        verify(paymentPort, never()).verifySignature(any(), any(), any());
+        verify(shipmentRepository, never()).save(any());
+    }
+
+    @Test
+    void book_cod_dbWriteFails_doesNotInitiateRefund() {
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
+        when(shipmentRepository.save(any())).thenThrow(new RuntimeException("DB down"));
+
+        assertThatThrownBy(() -> service.book(codBookingRequest(), IDEMPOTENCY_KEY, USER_ID))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(paymentPort, never()).initiateRefund(any(), anyLong());
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private void stubServiceability(boolean serviceable, DeliveryType deliveryType) {
@@ -365,9 +435,19 @@ class BookingServiceImplTest {
         req.setDeclaredValuePaise(50_000L);
         req.setPickupType(PickupType.DA_PICKUP);
         req.setDropType(DropType.DA_DELIVERY);
+        req.setPaymentMode(PaymentMode.PREPAID);
         req.setRazorpayOrderId("order_abc123");
         req.setRazorpayPaymentId("pay_xyz789");
         req.setRazorpaySignature("sig_test");
+        return req;
+    }
+
+    private BookingRequest codBookingRequest() {
+        BookingRequest req = bookingRequest();
+        req.setPaymentMode(PaymentMode.COD);
+        req.setRazorpayOrderId(null);
+        req.setRazorpayPaymentId(null);
+        req.setRazorpaySignature(null);
         return req;
     }
 }

@@ -3,9 +3,9 @@
 | Field | Value |
 |---|---|
 | **Module** | M4 — Orders |
-| **Plan version** | 1.5 |
+| **Plan version** | 1.6 |
 | **Author** | Satvik |
-| **Last updated** | 2026-05-30 |
+| **Last updated** | 2026-05-31 |
 | **Total PRs** | 21 |
 | **Design doc** | [M4-ORDERS-DESIGN.md](M4-ORDERS-DESIGN.md) |
 
@@ -22,8 +22,9 @@
 | #7 | Shipment state machine with full transition coverage | ✅ Merged |
 | #8 | Idempotency infrastructure (IdempotencyFilter, IdempotencyKeyPurgeJob, V4_10 fingerprint migration) | ✅ Merged |
 | #9 | Ref gen + utility services: ShipmentRefService, DeliveryTypeResolver, PaymentPort, PickupOtpService, PickupOtpController, V4_11 pickup_otps migration, PickupOtpProperties | ✅ Merged |
-| #10 | B2C PREPAID booking endpoint with Resilience4j circuit breakers (B2cShipmentController, BookingService/Impl, BookingRequest/Response DTOs, GlobalExceptionHandler, ResilienceConfig/Properties) | 🔧 Implemented — not yet committed |
-| #11–#21 | COD path, B2B booking, cancellation, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
+| #10 | B2C PREPAID booking endpoint with Resilience4j circuit breakers (B2cShipmentController, BookingService/Impl, BookingRequest/Response DTOs, GlobalExceptionHandler, ResilienceConfig/Properties) | ✅ Merged |
+| #11 | COD booking path: `paymentMode` field added to `BookingRequest`; COD branch in `BookingServiceImpl` (skips Razorpay, no `PaymentTransaction` row); `PaymentSummary.mode` field added to `BookingResponse`; `InvalidBookingRequestException` added to `BookingService`; `V4_12__add_cod_shipment_index.sql` partial index | ✅ Merged |
+| #12–#21 | B2B booking, cancellation, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
 
 ---
 
@@ -129,22 +130,24 @@ Phase 7 (Observability)
 
 **Why third:** M2, M3, M8, M9 need to know what interface to implement. Publishing these now lets those teams work in parallel with M4's implementation. M4 will use stub implementations in tests until real module implementations are wired in `app`.
 
-**What:**
+**What (as merged):**
 ```java
 // com.oneday.common.port
 
 PricingPort          → M2 implements; M4 calls at booking
 ServiceabilityPort   → M3 implements; M4 calls at booking
 EtaPort              → M9 implements; M4 calls at booking and AT_ORIGIN_HUB
-BarcodePort          → M8 implements; M4 calls (async) after booking
 NotificationPort     → notification service implements; M4 calls on every state change
+// Note: BarcodePort was listed in the original plan but was not created.
+// M8 integration is fully async via Kafka — M4 emits ShipmentCreatedEvent;
+// M8 subscribes to it and emits LABEL_GENERATED back. No synchronous port needed.
 ```
 - Each interface is **minimal** — only methods called in V1 booking or state transition flows. No speculative methods. If a V2 flow needs a new method, it is added then with a separate PR. Over-specifying now forces every implementor to change when the method is not yet needed.
-- DTOs for each port (e.g. `QuoteRequest`, `QuoteResult`, `ServiceabilityResult`, `EtaResult`, `EtaContext`) in `common.port.dto`
+- DTOs for each port (`QuoteRequest`, `QuoteResult`, `ServiceabilityResult`, `EtaRequest`, `EtaResult`, `EtaContext`, `NotificationRequest`, `NotificationEventType`) in `common.port.dto`
 - No stub implementations here — stubs live in `orders/src/test/`
-- **[BD-SEAM] `BarcodePort` and `NotificationPort` are behind interfaces precisely because their implementations are V1 assumptions.** If the barcode standard (H1) or notification channel changes in V2, only the `common` implementation bean is replaced — M4's booking service is untouched.
+- **[BD-SEAM] `NotificationPort` is behind an interface precisely because its implementation is a V1 assumption.** If the notification channel changes in V2, only the `common` implementation bean is replaced — M4's booking service is untouched.
 
-**Unlocks:** M2 can implement `PricingPort`; M3 can implement `ServiceabilityPort`; M9 can implement `EtaPort`; M8 can implement `BarcodePort`. All independently, without waiting for M4.
+**Unlocks:** M2 can implement `PricingPort`; M3 can implement `ServiceabilityPort`; M9 can implement `EtaPort`. All independently, without waiting for M4.
 
 ---
 
@@ -265,27 +268,26 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ## Phase 3 — Booking APIs
 > **End-to-end booking flows with stub ports. Circuit breakers included here, not later.**
-> PRs #11 and #12 can be developed in parallel once #10 is merged.
+> PRs #10 and #11 are merged. PR #12 (B2B booking) is next; PR #13 (cancellation) can be developed in parallel.
 >
 > **V2 extension points:** New booking types (e.g. B2C COD with partial prepayment, subscription accounts) are new `BookingService` branches behind the existing port interfaces — not new service classes. New `customer_type` values are added to the `CustomerType` enum in `common` and a new `BookingOrchestrator` implementation is registered.
 
 ---
 
-### `M4 IMPL - PR #10 - B2C PREPAID booking endpoint with circuit breakers` 🔧 Implemented — not yet committed
+### `M4 IMPL - PR #10 - B2C PREPAID booking endpoint with circuit breakers` ✅ Merged
 
 **Module:** `orders`
 
-**What (as implemented in working tree):**
-- `POST /api/v1/b2c/shipments` — B2C PREPAID path (COD and C2C deferred to PR #11)
+**What (merged):**
+- `POST /api/v1/b2c/shipments` — B2C booking path (PREPAID in this PR; COD added in PR #11)
 - `B2cShipmentController`: package-private `@RestController`; accepts `Idempotency-Key` and `X-User-Id` headers; delegates to `BookingService.book()`
   - Note: JWT auth (`@AuthenticationPrincipal`) is not yet integrated; uses `X-User-Id` header as a placeholder pending M1 integration
 - `BookingService` (public interface) + `BookingServiceImpl` (package-private): orchestrates serviceability → pricing → Razorpay verify+capture → DB transaction → best-effort ETA → return 201
-  - `customer_type` is hardcoded to `B2C` (no `customer_type` field in `BookingRequest`)
-  - `payment_mode` is hardcoded to `PREPAID` (no `payment_mode` field in `BookingRequest`; COD is PR #11)
+  - `customer_type` is hardcoded to `B2C` (no `customer_type` field in `BookingRequest`; C2C is a future PR)
   - Kafka event emission (shipment.created) and notification dispatch are **not yet wired** (planned PR #14)
   - Compensating refund is initiated if DB write fails after successful Razorpay capture
-- `BookingRequest` DTO: `senderName`, `senderPhone`, `senderEmail`, `originAddress`/`originCity`/`originPincode`, `receiverName`, `receiverPhone`, `receiverEmail`, `destAddress`/`destCity`/`destPincode`, `weightGrams`, `lengthCm`, `widthCm`, `heightCm`, `declaredValuePaise`, `pickupType`, `dropType`, `razorpayOrderId`, `razorpayPaymentId`, `razorpaySignature`
-- `BookingResponse` DTO: `shipmentRef`, `state`, `stateLabel`, `deliveryType`, `pricing` (quotedPricePaise, gstPaise, totalPricePaise, currency, breakdown, rateCardVersion), `etaPromised`, `slaCommitmentMinutes`, `trackingUrl`, `parcelId` (null at booking), `labelStatus` ("PENDING"), `payment` (status, razorpayPaymentId)
+- `BookingRequest` DTO: sender/receiver fields, address fields, parcel dimensions, `pickupType`, `dropType`, Razorpay fields
+- `BookingResponse` DTO: `shipmentRef`, `state`, `stateLabel`, `deliveryType`, `pricing`, `etaPromised`, `slaCommitmentMinutes`, `trackingUrl`, `parcelId` (null at booking), `labelStatus` ("PENDING"), `payment`
 - `GlobalExceptionHandler` (`@RestControllerAdvice`): maps `ServiceabilityException`, `DownstreamTimeoutException`, `PaymentPort.*Exception`, `MethodArgumentNotValidException` to appropriate HTTP status codes
 - `ResilienceConfig`: registers `CircuitBreakerRegistry` and `TimeLimiterRegistry` beans; three named circuit breakers (`serviceability`, `pricing`, `payment`) and matching `TimeLimiter`s; `ScheduledExecutorService` bean (`resilienceScheduler`, 4 threads)
 - `ResilienceProperties` (`@ConfigurationProperties(prefix="orders.resilience")`): `failureRateThreshold`, `minimumNumberOfCalls`, `slidingWindowSize`, `serviceabilityTimeoutMs`, `pricingTimeoutMs`, `paymentTimeoutMs`
@@ -296,15 +298,19 @@ NotificationPort     → notification service implements; M4 calls on every stat
 
 ---
 
-### `M4 IMPL - PR #11 - COD booking path for B2C and C2C`
+### `M4 IMPL - PR #11 - COD booking path for B2C` ✅ Merged
 
 **Module:** `orders`
 
-**What:**
-- Extend `BookingService` to branch on `payment_mode=COD`
-- Skip `PaymentPort` entirely; no `PaymentTransaction` row created at booking
-- `label_status: PENDING`, `parcel_id: null` in `201` response
-- `payment_mode` included in `ShipmentCreatedEvent` so M5 knows DA must collect cash
+**What (merged):**
+- `paymentMode` field (`@NotNull PaymentMode`) added to `BookingRequest`; Razorpay fields are now optional at the DTO level and validated in `BookingServiceImpl` (required only when `paymentMode=PREPAID`)
+- `BookingServiceImpl` branches on `req.getPaymentMode()`:
+  - `PREPAID`: validates Razorpay fields (throws `InvalidBookingRequestException` if blank), verifies signature, captures payment, inserts `PaymentTransaction(status=CAPTURED)`, sets `payment_id` on `Shipment`
+  - `COD`: skips all Razorpay steps; no `PaymentTransaction` row inserted; `Shipment.payment_id` remains null
+- `BookingService` interface gains `InvalidBookingRequestException` inner class (thrown on missing Razorpay fields for PREPAID)
+- `BookingResponse.PaymentSummary` gains `mode` field (`PaymentMode`) with `@JsonInclude(NON_NULL)` on the class; COD response sets `mode=COD`, `status=COD_PENDING`, `razorpayPaymentId=null` (omitted from JSON)
+- `V4_12__add_cod_shipment_index.sql`: partial index `idx_shipments_cod` on `shipments(city_id, state) WHERE payment_mode = 'COD'`
+- C2C support is **not** included in this PR; `customer_type` remains hardcoded to `B2C` in `BookingServiceImpl`; `payment_mode` is included in `ShipmentCreatedEvent` fields (already defined in `ShipmentCreatedEvent`) so M5 knows DA must collect cash
 
 ---
 
@@ -586,18 +592,18 @@ if (auth.getPrincipal() instanceof OneDayPrincipal p) {
                           └─► #7 (State machine)
                                ├─► #8 (Idempotency) ✅
                                └─► #9 (Ref gen + PaymentPort + PickupOtpService) ✅
-                                    └─► #10 (B2C PREPAID booking + circuit breakers) 🔧
-                                         ├─► #11 (COD path)         ← parallel
-                                         ├─► #12 (B2B booking)      ← parallel
-                                         └─► #13 (Cancellation)
-                                              └─► #14 (Kafka producer)
-                                                   ├─► #15 (Consumers: DA + Hub)
-                                                   └─► #16 (Consumers: Scan + Flight + Cron + Exceptions)
-                                                        ├─► #17 (Tracking API)   ← parallel
-                                                        ├─► #18 (Internal APIs)  ← parallel
-                                                        └─► #19 (B2B Webhooks)   ← parallel
-                                                             └─► #20 (Resilience hardening)
-                                                                  └─► #21 (Observability)
+                                    └─► #10 (B2C PREPAID booking + circuit breakers) ✅
+                                         └─► #11 (COD path) ✅
+                                              ├─► #12 (B2B booking)      ← parallel
+                                              └─► #13 (Cancellation)
+                                                   └─► #14 (Kafka producer)
+                                                        ├─► #15 (Consumers: DA + Hub)
+                                                        └─► #16 (Consumers: Scan + Flight + Cron + Exceptions)
+                                                             ├─► #17 (Tracking API)   ← parallel
+                                                             ├─► #18 (Internal APIs)  ← parallel
+                                                             └─► #19 (B2B Webhooks)   ← parallel
+                                                                  └─► #20 (Resilience hardening)
+                                                                       └─► #21 (Observability)
 ```
 
 ---

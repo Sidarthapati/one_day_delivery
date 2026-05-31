@@ -1,6 +1,7 @@
 package com.oneday.orders.dto;
 
 import com.oneday.common.domain.enums.DropType;
+import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.PickupType;
 import com.oneday.orders.domain.Address;
 import jakarta.validation.Valid;
@@ -49,11 +50,14 @@ public class BookingRequest {
     @NotNull private PickupType pickupType;
     @NotNull private DropType   dropType;
 
-    // ── Payment (Razorpay) ────────────────────────────────────────────────────
+    // ── Payment ───────────────────────────────────────────────────────────────
 
-    @NotBlank @Size(max = 100) private String razorpayOrderId;
-    @NotBlank @Size(max = 100) private String razorpayPaymentId;
-    @NotBlank @Size(max = 500) private String razorpaySignature;
+    @NotNull private PaymentMode paymentMode;
+
+    // Razorpay fields are required only for PREPAID; validated in BookingServiceImpl.
+    @Size(max = 100) private String razorpayOrderId;
+    @Size(max = 100) private String razorpayPaymentId;
+    @Size(max = 500) private String razorpaySignature;
 
     // ── Getters / setters ─────────────────────────────────────────────────────
 
@@ -113,6 +117,9 @@ public class BookingRequest {
 
     public DropType getDropType()       { return dropType; }
     public void setDropType(DropType v) { this.dropType = v; }
+
+    public PaymentMode getPaymentMode()           { return paymentMode; }
+    public void setPaymentMode(PaymentMode v)     { this.paymentMode = v; }
 
     public String getRazorpayOrderId()       { return razorpayOrderId; }
     public void setRazorpayOrderId(String v) { this.razorpayOrderId = v; }

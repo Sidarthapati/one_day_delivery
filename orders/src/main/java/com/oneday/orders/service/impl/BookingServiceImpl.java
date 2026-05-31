@@ -48,6 +48,9 @@ class BookingServiceImpl implements BookingService {
 
     private static final Logger log = LoggerFactory.getLogger(BookingServiceImpl.class);
 
+    private static final String PAYMENT_STATUS_CAPTURED    = "CAPTURED";
+    private static final String PAYMENT_STATUS_COD_PENDING = "COD_PENDING";
+
     private final ServiceabilityPort serviceabilityPort;
     private final PricingPort pricingPort;
     private final PaymentPort paymentPort;
@@ -128,17 +131,26 @@ class BookingServiceImpl implements BookingService {
                         req.getDeclaredValuePaise(),
                         null)));
 
-        // ── 4. Payment verify + capture (outside DB transaction) ──────────────
-        runWithTimeout(paymentTl, paymentCb, () -> {
-            paymentPort.verifySignature(
-                    req.getRazorpayOrderId(),
-                    req.getRazorpayPaymentId(),
-                    req.getRazorpaySignature());
-            paymentPort.capture(req.getRazorpayPaymentId(), quote.totalPricePaise());
-        });
+        // ── 4. Payment verify + capture (PREPAID only, outside DB transaction) ──
+        boolean isPrepaid = PaymentMode.PREPAID == req.getPaymentMode();
+        if (isPrepaid) {
+            if (req.getRazorpayOrderId() == null || req.getRazorpayOrderId().isBlank() ||
+                req.getRazorpayPaymentId() == null || req.getRazorpayPaymentId().isBlank() ||
+                req.getRazorpaySignature() == null || req.getRazorpaySignature().isBlank()) {
+                throw new BookingService.InvalidBookingRequestException(
+                        "razorpayOrderId, razorpayPaymentId, and razorpaySignature are required for PREPAID bookings");
+            }
+            runWithTimeout(paymentTl, paymentCb, () -> {
+                paymentPort.verifySignature(
+                        req.getRazorpayOrderId(),
+                        req.getRazorpayPaymentId(),
+                        req.getRazorpaySignature());
+                paymentPort.capture(req.getRazorpayPaymentId(), quote.totalPricePaise());
+            });
+        }
 
         // ── 5. DB writes (transaction opened only here) ────────────────────────
-        // If the DB write fails after payment capture, initiate a compensating refund.
+        // For PREPAID: if the DB write fails after capture, initiate a compensating refund.
         final int finalVolumetricWeight = volumetricWeightGrams;
         final int finalChargeableWeight = chargeableWeightGrams;
         try {
@@ -146,16 +158,18 @@ class BookingServiceImpl implements BookingService {
                     persist(req, idempotencyKey, userId, serviceability,
                             finalVolumetricWeight, finalChargeableWeight, quote));
         } catch (RuntimeException dbEx) {
-            try {
-                String refundId = paymentPort.initiateRefund(req.getRazorpayPaymentId(), quote.totalPricePaise());
-                // Log refund ID explicitly — the PaymentTransaction row was rolled back with the
-                // failed TX so this log line is the only audit trail for this money movement.
-                log.error("COMPENSATING REFUND INITIATED: paymentId={} refundId={} amountPaise={} reason=db-write-failure",
-                        req.getRazorpayPaymentId(), refundId, quote.totalPricePaise());
-            } catch (Exception refundEx) {
-                log.error("MANUAL INTERVENTION REQUIRED: payment {} for {} paise was captured but " +
-                                "DB write failed and refund attempt also failed — {}",
-                        req.getRazorpayPaymentId(), quote.totalPricePaise(), refundEx.getMessage());
+            if (isPrepaid) {
+                try {
+                    String refundId = paymentPort.initiateRefund(req.getRazorpayPaymentId(), quote.totalPricePaise());
+                    // Log refund ID explicitly — the PaymentTransaction row was rolled back with the
+                    // failed TX so this log line is the only audit trail for this money movement.
+                    log.error("COMPENSATING REFUND INITIATED: paymentId={} refundId={} amountPaise={} reason=db-write-failure",
+                            req.getRazorpayPaymentId(), refundId, quote.totalPricePaise());
+                } catch (Exception refundEx) {
+                    log.error("MANUAL INTERVENTION REQUIRED: payment {} for {} paise was captured but " +
+                                    "DB write failed and refund attempt also failed — {}",
+                            req.getRazorpayPaymentId(), quote.totalPricePaise(), refundEx.getMessage());
+                }
             }
             throw dbEx;
         }
@@ -199,25 +213,27 @@ class BookingServiceImpl implements BookingService {
         shipment.setDropType(req.getDropType());
         shipment.setState(ShipmentState.BOOKED);
         shipment.setOriginTileId(serviceability.originTileId());
-        shipment.setPaymentMode(PaymentMode.PREPAID);
+        shipment.setPaymentMode(req.getPaymentMode());
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());
 
         shipment = shipmentRepository.save(shipment);
 
-        PaymentTransaction payment = new PaymentTransaction();
-        payment.setShipmentId(shipment.getId());
-        payment.setRazorpayOrderId(req.getRazorpayOrderId());
-        payment.setRazorpayPaymentId(req.getRazorpayPaymentId());
-        payment.setRazorpaySignature(req.getRazorpaySignature());
-        payment.setAmountPaise(quote.baseAmountPaise());
-        payment.setTaxPaise(quote.taxPaise());
-        payment.setTotalPaise(quote.totalPricePaise());
-        payment.setCurrency("INR");
-        payment.setStatus(PaymentStatus.CAPTURED);
+        if (PaymentMode.PREPAID == req.getPaymentMode()) {
+            PaymentTransaction payment = new PaymentTransaction();
+            payment.setShipmentId(shipment.getId());
+            payment.setRazorpayOrderId(req.getRazorpayOrderId());
+            payment.setRazorpayPaymentId(req.getRazorpayPaymentId());
+            payment.setRazorpaySignature(req.getRazorpaySignature());
+            payment.setAmountPaise(quote.baseAmountPaise());
+            payment.setTaxPaise(quote.taxPaise());
+            payment.setTotalPaise(quote.totalPricePaise());
+            payment.setCurrency("INR");
+            payment.setStatus(PaymentStatus.CAPTURED);
 
-        PaymentTransaction savedPayment = paymentTransactionRepository.save(payment);
-        shipment.setPaymentId(savedPayment.getId());
+            PaymentTransaction savedPayment = paymentTransactionRepository.save(payment);
+            shipment.setPaymentId(savedPayment.getId());
+        }
 
         TransitionContext ctx = TransitionContext.fromApi(userId, idempotencyKey);
         historyRepository.save(ShipmentStateHistory.of(shipment.getId(), null, ShipmentState.BOOKED, ctx));
@@ -255,8 +271,14 @@ class BookingServiceImpl implements BookingService {
         pricing.setRateCardVersion(quote.rateCardVersion());
 
         BookingResponse.PaymentSummary paymentSummary = new BookingResponse.PaymentSummary();
-        paymentSummary.setStatus("CAPTURED");
-        paymentSummary.setRazorpayPaymentId(req.getRazorpayPaymentId());
+        paymentSummary.setMode(req.getPaymentMode());
+        if (PaymentMode.PREPAID == req.getPaymentMode()) {
+            paymentSummary.setStatus(PAYMENT_STATUS_CAPTURED);
+            paymentSummary.setRazorpayPaymentId(req.getRazorpayPaymentId());
+        } else {
+            paymentSummary.setStatus(PAYMENT_STATUS_COD_PENDING);
+            paymentSummary.setRazorpayPaymentId(null);
+        }
 
         BookingResponse response = new BookingResponse();
         response.setShipmentRef(shipment.getShipmentRef());

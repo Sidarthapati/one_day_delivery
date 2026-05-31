@@ -20,6 +20,14 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 class GlobalExceptionHandler {
 
+    @ExceptionHandler(BookingService.InvalidBookingRequestException.class)
+    ProblemDetail handleInvalidBookingRequest(BookingService.InvalidBookingRequestException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        pd.setTitle("Invalid request");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
     @ExceptionHandler(BookingService.ServiceabilityException.class)
     ProblemDetail handleServiceability(BookingService.ServiceabilityException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);

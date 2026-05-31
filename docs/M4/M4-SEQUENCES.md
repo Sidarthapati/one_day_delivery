@@ -66,7 +66,7 @@ sequenceDiagram
 
 ---
 
-## Kafka State Transition (e.g. PICKUP_ASSIGNED → PICKED_UP)
+## Kafka State Transition (e.g. BOOKED → PICKUP_ASSIGNED)
 
 ```mermaid
 sequenceDiagram
@@ -75,16 +75,19 @@ sequenceDiagram
     participant M4Consumer
     participant DB
 
-    M5->>Kafka: publish oneday.da.pickup_completed {shipment_id, event_key}
+    M5->>Kafka: publish oneday.da.events {event_type: PICKUP_ASSIGNED, shipment_id, occurred_at}
     Kafka-->>M4Consumer: deliver message
     M4Consumer->>DB: SELECT FOR UPDATE shipments WHERE id=...
-    DB-->>M4Consumer: {state: PICKUP_ASSIGNED}
-    M4Consumer->>DB: UPDATE state=PICKED_UP
+    DB-->>M4Consumer: {state: BOOKED}
+    M4Consumer->>DB: UPDATE state=PICKUP_ASSIGNED
     M4Consumer->>DB: INSERT shipment_state_history (event_ref=kafka_msg_key)
     DB-->>M4Consumer: commit
     M4Consumer->>Kafka: emit shipment.state_changed
     Note right of DB: Raw Kafka payload NOT stored in DB
+    Note over M4Consumer: Side-effect: generate 4-digit OTP, send to customer via NotificationPort
 ```
+
+> **Note:** `PICKUP_ASSIGNED → PICKED_UP` is NOT a Kafka-driven transition. `PICKED_UP` is triggered exclusively by the OTP verify HTTP endpoint (`POST /internal/v1/shipments/{ref}/pickup-otp/verify`), called by M5's DA app after the customer provides the OTP. M4 does not consume `DaEventType.PICKUP_COMPLETED` for state transitions.
 
 ---
 
