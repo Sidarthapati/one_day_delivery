@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>One Day Delivery — Live API Demo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .tab-btn { transition: all .15s; }
+  .tab-btn.active { background:#6366f1; color:#fff; }
+  .tab-btn:not(.active):hover { background:#e0e7ff; color:#4338ca; }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:flex; }
+  pre { font-family: 'Fira Code', 'Cascadia Code', monospace; font-size:13px; }
+  .json-key   { color:#60a5fa; }
+  .json-str   { color:#4ade80; }
+  .json-num   { color:#fb923c; }
+  .json-bool  { color:#f472b6; }
+  .json-null  { color:#94a3b8; }
+  .spin { animation: spin .7s linear infinite; display:inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pulse-dot { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .status-green { background:#22c55e; }
+  .status-offline { background:#ef4444; }
+  .fade-in { animation: fadeIn .3s ease; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+  .state-node { display:inline-flex; align-items:center; justify-content:center;
+    border-radius:9999px; font-size:11px; font-weight:600; padding:4px 10px; white-space:nowrap; }
+  .arrow { color:#94a3b8; font-size:18px; margin:0 4px; flex-shrink:0; }
+  .credit-bar { transition: width 0.8s cubic-bezier(.4,0,.2,1); }
+</style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-lg">
+  <div class="flex items-center gap-3">
+    <div class="text-2xl font-black tracking-tight text-indigo-400">1D</div>
+    <div>
+      <div class="font-bold text-lg">One Day Delivery</div>
+      <div class="text-xs text-slate-400">Live API Demo · M4 Orders</div>
+    </div>
+  </div>
+  <div class="flex items-center gap-2 text-sm">
+    <span id="status-dot" class="w-2.5 h-2.5 rounded-full status-offline pulse-dot"></span>
+    <span id="status-text" class="text-slate-400">Checking backend…</span>
+  </div>
+</header>
+
+<!-- ── Tab Bar ─────────────────────────────────────────────────────────── -->
+<div class="bg-white border-b border-slate-200 px-6 flex gap-1 sticky top-[64px] z-10 shadow-sm">
+  <button class="tab-btn active px-4 py-3 text-sm font-medium rounded-t-md" onclick="switchTab('b2c')">📦 B2C Booking</button>
+  <button class="tab-btn px-4 py-3 text-sm font-medium rounded-t-md" onclick="switchTab('b2b')">🏢 B2B Enterprise</button>
+  <button class="tab-btn px-4 py-3 text-sm font-medium rounded-t-md" onclick="switchTab('idem')">🔁 Safe Retries</button>
+  <button class="tab-btn px-4 py-3 text-sm font-medium rounded-t-md" onclick="switchTab('journey')">🗺️ Shipment Journey</button>
+  <button class="tab-btn px-4 py-3 text-sm font-medium rounded-t-md" onclick="switchTab('otp')">🔐 Pickup OTP</button>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 1: B2C BOOKING                                                    -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="tab-b2c" class="tab-panel active flex-col lg:flex-row gap-0 min-h-[calc(100vh-112px)]">
+
+  <!-- Left: Form -->
+  <div class="w-full lg:w-[42%] bg-white border-r border-slate-200 p-6 overflow-y-auto">
+    <h2 class="text-lg font-bold text-slate-800 mb-1">Consumer Booking</h2>
+    <p class="text-sm text-slate-500 mb-5">A customer books a parcel from any of our 5 cities. Payment is either prepaid via Razorpay or collected on delivery (COD).</p>
+
+    <!-- Payment Mode toggle -->
+    <div class="mb-5">
+      <label class="block text-xs font-semibold text-slate-500 uppercase mb-2">Payment Mode</label>
+      <div class="flex rounded-lg overflow-hidden border border-slate-200">
+        <button id="b2c-pay-prepaid" onclick="setB2cMode('PREPAID')" class="flex-1 py-2 text-sm font-semibold bg-indigo-600 text-white">💳 Prepaid</button>
+        <button id="b2c-pay-cod" onclick="setB2cMode('COD')" class="flex-1 py-2 text-sm font-semibold text-slate-600">📬 Cash on Delivery</button>
+      </div>
+    </div>
+
+    <!-- Sender + Receiver row -->
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Sender</div>
+        <input id="b2c-sname" class="form-input w-full mb-2" placeholder="Name" value="Priya Sharma">
+        <input id="b2c-sphone" class="form-input w-full mb-2" placeholder="+91XXXXXXXXXX" value="+919876543210">
+        <select id="b2c-ocity" class="form-input w-full mb-2" onchange="cityChanged('b2c','o')">
+          <option value="BLR" selected>Bangalore</option><option value="BOM">Mumbai</option>
+          <option value="DEL">Delhi</option><option value="MAA">Chennai</option><option value="HYD">Hyderabad</option>
+        </select>
+        <input id="b2c-opincode" class="form-input w-full" placeholder="Pincode" value="560001">
+      </div>
+      <div>
+        <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Receiver</div>
+        <input id="b2c-rname" class="form-input w-full mb-2" placeholder="Name" value="Rahul Patel">
+        <input id="b2c-rphone" class="form-input w-full mb-2" placeholder="+91XXXXXXXXXX" value="+919123456789">
+        <select id="b2c-dcity" class="form-input w-full mb-2" onchange="cityChanged('b2c','d')">
+          <option value="BLR">Bangalore</option><option value="BOM" selected>Mumbai</option>
+          <option value="DEL">Delhi</option><option value="MAA">Chennai</option><option value="HYD">Hyderabad</option>
+        </select>
+        <input id="b2c-dpincode" class="form-input w-full" placeholder="Pincode" value="400001">
+      </div>
+    </div>
+
+    <!-- Parcel -->
+    <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Parcel</div>
+    <div class="grid grid-cols-4 gap-2 mb-4">
+      <div><label class="text-xs text-slate-400">Weight (g)</label><input id="b2c-weight" class="form-input w-full" type="number" value="500" min="1"></div>
+      <div><label class="text-xs text-slate-400">L (cm)</label><input id="b2c-len" class="form-input w-full" type="number" value="20" min="1"></div>
+      <div><label class="text-xs text-slate-400">W (cm)</label><input id="b2c-wid" class="form-input w-full" type="number" value="15" min="1"></div>
+      <div><label class="text-xs text-slate-400">H (cm)</label><input id="b2c-hei" class="form-input w-full" type="number" value="10" min="1"></div>
+    </div>
+
+    <!-- Options -->
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <label class="text-xs font-semibold text-slate-500 uppercase mb-2 block">Pickup</label>
+        <div class="flex rounded-lg overflow-hidden border border-slate-200">
+          <button id="b2c-pu-da" onclick="setOpt('b2c','pu','DA_PICKUP')" class="flex-1 py-1.5 text-xs font-semibold bg-indigo-600 text-white">DA Pickup</button>
+          <button id="b2c-pu-self" onclick="setOpt('b2c','pu','SELF_DROP')" class="flex-1 py-1.5 text-xs font-semibold text-slate-600">Self Drop</button>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-slate-500 uppercase mb-2 block">Delivery</label>
+        <div class="flex rounded-lg overflow-hidden border border-slate-200">
+          <button id="b2c-dr-da" onclick="setOpt('b2c','dr','DA_DELIVERY')" class="flex-1 py-1.5 text-xs font-semibold bg-indigo-600 text-white">Home</button>
+          <button id="b2c-dr-hub" onclick="setOpt('b2c','dr','HUB_COLLECT')" class="flex-1 py-1.5 text-xs font-semibold text-slate-600">Hub Pickup</button>
+        </div>
+      </div>
+    </div>
+    <div class="mb-5">
+      <label class="text-xs font-semibold text-slate-500 uppercase mb-1 block">Declared Value (₹) <span class="text-slate-400 font-normal">optional</span></label>
+      <input id="b2c-dval" class="form-input w-full" type="number" value="5000" placeholder="0">
+    </div>
+
+    <button onclick="sendB2c()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg text-sm transition">▶ Book Shipment</button>
+  </div>
+
+  <!-- Right: API Viewer -->
+  <div class="w-full lg:w-[58%] p-6 flex flex-col gap-4 overflow-y-auto">
+    <div id="b2c-req-panel" class="bg-slate-900 rounded-xl p-4 text-xs">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded font-bold">POST</span>
+          <span class="text-slate-300 font-mono">http://localhost:8080/api/v1/b2c/shipments</span>
+        </div>
+      </div>
+      <div class="text-slate-500 text-xs mb-2">Idempotency-Key: <span class="text-slate-300" id="b2c-ikey">auto-generated</span></div>
+      <div class="text-slate-500 text-xs mb-3">X-User-Id: <span class="text-slate-300">demo-user</span></div>
+      <pre id="b2c-req-body" class="text-slate-300 whitespace-pre-wrap break-all leading-relaxed"></pre>
+    </div>
+
+    <div id="b2c-loading" class="hidden text-center py-6 text-slate-500">
+      <div class="spin text-2xl mb-2">⚙</div>
+      <div class="text-sm">Sending request…</div>
+    </div>
+
+    <div id="b2c-resp-panel" class="hidden fade-in">
+      <div class="bg-slate-900 rounded-xl p-4">
+        <div class="flex items-center gap-3 mb-3">
+          <span id="b2c-status-badge" class="text-xs px-2 py-0.5 rounded font-bold"></span>
+          <span id="b2c-timing" class="text-slate-500 text-xs"></span>
+        </div>
+        <pre id="b2c-resp-body" class="text-slate-300 whitespace-pre-wrap break-all leading-relaxed text-xs overflow-auto max-h-80"></pre>
+      </div>
+      <div id="b2c-summary" class="mt-4 bg-white border border-slate-200 rounded-xl p-5 fade-in"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 2: B2B BOOKING                                                    -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="tab-b2b" class="tab-panel flex-col lg:flex-row gap-0 min-h-[calc(100vh-112px)]">
+
+  <div class="w-full lg:w-[42%] bg-white border-r border-slate-200 p-6 overflow-y-auto">
+    <h2 class="text-lg font-bold text-slate-800 mb-1">Enterprise B2B Booking</h2>
+    <p class="text-sm text-slate-500 mb-5">Corporate clients ship on credit. Charge is debited from their account — no payment gateway involved. A <strong>SELECT FOR UPDATE</strong> credit check runs atomically in the DB transaction.</p>
+
+    <!-- Credit meter -->
+    <div class="mb-5 bg-indigo-50 rounded-xl p-4">
+      <div class="flex justify-between text-xs font-semibold mb-1">
+        <span class="text-slate-600">Acme Corp Credit Usage</span>
+        <span id="b2b-credit-label" class="text-indigo-700">₹12,000 used of ₹50,000</span>
+      </div>
+      <div class="h-3 bg-white rounded-full border border-slate-200 overflow-hidden">
+        <div id="b2b-credit-bar" class="credit-bar h-full bg-indigo-500 rounded-full" style="width:24%"></div>
+      </div>
+      <div class="text-xs text-slate-400 mt-1">₹38,000 remaining</div>
+    </div>
+
+    <div class="mb-3">
+      <label class="text-xs font-semibold text-slate-500 uppercase mb-1 block">B2B Account ID</label>
+      <input id="b2b-acct" class="form-input w-full font-mono text-xs" value="a1b2c3d4-e5f6-7890-abcd-ef1234567890">
+    </div>
+    <div class="mb-4">
+      <label class="text-xs font-semibold text-slate-500 uppercase mb-1 block">Purchase Order Ref <span class="text-slate-400 font-normal">optional</span></label>
+      <input id="b2b-po" class="form-input w-full" placeholder="e.g. PO-2024-001" value="PO-2024-001">
+    </div>
+
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div>
+        <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Sender</div>
+        <input id="b2b-sname" class="form-input w-full mb-2" value="Acme Corp Warehouse">
+        <input id="b2b-sphone" class="form-input w-full mb-2" value="+919988776655">
+        <select id="b2b-ocity" class="form-input w-full mb-2" onchange="cityChanged('b2b','o')">
+          <option value="BLR" selected>Bangalore</option><option value="BOM">Mumbai</option>
+          <option value="DEL">Delhi</option><option value="MAA">Chennai</option><option value="HYD">Hyderabad</option>
+        </select>
+        <input id="b2b-opincode" class="form-input w-full" value="560100">
+      </div>
+      <div>
+        <div class="text-xs font-semibold text-slate-500 uppercase mb-2">Receiver</div>
+        <input id="b2b-rname" class="form-input w-full mb-2" value="Mumbai Client Pvt Ltd">
+        <input id="b2b-rphone" class="form-input w-full mb-2" value="+919001122334">
+        <select id="b2b-dcity" class="form-input w-full mb-2" onchange="cityChanged('b2b','d')">
+          <option value="BLR">Bangalore</option><option value="BOM" selected>Mumbai</option>
+          <option value="DEL">Delhi</option><option value="MAA">Chennai</option><option value="HYD">Hyderabad</option>
+        </select>
+        <input id="b2b-dpincode" class="form-input w-full" value="400051">
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-2 mb-4">
+      <div><label class="text-xs text-slate-400">Weight (g)</label><input id="b2b-weight" class="form-input w-full" type="number" value="2000" min="1"></div>
+      <div><label class="text-xs text-slate-400">L (cm)</label><input id="b2b-len" class="form-input w-full" type="number" value="30" min="1"></div>
+      <div><label class="text-xs text-slate-400">W (cm)</label><input id="b2b-wid" class="form-input w-full" type="number" value="25" min="1"></div>
+      <div><label class="text-xs text-slate-400">H (cm)</label><input id="b2b-hei" class="form-input w-full" type="number" value="20" min="1"></div>
+    </div>
+    <div class="mb-5">
+      <label class="text-xs font-semibold text-slate-500 uppercase mb-1 block">Declared Value (₹) <span class="text-red-400 text-xs">required</span></label>
+      <input id="b2b-dval" class="form-input w-full" type="number" value="25000">
+    </div>
+
+    <button onclick="sendB2b()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg text-sm transition">▶ Book on Credit</button>
+
+    <!-- Credit limit exceeded demo -->
+    <button onclick="sendB2bOverLimit()" class="w-full mt-2 border border-red-300 text-red-600 hover:bg-red-50 font-semibold py-2 rounded-lg text-sm transition">⚡ Try Exceeding Credit Limit</button>
+  </div>
+
+  <div class="w-full lg:w-[58%] p-6 flex flex-col gap-4 overflow-y-auto">
+    <div id="b2b-req-panel" class="bg-slate-900 rounded-xl p-4 text-xs">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded font-bold">POST</span>
+        <span class="text-slate-300 font-mono">http://localhost:8080/api/v1/b2b/shipments</span>
+      </div>
+      <div class="text-slate-500 text-xs mb-2">Idempotency-Key: <span class="text-slate-300" id="b2b-ikey">auto-generated</span></div>
+      <div class="text-slate-500 text-xs mb-3">X-User-Id: <span class="text-slate-300">demo-user</span></div>
+      <pre id="b2b-req-body" class="text-slate-300 whitespace-pre-wrap break-all leading-relaxed"></pre>
+    </div>
+    <div id="b2b-loading" class="hidden text-center py-6 text-slate-500"><div class="spin text-2xl mb-2">⚙</div><div class="text-sm">Sending request…</div></div>
+    <div id="b2b-resp-panel" class="hidden fade-in">
+      <div class="bg-slate-900 rounded-xl p-4">
+        <div class="flex items-center gap-3 mb-3">
+          <span id="b2b-status-badge" class="text-xs px-2 py-0.5 rounded font-bold"></span>
+          <span id="b2b-timing" class="text-slate-500 text-xs"></span>
+        </div>
+        <pre id="b2b-resp-body" class="text-slate-300 whitespace-pre-wrap break-all leading-relaxed text-xs overflow-auto max-h-80"></pre>
+      </div>
+      <div id="b2b-summary" class="mt-4 bg-white border border-slate-200 rounded-xl p-5 fade-in"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 3: IDEMPOTENCY                                                    -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="tab-idem" class="tab-panel flex-col lg:flex-row gap-0 min-h-[calc(100vh-112px)]">
+  <div class="w-full lg:w-[42%] bg-white border-r border-slate-200 p-6 overflow-y-auto">
+    <h2 class="text-lg font-bold text-slate-800 mb-1">Safe Retries / Idempotency</h2>
+    <p class="text-sm text-slate-500 mb-5">Every request carries an <strong>Idempotency-Key</strong>. If the same key is sent again — due to a network retry, double-click, or app crash — the backend returns the <em>exact same response</em> instead of creating a duplicate shipment.</p>
+
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-xs text-amber-800">
+      <strong>Idempotency Key:</strong>
+      <div class="flex items-center gap-2 mt-1">
+        <span id="idem-key-display" class="font-mono bg-white border border-amber-200 rounded px-2 py-1 flex-1 text-xs truncate"></span>
+        <button onclick="resetIdemKey()" class="text-amber-700 hover:text-amber-900 font-semibold text-xs">🔄 New</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 mb-3">
+      <div>
+        <select id="idem-ocity" class="form-input w-full mb-2" onchange="cityChanged('idem','o')">
+          <option value="BLR" selected>Bangalore</option><option value="BOM">Mumbai</option>
+          <option value="DEL">Delhi</option><option value="MAA">Chennai</option><option value="HYD">Hyderabad</option>
+        </select>
+        <input id="idem-opincode" class="form-input w-full" value="560034">
+      </div>
+      <div>
+        <select id="idem-dcity" class="form-input w-full mb-2" onchange="cityChanged('idem','d')">
+          <option value="BLR">Bangalore</option><option value="BOM">Mumbai</option>
+          <option value="DEL" selected>Delhi</option><option value="MAA">Chennai</option><option value="HYD">Hyderabad</option>
+        </select>
+        <input id="idem-dpincode" class="form-input w-full" value="110001">
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-3 mb-5">
+      <div><label class="text-xs text-slate-400">Weight (g)</label><input id="idem-weight" class="form-input w-full" type="number" value="750"></div>
+      <div><label class="text-xs text-slate-400">Declared Val (₹)</label><input id="idem-dval" class="form-input w-full" type="number" value="3000"></div>
+    </div>
+
+    <button onclick="sendIdem(false)" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg text-sm transition mb-2">▶ Send Request</button>
+    <button onclick="sendIdem(true)" class="w-full border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold py-2.5 rounded-lg text-sm transition">⚡ Send Again (same key) — Simulate Retry</button>
+  </div>
+
+  <div class="w-full lg:w-[58%] p-6 flex flex-col gap-4 overflow-y-auto">
+    <div id="idem-req-panel" class="bg-slate-900 rounded-xl p-4 text-xs">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="bg-indigo-600 text-white px-2 py-0.5 rounded font-bold text-xs">POST</span>
+        <span class="text-slate-300 font-mono">http://localhost:8080/api/v1/b2c/shipments</span>
+      </div>
+      <div class="text-slate-500 text-xs mb-3">Idempotency-Key: <span class="text-yellow-300 font-mono" id="idem-ikey-preview">—</span></div>
+      <pre id="idem-req-body" class="text-slate-300 whitespace-pre-wrap break-all leading-relaxed"></pre>
+    </div>
+    <div id="idem-loading" class="hidden text-center py-6 text-slate-500"><div class="spin text-2xl mb-2">⚙</div><div class="text-sm">Sending request…</div></div>
+    <div id="idem-resp-panel" class="hidden fade-in flex flex-col gap-4">
+      <div class="bg-slate-900 rounded-xl p-4">
+        <div class="flex items-center gap-3 mb-3">
+          <span id="idem-status-badge" class="text-xs px-2 py-0.5 rounded font-bold"></span>
+          <span id="idem-timing" class="text-slate-500 text-xs"></span>
+          <span id="idem-replay-badge" class="hidden text-xs bg-yellow-500 text-black px-2 py-0.5 rounded font-bold">⚡ CACHED RESPONSE</span>
+        </div>
+        <pre id="idem-resp-body" class="text-slate-300 whitespace-pre-wrap break-all leading-relaxed text-xs overflow-auto max-h-64"></pre>
+      </div>
+      <div id="idem-explanation" class="bg-white border border-slate-200 rounded-xl p-5 text-sm"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 4: SHIPMENT JOURNEY                                               -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="tab-journey" class="tab-panel flex-col min-h-[calc(100vh-112px)]">
+  <div class="bg-white border-b border-slate-200 p-6">
+    <h2 class="text-lg font-bold text-slate-800 mb-1">Shipment Lifecycle</h2>
+    <p class="text-sm text-slate-500 mb-4">The M4 state machine has <strong>23 states</strong> and enforces valid transitions with a pessimistic write lock. Toggle the options below to see how the path changes.</p>
+    <div class="flex flex-wrap gap-4">
+      <div>
+        <label class="text-xs font-semibold text-slate-500 uppercase mb-2 block">Route</label>
+        <div class="flex rounded-lg overflow-hidden border border-slate-200">
+          <button id="jrn-intercity" onclick="setJourney('route','intercity')" class="px-4 py-2 text-xs font-semibold bg-indigo-600 text-white">✈ Intercity</button>
+          <button id="jrn-samecity" onclick="setJourney('route','samecity')" class="px-4 py-2 text-xs font-semibold text-slate-600">🏙 Same City</button>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-slate-500 uppercase mb-2 block">Pickup</label>
+        <div class="flex rounded-lg overflow-hidden border border-slate-200">
+          <button id="jrn-dapickup" onclick="setJourney('pickup','da')" class="px-4 py-2 text-xs font-semibold bg-indigo-600 text-white">DA Picks Up</button>
+          <button id="jrn-selfdrop" onclick="setJourney('pickup','self')" class="px-4 py-2 text-xs font-semibold text-slate-600">Self Drop</button>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-slate-500 uppercase mb-2 block">Delivery</label>
+        <div class="flex rounded-lg overflow-hidden border border-slate-200">
+          <button id="jrn-dadelivery" onclick="setJourney('delivery','da')" class="px-4 py-2 text-xs font-semibold bg-indigo-600 text-white">Home Delivery</button>
+          <button id="jrn-hubcollect" onclick="setJourney('delivery','hub')" class="px-4 py-2 text-xs font-semibold text-slate-600">Hub Collect</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="p-6 overflow-x-auto">
+    <div id="journey-diagram" class="min-w-max"></div>
+
+    <!-- Exception paths -->
+    <div class="mt-8 bg-white rounded-xl border border-slate-200 p-5">
+      <h3 class="font-bold text-slate-700 mb-3 text-sm">Exception Paths (owned by M11)</h3>
+      <div class="flex flex-wrap items-center gap-2 text-xs mb-3">
+        <span class="state-node bg-orange-100 text-orange-700">PICKUP_ASSIGNED</span>
+        <span class="arrow">→</span><span class="state-node bg-red-100 text-red-700">PICKUP_FAILED</span>
+        <span class="arrow">→</span><span class="state-node bg-orange-100 text-orange-700">PICKUP_ASSIGNED</span>
+        <span class="text-slate-400 ml-2">(retry)</span>
+        <span class="ml-4 text-slate-300">|</span>
+        <span class="arrow ml-4">→</span><span class="state-node bg-slate-100 text-slate-600">CANCELLED</span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <span class="state-node bg-blue-100 text-blue-700">DROP_COLLECTED</span>
+        <span class="arrow">→</span><span class="state-node bg-red-100 text-red-700">DELIVERY_FAILED</span>
+        <span class="arrow">→</span><span class="state-node bg-red-100 text-red-700">RTO_INITIATED</span>
+        <span class="arrow">→</span><span class="state-node bg-red-200 text-red-800">RTO_IN_TRANSIT</span>
+        <span class="text-slate-400 text-xs">(intercity)</span>
+        <span class="arrow">→</span><span class="state-node bg-red-200 text-red-800">RTO_COMPLETED</span>
+        <span class="ml-4 text-slate-300">|</span>
+        <span class="arrow ml-4">→</span><span class="state-node bg-orange-100 text-orange-700">DROP_ASSIGNED</span>
+        <span class="text-slate-400 text-xs">(re-attempt)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 5: PICKUP OTP                                                     -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<div id="tab-otp" class="tab-panel flex-col lg:flex-row gap-0 min-h-[calc(100vh-112px)]">
+  <div class="w-full lg:w-[45%] bg-white border-r border-slate-200 p-6 overflow-y-auto">
+    <h2 class="text-lg font-bold text-slate-800 mb-1">Pickup OTP Verification</h2>
+    <p class="text-sm text-slate-500 mb-5">When a DA is assigned to pick up a parcel, a 4-digit OTP is sent to the sender's phone. The DA must collect this OTP before the system transitions the shipment to <code class="bg-slate-100 px-1 rounded">PICKED_UP</code>.</p>
+
+    <!-- Flow diagram -->
+    <div class="bg-slate-50 rounded-xl p-4 mb-5 text-xs">
+      <div class="font-semibold text-slate-600 mb-3">Flow</div>
+      <div class="space-y-2">
+        <div class="flex items-start gap-3"><span class="bg-indigo-600 text-white rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 font-bold mt-0.5">1</span><span>Booking created → state: <strong>BOOKED</strong></span></div>
+        <div class="flex items-start gap-3"><span class="bg-indigo-600 text-white rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 font-bold mt-0.5">2</span><span>M5 assigns a DA → state: <strong>PICKUP_ASSIGNED</strong> + OTP generated &amp; SMS'd</span></div>
+        <div class="flex items-start gap-3"><span class="bg-indigo-600 text-white rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 font-bold mt-0.5">3</span><span>DA arrives, asks sender for OTP, enters it in the DA app</span></div>
+        <div class="flex items-start gap-3"><span class="bg-green-600 text-white rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 font-bold mt-0.5">4</span><span>API verifies OTP → state: <strong>PICKED_UP</strong></span></div>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="text-xs font-semibold text-slate-500 uppercase mb-1 block">Shipment Ref</label>
+      <input id="otp-ref" class="form-input w-full font-mono" placeholder="e.g. BLR240001">
+    </div>
+
+    <button onclick="sendOtpResend()" class="w-full border border-indigo-300 text-indigo-700 hover:bg-indigo-50 font-semibold py-2.5 rounded-lg text-sm transition mb-3">📤 Request OTP Resend</button>
+
+    <div class="mb-3">
+      <label class="text-xs font-semibold text-slate-500 uppercase mb-1 block">OTP (4 digits)</label>
+      <input id="otp-code" class="form-input w-full font-mono text-center text-lg tracking-widest" maxlength="4" placeholder="_ _ _ _">
+    </div>
+    <button onclick="sendOtpVerify()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg text-sm transition">✅ Verify OTP</button>
+  </div>
+
+  <div class="w-full lg:w-[55%] p-6 flex flex-col gap-4 overflow-y-auto">
+    <div class="bg-slate-900 rounded-xl p-4">
+      <div class="text-xs text-slate-400 mb-3 font-semibold uppercase">Resend Endpoint</div>
+      <div class="flex items-center gap-2 mb-3">
+        <span class="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded font-bold">POST</span>
+        <span class="text-slate-300 font-mono text-xs">/internal/v1/shipments/<span class="text-yellow-300">{ref}</span>/pickup-otp/resend</span>
+      </div>
+      <pre class="text-slate-400 text-xs">200 OK  →  {"otp": "4821"}  — new OTP (also sent via SMS)
+404     →  Shipment not found
+409     →  Not in PICKUP_ASSIGNED state
+429     →  Resend limit (3) reached</pre>
+    </div>
+
+    <div class="bg-slate-900 rounded-xl p-4">
+      <div class="text-xs text-slate-400 mb-3 font-semibold uppercase">Verify Endpoint</div>
+      <div class="flex items-center gap-2 mb-3">
+        <span class="bg-indigo-600 text-white text-xs px-2 py-0.5 rounded font-bold">POST</span>
+        <span class="text-slate-300 font-mono text-xs">/internal/v1/shipments/<span class="text-yellow-300">{ref}</span>/pickup-otp/verify</span>
+      </div>
+      <pre class="text-slate-300 text-xs mb-3">Body: {"otp": "4821"}</pre>
+      <pre class="text-slate-400 text-xs">204 No Content → OTP correct; PICKUP_ASSIGNED → PICKED_UP
+404     →  Shipment not found
+409     →  Not in PICKUP_ASSIGNED state
+422     →  OTP wrong / expired / already used</pre>
+    </div>
+
+    <div id="otp-loading" class="hidden text-center py-6 text-slate-500"><div class="spin text-2xl mb-2">⚙</div><div class="text-sm">Sending request…</div></div>
+    <div id="otp-resp-panel" class="hidden fade-in">
+      <div class="bg-slate-900 rounded-xl p-4">
+        <div class="flex items-center gap-3 mb-3">
+          <span id="otp-status-badge" class="text-xs px-2 py-0.5 rounded font-bold"></span>
+          <span id="otp-timing" class="text-slate-500 text-xs"></span>
+        </div>
+        <pre id="otp-resp-body" class="text-slate-300 whitespace-pre-wrap text-xs"></pre>
+      </div>
+      <div id="otp-summary" class="mt-3 bg-white border border-slate-200 rounded-xl p-4 text-sm"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- STYLES                                                                 -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<style>
+  .form-input {
+    border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px;
+    font-size:13px; outline:none; background:#f8fafc; color:#1e293b;
+    transition:border-color .15s;
+  }
+  .form-input:focus { border-color:#6366f1; background:#fff; }
+</style>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- JAVASCRIPT                                                             -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<script>
+const API = 'http://localhost:8080';
+
+// ── City data ──────────────────────────────────────────────────────────
+const CITIES = {
+  BLR: { name:'Bangalore', state:'Karnataka',     pincodes:['560001','560034','560100'], addr:'12 MG Road' },
+  BOM: { name:'Mumbai',    state:'Maharashtra',   pincodes:['400001','400051','400099'], addr:'27 Marine Lines' },
+  DEL: { name:'Delhi',     state:'Delhi',         pincodes:['110001','110011','110062'], addr:'8 Connaught Place' },
+  MAA: { name:'Chennai',   state:'Tamil Nadu',    pincodes:['600001','600028','600091'], addr:'15 Anna Salai' },
+  HYD: { name:'Hyderabad', state:'Telangana',     pincodes:['500001','500016','500072'], addr:'22 Banjara Hills' },
+};
+
+// ── State ──────────────────────────────────────────────────────────────
+const state = {
+  b2c:  { mode:'PREPAID', pickup:'DA_PICKUP', drop:'DA_DELIVERY' },
+  idem: { key: uuid(), lastRef: null },
+  b2b:  { outstanding: 1200000, limit: 5000000 },
+  journey: { route:'intercity', pickup:'da', delivery:'da' },
+  lastIdemResponse: null,
+};
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+function uuid() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0; return(c==='x'?r:(r&3|8)).toString(16);
+  });
+}
+function inr(paise) {
+  return new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(paise/100);
+}
+function statusBadge(code) {
+  const ok = code >= 200 && code < 300;
+  const cls = ok ? 'bg-green-600 text-white' : code===409?'bg-orange-500 text-white':code===402?'bg-yellow-500 text-black':'bg-red-600 text-white';
+  return `<span class="text-xs px-2 py-0.5 rounded font-bold ${cls}">${code}</span>`;
+}
+function highlight(json) {
+  return JSON.stringify(json,null,2)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"([^"]+)":/g,'<span class="json-key">"$1"</span>:')
+    .replace(/: "([^"]*)"/g,': <span class="json-str">"$1"</span>')
+    .replace(/: (\d+(\.\d+)?)/g,': <span class="json-num">$1</span>')
+    .replace(/: (true|false)/g,': <span class="json-bool">$1</span>')
+    .replace(/: null/g,': <span class="json-null">null</span>');
+}
+function cityChanged(tab, dir) {
+  const sel = document.getElementById(`${tab}-${dir==='o'?'o':'d'}city`).value;
+  const pinEl = document.getElementById(`${tab}-${dir==='o'?'o':'d'}pincode`);
+  if (pinEl) pinEl.value = CITIES[sel].pincodes[0];
+  updateReqPreviews();
+}
+
+// ── Tab switching ───────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>{
+    const tabs=['b2c','b2b','idem','journey','otp'];
+    b.classList.toggle('active', tabs[i]===tab);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  if(tab==='journey') renderJourney();
+}
+
+// ── B2C form ────────────────────────────────────────────────────────────
+function setB2cMode(mode) {
+  state.b2c.mode = mode;
+  document.getElementById('b2c-pay-prepaid').className = `flex-1 py-2 text-sm font-semibold ${mode==='PREPAID'?'bg-indigo-600 text-white':'text-slate-600'}`;
+  document.getElementById('b2c-pay-cod').className    = `flex-1 py-2 text-sm font-semibold ${mode==='COD'?'bg-indigo-600 text-white':'text-slate-600'}`;
+  updateReqPreviews();
+}
+function setOpt(tab, kind, val) {
+  if(tab==='b2c') state.b2c[kind==='pu'?'pickup':'drop'] = val;
+  const ids = kind==='pu' ? ['da','self'] : ['da','hub'];
+  const vals = kind==='pu' ? ['DA_PICKUP','SELF_DROP'] : ['DA_DELIVERY','HUB_COLLECT'];
+  ids.forEach((id,i)=>{
+    const el = document.getElementById(`${tab}-${kind}-${id}`);
+    if(el) el.className = `flex-1 py-1.5 text-xs font-semibold ${vals[i]===val?'bg-indigo-600 text-white':'text-slate-600'}`;
+  });
+  updateReqPreviews();
+}
+
+function buildB2cBody() {
+  const oc = document.getElementById('b2c-ocity').value;
+  const dc = document.getElementById('b2c-dcity').value;
+  const op = document.getElementById('b2c-opincode').value;
+  const dp = document.getElementById('b2c-dpincode').value;
+  const dval = parseInt(document.getElementById('b2c-dval').value||'0')*100;
+  const body = {
+    sender_name:   document.getElementById('b2c-sname').value,
+    sender_phone:  document.getElementById('b2c-sphone').value,
+    sender_email:  'sender@example.com',
+    origin_address:{ line1: CITIES[oc]?.addr||'1 Main St', city:CITIES[oc]?.name||oc, pincode:op, state:CITIES[oc]?.state||'' },
+    origin_city:   oc,
+    origin_pincode: op,
+    receiver_name: document.getElementById('b2c-rname').value,
+    receiver_phone:document.getElementById('b2c-rphone').value,
+    receiver_email:'receiver@example.com',
+    dest_address:  { line1: CITIES[dc]?.addr||'1 Main St', city:CITIES[dc]?.name||dc, pincode:dp, state:CITIES[dc]?.state||'' },
+    dest_city:     dc,
+    dest_pincode:  dp,
+    weight_grams:  parseInt(document.getElementById('b2c-weight').value||'500'),
+    length_cm:     parseInt(document.getElementById('b2c-len').value||'20'),
+    width_cm:      parseInt(document.getElementById('b2c-wid').value||'15'),
+    height_cm:     parseInt(document.getElementById('b2c-hei').value||'10'),
+    declared_value_paise: dval||null,
+    pickup_type:   state.b2c.pickup,
+    drop_type:     state.b2c.drop,
+    payment_mode:  state.b2c.mode,
+  };
+  if(state.b2c.mode==='PREPAID'){
+    body.razorpay_order_id  = 'order_DEMO_'+Math.random().toString(36).slice(2,10).toUpperCase();
+    body.razorpay_payment_id= 'pay_DEMO_'+Math.random().toString(36).slice(2,10).toUpperCase();
+    body.razorpay_signature = 'stub_sig_demo';
+  }
+  return body;
+}
+
+function buildB2bBody(overLimit=false) {
+  const oc = document.getElementById('b2b-ocity').value;
+  const dc = document.getElementById('b2b-dcity').value;
+  const op = document.getElementById('b2b-opincode').value;
+  const dp = document.getElementById('b2b-dpincode').value;
+  const dval = overLimit ? 4000000 : parseInt(document.getElementById('b2b-dval').value||'0')*100;
+  const weight = overLimit ? 50000 : parseInt(document.getElementById('b2b-weight').value||'2000');
+  return {
+    b2b_account_id: document.getElementById('b2b-acct').value,
+    purchase_order_ref: document.getElementById('b2b-po').value||null,
+    sender_name:   document.getElementById('b2b-sname').value,
+    sender_phone:  document.getElementById('b2b-sphone').value,
+    sender_email:  'warehouse@acmecorp.example.com',
+    origin_address:{ line1: CITIES[oc]?.addr||'1 Main St', city:CITIES[oc]?.name||oc, pincode:op, state:CITIES[oc]?.state||'' },
+    origin_city:   oc,
+    origin_pincode: op,
+    receiver_name: document.getElementById('b2b-rname').value,
+    receiver_phone:document.getElementById('b2b-rphone').value,
+    receiver_email:'accounts@client.example.com',
+    dest_address:  { line1: CITIES[dc]?.addr||'1 Main St', city:CITIES[dc]?.name||dc, pincode:dp, state:CITIES[dc]?.state||'' },
+    dest_city:     dc,
+    dest_pincode:  dp,
+    weight_grams:  weight,
+    length_cm:     parseInt(document.getElementById('b2b-len').value||'30'),
+    width_cm:      parseInt(document.getElementById('b2b-wid').value||'25'),
+    height_cm:     parseInt(document.getElementById('b2b-hei').value||'20'),
+    declared_value_paise: dval,
+    pickup_type:   'DA_PICKUP',
+    drop_type:     'DA_DELIVERY',
+  };
+}
+
+function buildIdemBody() {
+  const oc = document.getElementById('idem-ocity').value;
+  const dc = document.getElementById('idem-dcity').value;
+  const op = document.getElementById('idem-opincode').value;
+  const dp = document.getElementById('idem-dpincode').value;
+  const dval = parseInt(document.getElementById('idem-dval').value||'0')*100;
+  return {
+    sender_name:'Demo Sender', sender_phone:'+919000000001', sender_email:'demo@example.com',
+    origin_address:{line1:CITIES[oc]?.addr||'1 Main St',city:CITIES[oc]?.name||oc,pincode:op,state:CITIES[oc]?.state||''},
+    origin_city:oc, origin_pincode:op,
+    receiver_name:'Demo Receiver', receiver_phone:'+919000000002', receiver_email:'recv@example.com',
+    dest_address:{line1:CITIES[dc]?.addr||'1 Main St',city:CITIES[dc]?.name||dc,pincode:dp,state:CITIES[dc]?.state||''},
+    dest_city:dc, dest_pincode:dp,
+    weight_grams:parseInt(document.getElementById('idem-weight').value||'750'),
+    length_cm:20, width_cm:15, height_cm:10,
+    declared_value_paise:dval||null,
+    pickup_type:'DA_PICKUP', drop_type:'DA_DELIVERY',
+    payment_mode:'PREPAID',
+    razorpay_order_id:'order_IDEM_DEMO', razorpay_payment_id:'pay_IDEM_DEMO', razorpay_signature:'stub_sig_idem',
+  };
+}
+
+// ── Request preview auto-update ─────────────────────────────────────────
+function updateReqPreviews() {
+  try {
+    const ikey = uuid();
+    document.getElementById('b2c-ikey').textContent = ikey.slice(0,8)+'…';
+    document.getElementById('b2c-req-body').innerHTML = highlight(buildB2cBody());
+  } catch(e){}
+  try {
+    document.getElementById('b2b-ikey').textContent = uuid().slice(0,8)+'…';
+    document.getElementById('b2b-req-body').innerHTML = highlight(buildB2bBody());
+  } catch(e){}
+  try {
+    document.getElementById('idem-ikey-preview').textContent = state.idem.key;
+    document.getElementById('idem-req-body').innerHTML = highlight(buildIdemBody());
+  } catch(e){}
+}
+
+// ── API call helper ─────────────────────────────────────────────────────
+async function callApi(url, method, body, headers={}) {
+  const t0 = Date.now();
+  const resp = await fetch(url, {
+    method,
+    headers: { 'Content-Type':'application/json', ...headers },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const elapsed = Date.now() - t0;
+  let data = null;
+  const text = await resp.text();
+  try { data = JSON.parse(text); } catch(e) { data = text; }
+  return { status: resp.status, data, elapsed };
+}
+
+function showStatus(id, code) {
+  const ok = code >= 200 && code < 300;
+  const color = ok?'bg-green-600 text-white':code===409||code===429?'bg-orange-500 text-white':code===402?'bg-yellow-500 text-black':'bg-red-600 text-white';
+  const el = document.getElementById(id);
+  el.className = `text-xs px-2 py-0.5 rounded font-bold ${color}`;
+  el.textContent = code;
+}
+
+// ── B2C Send ────────────────────────────────────────────────────────────
+async function sendB2c() {
+  const ikey = uuid();
+  const body = buildB2cBody();
+  document.getElementById('b2c-resp-panel').classList.add('hidden');
+  document.getElementById('b2c-loading').classList.remove('hidden');
+  try {
+    const {status,data,elapsed} = await callApi(`${API}/api/v1/b2c/shipments`,'POST',body,{
+      'Idempotency-Key': ikey, 'X-User-Id':'demo-user'
+    });
+    document.getElementById('b2c-loading').classList.add('hidden');
+    document.getElementById('b2c-resp-panel').classList.remove('hidden');
+    showStatus('b2c-status-badge', status);
+    document.getElementById('b2c-timing').textContent = `${elapsed}ms`;
+    document.getElementById('b2c-resp-body').innerHTML = typeof data==='object'?highlight(data):String(data||'(empty)');
+    renderB2cSummary(status, data, body);
+  } catch(e) {
+    document.getElementById('b2c-loading').classList.add('hidden');
+    document.getElementById('b2c-resp-panel').classList.remove('hidden');
+    document.getElementById('b2c-status-badge').textContent='Network Error';
+    document.getElementById('b2c-status-badge').className='text-xs px-2 py-0.5 rounded font-bold bg-gray-600 text-white';
+    document.getElementById('b2c-resp-body').textContent = backendOfflineMsg();
+    document.getElementById('b2c-summary').innerHTML='';
+  }
+}
+
+function renderB2cSummary(status, data, req) {
+  const el = document.getElementById('b2c-summary');
+  if(status===201 && data?.shipment_ref) {
+    const oc = req.origin_city, dc = req.dest_city;
+    const eta = data.eta_promised ? new Date(data.eta_promised).toLocaleString('en-IN',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : 'Calculating…';
+    el.innerHTML = `
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-2xl">✅</span>
+        <div><div class="font-bold text-slate-800 text-base">${data.shipment_ref}</div>
+        <div class="text-xs text-slate-500">${data.state_label||data.state}</div></div>
+      </div>
+      <div class="grid grid-cols-3 gap-3 text-sm">
+        <div class="bg-slate-50 rounded-lg p-3"><div class="text-xs text-slate-400 mb-1">Route</div>
+          <div class="font-semibold">${CITIES[oc]?.name||oc} → ${CITIES[dc]?.name||dc}</div>
+          <div class="text-xs text-indigo-600">${data.delivery_type||'INTERCITY'}</div></div>
+        <div class="bg-slate-50 rounded-lg p-3"><div class="text-xs text-slate-400 mb-1">Total Cost</div>
+          <div class="font-bold text-indigo-700 text-lg">${data.pricing?inr(data.pricing.total_price_paise):'—'}</div>
+          <div class="text-xs text-slate-400">${data.pricing?`Base ${inr(data.pricing.quoted_price_paise)} + GST ${inr(data.pricing.gst_paise)}`:'—'}</div></div>
+        <div class="bg-slate-50 rounded-lg p-3"><div class="text-xs text-slate-400 mb-1">ETA</div>
+          <div class="font-semibold text-sm">${eta}</div>
+          <div class="text-xs text-slate-400">${data.sla_commitment_minutes ? data.sla_commitment_minutes/60+'h SLA' : ''}</div></div>
+      </div>
+      ${data.payment?`<div class="mt-3 text-xs text-slate-500">Payment: <span class="font-semibold">${data.payment.mode}</span> · ${data.payment.status||''}</div>`:''}`;
+  } else {
+    el.innerHTML = `<div class="text-red-600 font-semibold">Error ${status}</div>
+      <div class="text-sm text-slate-600 mt-1">${typeof data==='object'?data.detail||data.message||JSON.stringify(data):data}</div>`;
+  }
+}
+
+// ── B2B Send ────────────────────────────────────────────────────────────
+async function sendB2b(overLimit=false) {
+  const ikey = uuid();
+  const body = buildB2bBody(overLimit);
+  document.getElementById('b2b-resp-panel').classList.add('hidden');
+  document.getElementById('b2b-loading').classList.remove('hidden');
+  try {
+    const {status,data,elapsed} = await callApi(`${API}/api/v1/b2b/shipments`,'POST',body,{
+      'Idempotency-Key': ikey, 'X-User-Id':'demo-user'
+    });
+    document.getElementById('b2b-loading').classList.add('hidden');
+    document.getElementById('b2b-resp-panel').classList.remove('hidden');
+    showStatus('b2b-status-badge', status);
+    document.getElementById('b2b-timing').textContent = `${elapsed}ms`;
+    document.getElementById('b2b-resp-body').innerHTML = typeof data==='object'?highlight(data):String(data||'(empty)');
+    renderB2bSummary(status, data, body);
+    // Update credit meter if booking succeeded
+    if(status===201 && data?.pricing) {
+      state.b2b.outstanding += data.pricing.total_price_paise;
+      updateCreditMeter();
+    }
+  } catch(e) {
+    document.getElementById('b2b-loading').classList.add('hidden');
+    document.getElementById('b2b-resp-panel').classList.remove('hidden');
+    document.getElementById('b2b-status-badge').textContent='Network Error';
+    document.getElementById('b2b-status-badge').className='text-xs px-2 py-0.5 rounded font-bold bg-gray-600 text-white';
+    document.getElementById('b2b-resp-body').textContent = backendOfflineMsg();
+    document.getElementById('b2b-summary').innerHTML='';
+  }
+}
+function sendB2bOverLimit() { sendB2b(true); }
+
+function updateCreditMeter() {
+  const pct = Math.min(100, (state.b2b.outstanding / state.b2b.limit)*100);
+  document.getElementById('b2b-credit-bar').style.width = pct+'%';
+  document.getElementById('b2b-credit-bar').className = `credit-bar h-full rounded-full ${pct>80?'bg-red-500':pct>60?'bg-orange-400':'bg-indigo-500'}`;
+  document.getElementById('b2b-credit-label').textContent = `${inr(state.b2b.outstanding)} used of ${inr(state.b2b.limit)}`;
+  const remaining = document.getElementById('b2b-credit-bar').parentElement.nextElementSibling;
+  if(remaining) remaining.textContent = `${inr(state.b2b.limit - state.b2b.outstanding)} remaining`;
+}
+
+function renderB2bSummary(status, data, req) {
+  const el = document.getElementById('b2b-summary');
+  if(status===201 && data?.shipment_ref) {
+    const oc = req.origin_city, dc = req.dest_city;
+    el.innerHTML = `
+      <div class="flex items-center gap-2 mb-3">
+        <span class="text-2xl">✅</span>
+        <div><div class="font-bold text-slate-800 text-base">${data.shipment_ref}</div>
+        <div class="text-xs text-slate-500">B2B · Credit charged · No payment gateway</div></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div class="bg-slate-50 rounded-lg p-3"><div class="text-xs text-slate-400 mb-1">Route</div>
+          <div class="font-semibold">${CITIES[oc]?.name||oc} → ${CITIES[dc]?.name||dc}</div></div>
+        <div class="bg-slate-50 rounded-lg p-3"><div class="text-xs text-slate-400 mb-1">Credit Charged</div>
+          <div class="font-bold text-indigo-700 text-lg">${data.pricing?inr(data.pricing.total_price_paise):'—'}</div>
+          <div class="text-xs text-slate-400">incl. 18% GST</div></div>
+      </div>
+      <div class="mt-3 text-xs text-green-700 bg-green-50 rounded-lg p-2">✅ No Razorpay call — amount debited from Acme Corp's credit balance. Invoice will be sent at month end.</div>`;
+  } else if(status===402) {
+    el.innerHTML = `<div class="text-red-600 font-bold text-base mb-2">💳 Credit Limit Exceeded</div>
+      <div class="text-sm text-slate-600">The booking would push the outstanding balance beyond the credit limit. The API returned 402 Payment Required and rolled back — <strong>no shipment was created</strong>.</div>`;
+  } else if(status===404) {
+    el.innerHTML = `<div class="text-red-600 font-bold">B2B Account Not Found (404)</div><div class="text-sm text-slate-600 mt-1">Check the Account ID.</div>`;
+  } else {
+    el.innerHTML = `<div class="text-red-600 font-semibold">Error ${status}</div>
+      <div class="text-sm text-slate-600 mt-1">${typeof data==='object'?data.detail||data.message||JSON.stringify(data):data}</div>`;
+  }
+}
+
+// ── Idempotency ─────────────────────────────────────────────────────────
+function resetIdemKey() {
+  state.idem.key = uuid();
+  state.lastIdemResponse = null;
+  document.getElementById('idem-key-display').textContent = state.idem.key;
+  document.getElementById('idem-ikey-preview').textContent = state.idem.key;
+  document.getElementById('idem-resp-panel').classList.add('hidden');
+}
+
+async function sendIdem(isRetry) {
+  const ikey = state.idem.key;
+  const body = buildIdemBody();
+  document.getElementById('idem-resp-panel').classList.add('hidden');
+  document.getElementById('idem-loading').classList.remove('hidden');
+  try {
+    const {status,data,elapsed} = await callApi(`${API}/api/v1/b2c/shipments`,'POST',body,{
+      'Idempotency-Key': ikey, 'X-User-Id':'demo-user'
+    });
+    document.getElementById('idem-loading').classList.add('hidden');
+    document.getElementById('idem-resp-panel').classList.remove('hidden');
+    showStatus('idem-status-badge', status);
+    document.getElementById('idem-timing').textContent = `${elapsed}ms`;
+    document.getElementById('idem-resp-body').innerHTML = typeof data==='object'?highlight(data):String(data||'');
+
+    const replayBadge = document.getElementById('idem-replay-badge');
+    const isCached = isRetry && state.lastIdemResponse && typeof data==='object' &&
+                     data?.shipment_ref === state.lastIdemResponse?.shipment_ref;
+    replayBadge.classList.toggle('hidden', !isCached);
+
+    const expEl = document.getElementById('idem-explanation');
+    if(!isRetry && status===201) {
+      state.lastIdemResponse = data;
+      expEl.innerHTML = `<div class="flex gap-2 mb-2"><span class="text-xl">🆕</span>
+        <div><strong>New shipment created: ${data?.shipment_ref||''}</strong><br>
+        <span class="text-slate-500 text-xs">Idempotency key <code>${ikey.slice(0,12)}…</code> stored. Any retry with this key returns this exact response.</span></div></div>`;
+    } else if(isRetry && isCached) {
+      expEl.innerHTML = `<div class="flex gap-2 mb-2"><span class="text-xl">⚡</span>
+        <div><strong>Cached response returned — no duplicate created!</strong><br>
+        <span class="text-slate-500 text-xs">The shipment ref <strong>${data?.shipment_ref}</strong> is identical to the first response.
+        A network retry or accidental double-click never results in a duplicate booking or charge.</span></div></div>`;
+    } else if(isRetry) {
+      expEl.innerHTML = `<div class="text-slate-600 text-sm">Send the first request before retrying, or reset the key.</div>`;
+    } else {
+      expEl.innerHTML = `<div class="text-red-600 font-semibold">Error ${status}</div>
+        <div class="text-sm text-slate-600 mt-1">${typeof data==='object'?data.detail||JSON.stringify(data):data}</div>`;
+    }
+  } catch(e) {
+    document.getElementById('idem-loading').classList.add('hidden');
+    document.getElementById('idem-resp-panel').classList.remove('hidden');
+    document.getElementById('idem-status-badge').textContent='Network Error';
+    document.getElementById('idem-status-badge').className='text-xs px-2 py-0.5 rounded font-bold bg-gray-600 text-white';
+    document.getElementById('idem-resp-body').textContent = backendOfflineMsg();
+    document.getElementById('idem-explanation').innerHTML='';
+  }
+}
+
+// ── Journey diagram ─────────────────────────────────────────────────────
+const JOURNEY_OPTS = { route:'intercity', pickup:'da', delivery:'da' };
+
+function setJourney(kind, val) {
+  JOURNEY_OPTS[kind] = val;
+  const ids = {
+    route:    ['jrn-intercity','jrn-samecity'],
+    pickup:   ['jrn-dapickup','jrn-selfdrop'],
+    delivery: ['jrn-dadelivery','jrn-hubcollect'],
+  };
+  const vals = { route:['intercity','samecity'], pickup:['da','self'], delivery:['da','hub'] };
+  ids[kind].forEach((id,i)=>{
+    const el = document.getElementById(id);
+    if(el) el.className = `px-4 py-2 text-xs font-semibold ${vals[kind][i]===val?'bg-indigo-600 text-white':'text-slate-600'}`;
+  });
+  renderJourney();
+}
+
+function renderJourney() {
+  const intercity = JOURNEY_OPTS.route==='intercity';
+  const selfDrop  = JOURNEY_OPTS.pickup==='self';
+  const hubCollect= JOURNEY_OPTS.delivery==='hub';
+
+  const phases = [
+    { label:'Booking', color:'bg-green-100 text-green-800', states:[
+      { name:'BOOKED', desc:'Customer books, payment processed' },
+    ]},
+  ];
+
+  if(selfDrop) {
+    phases.push({ label:'Pickup', color:'bg-blue-100 text-blue-800', states:[
+      { name:'AWAITING_SELF_DROP', desc:'Sender brings parcel to origin hub' },
+    ]});
+  } else {
+    phases.push({ label:'Pickup', color:'bg-blue-100 text-blue-800', states:[
+      { name:'PICKUP_ASSIGNED', desc:'DA assigned, OTP sent to sender' },
+      { name:'PICKED_UP', desc:'OTP verified, parcel in DA hands' },
+      { name:'HANDED_TO_PICKUP_VAN', desc:'DA loads parcel onto pickup van' },
+    ]});
+  }
+
+  phases.push({ label:'Origin Hub', color:'bg-purple-100 text-purple-800', states:[
+    { name:'AT_ORIGIN_HUB', desc:'Parcel arrives at source city hub' },
+    { name:'ORIGIN_HUB_PROCESSING', desc:'Sorted, bagged, manifested' },
+    { name:'IN_TAKEOFF_BAG', desc:'Sealed in airline bag' },
+  ]});
+
+  if(intercity) {
+    phases.push({ label:'Air Leg', color:'bg-sky-100 text-sky-800', states:[
+      { name:'DISPATCHED_TO_AIRPORT', desc:'Bag dispatched to airport' },
+      { name:'AT_AIRPORT', desc:'Checked in with airline' },
+      { name:'DEPARTED', desc:'Flight departed' },
+      { name:'LANDED', desc:'Flight landed at destination' },
+      { name:'DISPATCHED_TO_HUB', desc:'Dispatched to dest hub' },
+    ]});
+    phases.push({ label:'Dest Hub', color:'bg-violet-100 text-violet-800', states:[
+      { name:'AT_DEST_HUB', desc:'Arrived at destination city hub' },
+      { name:'DEST_HUB_PROCESSING', desc:'Sorted for last mile' },
+    ]});
+  } else {
+    phases.push({ label:'Dest Hub', color:'bg-violet-100 text-violet-800', states:[
+      { name:'DEST_HUB_PROCESSING', desc:'Parcel at destination area hub' },
+    ]});
+  }
+
+  if(hubCollect) {
+    phases.push({ label:'Delivery', color:'bg-emerald-100 text-emerald-800', states:[
+      { name:'AWAITING_HUB_COLLECT', desc:'Parcel ready, awaiting customer' },
+      { name:'HUB_COLLECTED', desc:'✅ Customer collected from hub' },
+    ]});
+  } else {
+    phases.push({ label:'Delivery', color:'bg-emerald-100 text-emerald-800', states:[
+      { name:'HANDED_TO_DROP_VAN', desc:'Loaded onto delivery van' },
+      { name:'DROP_ASSIGNED', desc:'DA assigned for drop' },
+      { name:'DROP_COLLECTED', desc:'DA has parcel for delivery' },
+      { name:'DROPPED', desc:'✅ Delivered to receiver' },
+    ]});
+  }
+
+  let html = '';
+  phases.forEach((phase, pi) => {
+    html += `<div class="mb-6">
+      <div class="text-xs font-bold text-slate-500 uppercase mb-2">${phase.label}</div>
+      <div class="flex items-stretch gap-0 flex-wrap">`;
+    phase.states.forEach((s, si) => {
+      html += `<div class="flex items-center">
+        <div class="group relative">
+          <div class="state-node ${phase.color} cursor-default">${s.name}</div>
+          <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-800 text-white text-xs rounded-lg px-3 py-2 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none z-10 transition shadow-lg">${s.desc}</div>
+        </div>
+        ${si < phase.states.length-1 ? '<span class="arrow">→</span>' : ''}
+      </div>`;
+    });
+    // Arrow to next phase
+    if(pi < phases.length-1) {
+      html += `<div class="flex items-center"><span class="arrow text-indigo-400 font-bold">⟶</span></div>`;
+    }
+    html += `</div></div>`;
+  });
+
+  document.getElementById('journey-diagram').innerHTML = html;
+}
+
+// ── OTP ─────────────────────────────────────────────────────────────────
+async function sendOtpResend() {
+  const ref = document.getElementById('otp-ref').value.trim();
+  if(!ref) { alert('Enter a shipment ref'); return; }
+  document.getElementById('otp-resp-panel').classList.add('hidden');
+  document.getElementById('otp-loading').classList.remove('hidden');
+  try {
+    const t0=Date.now();
+    const resp = await fetch(`${API}/internal/v1/shipments/${encodeURIComponent(ref)}/pickup-otp/resend`,{method:'POST'});
+    const elapsed=Date.now()-t0;
+    let data=null; try{data=await resp.json();}catch(e){data={};}
+    document.getElementById('otp-loading').classList.add('hidden');
+    document.getElementById('otp-resp-panel').classList.remove('hidden');
+    showStatus('otp-status-badge', resp.status);
+    document.getElementById('otp-timing').textContent=`${elapsed}ms`;
+    document.getElementById('otp-resp-body').innerHTML = highlight(data)||'(empty)';
+    renderOtpSummary(resp.status, data, 'resend');
+    if(resp.status===200 && data?.otp) document.getElementById('otp-code').value=data.otp;
+  } catch(e) {
+    document.getElementById('otp-loading').classList.add('hidden');
+    document.getElementById('otp-resp-panel').classList.remove('hidden');
+    document.getElementById('otp-status-badge').textContent='Network Error';
+    document.getElementById('otp-status-badge').className='text-xs px-2 py-0.5 rounded font-bold bg-gray-600 text-white';
+    document.getElementById('otp-resp-body').textContent=backendOfflineMsg();
+  }
+}
+
+async function sendOtpVerify() {
+  const ref = document.getElementById('otp-ref').value.trim();
+  const otp = document.getElementById('otp-code').value.trim();
+  if(!ref||!otp) { alert('Enter shipment ref and OTP'); return; }
+  document.getElementById('otp-resp-panel').classList.add('hidden');
+  document.getElementById('otp-loading').classList.remove('hidden');
+  try {
+    const {status,data,elapsed} = await callApi(
+      `${API}/internal/v1/shipments/${encodeURIComponent(ref)}/pickup-otp/verify`,
+      'POST', {otp}
+    );
+    document.getElementById('otp-loading').classList.add('hidden');
+    document.getElementById('otp-resp-panel').classList.remove('hidden');
+    showStatus('otp-status-badge', status);
+    document.getElementById('otp-timing').textContent=`${elapsed}ms`;
+    document.getElementById('otp-resp-body').textContent = status===204?'204 No Content — OTP verified':typeof data==='object'?JSON.stringify(data,null,2):String(data||'');
+    renderOtpSummary(status, data, 'verify');
+  } catch(e) {
+    document.getElementById('otp-loading').classList.add('hidden');
+    document.getElementById('otp-resp-panel').classList.remove('hidden');
+    document.getElementById('otp-status-badge').textContent='Network Error';
+    document.getElementById('otp-status-badge').className='text-xs px-2 py-0.5 rounded font-bold bg-gray-600 text-white';
+    document.getElementById('otp-resp-body').textContent=backendOfflineMsg();
+  }
+}
+
+function renderOtpSummary(status, data, action) {
+  const el = document.getElementById('otp-summary');
+  if(action==='resend') {
+    if(status===200) el.innerHTML=`<div class="text-green-700 font-bold">✅ OTP sent!</div><div class="text-sm text-slate-600 mt-1">New OTP generated and SMS'd to sender. OTP auto-filled in the field above for this demo.</div>`;
+    else if(status===409) el.innerHTML=`<div class="text-orange-600 font-bold">⚠ Not in PICKUP_ASSIGNED state</div><div class="text-sm text-slate-600 mt-1">This shipment is in an earlier state. A DA must be assigned first (done by M5 dispatch module).</div>`;
+    else if(status===404) el.innerHTML=`<div class="text-red-600 font-bold">404 — Shipment not found</div><div class="text-sm text-slate-600 mt-1">Check the shipment ref. It must be a ref returned by the booking API.</div>`;
+    else if(status===429) el.innerHTML=`<div class="text-red-600 font-bold">429 — Resend limit reached</div><div class="text-sm text-slate-600 mt-1">Maximum 3 resends allowed per shipment.</div>`;
+    else el.innerHTML=`<div class="text-red-600">${status} — ${typeof data==='object'?data.detail||JSON.stringify(data):data}</div>`;
+  } else {
+    if(status===204) el.innerHTML=`<div class="text-green-700 font-bold">✅ Pickup confirmed!</div><div class="text-sm text-slate-600 mt-1">State transitioned: <strong>PICKUP_ASSIGNED → PICKED_UP</strong>. The parcel is now in the DA's custody.</div>`;
+    else if(status===422) el.innerHTML=`<div class="text-red-600 font-bold">422 — Wrong OTP</div><div class="text-sm text-slate-600 mt-1">OTP incorrect, expired, or already used. Resend to get a new one.</div>`;
+    else if(status===409) el.innerHTML=`<div class="text-orange-600 font-bold">⚠ Shipment not in PICKUP_ASSIGNED state</div>`;
+    else el.innerHTML=`<div class="text-red-600">${status}</div>`;
+  }
+}
+
+// ── Backend health check ─────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/`, {signal: AbortSignal.timeout(3000)});
+    const ok = r.status < 500;
+    document.getElementById('status-dot').className=`w-2.5 h-2.5 rounded-full ${ok?'status-green':'status-offline'} pulse-dot`;
+    document.getElementById('status-text').textContent = ok ? 'Backend running ✓' : 'Backend error';
+    document.getElementById('status-text').className = ok?'text-green-400 text-sm':'text-red-400 text-sm';
+  } catch(e) {
+    document.getElementById('status-dot').className='w-2.5 h-2.5 rounded-full status-offline pulse-dot';
+    document.getElementById('status-text').textContent='Backend offline — start it below';
+    document.getElementById('status-text').className='text-red-400 text-sm';
+  }
+}
+
+function backendOfflineMsg() {
+  return `Backend not reachable at http://localhost:8080\n\nTo start it:\n  cd one_day_delivery\n  export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\n  mvn clean package -DskipTests -pl app --also-make -q\n  java -jar app/target/app-1.0.0-SNAPSHOT.jar`;
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────
+document.getElementById('idem-key-display').textContent = state.idem.key;
+document.querySelectorAll('.form-input').forEach(el => el.addEventListener('input', updateReqPreviews));
+document.querySelectorAll('select').forEach(el => el.addEventListener('change', updateReqPreviews));
+updateReqPreviews();
+renderJourney();
+checkHealth();
+setInterval(checkHealth, 15000);
+</script>
+</body>
+</html>
