@@ -20,6 +20,7 @@ public class BookingResponse {
     private String trackingUrl;
     private String parcelId;                   // always null at booking time
     private String labelStatus;               // always "PENDING" at booking time
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     private PaymentSummary payment;
 
     // ── Nested: pricing block ─────────────────────────────────────────────────

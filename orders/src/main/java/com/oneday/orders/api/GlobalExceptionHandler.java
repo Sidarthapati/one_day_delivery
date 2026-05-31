@@ -1,5 +1,6 @@
 package com.oneday.orders.api;
 
+import com.oneday.orders.service.B2bBookingService;
 import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
@@ -110,6 +111,30 @@ class GlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
         pd.setTitle("Resource not found");
         pd.setDetail("The requested shipment does not exist.");
+        return pd;
+    }
+
+    @ExceptionHandler(B2bBookingService.AccountNotFoundException.class)
+    ProblemDetail handleB2bAccountNotFound(B2bBookingService.AccountNotFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setTitle("B2B account not found");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(B2bBookingService.AccountInactiveException.class)
+    ProblemDetail handleB2bAccountInactive(B2bBookingService.AccountInactiveException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("B2B account inactive");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(B2bBookingService.CreditLimitExceededException.class)
+    ProblemDetail handleCreditLimitExceeded(B2bBookingService.CreditLimitExceededException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYMENT_REQUIRED);
+        pd.setTitle("Credit limit exceeded");
+        pd.setDetail(ex.getMessage());
         return pd;
     }
 }
