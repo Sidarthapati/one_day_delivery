@@ -3,6 +3,7 @@ package com.oneday.orders.api;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.DropType;
+import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.PickupType;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.config.IdempotencyProperties;
@@ -169,6 +170,7 @@ class B2cShipmentControllerTest {
         pricing.setRateCardVersion("v1");
 
         BookingResponse.PaymentSummary payment = new BookingResponse.PaymentSummary();
+        payment.setMode(PaymentMode.PREPAID);
         payment.setStatus("CAPTURED");
         payment.setRazorpayPaymentId("pay_xyz789");
 
@@ -217,9 +219,37 @@ class B2cShipmentControllerTest {
         req.setDeclaredValuePaise(50_000L);
         req.setPickupType(PickupType.DA_PICKUP);
         req.setDropType(DropType.DA_DELIVERY);
+        req.setPaymentMode(PaymentMode.PREPAID);
         req.setRazorpayOrderId("order_abc123");
         req.setRazorpayPaymentId("pay_xyz789");
         req.setRazorpaySignature("sig_test");
         return req;
+    }
+
+    // ── 201 Created: COD happy path ────────────────────────────────────────
+
+    @Test
+    void createShipment_cod_returns201() throws Exception {
+        BookingResponse codResponse = happyResponse();
+        codResponse.getPayment().setMode(PaymentMode.COD);
+        codResponse.getPayment().setStatus("COD_PENDING");
+        codResponse.getPayment().setRazorpayPaymentId(null);
+        when(bookingService.book(any(), anyString(), anyString())).thenReturn(codResponse);
+
+        BookingRequest codReq = bookingRequest();
+        codReq.setPaymentMode(PaymentMode.COD);
+        codReq.setRazorpayOrderId(null);
+        codReq.setRazorpayPaymentId(null);
+        codReq.setRazorpaySignature(null);
+
+        mockMvc.perform(post("/api/v1/b2c/shipments")
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY)
+                        .header("X-User-Id", USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(codReq)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.payment.mode").value("COD"))
+                .andExpect(jsonPath("$.payment.status").value("COD_PENDING"))
+                .andExpect(jsonPath("$.payment.razorpayPaymentId").doesNotExist());
     }
 }

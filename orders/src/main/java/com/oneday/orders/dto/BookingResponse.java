@@ -1,6 +1,8 @@
 package com.oneday.orders.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.oneday.common.domain.enums.DeliveryType;
+import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.ShipmentState;
 
 import java.time.Instant;
@@ -51,9 +53,14 @@ public class BookingResponse {
 
     // ── Nested: payment summary block ─────────────────────────────────────────
 
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class PaymentSummary {
+        private PaymentMode mode;
         private String status;
         private String razorpayPaymentId;
+
+        public PaymentMode getMode()                   { return mode; }
+        public void setMode(PaymentMode v)             { this.mode = v; }
 
         public String getStatus()                      { return status; }
         public void setStatus(String v)                { this.status = v; }
