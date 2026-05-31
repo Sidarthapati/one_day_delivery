@@ -37,7 +37,7 @@ Before the PR breakdown, these principles govern every decision in this plan:
 M4 is a platform module. Before a single line of M4 business logic is written, the Kafka event schemas, cross-module port interfaces, and topic name constants must be published. Other teams cannot proceed without them.
 
 **2. Cross-module contracts live in `common`, not in `orders`.**
-Port interfaces that other modules implement — `PricingPort` (M2), `ServiceabilityPort` (M3), `EtaPort` (M9), `BarcodePort` (M8), `NotificationPort` — must live in `common`. If they live in `orders`, other modules would need to depend on `orders` to implement them, creating a circular dependency. Only M4-internal ports (e.g. `PaymentPort` for Razorpay) stay in `orders`.
+Port interfaces that other modules implement — `PricingPort` (M2), `ServiceabilityPort` (M3), `EtaPort` (M9), `NotificationPort` — must live in `common`. If they live in `orders`, other modules would need to depend on `orders` to implement them, creating a circular dependency. Only M4-internal ports (e.g. `PaymentPort` for Razorpay) stay in `orders`. M8 (barcode/label) has no port interface — it is integrated fully async via Kafka.
 
 **3. Resilience is not a phase 6 concern.**
 Circuit breakers for M2 and M3 are configured alongside the booking API, not bolted on at the end. A booking endpoint without circuit breakers is not production-ready, even in development.
@@ -129,7 +129,7 @@ Phase 7 (Observability)
 
 **Module:** `common`
 
-**Why third:** M2, M3, M8, M9 need to know what interface to implement. Publishing these now lets those teams work in parallel with M4's implementation. M4 will use stub implementations in tests until real module implementations are wired in `app`.
+**Why third:** M2, M3, and M9 need to know what interface to implement. M8 integration is fully async — no port interface needed (see note below). Publishing these now lets those teams work in parallel with M4's implementation. M4 will use stub implementations in tests until real module implementations are wired in `app`.
 
 **What (as merged):**
 ```java
@@ -599,7 +599,6 @@ if (auth.getPrincipal() instanceof OneDayPrincipal p) {
            ├─► [M2 implements PricingPort]        ← parallel, other team
            ├─► [M3 implements ServiceabilityPort] ← parallel, other team
            ├─► [M9 implements EtaPort]            ← parallel, other team
-           ├─► [M8 implements BarcodePort]        ← parallel, other team
            └─► #4 (Flyway migrations)
                 └─► #5 (JPA entities)
                      └─► #6 (Repositories)
@@ -628,7 +627,7 @@ if (auth.getPrincipal() instanceof OneDayPrincipal p) {
 |---|---|
 | #1 | Write entity code in any module using `MutableBaseEntity`; write Flyway migrations in module-prefixed folders |
 | #2 | Write Kafka producers and consumers using shared event POJOs and topic constants |
-| #3 | M2 implements `PricingPort`; M3 implements `ServiceabilityPort`; M9 implements `EtaPort`; M8 implements `BarcodePort` |
+| #3 | M2 implements `PricingPort`; M3 implements `ServiceabilityPort`; M9 implements `EtaPort` |
 | #7 | M10 (SLA) can build against the state machine's `STATE_CHANGED` events confidently |
 | #10 | M5 can start building DA assignment against `shipment.created` events and the internal `GET /internal/v1/shipments` endpoint |
 | #14 | All modules can verify their events are being consumed correctly by M4 |
