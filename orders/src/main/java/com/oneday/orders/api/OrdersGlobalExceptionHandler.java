@@ -18,8 +18,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-// Renamed to OrdersGlobalExceptionHandler — see that file. Kept as empty shell to avoid git deletion noise.
-class GlobalExceptionHandler {
+@RestControllerAdvice
+class OrdersGlobalExceptionHandler {
 
     @ExceptionHandler(BookingService.InvalidBookingRequestException.class)
     ProblemDetail handleInvalidBookingRequest(BookingService.InvalidBookingRequestException ex) {
