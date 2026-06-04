@@ -204,6 +204,13 @@
                             <goal>prepare-agent</goal>
                         </goals>
                         <configuration>
+                            <excludes>
+                                <exclude>jdk/**</exclude>
+                                <exclude>java/**</exclude>
+                                <exclude>javax/**</exclude>
+                                <exclude>sun/**</exclude>
+                                <exclude>com/sun/**</exclude>
+                            </excludes>
                             <includes>
                                 <include>com/oneday/**</include>
                             </includes>
