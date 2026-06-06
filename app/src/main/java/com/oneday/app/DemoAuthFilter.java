@@ -35,9 +35,11 @@ class DemoAuthFilter extends OncePerRequestFilter {
 
     private static AuthUserDetails buildDemoPrincipal() {
         try {
+            // ADMIN so the demo principal passes every M4 role gate + B2B ownership check
+            // (the demo deliberately bypasses real auth; identity here is synthetic anyway).
             Role role = new Role();
-            role.setName("CUSTOMER");
-            role.setDisplayName("Customer");
+            role.setName("ADMIN");
+            role.setDisplayName("Admin");
             role.setActive(true);
             setBaseId(role, UUID.fromString("00000000-0000-0000-0000-000000000002"));
 
