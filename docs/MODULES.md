@@ -14,7 +14,7 @@
 | M3 | [Serviceability & Grid Management](#m3-serviceability--grid-management) | Rectangular tile grid over urban pincodes; dynamic rebalancing |
 | M4 | [Order Booking & Shipment Lifecycle](#m4-order-booking--shipment-lifecycle) | Customer-facing booking, ETA promise, and canonical order state machine |
 | M5 | [DA Assignment & Dispatch](#m5-da-assignment--dispatch) | Real-time delivery associate queue, assignment, and cron-meeting constraint |
-| M6 | [Van Routing & Scheduling](#m6-van-routing--scheduling) | Nightly route plan for hub consolidation vans on the grid graph |
+| M6 | [Van Routing & Scheduling](#m6-van-routing--scheduling) | Nightly bidirectional milk-run plan for consolidation vans + live van tracking |
 | M7 | [Hub Operations & Sortation](#m7-hub-operations--sortation) | Inbound sort, stand assignment, bag creation, and system manifests |
 | M8 | [Barcode, Label & Scanning](#m8-barcode-label--scanning) | Unique parcel identity, label generation, and scan-event ledger |
 | M9 | [Airline & Flight Integration](#m9-airline--flight-integration) | Flight schedule, hub-level assignment, handover tracking, and GHA APIs |
@@ -198,35 +198,59 @@
 
 ## M6 — Van Routing & Scheduling
 
+> **Full design:** [`docs/M6/M6-ROUTING-DESIGN.md`](./M6/M6-ROUTING-DESIGN.md) (titled *Van Routing, Scheduling & Custody*). This summary was **expanded after design**: M6 owns the **whole van lifecycle**, not a nightly batch. Three parts — **plan-time** (nightly routing/scheduling), **execution** (parcel custody, manifests, binding, handoff, failures), and **run-time** (live tracking). The van is treated as a **mobile mini-hub** (a moving cross-dock), not a vehicle moving abstract counts.
+
 ### Business Logic / Requirements
-- Compute an **ordered sequence of stops** for each hub consolidation van covering its assigned grid area.
-- Route graph: van stops are at **grid vertices** (tile corners / defined stop points from M3).
-- **Nightly replan is the default:** routes are re-optimised once per night and locked for the following operating day. Intraday changes are strongly discouraged.
-  - If an intraday change is genuinely required, it must **notify the station manager** and (depending on severity) require **approval** before taking effect.
-- Route optimisation uses the same **70% historical / 30% current** weighting spirit as grid sizing (shared planning philosophy).
-- Key constraints for the optimiser:
-  - **Packet count** on the run (van capacity).
-  - **Time window to reach hub** (or SLA for that leg).
-  - **Per-parcel cost floor** from M2 (cost-aware routing).
-- **Admin and station manager** can manually override any route at any time with audit log entry.
+
+**Planning (plan-time)**
+- **Bidirectional consolidation milk-run:** each van loop *both* **delivers** last-mile parcels to DAs and **collects** first-mile parcels from them at the same meeting stops (simultaneous pickup-and-delivery). The binding capacity limit is the *peak* load along the loop, not the net.
+- **Meeting points at grid vertices:** van stops at H3 hex vertices (M3), chosen at vertices **shared by multiple DA territories** so one stop serves several DAs (a set-cover step in M6).
+- **Periodic loops, fixed nightly:** `hub → meeting points → hub` at a target **2–3h cycle**, repeating through the ~16h day. Route *shape* replanned nightly and locked; loop *repeats* on a cadence.
+- **70/30 weighting** (shared with grid sizing), reusing M3's demand snapshot.
+- **Fleet sizing:** count + capacity are ops inputs; M6 also computes a **recommended van count** and flags under-provisioning.
+- **Hub↔airport shuttle:** M6 owns the periodic shuttle timetable (fixed cadence v1; flight-cutoff-driven once M9 lands); the shuttle carries sealed flight bags.
+- **Hub & airport location:** M6 introduces per-city hub/airport coordinates — not stored before.
+- **Nightly replan + approval + override** (mirrors M3 governance; append-only audit).
+
+**Execution (custody — the van as mini-hub)**
+- **Four custody scans per parcel:** LOAD (hub→van), DELIVER (van→DA), COLLECT (DA→van), UNLOAD (van→hub) — each an M8 scan + an M4 state transition. The parcel is never "nowhere": between scans it is *on a specific van/loop*.
+- **Van manifest:** M6 builds the per-van, per-loop manifest (which specific parcels ride, to/from which DA, at which stop) from M7's sort output (deliver) + DA accumulation (collect). Parcels loaded in reverse stop-order.
+- **Parcel→loop binding:** SLA-first, then capacity-bounded — earliest deadline-feasible loop, not "next loop with room". Runtime **overflow → bump then escalate**, never silently drop SLA.
+- **Handoff protocol:** bounded dwell window per stop; multi-DA choreography; scan-reconciliation (expected = actual) per DA; discrepancies → M11.
+- **Failure handling:** DA no-show, van breakdown (recovery van on approval), mis-sort, lost/damaged-on-van — each with detection, carry-back/recovery, escalation.
+
+**Run-time (tracking)**
+- **Live van tracking:** M6 ingests telemetry (GPS + scans) over an HTTP API, maintains live position, compares plan-vs-actual, emits deviation ("van running late / arrived"). Raw GPS stays in-process; only meaningful events go on Kafka. M6 owns this; M10 *consumes* deviation for SLA.
+- **Van-driver app contract:** M6 owns the driver-side load/navigate/scan/confirm/return workflow (parallel to M5 owning the DA app).
 
 ### Inputs
 | Input | Source |
 |-------|--------|
-| Grid vertex list per city | M3 |
-| Historical stop + demand data (7+ days) | M4 order history |
-| Current-day order demand | M4 live feed |
-| Van capacity (max packets) | Fleet configuration |
-| Hub operating time window | Hub ops configuration |
+| DA territories (DA → hexes) + grid vertices | M3 |
+| Historical + current-day demand (70/30 blend) | M3 demand snapshot (from M4 order history) |
+| Van count + capacity per city | Fleet configuration (M6) |
+| Hub + airport coordinates per city | Ops configuration (M6) |
+| Operating window / hub time window | Hub / ops configuration |
+| Parcels sorted & ready to load (deliver) | M7 sort output |
+| First-mile parcels accumulated per DA | M5 / M4 |
+| Parcel delivery SLA / flight cutoff (parcel deadlines) | M4 (SLA), M9 (cutoff) |
 | Per-parcel cost floor | M2 |
-| Manual override action | Station manager / admin (M1) |
+| Manual override / recovery-van action | Station manager / admin (M1) |
+| Live van telemetry (GPS + custody scans) | Van-driver app (HTTP) |
 
 ### Outputs
 | Output | Consumer |
 |--------|----------|
-| Nightly route plan per van (ordered stop list, ETA per stop) | Van driver app, M5 (cron meeting point), M10 |
-| Route-change notification | Station manager notification, M10 |
-| Route override audit log entry | M1 audit log |
+| Nightly route plan per van (ordered stops, per-stop ETA) | Van driver app, M10 |
+| Per-DA cron schedule (meeting vertex + meeting times) | M5 (cron-meeting constraint) |
+| Hub↔airport shuttle timetable (cron departure times) | M9, M10 |
+| Recommended fleet size / under-provisioning flag | Station manager / ops |
+| Van manifest (per van/loop: parcels, direction, stop, DA) | Van driver app, M7 (load/unload) |
+| Custody scan events (LOAD/DELIVER/COLLECT/UNLOAD) | M8 (ledger), M4 (state) |
+| Handoff reconciliation + discrepancy events | M11 (exceptions), M10 (SLA) |
+| Loop-overflow / van-breakdown / recovery events | M10, M11, station manager |
+| Live van position + "running late / arrived" deviation events | M5 (cron feasibility), M10 (SLA), M4 / ops live map |
+| Route-change notification + override audit | Station manager, M10, M1 audit log |
 
 ---
 
@@ -490,7 +514,7 @@ How each module maps to an entity type within the codebase (assuming a **modular
 | **M3 — Grid** | Domain service + admin UI | Owns its own data (tile definitions, pincode lists). Config-heavy. Driven by nightly batch jobs (replan) and approval workflows. |
 | **M4 — Orders** | Core API service | The primary customer-facing layer. Owns the canonical state machine. Accepts HTTP requests from customers and B2B users. All other modules feed state back into it via events. |
 | **M5 — DA Assignment** | Background worker / real-time engine | Reacts to incoming `shipment.created` events; latency-sensitive (assignment must be fast). Manages the in-memory or DB-backed priority queue per DA. Always running. |
-| **M6 — Van Routing** | Scheduled batch job (cron) | Runs once per night. Pure compute on graph data. Not latency-sensitive. Can be a standalone script triggered by a scheduler (e.g. cron, Celery beat). |
+| **M6 — Van Routing & Scheduling** | Nightly batch job **+ always-on tracking service** | Two halves. *Plan-time:* a nightly batch that plans routes — pure graph compute, not latency-sensitive. *Run-time:* an always-on service that ingests live van telemetry (HTTP), tracks plan-vs-actual, and emits deviation events through the operating day. The batch fires nightly; the tracking half is always on. (The "runs once per night" framing in v0.2 of this doc was incomplete — see `docs/M6/M6-ROUTING-DESIGN.md` §11.) |
 | **M7 — Hub Ops** | Domain service + operator UI | Workflow-heavy for human operators. Owns stand and bag data. Reacts to scan events and flight status changes. Both an event consumer and a UI-backed workflow tool. |
 | **M8 — Barcode** | Utility library + append-only event store | Label generation is a pure function (shipment data in → printable label out). Scan events are an append-only ledger — never updated, only appended. |
 | **M9 — Airline** | Integration adapter / poller | Wraps external airline and GHA APIs. Translates their data model into internal events. Runs as a background poller (fetch flight status every N minutes) and publishes `flight.status_changed` events. |
