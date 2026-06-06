@@ -5,6 +5,7 @@ import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.grid.dto.response.ProposalResponse;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
+import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
 import com.oneday.grid.dto.response.TileDetailResponse;
 import com.oneday.grid.dto.response.TileLoadScoreResponse;
@@ -107,6 +108,15 @@ public class GridController {
             @RequestParam double lon) {
         UUID cityId = gridService.resolveCityId(cityCode);
         return gridService.getTileAt(cityId, lat, lon);
+    }
+
+    // City-agnostic serviceability for a raw point — the booking map UI calls this on
+    // pin drop without needing to know which city the point lands in.
+    @GetMapping("/serviceable-at")
+    public ServiceableAtResponse serviceableAt(
+            @RequestParam double lat,
+            @RequestParam double lon) {
+        return gridService.serviceableAt(lat, lon);
     }
 
     // ── Replan ────────────────────────────────────────────────────────────────

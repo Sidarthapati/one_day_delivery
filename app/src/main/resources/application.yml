@@ -32,3 +32,16 @@ spring:
         # In-house monolith: every producer is our own code. Tighten to explicit packages
         # once an external/untrusted producer writes to a topic we consume.
         spring.json.trusted.packages: "*"
+
+# M3 grid config. The assembled app loads ITS OWN application.yml (the grid module's is
+# shadowed on the classpath), so the cityCode→cityId map + H3 resolution must live here for
+# GridProperties to bind. Keep the UUIDs in sync with grid/src/main/resources/application.yml.
+grid:
+  h3:
+    resolution: 8
+  cities:
+    delhi: f47ac10b-58cc-4372-a567-0e02b2c3d479
+    mumbai: 550e8400-e29b-41d4-a716-446655440000
+    bangalore: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+    hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+    chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8

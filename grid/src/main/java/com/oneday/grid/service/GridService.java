@@ -4,6 +4,7 @@ import com.oneday.grid.domain.Grid;
 import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
+import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
 import com.oneday.grid.dto.response.TileDetailResponse;
 
@@ -14,6 +15,10 @@ import java.util.UUID;
 public interface GridService {
     ServiceabilityResponse checkServiceability(UUID cityId, String pincode);
     TileAtResponse getTileAt(UUID cityId, double lat, double lon);
+
+    // Resolves a WGS84 point to whichever seeded city grid contains it (used by the
+    // booking map UI — the caller need not know the city up front).
+    ServiceableAtResponse serviceableAt(double lat, double lon);
 
     // cityCode maps to classpath:serviceability/{cityCode}.yaml
     void initializeGrid(UUID cityId, String cityCode);
