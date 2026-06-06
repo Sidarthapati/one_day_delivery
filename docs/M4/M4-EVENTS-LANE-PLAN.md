@@ -44,7 +44,7 @@ There are exactly **two hooks into Person A's code**, both additive:
 |---|-------------|----------------------|--------|
 | 14a | `STATE_CHANGED` producer | state-machine transition (exists) | ✅ Done |
 | 14b | `CREATED` producer | shipment birth in `BookingServiceImpl` (#10/#11) | ✅ Done |
-| 14c | rich `CANCELLED` producer | cancellation flow (**PR #13 — not built**) | ⏸ Parked |
+| 14c | rich `CANCELLED` producer | cancellation flow (PR #13) | ✅ Done |
 | 15/16 | All 6 consumers (DA, Hub, Scan, Flight, Cron, Exceptions) | upstream modules (not built) | ✅ Scaffolded, **dormant** (`autoStartup=false`) |
 | 19 | B2B webhooks (HMAC) | B2B booking (**PR #12 — not built**) | ⏸ Parked |
 | 17/18 | help on read APIs (optional) | Person A's lane | ⚪ Optional |
@@ -55,9 +55,10 @@ There are exactly **two hooks into Person A's code**, both additive:
 - **14b CREATED — done.** `ShipmentBooked` + listener in `ShipmentEventProducer` + hook in
   `BookingServiceImpl.persist()`. Lat/lon left null (not stored on `Address`); address line from
   `Address.line1`.
-- **14c CANCELLED — parked.** A basic `→ CANCELLED` already rides STATE_CHANGED. The rich
-  `ShipmentCancelledEvent` (reason, refund fields) needs the cancellation service (PR #13). When
-  #13 lands, fire a `ShipmentCancelled` in-process event from it; add a listener here.
+- **14c CANCELLED — done (PR #13).** `CancellationServiceImpl` fires an in-process `ShipmentCancelled`
+  event (cancelledAtState, reason, refundInitiated, refundAmountPaise); `ShipmentEventProducer`'s
+  AFTER_COMMIT listener maps it to the rich `ShipmentCancelledEvent` on `oneday.shipments.events`.
+  The plain `→ CANCELLED` STATE_CHANGED still fires too (both are emitted).
 
 ### Phase 2 — Consumers (built, dormant)
 All six consumers exist in `orders/events/` (`DaEventsConsumer`, `HubEventsConsumer`,
