@@ -3,6 +3,7 @@ package com.oneday.orders.events;
 import com.oneday.common.kafka.EventPublisher;
 import com.oneday.common.kafka.KafkaTopics;
 import com.oneday.common.kafka.enums.ShipmentEventType;
+import com.oneday.common.kafka.events.ShipmentCancelledEvent;
 import com.oneday.common.kafka.events.ShipmentCreatedEvent;
 import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
 import com.oneday.orders.domain.Shipment;
@@ -77,6 +78,7 @@ public class ShipmentEventProducer {
         event.setOriginTileId(s.getOriginTileId());
         event.setDestCity(s.getDestCity());
         event.setDestPincode(s.getDestPincode());
+        event.setDestTileId(s.getDestTileId());
         event.setChargeableWeightGrams(s.getChargeableWeightGrams());
         event.setSlaCommitmentMinutes(s.getSlaCommitmentMinutes() != null
                 ? s.getSlaCommitmentMinutes().intValue() : null);
@@ -89,6 +91,24 @@ public class ShipmentEventProducer {
         event.setReceiverAddressLine(s.getDestAddress() != null ? s.getDestAddress().getLine1() : null);
 
         log.debug("Publishing CREATED shipmentId={} ref={}", s.getId(), s.getShipmentRef());
+        eventPublisher.publish(KafkaTopics.SHIPMENTS_EVENTS, event);
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onShipmentCancelled(ShipmentCancelled e) {
+        ShipmentCancelledEvent event = new ShipmentCancelledEvent();
+        event.setEventId(UUID.randomUUID());
+        event.setEventType(ShipmentEventType.CANCELLED);
+        event.setOccurredAt(e.occurredAt() != null ? e.occurredAt() : Instant.now());
+        event.setShipmentId(e.shipmentId());
+        event.setShipmentRef(e.shipmentRef());
+        event.setCancelledAtState(e.cancelledAtState());
+        event.setReason(e.reason());
+        event.setRefundInitiated(e.refundInitiated());
+        event.setRefundAmountPaise(e.refundAmountPaise());
+
+        log.debug("Publishing CANCELLED shipmentId={} ref={} cancelledAtState={}",
+                e.shipmentId(), e.shipmentRef(), e.cancelledAtState());
         eventPublisher.publish(KafkaTopics.SHIPMENTS_EVENTS, event);
     }
 }

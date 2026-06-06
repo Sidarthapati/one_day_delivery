@@ -33,6 +33,7 @@ public class ShipmentCreatedEvent extends BaseShipmentEvent {
     private Double originLon;
     private String destCity;
     private String destPincode;
+    private UUID destTileId;
     private Double destLat;
     private Double destLon;
     private Integer chargeableWeightGrams;
