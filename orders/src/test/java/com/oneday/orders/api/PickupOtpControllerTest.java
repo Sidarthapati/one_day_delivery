@@ -1,5 +1,8 @@
 package com.oneday.orders.api;
 
+import com.oneday.auth.domain.Role;
+import com.oneday.auth.domain.User;
+import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.dto.OtpVerifyRequest;
@@ -41,9 +44,22 @@ class PickupOtpControllerTest {
     private static final String REF = "1DD-BLR-20260530-00001";
     private static final UUID SHIPMENT_ID = UUID.randomUUID();
 
+    // Authenticated DA principal — the controller now derives the actor + gates on role.
+    private AuthUserDetails da;
+
     @BeforeEach
     void setUp() {
         controller = new PickupOtpController(shipmentRepository, pickupOtpService, stateMachine);
+        da = principalWithRole("DELIVERY_ASSOCIATE", "00000000-0000-0000-0000-0000000000da");
+    }
+
+    private static AuthUserDetails principalWithRole(String roleName, String userId) {
+        Role role = new Role();
+        role.setName(roleName);
+        User user = new User();
+        user.setRole(role);
+        ReflectionTestUtils.setField(user, "id", UUID.fromString(userId));
+        return new AuthUserDetails(user);
     }
 
     // -------------------------------------------------------------------------
@@ -58,7 +74,7 @@ class PickupOtpControllerTest {
         doNothing().when(stateMachine).transition(eq(SHIPMENT_ID),
                 eq(ShipmentState.PICKED_UP), any());
 
-        ResponseEntity<Void> response = controller.verifyOtp(REF, otpRequest("4821"));
+        ResponseEntity<Void> response = controller.verifyOtp(REF, da, otpRequest("4821"));
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         verify(pickupOtpService).verify(SHIPMENT_ID, "4821");
@@ -70,7 +86,7 @@ class PickupOtpControllerTest {
         when(shipmentRepository.findByShipmentRef(REF))
                 .thenReturn(Optional.of(shipment(ShipmentState.BOOKED)));
 
-        assertThatThrownBy(() -> controller.verifyOtp(REF, otpRequest("4821")))
+        assertThatThrownBy(() -> controller.verifyOtp(REF, da, otpRequest("4821")))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.CONFLICT));
@@ -83,7 +99,7 @@ class PickupOtpControllerTest {
         doThrow(new PickupOtpService.OtpVerificationException("OTP is incorrect"))
                 .when(pickupOtpService).verify(any(), any());
 
-        assertThatThrownBy(() -> controller.verifyOtp(REF, otpRequest("9999")))
+        assertThatThrownBy(() -> controller.verifyOtp(REF, da, otpRequest("9999")))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
@@ -93,10 +109,20 @@ class PickupOtpControllerTest {
     void verifyOtp_shipmentNotFound_returns404() {
         when(shipmentRepository.findByShipmentRef(REF)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.verifyOtp(REF, otpRequest("4821")))
+        assertThatThrownBy(() -> controller.verifyOtp(REF, da, otpRequest("4821")))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void verifyOtp_nonDaRole_returns403() {
+        AuthUserDetails customer = principalWithRole("C2C_CUSTOMER", "00000000-0000-0000-0000-0000000c0001");
+
+        assertThatThrownBy(() -> controller.verifyOtp(REF, customer, otpRequest("4821")))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.FORBIDDEN));
     }
 
     // -------------------------------------------------------------------------
@@ -109,7 +135,7 @@ class PickupOtpControllerTest {
                 .thenReturn(Optional.of(shipment(ShipmentState.PICKUP_ASSIGNED)));
         when(pickupOtpService.resend(SHIPMENT_ID)).thenReturn("3902");
 
-        ResponseEntity<Map<String, String>> response = controller.resendOtp(REF);
+        ResponseEntity<Map<String, String>> response = controller.resendOtp(REF, da);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("otp", "3902");
@@ -122,7 +148,7 @@ class PickupOtpControllerTest {
         doThrow(new PickupOtpService.ResendLimitExceededException("Resend limit reached"))
                 .when(pickupOtpService).resend(SHIPMENT_ID);
 
-        assertThatThrownBy(() -> controller.resendOtp(REF))
+        assertThatThrownBy(() -> controller.resendOtp(REF, da))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.TOO_MANY_REQUESTS));
@@ -133,7 +159,7 @@ class PickupOtpControllerTest {
         when(shipmentRepository.findByShipmentRef(REF))
                 .thenReturn(Optional.of(shipment(ShipmentState.BOOKED)));
 
-        assertThatThrownBy(() -> controller.resendOtp(REF))
+        assertThatThrownBy(() -> controller.resendOtp(REF, da))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.CONFLICT));
@@ -143,7 +169,7 @@ class PickupOtpControllerTest {
     void resendOtp_shipmentNotFound_returns404() {
         when(shipmentRepository.findByShipmentRef(REF)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> controller.resendOtp(REF))
+        assertThatThrownBy(() -> controller.resendOtp(REF, da))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.NOT_FOUND));

@@ -1,6 +1,9 @@
 package com.oneday.orders.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.oneday.auth.domain.Role;
+import com.oneday.auth.domain.User;
+import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.DropType;
 import com.oneday.common.domain.enums.PaymentMode;
@@ -15,6 +18,8 @@ import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.PaymentPort;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -24,13 +29,19 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -54,12 +65,39 @@ class B2cShipmentControllerTest {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @MockBean BookingService bookingService;
+    @MockBean com.oneday.orders.service.CancellationService cancellationService;
     // IdempotencyFilter is a @Component instantiated by @WebMvcTest; mock its repo dependency
     // so the context loads (addFilters=false prevents the filter from actually running).
     @MockBean IdempotencyKeyRepository idempotencyKeyRepository;
 
     private static final String IDEMPOTENCY_KEY = "idem-test-001";
-    private static final String USER_ID         = "user-999";
+
+    // Identity + role come from the authenticated principal, not a header. Seed the
+    // SecurityContext with a real customer AuthUserDetails so @AuthenticationPrincipal +
+    // the role gate resolve.
+    @BeforeEach
+    void authenticate() {
+        setPrincipal(principalWithRole("C2C_CUSTOMER", "00000000-0000-0000-0000-000000000009"));
+    }
+
+    @AfterEach
+    void clearAuth() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private static void setPrincipal(AuthUserDetails principal) {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, List.of()));
+    }
+
+    private static AuthUserDetails principalWithRole(String roleName, String userId) {
+        Role role = new Role();
+        role.setName(roleName);
+        User user = new User();
+        user.setRole(role);
+        ReflectionTestUtils.setField(user, "id", UUID.fromString(userId));
+        return new AuthUserDetails(user);
+    }
 
     // ── 201 Created: happy path ────────────────────────────────────────────
 
@@ -69,7 +107,6 @@ class B2cShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isCreated())
@@ -88,7 +125,6 @@ class B2cShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isUnprocessableEntity())
@@ -104,7 +140,6 @@ class B2cShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isPaymentRequired())
@@ -121,7 +156,6 @@ class B2cShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isServiceUnavailable())
@@ -137,7 +171,6 @@ class B2cShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isUnprocessableEntity())
@@ -145,17 +178,30 @@ class B2cShipmentControllerTest {
                 .andExpect(jsonPath("$.violations.senderPhone").exists());
     }
 
-    // ── 400: missing required header ──────────────────────────────────────
+    // ── 403: authenticated but wrong role ─────────────────────────────────
 
     @Test
-    void createShipment_missingUserIdHeader_returns400() throws Exception {
+    void createShipment_wrongRole_returns403() throws Exception {
+        setPrincipal(principalWithRole("DELIVERY_ASSOCIATE", "00000000-0000-0000-0000-0000000000da"));
+
         mockMvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        // X-User-Id deliberately omitted
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.title").value("Missing required header"));
+                .andExpect(status().isForbidden());
+    }
+
+    // ── 401: no authenticated principal ───────────────────────────────────
+
+    @Test
+    void createShipment_unauthenticated_returns401() throws Exception {
+        SecurityContextHolder.clearContext();  // drop the principal seeded in @BeforeEach
+
+        mockMvc.perform(post("/api/v1/b2c/shipments")
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(bookingRequest())))
+                .andExpect(status().isUnauthorized());
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -244,7 +290,6 @@ class B2cShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(codReq)))
                 .andExpect(status().isCreated())

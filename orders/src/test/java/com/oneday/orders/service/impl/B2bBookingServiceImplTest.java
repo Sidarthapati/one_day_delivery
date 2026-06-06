@@ -10,6 +10,7 @@ import com.oneday.common.port.PricingPort;
 import com.oneday.common.port.ServiceabilityPort;
 import com.oneday.common.port.dto.EtaResult;
 import com.oneday.common.port.dto.QuoteResult;
+import com.oneday.common.port.dto.ServiceabilityQuery;
 import com.oneday.common.port.dto.ServiceabilityResult;
 import com.oneday.orders.domain.Address;
 import com.oneday.orders.domain.B2bAccount;
@@ -153,7 +154,7 @@ class B2bBookingServiceImplTest {
         assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID))
                 .isInstanceOf(B2bBookingService.AccountNotFoundException.class);
 
-        verify(serviceabilityPort, never()).check(any(), any());
+        verify(serviceabilityPort, never()).check(any());
         verify(shipmentRepository, never()).save(any());
     }
 
@@ -168,7 +169,22 @@ class B2bBookingServiceImplTest {
         assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID))
                 .isInstanceOf(B2bBookingService.AccountInactiveException.class);
 
-        verify(serviceabilityPort, never()).check(any(), any());
+        verify(serviceabilityPort, never()).check(any());
+        verify(shipmentRepository, never()).save(any());
+    }
+
+    // ── account ownership ──────────────────────────────────────────────────
+
+    @Test
+    void book_callerNotOwner_throwsAccountAccessException() {
+        B2bAccount account = activeAccount(0L, 1_000_000L);
+        account.setOwnerUserId(UUID.fromString("99999999-9999-9999-9999-999999999999"));  // not USER_ID
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+
+        assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID))
+                .isInstanceOf(B2bBookingService.AccountAccessException.class);
+
+        verify(serviceabilityPort, never()).check(any());
         verify(shipmentRepository, never()).save(any());
     }
 
@@ -269,8 +285,8 @@ class B2bBookingServiceImplTest {
     }
 
     private void stubServiceability(boolean serviceable, DeliveryType deliveryType) {
-        when(serviceabilityPort.check(anyString(), anyString()))
-                .thenReturn(new ServiceabilityResult(serviceable, TILE_ID, deliveryType));
+        when(serviceabilityPort.check(any(ServiceabilityQuery.class)))
+                .thenReturn(new ServiceabilityResult(serviceable, TILE_ID, TILE_ID, deliveryType));
     }
 
     private void stubPricing(long base, long tax, long total) {

@@ -1,6 +1,9 @@
 package com.oneday.orders.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.oneday.auth.domain.Role;
+import com.oneday.auth.domain.User;
+import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.DropType;
 import com.oneday.common.domain.enums.PickupType;
@@ -11,6 +14,8 @@ import com.oneday.orders.dto.B2bBookingRequest;
 import com.oneday.orders.dto.BookingResponse;
 import com.oneday.orders.repository.IdempotencyKeyRepository;
 import com.oneday.orders.service.B2bBookingService;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -20,14 +25,19 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -49,11 +59,36 @@ class B2bShipmentControllerTest {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @MockBean B2bBookingService b2bBookingService;
+    @MockBean com.oneday.orders.service.CancellationService cancellationService;
     @MockBean IdempotencyKeyRepository idempotencyKeyRepository;
 
     private static final String IDEMPOTENCY_KEY = "idem-b2b-001";
-    private static final String USER_ID         = "user-b2b-999";
     private static final UUID   ACCOUNT_ID      = UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+    // Identity + role come from the authenticated principal, not a header.
+    @BeforeEach
+    void authenticate() {
+        setPrincipal(principalWithRole("B2B_USER", "00000000-0000-0000-0000-000000000009"));
+    }
+
+    @AfterEach
+    void clearAuth() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private static void setPrincipal(AuthUserDetails principal) {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, List.of()));
+    }
+
+    private static AuthUserDetails principalWithRole(String roleName, String userId) {
+        Role role = new Role();
+        role.setName(roleName);
+        User user = new User();
+        user.setRole(role);
+        ReflectionTestUtils.setField(user, "id", UUID.fromString(userId));
+        return new AuthUserDetails(user);
+    }
 
     // ── 201 Created: happy path ────────────────────────────────────────────
 
@@ -63,7 +98,6 @@ class B2bShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2b/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isCreated())
@@ -83,7 +117,6 @@ class B2bShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2b/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isPaymentRequired())
@@ -99,7 +132,6 @@ class B2bShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2b/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isConflict())
@@ -115,7 +147,6 @@ class B2bShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2b/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isNotFound())
@@ -131,12 +162,24 @@ class B2bShipmentControllerTest {
 
         mockMvc.perform(post("/api/v1/b2b/shipments")
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.title").value("Validation failed"))
                 .andExpect(jsonPath("$.violations.b2bAccountId").exists());
+    }
+
+    // ── 403: authenticated but not a B2B user ─────────────────────────────
+
+    @Test
+    void createB2bShipment_wrongRole_returns403() throws Exception {
+        setPrincipal(principalWithRole("C2C_CUSTOMER", "00000000-0000-0000-0000-0000000c0001"));
+
+        mockMvc.perform(post("/api/v1/b2b/shipments")
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(bookingRequest())))
+                .andExpect(status().isForbidden());
     }
 
     // ── 400: missing Idempotency-Key header ───────────────────────────────
@@ -145,7 +188,6 @@ class B2bShipmentControllerTest {
     void createB2bShipment_missingIdempotencyKeyHeader_returns400() throws Exception {
         mockMvc.perform(post("/api/v1/b2b/shipments")
                         // Idempotency-Key deliberately omitted
-                        .header("X-User-Id", USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bookingRequest())))
                 .andExpect(status().isBadRequest())
