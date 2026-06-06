@@ -11,6 +11,7 @@ import com.oneday.common.port.dto.EtaRequest;
 import com.oneday.common.port.dto.EtaResult;
 import com.oneday.common.port.dto.QuoteRequest;
 import com.oneday.common.port.dto.QuoteResult;
+import com.oneday.common.port.dto.ServiceabilityQuery;
 import com.oneday.common.port.dto.ServiceabilityResult;
 import com.oneday.orders.domain.PaymentTransaction;
 import com.oneday.orders.domain.Shipment;
@@ -110,10 +111,19 @@ class BookingServiceImpl implements BookingService {
     }
 
     @Override
-    public BookingResponse book(BookingRequest req, String idempotencyKey, String userId) {
+    public QuoteResult quote(BookingRequest req) {
+        return priceRequest(req).quote();
+    }
+
+    // Steps 1-3 of booking, with no payment or DB write — reused by book() and quote()
+    // (the payment create-order flow prices the shipment via quote() before checkout).
+    private Priced priceRequest(BookingRequest req) {
         // ── 1. Serviceability (outside DB transaction) ─────────────────────────
         ServiceabilityResult serviceability = callWithTimeout(serviceabilityTl, serviceabilityCb,
-                () -> serviceabilityPort.check(req.getOriginPincode(), req.getDestPincode()));
+                () -> serviceabilityPort.check(new ServiceabilityQuery(
+                        req.getOriginPincode(), req.getDestPincode(),
+                        req.getOriginAddress().getLatitude(), req.getOriginAddress().getLongitude(),
+                        req.getDestAddress().getLatitude(), req.getDestAddress().getLongitude())));
 
         if (!serviceability.serviceable()) {
             throw new ServiceabilityException(
@@ -135,6 +145,19 @@ class BookingServiceImpl implements BookingService {
                         chargeableWeightGrams,
                         req.getDeclaredValuePaise(),
                         null)));
+        return new Priced(serviceability, volumetricWeightGrams, chargeableWeightGrams, quote);
+    }
+
+    private record Priced(ServiceabilityResult serviceability, int volumetricWeightGrams,
+                          int chargeableWeightGrams, QuoteResult quote) {}
+
+    @Override
+    public BookingResponse book(BookingRequest req, String idempotencyKey, String userId) {
+        Priced priced = priceRequest(req);
+        ServiceabilityResult serviceability = priced.serviceability();
+        int volumetricWeightGrams = priced.volumetricWeightGrams();
+        int chargeableWeightGrams = priced.chargeableWeightGrams();
+        QuoteResult quote = priced.quote();
 
         // ── 4. Payment verify + capture (PREPAID only, outside DB transaction) ──
         boolean isPrepaid = PaymentMode.PREPAID == req.getPaymentMode();
@@ -218,6 +241,7 @@ class BookingServiceImpl implements BookingService {
         shipment.setDropType(req.getDropType());
         shipment.setState(ShipmentState.BOOKED);
         shipment.setOriginTileId(serviceability.originTileId());
+        shipment.setDestTileId(serviceability.destTileId());
         shipment.setPaymentMode(req.getPaymentMode());
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());

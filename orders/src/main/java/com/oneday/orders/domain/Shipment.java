@@ -164,9 +164,13 @@ public class Shipment extends MutableBaseEntity {
     @Column(name = "assigned_flight_id")
     private UUID assignedFlightId;
 
-    // Set from ServiceabilityResult at booking; used by M5 for DA assignment
+    // Set from ServiceabilityResult at booking; used by M5 for pickup-DA assignment
     @Column(name = "origin_tile_id", updatable = false)
     private UUID originTileId;
+
+    // Set from ServiceabilityResult at booking; used by M5/M6 for delivery-DA + routing
+    @Column(name = "dest_tile_id", updatable = false)
+    private UUID destTileId;
 
     // Null at booking; populated when M8 emits LABEL_GENERATED
     @Column(name = "parcel_id", length = 30)
