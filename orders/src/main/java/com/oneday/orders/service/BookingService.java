@@ -1,5 +1,6 @@
 package com.oneday.orders.service;
 
+import com.oneday.common.port.dto.QuoteResult;
 import com.oneday.orders.dto.BookingRequest;
 import com.oneday.orders.dto.BookingResponse;
 
@@ -26,6 +27,14 @@ public interface BookingService {
      * @throws InvalidBookingRequestException if PREPAID Razorpay fields are missing or blank
      */
     BookingResponse book(BookingRequest request, String idempotencyKey, String userId);
+
+    /**
+     * Prices a request without booking or taking payment (serviceability → pricing).
+     * Used by the payment flow to mint a gateway order for the exact amount before checkout.
+     *
+     * @throws ServiceabilityException if the route is outside M3 grid coverage
+     */
+    QuoteResult quote(BookingRequest request);
 
     class ServiceabilityException extends RuntimeException {
         public ServiceabilityException(String message) { super(message); }
