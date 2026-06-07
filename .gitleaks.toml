@@ -1,0 +1,12 @@
+# Gitleaks config — extends the default ruleset and allowlists known false positives.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and documentation examples — placeholder/sample values, not real secrets"
+paths = [
+  # Test-only placeholder JWT signing key (clearly fake, 32-char dummy string)
+  '''auth/src/test/resources/application\.properties''',
+  # Illustrative (truncated) example JWT token in the auth flow docs
+  '''docs/M1/AUTH-FLOW\.md''',
+]
