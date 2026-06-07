@@ -1,6 +1,7 @@
 package com.oneday.orders.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.ShipmentState;
@@ -11,6 +12,7 @@ import java.util.Map;
 public class BookingResponse {
 
     private String shipmentRef;
+    private CustomerType customerType;         // B2C, C2C, or B2B — what the booker actually is
     private ShipmentState state;               // machine-readable (BOOKED)
     private String stateLabel;                 // human-readable ("Order confirmed")
     private DeliveryType deliveryType;
@@ -74,6 +76,9 @@ public class BookingResponse {
 
     public String getShipmentRef()                     { return shipmentRef; }
     public void setShipmentRef(String v)               { this.shipmentRef = v; }
+
+    public CustomerType getCustomerType()              { return customerType; }
+    public void setCustomerType(CustomerType v)        { this.customerType = v; }
 
     public ShipmentState getState()                    { return state; }
     public void setState(ShipmentState v)              { this.state = v; }

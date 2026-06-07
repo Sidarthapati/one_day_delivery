@@ -7,17 +7,24 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
  * Local-dev / demo security override.
- * Opens /api/** and /internal/** without JWT so the demo website can call the backend directly.
- * Never active in prod (guarded by @Profile("!prod")).
+ * Opens /api/** and /internal/** (permitAll, no CSRF) so the demo website can call the backend
+ * directly. Never active in prod (guarded by @Profile("!prod")).
  *
- * JwtAuthenticationFilter is declared as a @Bean in auth's SecurityConfig, which causes Spring Boot
- * to auto-register it as a servlet filter for ALL requests. We disable that auto-registration here
- * so it only runs within the auth module's own SecurityFilterChain (where it's added via addFilterBefore).
+ * <p>The chain still runs {@link JwtAuthenticationFilter}, so a request that carries a real
+ * {@code Authorization: Bearer <jwt>} is authenticated as its actual user/role (a customer can
+ * book; an ADMIN cannot — see {@code Authz#requireCustomerRole}). A request with no token is left
+ * unauthenticated here and {@code DemoAuthFilter} then fills in the synthetic ADMIN principal.
+ * permitAll means a missing/invalid token is never rejected at the security layer — per-endpoint
+ * role checks live in the controllers.</p>
+ *
+ * <p>JwtAuthenticationFilter is declared as a @Bean in auth's SecurityConfig, which would make Spring
+ * Boot auto-register it as a servlet filter for ALL requests; we disable that global auto-registration
+ * so it runs only within explicit chains (this one and the auth module's own).</p>
  */
 @Configuration
 @Profile("!prod")
@@ -25,11 +32,15 @@ class DemoSecurityConfig {
 
     @Bean
     @Order(1)
-    SecurityFilterChain demoApiChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain demoApiChain(HttpSecurity http,
+                                     JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         return http
                 .securityMatcher("/api/**", "/internal/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                .csrf(AbstractHttpConfigurer::disable)
+                // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies. Keep CSRF
+                // enabled but ignore the stateless API paths (equivalent here, no blanket disable).
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"))
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 

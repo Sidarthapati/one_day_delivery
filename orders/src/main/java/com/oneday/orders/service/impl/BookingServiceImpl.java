@@ -11,6 +11,7 @@ import com.oneday.common.port.dto.EtaRequest;
 import com.oneday.common.port.dto.EtaResult;
 import com.oneday.common.port.dto.QuoteRequest;
 import com.oneday.common.port.dto.QuoteResult;
+import com.oneday.common.port.dto.ServiceabilityQuery;
 import com.oneday.common.port.dto.ServiceabilityResult;
 import com.oneday.orders.domain.PaymentTransaction;
 import com.oneday.orders.domain.Shipment;
@@ -110,10 +111,21 @@ class BookingServiceImpl implements BookingService {
     }
 
     @Override
-    public BookingResponse book(BookingRequest req, String idempotencyKey, String userId) {
+    public QuoteResult quote(BookingRequest req) {
+        // Retail pre-quote for the payment flow. B2C and C2C share the retail rate card, so B2C is a
+        // safe default here — the booking total computed later with the real type matches.
+        return priceRequest(req, CustomerType.B2C).quote();
+    }
+
+    // Steps 1-3 of booking, with no payment or DB write — reused by book() and quote()
+    // (the payment create-order flow prices the shipment via quote() before checkout).
+    private Priced priceRequest(BookingRequest req, CustomerType customerType) {
         // ── 1. Serviceability (outside DB transaction) ─────────────────────────
         ServiceabilityResult serviceability = callWithTimeout(serviceabilityTl, serviceabilityCb,
-                () -> serviceabilityPort.check(req.getOriginPincode(), req.getDestPincode()));
+                () -> serviceabilityPort.check(new ServiceabilityQuery(
+                        req.getOriginPincode(), req.getDestPincode(),
+                        req.getOriginAddress().getLatitude(), req.getOriginAddress().getLongitude(),
+                        req.getDestAddress().getLatitude(), req.getDestAddress().getLongitude())));
 
         if (!serviceability.serviceable()) {
             throw new ServiceabilityException(
@@ -128,13 +140,32 @@ class BookingServiceImpl implements BookingService {
         // ── 3. Pricing (outside DB transaction) ───────────────────────────────
         QuoteResult quote = callWithTimeout(pricingTl, pricingCb, () -> pricingPort.computeQuote(
                 new QuoteRequest(
-                        CustomerType.B2C,
+                        customerType,
                         serviceability.deliveryType(),
                         req.getOriginCity().toUpperCase(),
                         req.getDestCity().toUpperCase(),
                         chargeableWeightGrams,
                         req.getDeclaredValuePaise(),
                         null)));
+        return new Priced(serviceability, volumetricWeightGrams, chargeableWeightGrams, quote);
+    }
+
+    private record Priced(ServiceabilityResult serviceability, int volumetricWeightGrams,
+                          int chargeableWeightGrams, QuoteResult quote) {}
+
+    @Override
+    public BookingResponse book(BookingRequest req, String idempotencyKey, String userId) {
+        return book(req, idempotencyKey, userId, CustomerType.B2C);
+    }
+
+    @Override
+    public BookingResponse book(BookingRequest req, String idempotencyKey, String userId,
+                                CustomerType customerType) {
+        Priced priced = priceRequest(req, customerType);
+        ServiceabilityResult serviceability = priced.serviceability();
+        int volumetricWeightGrams = priced.volumetricWeightGrams();
+        int chargeableWeightGrams = priced.chargeableWeightGrams();
+        QuoteResult quote = priced.quote();
 
         // ── 4. Payment verify + capture (PREPAID only, outside DB transaction) ──
         boolean isPrepaid = PaymentMode.PREPAID == req.getPaymentMode();
@@ -160,7 +191,7 @@ class BookingServiceImpl implements BookingService {
         final int finalChargeableWeight = chargeableWeightGrams;
         try {
             return tx.execute(status ->
-                    persist(req, idempotencyKey, userId, serviceability,
+                    persist(req, idempotencyKey, userId, customerType, serviceability,
                             finalVolumetricWeight, finalChargeableWeight, quote));
         } catch (RuntimeException dbEx) {
             if (isPrepaid) {
@@ -181,7 +212,7 @@ class BookingServiceImpl implements BookingService {
     }
 
     private BookingResponse persist(BookingRequest req, String idempotencyKey, String userId,
-                                    ServiceabilityResult serviceability,
+                                    CustomerType customerType, ServiceabilityResult serviceability,
                                     int volumetricWeightGrams, int chargeableWeightGrams,
                                     QuoteResult quote) {
         Instant bookedAt = Instant.now();
@@ -189,7 +220,7 @@ class BookingServiceImpl implements BookingService {
 
         Shipment shipment = new Shipment();
         shipment.setShipmentRef(shipmentRef);
-        shipment.setCustomerType(CustomerType.B2C);
+        shipment.setCustomerType(customerType);
         shipment.setDeliveryType(serviceability.deliveryType());
         shipment.setSenderName(req.getSenderName());
         shipment.setSenderPhone(req.getSenderPhone());
@@ -218,9 +249,11 @@ class BookingServiceImpl implements BookingService {
         shipment.setDropType(req.getDropType());
         shipment.setState(ShipmentState.BOOKED);
         shipment.setOriginTileId(serviceability.originTileId());
+        shipment.setDestTileId(serviceability.destTileId());
         shipment.setPaymentMode(req.getPaymentMode());
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());
+        shipment.setBookedByUserId(UserIds.parse(userId));
 
         shipment = shipmentRepository.save(shipment);
 
@@ -291,6 +324,7 @@ class BookingServiceImpl implements BookingService {
 
         BookingResponse response = new BookingResponse();
         response.setShipmentRef(shipment.getShipmentRef());
+        response.setCustomerType(customerType);
         response.setState(ShipmentState.BOOKED);
         response.setStateLabel(stateMapper.labelFor(ShipmentState.BOOKED));
         response.setDeliveryType(serviceability.deliveryType());

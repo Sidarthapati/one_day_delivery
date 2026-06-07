@@ -15,6 +15,7 @@ import com.oneday.grid.domain.PincodeMapping;
 import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
+import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
 import com.oneday.grid.dto.response.TileDetailResponse;
 import com.oneday.grid.repository.DaHexAssignmentRepository;
@@ -40,6 +41,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -110,6 +112,29 @@ public class GridServiceImpl implements GridService {
                 .map(hex -> new TileAtResponse(hex.getId(), Long.toHexString(hex.getH3Index()), hex.isActive()))
                 .orElseThrow(() -> new IllegalArgumentException(
                         "No hex at " + Long.toHexString(h3Index) + " for cityId=" + cityId));
+    }
+
+    @Override
+    public ServiceableAtResponse serviceableAt(double lat, double lon) {
+        // A WGS84 point belongs to at most one city's polyfill, so scan the configured
+        // cities and return the first whose grid contains the point's H3 cell.
+        for (Map.Entry<String, UUID> entry : gridProperties.getCities().entrySet()) {
+            UUID cityId = entry.getValue();
+            Optional<Grid> gridOpt = gridRepository.findByCityId(cityId);
+            if (gridOpt.isEmpty()) {
+                continue;
+            }
+            Grid grid = gridOpt.get();
+            long h3Index = h3Core.latLngToCell(lat, lon, grid.getH3Resolution());
+            Optional<Hex> hexOpt = hexRepository.findByH3GridIdAndH3Index(grid.getId(), h3Index);
+            if (hexOpt.isPresent()) {
+                Hex hex = hexOpt.get();
+                return new ServiceableAtResponse(
+                        hex.isActive(), entry.getKey(), cityId, hex.getId(),
+                        Long.toHexString(hex.getH3Index()));
+            }
+        }
+        return new ServiceableAtResponse(false, null, null, null, null);
     }
 
     @Override

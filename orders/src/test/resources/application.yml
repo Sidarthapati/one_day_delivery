@@ -11,3 +11,11 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration/orders
+    # The shared dev DB's history also holds the other modules' migrations (auth/grid/onboarding),
+    # which this orders-only location can't resolve. Skip cross-module checksum validation here;
+    # Hibernate ddl-auto=validate still enforces that the entities match the live schema.
+    validate-on-migrate: false
+  # Match the production API JSON contract (app/application.yml) so the E2E tests assert the
+  # same snake_case payloads the frontend actually consumes.
+  jackson:
+    property-naming-strategy: SNAKE_CASE

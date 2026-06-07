@@ -63,5 +63,11 @@
             <artifactId>flyway-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Razorpay payment gateway (live mode); mock mode needs none of this -->
+        <dependency>
+            <groupId>com.razorpay</groupId>
+            <artifactId>razorpay-java</artifactId>
+            <version>1.4.8</version>
+        </dependency>
     </dependencies>
 </project>

@@ -6,10 +6,12 @@ import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
+import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.common.domain.enums.ShipmentState;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -62,7 +64,10 @@ public class PickupOtpController {
     @Transactional
     @PostMapping("/{ref}/pickup-otp/verify")
     public ResponseEntity<Void> verifyOtp(@PathVariable String ref,
+                                          @AuthenticationPrincipal AuthUserDetails principal,
                                           @Valid @RequestBody OtpVerifyRequest request) {
+        Authz.requireRole(principal, "DELIVERY_ASSOCIATE");
+        String daUserId = Authz.requireUserId(principal);
         Shipment shipment = resolveShipment(ref);
 
         if (shipment.getState() != ShipmentState.PICKUP_ASSIGNED) {
@@ -76,10 +81,8 @@ public class PickupOtpController {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
         }
 
-        // OTP verified — transition state.
-        // triggeredBy = "da-app" (internal caller); eventRef = ref for correlation.
-        // TODO (PR #18): replace "da-app" with the authenticated DA user ID from the service token.
-        TransitionContext ctx = TransitionContext.fromApi("da-app", ref);
+        // OTP verified — transition state. Actor is the authenticated DA; eventRef = ref.
+        TransitionContext ctx = TransitionContext.fromApi(daUserId, ref);
         stateMachine.transition(shipment.getId(), ShipmentState.PICKED_UP, ctx);
 
         return ResponseEntity.noContent().build();
@@ -105,7 +108,10 @@ public class PickupOtpController {
      * </pre>
      */
     @PostMapping("/{ref}/pickup-otp/resend")
-    public ResponseEntity<Map<String, String>> resendOtp(@PathVariable String ref) {
+    public ResponseEntity<Map<String, String>> resendOtp(
+            @PathVariable String ref,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, "DELIVERY_ASSOCIATE");
         Shipment shipment = resolveShipment(ref);
 
         if (shipment.getState() != ShipmentState.PICKUP_ASSIGNED) {

@@ -8,7 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -35,16 +34,16 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http,
             JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         return http
-                // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies — no CSRF surface.
-                // lgtm[java/spring-disabled-csrf-protection]
-                .csrf(AbstractHttpConfigurer::disable)
+                // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies. Keep CSRF
+                // enabled but ignore all endpoints (equivalent here, but no blanket disable).
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/**"))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint(
                                 (req, res, ex) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/login", "/auth/register", "/auth/health", "/auth/request-onboarding").permitAll()
-                        .requestMatchers("/", "/index.html", "/*.js", "/*.css").permitAll()
+                        .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

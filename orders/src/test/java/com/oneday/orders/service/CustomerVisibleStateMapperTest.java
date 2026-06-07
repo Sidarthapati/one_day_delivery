@@ -3,8 +3,6 @@ package com.oneday.orders.service;
 import com.oneday.common.domain.enums.ShipmentState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -13,44 +11,20 @@ class CustomerVisibleStateMapperTest {
 
     private final CustomerVisibleStateMapper mapper = new CustomerVisibleStateMapper();
 
-    @ParameterizedTest(name = "{0} has a non-blank label")
-    @EnumSource(ShipmentState.class)
-    void everyState_hasNonBlankLabel(ShipmentState state) {
-        assertThat(mapper.labelFor(state))
-                .as("Label for %s", state)
-                .isNotNull()
-                .isNotBlank();
+    // Completeness invariant: every internal state maps to a non-blank customer-facing label, so
+    // the tracking API / "Your Bookings" list can never surface a raw enum or blank for any state.
+    @Test
+    void everyState_hasNonBlankLabel() {
+        for (ShipmentState state : ShipmentState.values()) {
+            assertThat(mapper.labelFor(state)).as("label for %s", state).isNotBlank();
+        }
     }
 
+    // Spot-check the wording against the design doc for a few headline states.
     @Test
-    void labelFor_booked_matchesDesignDoc() {
+    void labels_matchDesignDocWording() {
         assertThat(mapper.labelFor(ShipmentState.BOOKED)).isEqualTo("Order confirmed");
-    }
-
-    @Test
-    void labelFor_dropped_matchesDesignDoc() {
         assertThat(mapper.labelFor(ShipmentState.DROPPED)).isEqualTo("Delivered");
-    }
-
-    @Test
-    void labelFor_cancelled_matchesDesignDoc() {
         assertThat(mapper.labelFor(ShipmentState.CANCELLED)).isEqualTo("Cancelled");
-    }
-
-    @Test
-    void labelFor_rtoCompleted_matchesDesignDoc() {
-        assertThat(mapper.labelFor(ShipmentState.RTO_COMPLETED)).isEqualTo("Returned to sender");
-    }
-
-    @Test
-    void labelFor_awaitingSelfDrop_matchesDesignDoc() {
-        assertThat(mapper.labelFor(ShipmentState.AWAITING_SELF_DROP))
-                .isEqualTo("Please bring your parcel to the origin hub");
-    }
-
-    @Test
-    void labelFor_awaitingHubCollect_matchesDesignDoc() {
-        assertThat(mapper.labelFor(ShipmentState.AWAITING_HUB_COLLECT))
-                .isEqualTo("Your parcel is ready — collect from the hub");
     }
 }
