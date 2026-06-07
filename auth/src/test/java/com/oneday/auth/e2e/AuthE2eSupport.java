@@ -7,6 +7,7 @@ import com.oneday.auth.dto.request.RegisterUserRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.junit.jupiter.api.Tag;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -28,6 +29,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * keeping the shared dev DB clean and each scenario isolated. The seeded admin
  * ({@code admin@oneday.in}, from {@code DataInitializer}) is the bootstrap identity.
  */
+// Tagged "e2e" (inherited by every subclass) so CI can exclude these real-Postgres
+// full-stack tests with -DexcludedGroups=e2e; they still run locally against the dev DB.
+@Tag("e2e")
 @SpringBootTest(properties =
         "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration")
 @AutoConfigureMockMvc

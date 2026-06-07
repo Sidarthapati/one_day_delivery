@@ -27,9 +27,11 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      # Resolve dependencies so Trivy can scan the local Maven cache
-      - name: Resolve Maven dependencies
-        run: mvn dependency:resolve --batch-mode --no-transfer-progress -q
+      # Build + install the reactor so every module artifact (e.g. com.oneday:common) and all
+      # third-party deps land in the local Maven cache for Trivy to scan. A bare
+      # `dependency:resolve` can't resolve the inter-module SNAPSHOTs (they aren't installed yet).
+      - name: Build and resolve dependencies
+        run: mvn install -DskipTests --batch-mode --no-transfer-progress -q
 
       # Pass 1: upload HIGH + CRITICAL findings to the Security tab (non-blocking)
       - name: Trivy scan — SARIF upload

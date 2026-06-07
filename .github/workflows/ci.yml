@@ -22,7 +22,10 @@ jobs:
           cache: 'maven'
 
       - name: Build and test all modules
-        run: mvn clean install --batch-mode --no-transfer-progress
+        # Exclude the "e2e" group: those are full-stack @SpringBootTest suites that need a
+        # real Postgres (and run locally against the dev DB). CI has no database, so they
+        # are skipped here; every other (mock-based) test still runs.
+        run: mvn clean install -DexcludedGroups=e2e --batch-mode --no-transfer-progress
 
       - name: Upload test reports
         if: always()

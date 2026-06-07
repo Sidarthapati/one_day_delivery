@@ -1,0 +1,8 @@
+# Accepted CVEs — reviewed, no fix available in our framework generation.
+#
+# CVE-2026-22732 — Spring Security policy bypass / information disclosure.
+# Fixed only in Spring Security 6.5.9 / 7.0.4, which require Spring Boot 3.4/3.5.
+# We are on Spring Boot 3.2.5 (Spring Security 6.2.x); no 6.2.x backport exists.
+# Tracked for remediation via a Spring Boot major upgrade. The other CRITICALs
+# (Tomcat + CVE-2024-38821) are remediated by the version overrides in pom.xml.
+CVE-2026-22732
