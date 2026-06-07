@@ -1,0 +1,48 @@
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: routing-service
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.oneday.common.kafka.events.cron"
+  datasource:
+    url: jdbc:postgresql://localhost:5432/oneday
+    username: oneday
+    password: secret
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+    out-of-order: true
+routing:
+  osrm:
+    base-url: http://46.225.155.64:5000
+  solver:
+    time-limit-seconds: 45
+  cycle:
+    min-minutes: 120
+    max-minutes: 180
+  shuttle:
+    cadence-minutes: 30
+  window:
+    start-hour: 7
+    end-hour: 20
+  dwell-minutes: 5
+  max-da-to-vertex-minutes: 12
+  late-threshold-minutes: 10
+  cost-per-km: 15.0
+  cities:
+    delhi: f47ac10b-58cc-4372-a567-0e02b2c3d479
+    mumbai: 550e8400-e29b-41d4-a716-446655440000
+    bangalore: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+    hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+    chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
