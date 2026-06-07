@@ -26,6 +26,7 @@ import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -55,6 +56,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * needed. Tests are {@code @Transactional} → every booking is rolled back, keeping the shared dev
  * DB clean and each scenario isolated.
  */
+// Tagged "e2e" (inherited by every subclass) so CI can exclude these real-Postgres
+// full-stack tests with -DexcludedGroups=e2e; they still run locally against the dev DB.
+@Tag("e2e")
 @SpringBootTest(properties =
         "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration")
 @AutoConfigureMockMvc
