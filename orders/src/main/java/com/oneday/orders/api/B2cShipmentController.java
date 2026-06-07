@@ -1,6 +1,7 @@
 package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.orders.dto.BookingRequest;
 import com.oneday.orders.dto.BookingResponse;
 import com.oneday.orders.dto.CancellationResponse;
@@ -37,9 +38,13 @@ class B2cShipmentController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody BookingRequest request) {
-        // Only customer accounts may book retail shipments (ADMIN allowed for ops/demo).
-        Authz.requireRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER");
-        return bookingService.book(request, idempotencyKey, Authz.requireUserId(principal));
+        // Only customer accounts may book retail shipments. ADMIN is deliberately NOT
+        // allowed to book — it has read access to the orders database instead.
+        Authz.requireCustomerRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER");
+        // The b2c endpoint serves both retail roles; persist the customer's real type.
+        CustomerType customerType = "C2C_CUSTOMER".equals(principal.getUser().getRole().getName())
+                ? CustomerType.C2C : CustomerType.B2C;
+        return bookingService.book(request, idempotencyKey, Authz.requireUserId(principal), customerType);
     }
 
     @DeleteMapping("/{ref}")

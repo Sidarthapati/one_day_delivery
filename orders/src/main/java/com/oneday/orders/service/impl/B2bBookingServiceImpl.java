@@ -204,6 +204,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         shipment.setPaymentMode(null);   // B2B: credit; no payment mode column value
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());
+        shipment.setBookedByUserId(UserIds.parse(userId));
 
         shipment = shipmentRepository.save(shipment);
 
@@ -249,6 +250,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
 
         BookingResponse response = new BookingResponse();
         response.setShipmentRef(shipment.getShipmentRef());
+        response.setCustomerType(CustomerType.B2B);
         response.setState(ShipmentState.BOOKED);
         response.setStateLabel(stateMapper.labelFor(ShipmentState.BOOKED));
         response.setDeliveryType(serviceability.deliveryType());

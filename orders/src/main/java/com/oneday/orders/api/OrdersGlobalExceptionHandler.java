@@ -15,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -152,6 +153,23 @@ class OrdersGlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
         pd.setTitle("B2B account access denied");
         pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /**
+     * Authz gates ({@link Authz}) throw {@link ResponseStatusException} (401/403). Handle it here so
+     * the chosen status + reason are written as a ProblemDetail in-process. Otherwise the framework
+     * resolves it via {@code response.sendError()}, which triggers a container ERROR dispatch to
+     * {@code /error} — a path outside {@code /api/**} that the JWT-secured chain rejects as 401,
+     * masking the real status.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    ProblemDetail handleResponseStatus(ResponseStatusException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(ex.getStatusCode());
+        pd.setTitle("Request rejected");
+        if (ex.getReason() != null) {
+            pd.setDetail(ex.getReason());
+        }
         return pd;
     }
 }

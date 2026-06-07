@@ -43,4 +43,26 @@ final class Authz {
         throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                 "Role " + role + " is not permitted to perform this action");
     }
+
+    /**
+     * Authorizes the caller against {@code allowedRoles} <b>without</b> the ADMIN bypass.
+     * For actions reserved to customer accounts (booking): an ADMIN reads the orders database
+     * but must not be able to place an order. ADMIN therefore gets 403 here unless it is itself
+     * one of {@code allowedRoles}.
+     *
+     * @throws ResponseStatusException 401 if unauthenticated, 403 if the role is not permitted
+     */
+    static void requireCustomerRole(AuthUserDetails principal, String... allowedRoles) {
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        String role = principal.getUser().getRole().getName();
+        for (String allowed : allowedRoles) {
+            if (allowed.equals(role)) {
+                return;
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Role " + role + " is not permitted to book shipments");
+    }
 }

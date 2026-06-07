@@ -27,6 +27,18 @@ public interface CancellationService {
      */
     CancellationResponse cancel(String shipmentRef, String reason, String userId, boolean b2bLane);
 
+    /**
+     * Privileged cancellation for ADMIN ops tooling. Cancels any shipment regardless of lane and
+     * <b>without</b> the B2B account-ownership check (an admin acts on behalf of the account).
+     * The cancellation cutoff ({@link CancellationPolicy}) still applies. Refund/credit-reversal
+     * behave exactly as the customer path.
+     *
+     * @param shipmentRef the shipment reference
+     * @param reason      ops-supplied cancellation reason (nullable)
+     * @param userId      the admin's user id (recorded as the transition actor)
+     */
+    CancellationResponse cancelAsAdmin(String shipmentRef, String reason, String userId);
+
     /** Thrown when the shipment's current state is past the cancellation cutoff (HTTP 409). */
     class CancellationNotAllowedException extends RuntimeException {
         public CancellationNotAllowedException(String message) { super(message); }

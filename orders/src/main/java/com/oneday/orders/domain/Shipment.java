@@ -212,4 +212,10 @@ public class Shipment extends MutableBaseEntity {
     // Origin city code; used for city-scoped permission enforcement
     @Column(name = "city_id", length = 10, nullable = false, updatable = false)
     private String cityId;
+
+    // M1 user who placed the booking. Powers the customer "my shipments" view so a customer
+    // sees their full history across sessions. Nullable for rows booked before this column
+    // existed (and for any caller whose id is not a UUID, e.g. test fixtures).
+    @Column(name = "booked_by_user_id", updatable = false)
+    private UUID bookedByUserId;
 }

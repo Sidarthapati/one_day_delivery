@@ -77,6 +77,23 @@ class CancellationServiceImpl implements CancellationService {
             throw new EntityNotFoundException("Shipment not found: " + shipmentRef);
         }
 
+        return doCancel(shipment, reason, userId, false);
+    }
+
+    @Override
+    @Transactional
+    public CancellationResponse cancelAsAdmin(String shipmentRef, String reason, String userId) {
+        // No lane guard (admin cancels any lane) and ownership is bypassed below.
+        Shipment shipment = shipmentRepository.findByShipmentRef(shipmentRef)
+                .orElseThrow(() -> new EntityNotFoundException("Shipment not found: " + shipmentRef));
+        return doCancel(shipment, reason, userId, true);
+    }
+
+    private CancellationResponse doCancel(Shipment shipment, String reason, String userId,
+                                          boolean bypassOwnership) {
+        String shipmentRef = shipment.getShipmentRef();
+        boolean isB2b = shipment.getCustomerType() == CustomerType.B2B;
+
         if (!cancellationPolicy.isCancellable(shipment.getState(), shipment.getPickupType())) {
             throw new CancellationNotAllowedException(
                     "Shipment " + shipmentRef + " can no longer be cancelled in state " + shipment.getState());
@@ -89,7 +106,7 @@ class CancellationServiceImpl implements CancellationService {
         boolean refundInitiated;
         Long refundAmountPaise;
         if (isB2b) {
-            reverseB2bCredit(shipment, userId);
+            reverseB2bCredit(shipment, userId, bypassOwnership);
             refund = null;
             refundInitiated = false;
             refundAmountPaise = null;
@@ -124,12 +141,15 @@ class CancellationServiceImpl implements CancellationService {
     }
 
     /** B2B: decrement the account's outstanding balance by this shipment's total (credit reversal). */
-    private void reverseB2bCredit(Shipment shipment, String userId) {
+    private void reverseB2bCredit(Shipment shipment, String userId, boolean bypassOwnership) {
         B2bAccount account = b2bAccountRepository.findByIdForUpdate(shipment.getB2bAccountId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "B2B account not found: " + shipment.getB2bAccountId()));
 
-        if (account.getOwnerUserId() != null && !account.getOwnerUserId().toString().equals(userId)) {
+        // Admin (bypassOwnership) cancels on behalf of the account; customers must own it.
+        if (!bypassOwnership
+                && account.getOwnerUserId() != null
+                && !account.getOwnerUserId().toString().equals(userId)) {
             throw new AccountAccessException(
                     "User " + userId + " does not own account " + account.getId());
         }

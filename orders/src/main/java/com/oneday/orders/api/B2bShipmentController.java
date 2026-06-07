@@ -37,9 +37,10 @@ class B2bShipmentController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody B2bBookingRequest request) {
-        // Only B2B accounts may book on credit (ADMIN allowed for ops/demo). The service
-        // additionally checks the caller owns the specific b2b_account_id.
-        Authz.requireRole(principal, "B2B_USER");
+        // Only B2B accounts may book on credit. ADMIN is deliberately NOT allowed to book —
+        // it has read access to the orders database instead. The service additionally checks
+        // the caller owns the specific b2b_account_id.
+        Authz.requireCustomerRole(principal, "B2B_USER");
         return b2bBookingService.book(request, idempotencyKey, Authz.requireUserId(principal));
     }
 

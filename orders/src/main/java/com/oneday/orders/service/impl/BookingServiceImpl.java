@@ -112,12 +112,14 @@ class BookingServiceImpl implements BookingService {
 
     @Override
     public QuoteResult quote(BookingRequest req) {
-        return priceRequest(req).quote();
+        // Retail pre-quote for the payment flow. B2C and C2C share the retail rate card, so B2C is a
+        // safe default here — the booking total computed later with the real type matches.
+        return priceRequest(req, CustomerType.B2C).quote();
     }
 
     // Steps 1-3 of booking, with no payment or DB write — reused by book() and quote()
     // (the payment create-order flow prices the shipment via quote() before checkout).
-    private Priced priceRequest(BookingRequest req) {
+    private Priced priceRequest(BookingRequest req, CustomerType customerType) {
         // ── 1. Serviceability (outside DB transaction) ─────────────────────────
         ServiceabilityResult serviceability = callWithTimeout(serviceabilityTl, serviceabilityCb,
                 () -> serviceabilityPort.check(new ServiceabilityQuery(
@@ -138,7 +140,7 @@ class BookingServiceImpl implements BookingService {
         // ── 3. Pricing (outside DB transaction) ───────────────────────────────
         QuoteResult quote = callWithTimeout(pricingTl, pricingCb, () -> pricingPort.computeQuote(
                 new QuoteRequest(
-                        CustomerType.B2C,
+                        customerType,
                         serviceability.deliveryType(),
                         req.getOriginCity().toUpperCase(),
                         req.getDestCity().toUpperCase(),
@@ -153,7 +155,13 @@ class BookingServiceImpl implements BookingService {
 
     @Override
     public BookingResponse book(BookingRequest req, String idempotencyKey, String userId) {
-        Priced priced = priceRequest(req);
+        return book(req, idempotencyKey, userId, CustomerType.B2C);
+    }
+
+    @Override
+    public BookingResponse book(BookingRequest req, String idempotencyKey, String userId,
+                                CustomerType customerType) {
+        Priced priced = priceRequest(req, customerType);
         ServiceabilityResult serviceability = priced.serviceability();
         int volumetricWeightGrams = priced.volumetricWeightGrams();
         int chargeableWeightGrams = priced.chargeableWeightGrams();
@@ -183,7 +191,7 @@ class BookingServiceImpl implements BookingService {
         final int finalChargeableWeight = chargeableWeightGrams;
         try {
             return tx.execute(status ->
-                    persist(req, idempotencyKey, userId, serviceability,
+                    persist(req, idempotencyKey, userId, customerType, serviceability,
                             finalVolumetricWeight, finalChargeableWeight, quote));
         } catch (RuntimeException dbEx) {
             if (isPrepaid) {
@@ -204,7 +212,7 @@ class BookingServiceImpl implements BookingService {
     }
 
     private BookingResponse persist(BookingRequest req, String idempotencyKey, String userId,
-                                    ServiceabilityResult serviceability,
+                                    CustomerType customerType, ServiceabilityResult serviceability,
                                     int volumetricWeightGrams, int chargeableWeightGrams,
                                     QuoteResult quote) {
         Instant bookedAt = Instant.now();
@@ -212,7 +220,7 @@ class BookingServiceImpl implements BookingService {
 
         Shipment shipment = new Shipment();
         shipment.setShipmentRef(shipmentRef);
-        shipment.setCustomerType(CustomerType.B2C);
+        shipment.setCustomerType(customerType);
         shipment.setDeliveryType(serviceability.deliveryType());
         shipment.setSenderName(req.getSenderName());
         shipment.setSenderPhone(req.getSenderPhone());
@@ -245,6 +253,7 @@ class BookingServiceImpl implements BookingService {
         shipment.setPaymentMode(req.getPaymentMode());
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());
+        shipment.setBookedByUserId(UserIds.parse(userId));
 
         shipment = shipmentRepository.save(shipment);
 
@@ -315,6 +324,7 @@ class BookingServiceImpl implements BookingService {
 
         BookingResponse response = new BookingResponse();
         response.setShipmentRef(shipment.getShipmentRef());
+        response.setCustomerType(customerType);
         response.setState(ShipmentState.BOOKED);
         response.setStateLabel(stateMapper.labelFor(ShipmentState.BOOKED));
         response.setDeliveryType(serviceability.deliveryType());
