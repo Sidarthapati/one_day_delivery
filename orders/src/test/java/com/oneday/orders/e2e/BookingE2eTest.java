@@ -7,7 +7,6 @@ import com.oneday.common.port.dto.ServiceabilityResult;
 import com.oneday.orders.dto.B2bBookingRequest;
 import com.oneday.orders.dto.BookingRequest;
 import com.oneday.orders.repository.B2bAccountRepository;
-import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.PaymentPort;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DisplayName("E2E · Booking (B2C / C2C / B2B)")
 class BookingE2eTest extends OrdersE2eSupport {
 
-    @Autowired ShipmentRepository shipmentRepository;
+    // shipmentRepository is inherited from OrdersE2eSupport.
     @Autowired B2bAccountRepository b2bAccountRepository;
 
     // A B2C customer pays online (PREPAID): real Razorpay verify+capture runs, the shipment is

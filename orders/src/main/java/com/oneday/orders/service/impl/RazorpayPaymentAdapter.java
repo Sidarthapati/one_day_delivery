@@ -45,14 +45,15 @@ class RazorpayPaymentAdapter implements PaymentPort {
                         .put("payment_capture", true);  // auto-capture on successful payment
                 Order order = liveClient().orders.create(req);
                 String orderId = order.get("id");
-                log.info("[razorpay:live] created order {} for {} paise", orderId, amountPaise);
+                log.info("[razorpay:live] created order {} for {} paise", sanitizeForLog(orderId), amountPaise);
                 return new PaymentOrder(orderId, amountPaise, "INR", props.getKeyId());
             } catch (RazorpayException e) {
                 throw new PaymentCaptureException("Razorpay order creation failed: " + e.getMessage(), e);
             }
         }
         String orderId = "order_" + randomId(14);
-        log.info("[razorpay:test] created order {} for {} paise (receipt={})", orderId, amountPaise, receipt);
+        log.info("[razorpay:test] created order {} for {} paise (receipt={})",
+                orderId, amountPaise, sanitizeForLog(receipt));
         return new PaymentOrder(orderId, amountPaise, "INR", props.getKeyId());
     }
 
@@ -63,7 +64,8 @@ class RazorpayPaymentAdapter implements PaymentPort {
             throw new PaymentVerificationException(
                     "Razorpay signature mismatch for orderId=" + razorpayOrderId);
         }
-        log.info("[razorpay] signature verified for orderId={} paymentId={}", razorpayOrderId, razorpayPaymentId);
+        log.info("[razorpay] signature verified for orderId={} paymentId={}",
+                sanitizeForLog(razorpayOrderId), sanitizeForLog(razorpayPaymentId));
     }
 
     @Override
@@ -71,7 +73,7 @@ class RazorpayPaymentAdapter implements PaymentPort {
         // Orders are created with payment_capture=true, so Razorpay captures on success.
         // Nothing to do here in either mode beyond an audit log.
         log.info("[razorpay:{}] payment {} captured ({} paise)",
-                props.isLive() ? "live" : "test", razorpayPaymentId, amountPaise);
+                props.isLive() ? "live" : "test", sanitizeForLog(razorpayPaymentId), amountPaise);
     }
 
     @Override
@@ -81,14 +83,16 @@ class RazorpayPaymentAdapter implements PaymentPort {
                 Refund refund = liveClient().payments.refund(
                         razorpayPaymentId, new JSONObject().put("amount", amountPaise));
                 String refundId = refund.get("id");
-                log.info("[razorpay:live] refund {} → {} paise on paymentId={}", refundId, amountPaise, razorpayPaymentId);
+                log.info("[razorpay:live] refund {} → {} paise on paymentId={}",
+                        sanitizeForLog(refundId), amountPaise, sanitizeForLog(razorpayPaymentId));
                 return refundId;
             } catch (RazorpayException e) {
                 throw new PaymentRefundException("Razorpay refund failed: " + e.getMessage(), e);
             }
         }
         String refundId = "rfnd_" + randomId(14);
-        log.info("[razorpay:test] refund {} → {} paise on paymentId={}", refundId, amountPaise, razorpayPaymentId);
+        log.info("[razorpay:test] refund {} → {} paise on paymentId={}",
+                refundId, amountPaise, sanitizeForLog(razorpayPaymentId));
         return refundId;
     }
 
@@ -113,5 +117,12 @@ class RazorpayPaymentAdapter implements PaymentPort {
         StringBuilder sb = new StringBuilder(len);
         for (int i = 0; i < len; i++) sb.append(ALPHANUM.charAt(rng.nextInt(ALPHANUM.length())));
         return sb.toString();
+    }
+
+    // Strips CR/LF from values that originate outside this service (client-supplied Razorpay ids
+    // and order receipts, plus gateway response ids) before they reach the log, so a crafted value
+    // cannot forge or inject extra log lines (CWE-117 log injection).
+    private static String sanitizeForLog(String value) {
+        return value == null ? null : value.replace('\n', '_').replace('\r', '_');
     }
 }

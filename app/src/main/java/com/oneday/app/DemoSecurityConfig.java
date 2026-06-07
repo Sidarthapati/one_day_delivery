@@ -38,6 +38,8 @@ class DemoSecurityConfig {
         return http
                 .securityMatcher("/api/**", "/internal/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies — no CSRF surface.
+                // lgtm[java/spring-disabled-csrf-protection]
                 .csrf(AbstractHttpConfigurer::disable)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

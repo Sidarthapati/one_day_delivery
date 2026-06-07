@@ -29,6 +29,9 @@ public class E2eSecurityConfig {
         return http
                 .securityMatcher("/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                // Test-only chain mirroring the stateless production API: auth is via the
+                // Authorization/X-Api-Key headers, never cookies — there is no CSRF surface.
+                // lgtm[java/spring-disabled-csrf-protection]
                 .csrf(AbstractHttpConfigurer::disable)
                 .addFilterBefore(new JwtAuthenticationFilter(authService, apiKeyRepository),
                         UsernamePasswordAuthenticationFilter.class)
