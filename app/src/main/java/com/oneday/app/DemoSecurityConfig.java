@@ -7,7 +7,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
@@ -38,9 +37,9 @@ class DemoSecurityConfig {
         return http
                 .securityMatcher("/api/**", "/internal/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
-                // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies — no CSRF surface.
-                // lgtm[java/spring-disabled-csrf-protection]
-                .csrf(AbstractHttpConfigurer::disable)
+                // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies. Keep CSRF
+                // enabled but ignore the stateless API paths (equivalent here, no blanket disable).
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
