@@ -1,6 +1,8 @@
 package com.oneday.orders.domain;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
@@ -18,4 +20,10 @@ public class Address {
     @NotBlank @Size(max = 10)  private String pincode;
     @NotBlank @Size(max = 100) private String state;
     @Size(max = 200) private String landmark;
+
+    // WGS84 pin from the booking map (optional). Bounds loosely clamp to the
+    // Indian mainland; null when the caller didn't pick a point on the map.
+    // Persisted inside the address JSONB blob — no schema column needed.
+    @DecimalMin("6.0") @DecimalMax("38.0")  private Double latitude;
+    @DecimalMin("68.0") @DecimalMax("98.0") private Double longitude;
 }

@@ -25,7 +25,8 @@
 | #10 | B2C PREPAID booking endpoint with Resilience4j circuit breakers (B2cShipmentController, BookingService/Impl, BookingRequest/Response DTOs, GlobalExceptionHandler, ResilienceConfig/Properties) | ✅ Merged |
 | #11 | COD booking path: `paymentMode` field added to `BookingRequest`; COD branch in `BookingServiceImpl` (skips Razorpay, no `PaymentTransaction` row); `PaymentSummary.mode` field added to `BookingResponse`; `InvalidBookingRequestException` added to `BookingService`; `V4_12__add_cod_shipment_index.sql` partial index | ✅ Merged |
 | #12 | B2B booking endpoint with atomic credit check (B2bShipmentController, B2bBookingService/Impl, B2bBookingRequest DTO, findByIdForUpdate on B2bAccountRepository, 3 new GlobalExceptionHandler mappings, BookingResponse.payment @JsonInclude NON_NULL) | ✅ Merged |
-| #13–#21 | Cancellation, Kafka wiring, supporting APIs, resilience, observability | 🔲 Not started |
+| #13 | Cancellation API: `DELETE /api/v1/{b2c,b2b}/shipments/{ref}`; `CancellationPolicy`/Impl (BD-001 cutoffs); `CancellationService`/Impl (PREPAID refund / COD none / B2B credit reversal); rich `ShipmentCancelledEvent` producer; `DaEventsConsumer` pickup-OTP side-effect. No migration (columns pre-existed). | ✅ Done |
+| #14–#21 | Kafka wiring (producers done; consumers scaffolded dormant), supporting read APIs, resilience, observability | 🔲 Not started |
 
 ---
 

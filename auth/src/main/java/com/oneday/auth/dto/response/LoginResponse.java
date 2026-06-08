@@ -7,5 +7,6 @@ public record LoginResponse(
         Instant expiresAt,
         String role,
         String cityId,
+        String name,
         boolean mustChangePassword
 ) {}

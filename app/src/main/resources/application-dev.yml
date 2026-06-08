@@ -3,9 +3,15 @@
 # Activate with:  SPRING_PROFILES_ACTIVE=dev
 # Secrets come from env vars (see .env, which is gitignored) — never commit real keys.
 #
-#   export KAFKA_BOOTSTRAP_SERVERS=<cluster-bootstrap>:9092
-#   export KAFKA_SASL_MECHANISM=PLAIN            # Confluent; use SCRAM-SHA-256 for Redpanda
-#   export KAFKA_JAAS_CONFIG='org.apache.kafka.common.security.plain.PlainLoginModule required username="<KEY>" password="<SECRET>";'
+#   export KAFKA_BOOTSTRAP_SERVERS=<your-cluster-bootstrap:9092>
+#   export KAFKA_KEY=<api-key / username>
+#   export KAFKA_SECRET=<api-secret / password>
+#
+# Works with any SASL_SSL managed cluster. The mechanism and full JAAS login string come
+# from env vars so the same config serves Confluent Cloud (PLAIN + PlainLoginModule) and
+# Redpanda Cloud (SCRAM-SHA-256 + ScramLoginModule) without code changes:
+#   export KAFKA_SASL_MECHANISM=PLAIN
+#   export KAFKA_JAAS_CONFIG='org.apache.kafka.common.security.plain.PlainLoginModule required username="<key>" password="<secret>";'
 spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}

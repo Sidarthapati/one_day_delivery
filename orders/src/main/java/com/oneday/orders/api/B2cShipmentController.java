@@ -1,14 +1,22 @@
 package com.oneday.orders.api;
 
+import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.orders.dto.BookingRequest;
 import com.oneday.orders.dto.BookingResponse;
+import com.oneday.orders.dto.CancellationResponse;
 import com.oneday.orders.service.BookingService;
+import com.oneday.orders.service.CancellationService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -17,20 +25,35 @@ import org.springframework.web.bind.annotation.RestController;
 class B2cShipmentController {
 
     private final BookingService bookingService;
+    private final CancellationService cancellationService;
 
-    B2cShipmentController(BookingService bookingService) {
+    B2cShipmentController(BookingService bookingService, CancellationService cancellationService) {
         this.bookingService = bookingService;
+        this.cancellationService = cancellationService;
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public BookingResponse createShipment(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
-            // TODO(SECURITY/M1): Replace X-User-Id with @AuthenticationPrincipal once M1/auth is
-            // integrated. This header is client-forgeable — no JWT validation is performed yet.
-            // See M4-ORDERS-DESIGN.md §17.3; auth must be wired before any prod deployment.
-            @RequestHeader("X-User-Id") String userId,
+            @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody BookingRequest request) {
-        return bookingService.book(request, idempotencyKey, userId);
+        // Only customer accounts may book retail shipments. ADMIN is deliberately NOT
+        // allowed to book — it has read access to the orders database instead.
+        Authz.requireCustomerRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER");
+        // The b2c endpoint serves both retail roles; persist the customer's real type.
+        CustomerType customerType = "C2C_CUSTOMER".equals(principal.getUser().getRole().getName())
+                ? CustomerType.C2C : CustomerType.B2C;
+        return bookingService.book(request, idempotencyKey, Authz.requireUserId(principal), customerType);
+    }
+
+    @DeleteMapping("/{ref}")
+    @ResponseStatus(HttpStatus.OK)
+    public CancellationResponse cancelShipment(
+            @PathVariable("ref") String ref,
+            @RequestParam(value = "reason", required = false) String reason,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER");
+        return cancellationService.cancel(ref, reason, Authz.requireUserId(principal), false);
     }
 }

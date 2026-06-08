@@ -2,6 +2,7 @@ package com.oneday.orders.api;
 
 import com.oneday.orders.service.B2bBookingService;
 import com.oneday.orders.service.BookingService;
+import com.oneday.orders.service.CancellationService;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -65,6 +67,14 @@ class OrdersGlobalExceptionHandler {
     ProblemDetail handleIllegalTransition(IllegalStateTransitionException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
         pd.setTitle("Invalid state transition");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(CancellationService.CancellationNotAllowedException.class)
+    ProblemDetail handleCancellationNotAllowed(CancellationService.CancellationNotAllowedException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("Cancellation not allowed");
         pd.setDetail(ex.getMessage());
         return pd;
     }
@@ -135,6 +145,31 @@ class OrdersGlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYMENT_REQUIRED);
         pd.setTitle("Credit limit exceeded");
         pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(B2bBookingService.AccountAccessException.class)
+    ProblemDetail handleB2bAccountAccess(B2bBookingService.AccountAccessException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        pd.setTitle("B2B account access denied");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    /**
+     * Authz gates ({@link Authz}) throw {@link ResponseStatusException} (401/403). Handle it here so
+     * the chosen status + reason are written as a ProblemDetail in-process. Otherwise the framework
+     * resolves it via {@code response.sendError()}, which triggers a container ERROR dispatch to
+     * {@code /error} — a path outside {@code /api/**} that the JWT-secured chain rejects as 401,
+     * masking the real status.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    ProblemDetail handleResponseStatus(ResponseStatusException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(ex.getStatusCode());
+        pd.setTitle("Request rejected");
+        if (ex.getReason() != null) {
+            pd.setDetail(ex.getReason());
+        }
         return pd;
     }
 }

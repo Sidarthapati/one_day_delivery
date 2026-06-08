@@ -49,4 +49,8 @@ public class B2bAccount extends MutableBaseEntity {
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
+
+    // M1 user authorized to book against this account's credit (nullable = unrestricted).
+    @Column(name = "owner_user_id")
+    private UUID ownerUserId;
 }

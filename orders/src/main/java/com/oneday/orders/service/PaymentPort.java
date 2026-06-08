@@ -13,6 +13,20 @@ package com.oneday.orders.service;
 public interface PaymentPort {
 
     /**
+     * Creates a payment order for the given amount before checkout. The client opens the
+     * checkout against the returned {@code orderId}; on success it returns a payment id +
+     * signature that {@link #verifySignature} validates.
+     *
+     * @param amountPaise amount to collect, in paise
+     * @param receipt     merchant-side reference (e.g. a booking idempotency key) for audit
+     * @return the created order (id, amount, currency, and the public key id for the checkout)
+     */
+    PaymentOrder createOrder(long amountPaise, String receipt);
+
+    /** A created payment order. {@code keyId} is the public key the checkout UI needs. */
+    record PaymentOrder(String orderId, long amountPaise, String currency, String keyId) {}
+
+    /**
      * Verifies the Razorpay HMAC-SHA256 payment signature supplied by the client
      * after the Razorpay checkout JS SDK completes.
      *

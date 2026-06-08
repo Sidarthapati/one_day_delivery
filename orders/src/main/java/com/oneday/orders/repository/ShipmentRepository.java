@@ -48,4 +48,17 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
 
     // Used by M9 to find all shipments assigned to a specific flight.
     List<Shipment> findByAssignedFlightId(UUID assignedFlightId);
+
+    // Customer "my shipments" view: every shipment a given M1 user booked, newest first.
+    Page<Shipment> findByBookedByUserId(UUID bookedByUserId, Pageable pageable);
+
+    // Admin orders-DB view, station-manager scope: every shipment whose origin OR destination
+    // is the manager's city (custody model — a city role sees both legs touching its city).
+    @Query("SELECT s FROM Shipment s WHERE s.originCity = :city OR s.destCity = :city")
+    Page<Shipment> findByCityInvolved(@Param("city") String city, Pageable pageable);
+
+    @Query("SELECT s FROM Shipment s WHERE (s.originCity = :city OR s.destCity = :city) AND s.state = :state")
+    Page<Shipment> findByCityInvolvedAndState(@Param("city") String city,
+                                              @Param("state") ShipmentState state,
+                                              Pageable pageable);
 }

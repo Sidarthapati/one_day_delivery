@@ -4,388 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>1DD — Auth Console</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f0f2f5;
-      color: #1a1a2e;
-      min-height: 100vh;
-    }
-
-    /* ── NAV ── */
-    nav {
-      background: #1a1a2e;
-      color: #fff;
-      padding: 0 2rem;
-      height: 56px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: sticky;
-      top: 0;
-      z-index: 10;
-    }
-    nav .logo { font-weight: 700; font-size: 1.1rem; letter-spacing: .04em; }
-    nav .logo span { color: #f4a261; }
-    #user-badge {
-      display: none;
-      align-items: center;
-      gap: .75rem;
-      font-size: .85rem;
-    }
-    #user-badge .role-pill {
-      background: #f4a261;
-      color: #1a1a2e;
-      font-weight: 700;
-      font-size: .7rem;
-      padding: .2rem .6rem;
-      border-radius: 999px;
-      text-transform: uppercase;
-      letter-spacing: .05em;
-    }
-    #logout-btn {
-      background: transparent;
-      border: 1px solid rgba(255,255,255,.3);
-      color: #fff;
-      padding: .3rem .8rem;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: .8rem;
-    }
-    #logout-btn:hover { background: rgba(255,255,255,.1); }
-
-    /* ── TABS ── */
-    .tab-bar {
-      background: #fff;
-      border-bottom: 1.5px solid #e8e8e8;
-      display: flex;
-      padding: 0 2rem;
-      gap: 0;
-    }
-    .tab-btn {
-      padding: .85rem 1.25rem;
-      background: none;
-      border: none;
-      border-bottom: 2.5px solid transparent;
-      font-size: .88rem;
-      font-weight: 600;
-      color: #888;
-      cursor: pointer;
-      margin-bottom: -1.5px;
-      transition: color .15s, border-color .15s;
-    }
-    .tab-btn:hover { color: #1a1a2e; }
-    .tab-btn.active { color: #f4a261; border-bottom-color: #f4a261; }
-
-    /* ── LAYOUT ── */
-    main {
-      max-width: 960px;
-      margin: 2rem auto;
-      padding: 0 1.5rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1.5rem;
-    }
-    .tab-panel { display: none; flex-direction: column; gap: 1.5rem; }
-    .tab-panel.active { display: flex; }
-
-    /* ── CARD ── */
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      padding: 1.5rem;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
-    }
-    .card h2 {
-      font-size: 1rem;
-      font-weight: 600;
-      margin-bottom: 1rem;
-      display: flex;
-      align-items: center;
-      gap: .5rem;
-    }
-    .card h2 .icon { font-size: 1.1rem; }
-
-    /* ── FORM ── */
-    .form-row { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: .75rem; }
-    .form-row:last-child { margin-bottom: 0; }
-    .field { display: flex; flex-direction: column; gap: .3rem; flex: 1; min-width: 180px; }
-    label { font-size: .78rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; }
-    input, select, textarea {
-      padding: .55rem .75rem;
-      border: 1.5px solid #ddd;
-      border-radius: 8px;
-      font-size: .9rem;
-      outline: none;
-      transition: border-color .15s;
-      width: 100%;
-      font-family: inherit;
-    }
-    input:focus, select:focus, textarea:focus { border-color: #f4a261; }
-    textarea { resize: vertical; min-height: 80px; }
-
-    /* ── BUTTONS ── */
-    .btn {
-      padding: .55rem 1.25rem;
-      border: none;
-      border-radius: 8px;
-      font-size: .9rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity .15s, transform .1s;
-      white-space: nowrap;
-    }
-    .btn:active { transform: scale(.97); }
-    .btn:disabled { opacity: .5; cursor: not-allowed; }
-    .btn-primary { background: #1a1a2e; color: #fff; }
-    .btn-primary:hover:not(:disabled) { background: #2d2d4e; }
-    .btn-accent { background: #f4a261; color: #1a1a2e; }
-    .btn-accent:hover:not(:disabled) { background: #e8955a; }
-    .btn-danger { background: #e63946; color: #fff; }
-    .btn-danger:hover:not(:disabled) { background: #c1121f; }
-    .btn-success { background: #2dc653; color: #fff; }
-    .btn-success:hover:not(:disabled) { background: #25a844; }
-    .btn-ghost { background: transparent; border: 1.5px solid #ddd; color: #555; }
-    .btn-ghost:hover:not(:disabled) { border-color: #aaa; color: #1a1a2e; }
-    .btn-sm { padding: .3rem .7rem; font-size: .78rem; }
-
-    /* ── RESPONSE BOX ── */
-    .response {
-      margin-top: 1rem;
-      background: #1a1a2e;
-      color: #a8ff78;
-      border-radius: 8px;
-      padding: 1rem;
-      font-family: "SF Mono", "Fira Code", monospace;
-      font-size: .8rem;
-      white-space: pre-wrap;
-      word-break: break-all;
-      max-height: 260px;
-      overflow-y: auto;
-      display: none;
-    }
-    .response.error { color: #ff6b6b; }
-    .response.success { color: #4ade80; }
-    .response.visible { display: block; }
-
-    /* ── PERMISSION CHIPS ── */
-    .perm-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .4rem; }
-    .perm-chip {
-      padding: .22rem .65rem; font-size: .73rem;
-      font-family: "SF Mono","Fira Code",monospace;
-      border: 1.5px solid #e2e8f0; border-radius: 999px; cursor: pointer;
-      color: #64748b; background: #f8fafc; user-select: none; transition: all .12s;
-    }
-    .perm-chip.selected { border-color: #16a34a; background: #f0fdf4; color: #15803d; font-weight: 600; }
-    .perm-chip:hover:not(.selected) { border-color: #94a3b8; color: #334155; }
-
-    /* ── ACCOUNT TYPE TOGGLE ── */
-    .type-btn {
-      padding: .3rem .9rem; border: 1.5px solid #e2e8f0; border-radius: 999px;
-      cursor: pointer; font-size: .8rem; background: #f8fafc; color: #64748b;
-      font-weight: 500; transition: all .12s;
-    }
-    .type-btn.selected { border-color: #f59e0b; background: #fffbeb; color: #92400e; font-weight: 700; }
-
-    /* ── TAG ── */
-    .tag {
-      display: inline-block;
-      font-size: .7rem;
-      font-weight: 700;
-      padding: .15rem .5rem;
-      border-radius: 4px;
-      text-transform: uppercase;
-      letter-spacing: .05em;
-    }
-    .tag-get  { background: #d4edda; color: #155724; }
-    .tag-post { background: #cce5ff; color: #004085; }
-    .tag-put  { background: #fff3cd; color: #856404; }
-    .tag-del  { background: #f8d7da; color: #721c24; }
-
-    /* ── LOGIN HERO ── */
-    #login-view {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: calc(100vh - 56px);
-    }
-    #login-view .card {
-      width: 100%;
-      max-width: 420px;
-    }
-    .auth-toggle {
-      display: flex;
-      border-radius: 8px;
-      overflow: hidden;
-      border: 1.5px solid #e0e0e0;
-      margin-bottom: 1.25rem;
-    }
-    .auth-toggle button {
-      flex: 1;
-      padding: .55rem;
-      border: none;
-      background: transparent;
-      font-size: .88rem;
-      font-weight: 600;
-      cursor: pointer;
-      color: #888;
-      transition: background .15s, color .15s;
-    }
-    .auth-toggle button.active { background: #1a1a2e; color: #fff; }
-    #login-view .btn { width: 100%; margin-top: .5rem; }
-    #login-fields, #register-fields { display: none; }
-    #login-fields.visible, #register-fields.visible { display: block; }
-
-    /* ── DASHBOARD ── */
-    #dashboard-view { display: none; flex-direction: column; }
-
-    /* ── PERM badge ── */
-    .perm-result {
-      display: inline-flex;
-      align-items: center;
-      gap: .4rem;
-      font-weight: 700;
-      font-size: .95rem;
-      padding: .4rem .9rem;
-      border-radius: 8px;
-      margin-top: .75rem;
-    }
-    .perm-result.allowed { background: #d4edda; color: #155724; }
-    .perm-result.denied  { background: #f8d7da; color: #721c24; }
-
-    /* ── TOKEN ── */
-    #token-display {
-      background: #f8f9fa;
-      border: 1.5px solid #e0e0e0;
-      border-radius: 8px;
-      padding: .75rem 1rem;
-      font-family: "SF Mono", "Fira Code", monospace;
-      font-size: .72rem;
-      word-break: break-all;
-      color: #555;
-      margin-top: .5rem;
-    }
-    .token-row { display: flex; align-items: flex-start; gap: .75rem; }
-    .token-row .btn { flex-shrink: 0; }
-
-    /* ── TABLE ── */
-    .data-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: .85rem;
-      margin-top: .75rem;
-    }
-    .data-table th {
-      text-align: left;
-      padding: .5rem .75rem;
-      font-size: .72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .04em;
-      color: #888;
-      border-bottom: 1.5px solid #f0f0f0;
-    }
-    .data-table td {
-      padding: .6rem .75rem;
-      border-bottom: 1px solid #f5f5f5;
-      vertical-align: middle;
-    }
-    .data-table tr:last-child td { border-bottom: none; }
-    .data-table tr:hover td { background: #fafafa; }
-    .badge {
-      display: inline-block;
-      font-size: .7rem;
-      font-weight: 700;
-      padding: .15rem .5rem;
-      border-radius: 4px;
-    }
-    .badge-green { background: #d4edda; color: #155724; }
-    .badge-red   { background: #f8d7da; color: #721c24; }
-    .badge-blue  { background: #cce5ff; color: #004085; }
-    .badge-gray  { background: #e9ecef; color: #555; }
-
-    /* ── DIVIDER ── */
-    .divider { height: 1px; background: #f0f0f0; margin: 1.25rem 0; }
-
-    /* ── SECTION LABEL ── */
-    .section-label {
-      font-size: .72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .07em;
-      color: #aaa;
-      margin-bottom: .75rem;
-    }
-
-    .spinner {
-      display: inline-block;
-      width: 14px; height: 14px;
-      border: 2px solid currentColor;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin .6s linear infinite;
-      vertical-align: middle;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .city-field { display: none; }
-    .city-field.show { display: flex; }
-
-    .empty-state {
-      text-align: center;
-      color: #aaa;
-      font-size: .88rem;
-      padding: 1.5rem 0;
-    }
-
-    .info-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 1rem;
-      margin-bottom: .75rem;
-    }
-    .info-item { display: flex; flex-direction: column; gap: .2rem; }
-    .info-item .info-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #aaa; }
-    .info-item .info-value { font-weight: 600; font-size: .95rem; }
-
-    .permission-select {
-      max-height: 160px;
-      overflow-y: auto;
-    }
-
-    /* ── DARK MODE ── */
-    body.dark { background: #0f1117; color: #e2e8f0; }
-    body.dark nav { background: #090c14; }
-    body.dark .tab-bar { background: #161b2e; border-bottom-color: #2a3050; }
-    body.dark .tab-btn { color: #64748b; }
-    body.dark .tab-btn.active { color: #f4a261; border-bottom-color: #f4a261; }
-    body.dark .card { background: #1a2035; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
-    body.dark label { color: #94a3b8; }
-    body.dark input, body.dark select, body.dark textarea {
-      background: #242b42; border-color: #2e3a5c; color: #e2e8f0;
-    }
-    body.dark input:focus, body.dark select:focus, body.dark textarea:focus { border-color: #f4a261; }
-    body.dark .btn-ghost { border-color: #2e3a5c; color: #94a3b8; }
-    body.dark .btn-ghost:hover:not(:disabled) { border-color: #64748b; color: #e2e8f0; }
-    body.dark #token-display { background: #242b42; border-color: #2e3a5c; color: #94a3b8; }
-    body.dark .data-table th { color: #64748b; border-bottom-color: #242b42; }
-    body.dark .data-table td { border-bottom-color: #1e2638; }
-    body.dark .data-table tr:hover td { background: #1e2638; }
-    body.dark .badge-gray { background: #2e3a5c; color: #94a3b8; }
-    body.dark .divider { background: #1e2638; }
-    body.dark .section-label { color: #64748b; }
-    body.dark .empty-state { color: #64748b; }
-    body.dark .info-item .info-label { color: #64748b; }
-    body.dark .auth-toggle { border-color: #2e3a5c; }
-    body.dark .auth-toggle button { color: #64748b; }
-    body.dark .auth-toggle button.active { background: #242b42; color: #e2e8f0; }
-    body.dark .perm-chip { background: #1a2035; border-color: #2e3a5c; color: #94a3b8; }
-    body.dark .perm-chip.selected { background: #14532d; border-color: #22c55e; color: #4ade80; font-weight: 700; }
-    body.dark .perm-chip:hover:not(.selected) { border-color: #64748b; color: #e2e8f0; }
-    body.dark #dark-toggle { border-color: rgba(255,255,255,.2); }
-  </style>
+  <!-- Leaflet (map picker) — free OpenStreetMap tiles, no API key -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Razorpay hosted checkout (used when the backend runs in live/test-API mode) -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <link rel="stylesheet" href="css/app.css" />
 </head>
 <body>
 
@@ -459,7 +85,8 @@
 <!-- ═══════════════════ DASHBOARD ═══════════════════ -->
 <div id="dashboard-view">
   <div class="tab-bar">
-    <button class="tab-btn active" onclick="switchTab('auth')">Auth</button>
+    <button class="tab-btn active" onclick="switchTab('orders')">📦 Book Shipment</button>
+    <button class="tab-btn" onclick="switchTab('auth')">Auth</button>
     <button class="tab-btn" onclick="switchTab('users')">Users</button>
     <button class="tab-btn" onclick="switchTab('roles')">Roles</button>
     <button class="tab-btn" onclick="switchTab('permissions')">Permissions</button>
@@ -468,8 +95,135 @@
 
   <main>
 
+    <!-- ══════════ ORDERS TAB (M4) ══════════ -->
+    <div class="tab-panel active" id="tab-orders">
+
+      <!-- Who is booking -->
+      <div class="card">
+        <h2><span class="icon">📦</span> Orders &nbsp;<span class="muted" style="font-weight:400">Module M4 · live on this session's identity</span></h2>
+        <div class="order-banner">
+          Booking as <strong id="order-user-email">—</strong>
+          <span class="role-pill" id="order-user-role">—</span>
+          <span class="muted">user id</span> <code id="order-user-id">—</code>
+        </div>
+        <div id="order-no-booking" class="muted" style="display:none;margin-top:.75rem">
+          Your role is operational — booking is reserved for customer accounts.
+        </div>
+      </div>
+
+      <!-- B2C Booking -->
+      <div class="card" id="card-b2c-booking">
+        <h2><span class="icon">🧍</span> <span id="b2c-card-title">Book B2C Shipment</span> <span class="tag tag-post">POST /api/v1/b2c/shipments</span></h2>
+        <p class="muted" style="margin-bottom:.5rem">Set the pickup and drop points on the map — city &amp; pincode are derived from each pin.</p>
+        <div class="loc-grid">
+          <div class="loc-card">
+            <div class="loc-card-head">
+              <span class="loc-kind">📦 Pickup location</span>
+              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2c','origin')">📍 Set on map</button>
+            </div>
+            <div class="loc-card-body" id="o-b2c-origin-loc"><div class="loc-empty">No pickup point yet — tap “Set on map”.</div></div>
+          </div>
+          <div class="loc-card">
+            <div class="loc-card-head">
+              <span class="loc-kind">🎯 Drop location</span>
+              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2c','dest')">📍 Set on map</button>
+            </div>
+            <div class="loc-card-body" id="o-b2c-dest-loc"><div class="loc-empty">No drop point yet — tap “Set on map”.</div></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Sender Name</label><input id="o-b2c-sname" value="Ravi Kumar" /></div>
+          <div class="field"><label>Sender Phone</label><input id="o-b2c-sphone" value="+919000000001" /></div>
+          <div class="field"><label>Receiver Name</label><input id="o-b2c-rname" value="Priya Sharma" /></div>
+          <div class="field"><label>Receiver Phone</label><input id="o-b2c-rphone" value="+919000000002" /></div>
+        </div>
+        <div class="form-row">
+          <div class="field" style="max-width:130px"><label>Weight (g)</label><input id="o-b2c-weight" type="number" value="1000" /></div>
+          <div class="field" style="max-width:90px"><label>L (cm)</label><input id="o-b2c-len" type="number" value="20" /></div>
+          <div class="field" style="max-width:90px"><label>W (cm)</label><input id="o-b2c-wid" type="number" value="15" /></div>
+          <div class="field" style="max-width:90px"><label>H (cm)</label><input id="o-b2c-hei" type="number" value="10" /></div>
+          <div class="field" style="max-width:140px"><label>Declared Value (₹)</label><input id="o-b2c-dval" type="number" value="500" /></div>
+        </div>
+        <div class="form-row" style="align-items:center">
+          <div class="field" style="flex:0">
+            <label>Payment</label>
+            <div class="seg" id="b2c-pay-seg">
+              <button type="button" class="active" data-mode="PREPAID" onclick="selectPay(this)">Prepaid</button>
+              <button type="button" data-mode="COD" onclick="selectPay(this)">COD</button>
+            </div>
+          </div>
+          <button class="btn btn-primary" style="align-self:flex-end" onclick="bookB2c()">Book Shipment</button>
+        </div>
+        <div id="b2c-booking-summary"></div>
+        <div id="b2c-booking-response" class="response"></div>
+      </div>
+
+      <!-- B2B Booking -->
+      <div class="card" id="card-b2b-booking">
+        <h2><span class="icon">🏢</span> Book B2B Shipment <span class="tag tag-post">POST /api/v1/b2b/shipments</span></h2>
+        <div class="form-row">
+          <div class="field"><label>B2B Account ID</label><input id="o-b2b-acct" value="a1b2c3d4-e5f6-7890-abcd-ef1234567890" /></div>
+          <div class="field" style="max-width:180px"><label>PO Reference</label><input id="o-b2b-po" value="PO-2026-0042" /></div>
+        </div>
+        <p class="muted" style="margin-bottom:.5rem">Set the pickup and drop points on the map — city &amp; pincode are derived from each pin.</p>
+        <div class="loc-grid">
+          <div class="loc-card">
+            <div class="loc-card-head">
+              <span class="loc-kind">📦 Pickup location</span>
+              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2b','origin')">📍 Set on map</button>
+            </div>
+            <div class="loc-card-body" id="o-b2b-origin-loc"><div class="loc-empty">No pickup point yet — tap “Set on map”.</div></div>
+          </div>
+          <div class="loc-card">
+            <div class="loc-card-head">
+              <span class="loc-kind">🎯 Drop location</span>
+              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2b','dest')">📍 Set on map</button>
+            </div>
+            <div class="loc-card-body" id="o-b2b-dest-loc"><div class="loc-empty">No drop point yet — tap “Set on map”.</div></div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Sender Name</label><input id="o-b2b-sname" value="Acme Warehouse" /></div>
+          <div class="field"><label>Sender Phone</label><input id="o-b2b-sphone" value="+919000000010" /></div>
+          <div class="field"><label>Receiver Name</label><input id="o-b2b-rname" value="Client Receiving" /></div>
+          <div class="field"><label>Receiver Phone</label><input id="o-b2b-rphone" value="+919000000011" /></div>
+        </div>
+        <div class="form-row">
+          <div class="field" style="max-width:130px"><label>Weight (g)</label><input id="o-b2b-weight" type="number" value="2000" /></div>
+          <div class="field" style="max-width:90px"><label>L (cm)</label><input id="o-b2b-len" type="number" value="30" /></div>
+          <div class="field" style="max-width:90px"><label>W (cm)</label><input id="o-b2b-wid" type="number" value="25" /></div>
+          <div class="field" style="max-width:90px"><label>H (cm)</label><input id="o-b2b-hei" type="number" value="20" /></div>
+          <div class="field" style="max-width:140px"><label>Declared Value (₹)</label><input id="o-b2b-dval" type="number" value="3000" /></div>
+        </div>
+        <div class="form-row">
+          <button class="btn btn-primary" onclick="bookB2b()">Book on Credit</button>
+          <button class="btn btn-ghost" onclick="bookB2b(true)" title="Books against the near-limit QuickShip demo account → 402">Demo: Over Credit Limit</button>
+        </div>
+        <div id="b2b-booking-summary"></div>
+        <div id="b2b-booking-response" class="response"></div>
+      </div>
+
+      <!-- Recent bookings -->
+      <div class="card" id="card-recent-bookings">
+        <h2><span class="icon">🧾</span> Your Bookings <span class="muted" style="font-weight:400">all of your shipments</span></h2>
+        <div id="recent-bookings"><div class="empty-state">No bookings yet</div></div>
+      </div>
+
+      <!-- Admin: read-only orders database (admin cannot book) -->
+      <div class="card" id="card-admin-orders" style="display:none">
+        <h2><span class="icon">🗄️</span> Orders Database <span class="tag tag-get">GET /api/v1/admin/shipments</span></h2>
+        <p class="muted" id="admin-orders-desc" style="margin-bottom:.75rem">Read-only. As an admin you browse every shipment here — booking is reserved for customer accounts.</p>
+        <div class="form-row" style="align-items:center;gap:.75rem">
+          <button class="btn btn-sm btn-ghost" onclick="loadAdminOrders()">Refresh</button>
+          <span class="muted" id="admin-orders-count"></span>
+          <button class="btn btn-sm btn-ghost" id="admin-orders-clear" style="display:none" onclick="clearAdminFilters()">Clear filters</button>
+        </div>
+        <div id="admin-orders-container" style="overflow-x:auto"><div class="empty-state">Click Refresh to load orders</div></div>
+      </div>
+    </div>
+
     <!-- ══════════ AUTH TAB ══════════ -->
-    <div class="tab-panel active" id="tab-auth">
+    <div class="tab-panel" id="tab-auth">
 
       <!-- Health Check -->
       <div class="card">
@@ -798,674 +552,62 @@
   </main>
 </div>
 
-<script>
-  // ── State ──
-  let token = null;
-  let currentUser = null;
-  let currentUserId = null;
-  let rolesCache = [];   // [{id, name, cityScoped}, ...]
-  let lookedUpUserId = null;
+<!-- ══════════ MAP PICKER MODAL ══════════ -->
+<div id="map-modal" class="map-modal" style="display:none">
+  <div class="map-dialog">
+    <div class="map-head">
+      <strong id="map-title">Pick location</strong>
+      <button class="btn btn-ghost btn-sm" onclick="closeMapPicker()">✕ Close</button>
+    </div>
+    <div class="map-search-row">
+      <input id="map-search" placeholder="Search an address, area or landmark in India…" oninput="mapSearchDebounced()" autocomplete="off" />
+      <div id="map-search-results" class="map-search-results" style="display:none"></div>
+    </div>
+    <div id="map-canvas" class="map-canvas"></div>
+    <div class="map-foot">
+      <div id="map-status" class="map-status">Click or drag the pin to the exact pickup/drop point.</div>
+      <div class="map-foot-actions">
+        <button class="btn btn-ghost" onclick="closeMapPicker()">Cancel</button>
+        <button id="map-confirm" class="btn btn-primary" onclick="confirmMapPicker()" disabled>Use this location</button>
+      </div>
+    </div>
+  </div>
+</div>
 
-  const CITY_SCOPED_ROLES = new Set([
-    'STATION_MANAGER','SUPERVISOR','HUB_OPERATOR',
-    'DELIVERY_ASSOCIATE','VAN_DRIVER','CRON_DRIVER','CALL_CENTER_AGENT'
-  ]);
+<!-- ══════════ PAYMENT CHECKOUT MODAL ══════════ -->
+<div id="pay-modal" class="map-modal" style="display:none">
+  <div class="pay-dialog">
+    <div class="pay-head">
+      <div>
+        <strong>1DD Logistics</strong>
+        <div class="muted" id="pay-key">—</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeCheckout()" style="color:#fff;border-color:#3a4a6b">✕</button>
+    </div>
+    <div class="pay-amount-row"><span>Amount payable</span><span id="pay-amount" class="pay-amount">₹0.00</span></div>
+    <div class="pay-body">
+      <label>Card number</label>
+      <input id="pay-card" value="4111 1111 1111 1111" />
+      <div class="pay-row2">
+        <div><label>Expiry</label><input value="12 / 30" /></div>
+        <div><label>CVV</label><input value="123" /></div>
+      </div>
+      <label>Name on card</label>
+      <input value="Demo User" />
+      <div class="muted" style="margin-top:.4rem">Order <code id="pay-order-id">—</code> · test card, no real charge.</div>
+    </div>
+    <div class="pay-foot">
+      <div id="pay-error" class="pay-error"></div>
+      <button id="pay-btn" class="btn btn-success" onclick="doPay()">Pay</button>
+    </div>
+  </div>
+</div>
 
-  // ── API helper ──
-  function api(method, path, body) {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
-    if (token) opts.headers['Authorization'] = 'Bearer ' + token;
-    if (body)  opts.body = JSON.stringify(body);
-    return fetch(path, opts).then(async r => {
-      const text = await r.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = text; }
-      if (!r.ok) throw { status: r.status, body: data };
-      return data;
-    });
-  }
-
-  function fmtError(e) {
-    const b = e && e.body;
-    if (!b) return 'Something went wrong.';
-    const title  = b.title  || '';
-    const detail = b.detail || '';
-    if (title && detail) return `${title} — ${detail}`;
-    return detail || title || 'Something went wrong.';
-  }
-
-  function showResponse(id, data, isError) {
-    const el = document.getElementById(id);
-    el.className = 'response visible' + (isError ? ' error' : '');
-    if (isError) {
-      el.textContent = fmtError(data && data.body !== undefined ? data : { body: data });
-    } else {
-      el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-    }
-  }
-
-  function setLoading(btn, loading) {
-    if (loading) {
-      btn.dataset.orig = btn.innerHTML;
-      btn.innerHTML = '<span class="spinner"></span>';
-      btn.disabled = true;
-    } else {
-      btn.innerHTML = btn.dataset.orig;
-      btn.disabled = false;
-    }
-  }
-
-  // ── Auth toggle ──
-  function switchAuth(mode) {
-    document.querySelectorAll('.auth-toggle button').forEach((b, i) => {
-      b.classList.toggle('active', (mode === 'login') === (i === 0));
-    });
-    document.getElementById('login-fields').classList.toggle('visible', mode === 'login');
-    document.getElementById('register-fields').classList.toggle('visible', mode === 'register');
-    document.getElementById('register-hint').style.display = mode === 'register' ? '' : 'none';
-    document.getElementById('login-error').className = 'response error';
-  }
-
-  // ── Tab switch ──
-  function switchTab(name) {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    document.querySelector(`[onclick="switchTab('${name}')"]`).classList.add('active');
-    document.getElementById('tab-' + name).classList.add('active');
-  }
-
-  // ── Login ──
-  async function login() {
-    const btn = document.querySelector('#login-fields .btn-primary');
-    const email = document.getElementById('login-email').value.trim();
-    const password = document.getElementById('login-password').value;
-    const errEl = document.getElementById('login-error');
-    errEl.className = 'response error';
-    if (!email || !password) { errEl.className = 'response error visible'; errEl.textContent = 'Email and password required.'; return; }
-    setLoading(btn, true);
-    try {
-      const data = await api('POST', '/auth/login', { email, password });
-      token = data.token;
-      currentUser = { email, role: data.role, cityId: data.cityId, expiresAt: data.expiresAt };
-      await showDashboard(data);
-    } catch (e) {
-      errEl.className = 'response error visible';
-      errEl.textContent = e.status === 401 ? 'Invalid email or password.' : fmtError(e);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  // ── Register ──
-  function selectRegType(el) {
-    document.querySelectorAll('#reg-type-group .type-btn').forEach(b => b.classList.remove('selected'));
-    el.classList.add('selected');
-  }
-
-  async function register() {
-    const btn = document.querySelector('#register-fields .btn-accent');
-    const name = document.getElementById('reg-name').value.trim();
-    const email = document.getElementById('reg-email').value.trim();
-    const password = document.getElementById('reg-password').value;
-    const accountType = document.querySelector('#reg-type-group .type-btn.selected')?.dataset.type || 'C2C_CUSTOMER';
-    const errEl = document.getElementById('login-error');
-    errEl.className = 'response error';
-    if (!name || !email || !password) { errEl.className = 'response error visible'; errEl.textContent = 'All fields required.'; return; }
-    setLoading(btn, true);
-    try {
-      if (accountType === 'C2C_CUSTOMER') {
-        const data = await api('POST', '/auth/register', { name, email, password });
-        token = data.token;
-        currentUser = { email, role: data.role, cityId: data.cityId, expiresAt: data.expiresAt };
-        await showDashboard(data);
-      } else {
-        await api('POST', '/auth/request-onboarding', { name, email, password, requestedRole: accountType });
-        errEl.className = 'response success visible';
-        errEl.textContent = 'Request submitted! An admin will review your account. You can log in once approved.';
-      }
-    } catch (e) {
-      errEl.className = 'response error visible';
-      errEl.textContent = fmtError(e);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function showDashboard(data) {
-    document.getElementById('login-view').style.display = 'none';
-    document.getElementById('dashboard-view').style.display = 'flex';
-    document.getElementById('user-badge').style.display = 'flex';
-
-    document.getElementById('nav-name').textContent = currentUser.email;
-    document.getElementById('nav-role').textContent = data.role;
-
-    document.getElementById('info-role').textContent = data.role;
-    document.getElementById('info-city').textContent = data.cityId || 'Global';
-    document.getElementById('info-expiry').textContent = new Date(data.expiresAt).toLocaleTimeString();
-    document.getElementById('info-mustchange').textContent = data.mustChangePassword ? 'Yes ⚠️' : 'No';
-    document.getElementById('token-display').textContent = data.token;
-
-    // Pre-fill from JWT subject / current user email
-    try {
-      const payload = JSON.parse(atob(data.token.split('.')[1]));
-      currentUserId = payload.sub;
-      document.getElementById('ul-email').value = currentUser.email;
-      document.getElementById('pc-email').value = currentUser.email;
-    } catch {}
-
-    // Lock permission-check email to own identity unless caller can query others
-    const canQueryOthers = ['ADMIN', 'CALL_CENTER_AGENT'].includes(data.role);
-    const pcEmail = document.getElementById('pc-email');
-    pcEmail.readOnly = !canQueryOthers;
-    pcEmail.style.opacity = canQueryOthers ? '' : '0.6';
-    pcEmail.style.cursor  = canQueryOthers ? '' : 'not-allowed';
-
-    // Show/hide admin-only cards and tabs
-    const isAdmin = data.role === 'ADMIN';
-    const canLookupUsers = ['ADMIN', 'CALL_CENTER_AGENT'].includes(data.role);
-    document.getElementById('card-create-user').style.display = isAdmin ? '' : 'none';
-    document.getElementById('card-create-role').style.display = isAdmin ? '' : 'none';
-    document.getElementById('card-user-lookup').style.display = canLookupUsers ? '' : 'none';
-    document.getElementById('ul-admin-actions').style.display = isAdmin ? '' : 'none';
-    document.getElementById('onboarding-tab-btn').style.display = isAdmin ? '' : 'none';
-
-    // API keys only available to ADMIN, B2B_USER, B2C_CUSTOMER
-    const canUseApiKeys = ['ADMIN', 'B2B_USER', 'B2C_CUSTOMER'].includes(data.role);
-    document.getElementById('card-api-keys').style.display = canUseApiKeys ? '' : 'none';
-
-    // Fetch roles for dropdowns
-    await loadRolesIntoDropdowns();
-  }
-
-  function logout() {
-    token = null; currentUser = null; currentUserId = null; rolesCache = []; lookedUpUserId = null;
-    document.getElementById('login-view').style.display = 'flex';
-    document.getElementById('dashboard-view').style.display = 'none';
-    document.getElementById('user-badge').style.display = 'none';
-    document.getElementById('login-password').value = '';
-    document.getElementById('ul-actions').style.display = 'none';
-    document.getElementById('ak-list-container').innerHTML = '<div class="empty-state">Click Refresh to load keys</div>';
-    document.getElementById('roles-list-container').innerHTML = '<div class="empty-state">Click Refresh to load roles</div>';
-    document.getElementById('ob-list-container').innerHTML = '<div class="empty-state">Click Refresh to load requests</div>';
-    document.getElementById('onboarding-tab-btn').style.display = 'none';
-    switchTab('auth');
-  }
-
-  function copyToken() {
-    navigator.clipboard.writeText(token).then(() => {
-      const btn = document.querySelector('.token-row .btn');
-      const orig = btn.textContent;
-      btn.textContent = 'Copied!';
-      setTimeout(() => btn.textContent = orig, 1500);
-    });
-  }
-
-  // ── Roles into dropdowns ──
-  async function loadRolesIntoDropdowns() {
-    try {
-      rolesCache = await api('GET', '/roles');
-      populateRoleSelect('cu-role', true);
-      populateRoleSelect('cr-role-select', false);
-    } catch (_) {}
-  }
-
-  function populateRoleSelect(selectId, includeEmpty) {
-    const sel = document.getElementById(selectId);
-    sel.innerHTML = includeEmpty ? '<option value="">— select role —</option>' : '<option value="">— select role —</option>';
-    rolesCache.forEach(r => {
-      const opt = document.createElement('option');
-      opt.value = r.id;
-      opt.textContent = r.displayName + (r.cityScoped ? ' (city)' : '');
-      opt.dataset.cityScoped = r.cityScoped;
-      opt.dataset.name = r.name;
-      sel.appendChild(opt);
-    });
-  }
-
-  function onCreateRoleChange() {
-    const sel = document.getElementById('cu-role');
-    const opt = sel.selectedOptions[0];
-    const cityScoped = opt && opt.dataset.cityScoped === 'true';
-    document.getElementById('cu-city-field').classList.toggle('show', cityScoped);
-  }
-
-  // ── API Keys ──
-  async function createApiKey() {
-    const btn = document.querySelector('#card-api-key .btn-primary') ||
-                document.querySelector('[onclick="createApiKey()"]');
-    const label = document.getElementById('ak-label').value.trim();
-    if (!label) { alert('Enter a label'); return; }
-    setLoading(btn, true);
-    try {
-      const data = await api('POST', '/auth/api-keys', { label });
-      showResponse('ak-create-response', data, false);
-      document.getElementById('ak-label').value = '';
-      loadApiKeys();
-    } catch (e) {
-      showResponse('ak-create-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function loadApiKeys() {
-    const container = document.getElementById('ak-list-container');
-    container.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
-    try {
-      const keys = await api('GET', '/auth/api-keys');
-      if (!keys.length) { container.innerHTML = '<div class="empty-state">No API keys yet</div>'; return; }
-      container.innerHTML = `
-        <table class="data-table">
-          <thead><tr>
-            <th>Label</th><th>Status</th><th>Last Used</th><th>Created</th><th></th>
-          </tr></thead>
-          <tbody>
-            ${keys.map(k => `
-              <tr>
-                <td><strong>${esc(k.label)}</strong></td>
-                <td><span class="badge ${k.active ? 'badge-green' : 'badge-gray'}">${k.active ? 'Active' : 'Revoked'}</span></td>
-                <td>${k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : '—'}</td>
-                <td>${new Date(k.createdAt).toLocaleDateString()}</td>
-                <td>${k.active
-                  ? `<button class="btn btn-sm btn-danger" onclick="revokeApiKey('${k.id}', this)">Revoke</button>`
-                  : '—'
-                }</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`;
-    } catch (e) {
-      container.innerHTML = `<div class="empty-state" style="color:#e63946">${fmtError(e)}</div>`;
-    }
-  }
-
-  async function revokeApiKey(keyId, btn) {
-    if (!confirm('Revoke this API key?')) return;
-    setLoading(btn, true);
-    try {
-      await api('DELETE', `/auth/api-keys/${keyId}`);
-      loadApiKeys();
-    } catch (e) {
-      alert(fmtError(e));
-      setLoading(btn, false);
-    }
-  }
-
-  // ── User Lookup ──
-  async function getUser() {
-    const btn = document.querySelector('[onclick="getUser()"]');
-    const email = document.getElementById('ul-email').value.trim();
-    if (!email) { alert('Enter an email address'); return; }
-    setLoading(btn, true);
-    try {
-      const data = await api('GET', `/users?email=${encodeURIComponent(email)}`);
-      lookedUpUserId = data.id;
-      showResponse('ul-response', data, false);
-      document.getElementById('ul-actions').style.display = 'block';
-    } catch (e) {
-      showResponse('ul-response', e.body || e, true);
-      document.getElementById('ul-actions').style.display = 'none';
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function changeRole() {
-    const btn = document.querySelector('[onclick="changeRole()"]');
-    const roleId = document.getElementById('cr-role-select').value;
-    const reason = document.getElementById('cr-reason').value.trim();
-    if (!roleId) { alert('Select a role'); return; }
-    if (!lookedUpUserId) { alert('Fetch a user first'); return; }
-    setLoading(btn, true);
-    try {
-      await api('PUT', `/users/${lookedUpUserId}/role`, { newRoleId: roleId, reason: reason || null });
-      showResponse('cr-response', 'Role changed successfully.', false);
-    } catch (e) {
-      showResponse('cr-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function resetPassword() {
-    const btn = document.querySelector('[onclick="resetPassword()"]');
-    const newPassword = document.getElementById('rp-password').value;
-    if (!newPassword) { alert('Enter a password'); return; }
-    if (!lookedUpUserId) { alert('Fetch a user first'); return; }
-    setLoading(btn, true);
-    try {
-      await api('POST', `/users/${lookedUpUserId}/reset-password`, { newPassword });
-      showResponse('rp-response', 'Password reset. User must change on next login.', false);
-      document.getElementById('rp-password').value = '';
-    } catch (e) {
-      showResponse('rp-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function deactivateUser() {
-    const btn = document.querySelector('[onclick="deactivateUser()"]');
-    if (!lookedUpUserId) { alert('Fetch a user first'); return; }
-    if (!confirm('Deactivate this user?')) return;
-    setLoading(btn, true);
-    try {
-      await api('DELETE', `/users/${lookedUpUserId}`);
-      showResponse('status-response', 'User deactivated.', false);
-    } catch (e) {
-      showResponse('status-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function reactivateUser() {
-    const btn = document.querySelector('[onclick="reactivateUser()"]');
-    if (!lookedUpUserId) { alert('Fetch a user first'); return; }
-    setLoading(btn, true);
-    try {
-      await api('PUT', `/users/${lookedUpUserId}/reactivate`);
-      showResponse('status-response', 'User reactivated.', false);
-    } catch (e) {
-      showResponse('status-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function getAuditLog() {
-    const btn = document.querySelector('[onclick="getAuditLog()"]');
-    if (!lookedUpUserId) { alert('Fetch a user first'); return; }
-    setLoading(btn, true);
-    try {
-      const data = await api('GET', `/users/${lookedUpUserId}/audit-log`);
-      showResponse('al-response', data, false);
-    } catch (e) {
-      showResponse('al-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  // ── My Account ──
-  async function updateProfile() {
-    const btn = document.querySelector('[onclick="updateProfile()"]');
-    const name = document.getElementById('up-name').value.trim();
-    if (!name) { alert('Enter a name'); return; }
-    setLoading(btn, true);
-    try {
-      await api('PUT', '/users/me', { name });
-      showResponse('up-response', 'Profile updated.', false);
-    } catch (e) {
-      showResponse('up-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  async function changePassword() {
-    const btn = document.querySelector('[onclick="changePassword()"]');
-    const currentPassword = document.getElementById('cp-current').value;
-    const newPassword = document.getElementById('cp-new').value;
-    if (!currentPassword || !newPassword) { alert('Both fields required'); return; }
-    setLoading(btn, true);
-    try {
-      await api('PUT', '/users/me/password', { currentPassword, newPassword });
-      showResponse('cp-response', 'Password changed.', false);
-      document.getElementById('cp-current').value = '';
-      document.getElementById('cp-new').value = '';
-      document.getElementById('info-mustchange').textContent = 'No';
-    } catch (e) {
-      showResponse('cp-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  // ── Create User ──
-  async function createUser() {
-    const btn = document.querySelector('[onclick="createUser()"]');
-    const sel = document.getElementById('cu-role');
-    const opt = sel.selectedOptions[0];
-    const cityScoped = opt && opt.dataset.cityScoped === 'true';
-    const body = {
-      name:     document.getElementById('cu-name').value.trim(),
-      email:    document.getElementById('cu-email').value.trim(),
-      password: document.getElementById('cu-password').value,
-      role:     opt ? opt.dataset.name : '',
-      cityId:   cityScoped ? document.getElementById('cu-city').value : null,
-    };
-    setLoading(btn, true);
-    try {
-      const data = await api('POST', '/users', body);
-      showResponse('cu-response', data, false);
-    } catch (e) {
-      showResponse('cu-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  // ── Roles ──
-  async function loadRoles() {
-    const container = document.getElementById('roles-list-container');
-    container.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
-    document.getElementById('role-deactivate-response').className = 'response';
-    try {
-      const roles = await api('GET', '/roles');
-      rolesCache = roles;
-      populateRoleSelect('cu-role', true);
-      populateRoleSelect('cr-role-select', false);
-      container.innerHTML = `
-        <table class="data-table">
-          <thead><tr>
-            <th>Name</th><th>Display Name</th><th>City Scoped</th><th>Type</th><th>Status</th><th></th>
-          </tr></thead>
-          <tbody>
-            ${roles.map(r => `
-              <tr>
-                <td><code style="font-size:.8rem">${esc(r.name)}</code></td>
-                <td>${esc(r.displayName)}</td>
-                <td>${r.cityScoped ? '<span class="badge badge-blue">Yes</span>' : '—'}</td>
-                <td>${r.builtin ? '<span class="badge badge-gray">Built-in</span>' : '<span class="badge badge-green">Custom</span>'}</td>
-                <td><span class="badge ${r.active ? 'badge-green' : 'badge-red'}">${r.active ? 'Active' : 'Inactive'}</span></td>
-                <td>${(!r.builtin && r.active && currentUser.role === 'ADMIN')
-                  ? `<button class="btn btn-sm btn-danger" onclick="deactivateRole('${r.id}', this)">Deactivate</button>`
-                  : '—'
-                }</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`;
-    } catch (e) {
-      container.innerHTML = `<div class="empty-state" style="color:#e63946">${fmtError(e)}</div>`;
-    }
-  }
-
-  async function deactivateRole(roleId, btn) {
-    if (!confirm('Deactivate this role? Users currently assigned it will be affected.')) return;
-    setLoading(btn, true);
-    try {
-      await api('DELETE', `/roles/${roleId}`);
-      showResponse('role-deactivate-response', 'Role deactivated.', false);
-      loadRoles();
-    } catch (e) {
-      showResponse('role-deactivate-response', e.body || e, true);
-      setLoading(btn, false);
-    }
-  }
-
-  function togglePerm(el) { el.classList.toggle('selected'); }
-
-  function toSnakeCase(str) {
-    return str
-      .replace(/([A-Z])/g, '_$1')
-      .replace(/[\s\-]+/g, '_')
-      .replace(/[^a-z0-9_]/gi, '')
-      .replace(/_+/g, '_')
-      .replace(/^_|_$/g, '')
-      .toLowerCase();
-  }
-
-  function validateRoleName(input) {
-    const hint = document.getElementById('nr-name-hint');
-    const val = input.value;
-    if (!val) { hint.style.display = 'none'; return; }
-    const isValid = /^[a-z][a-z0-9_]*$/.test(val);
-    if (isValid) {
-      hint.style.display = 'none';
-    } else {
-      const suggested = toSnakeCase(val);
-      hint.style.display = 'block';
-      hint.innerHTML = `<span style="color:#ef4444">Must be snake_case (lowercase, underscores only).</span>`
-        + (suggested ? ` <a href="#" style="color:#2563eb;text-decoration:none" onclick="event.preventDefault();document.getElementById('nr-name').value='${suggested}';validateRoleName(document.getElementById('nr-name'))">Use <strong>${suggested}</strong></a>` : '');
-    }
-  }
-
-  async function createRole() {
-    const btn = document.querySelector('[onclick="createRole()"]');
-    const name = document.getElementById('nr-name').value.trim();
-    const displayName = document.getElementById('nr-display').value.trim();
-    const cityScoped = document.getElementById('nr-cityscoped').value === 'true';
-    const permissions = [...document.querySelectorAll('#nr-perm-chips .perm-chip.selected')].map(el => el.dataset.perm);
-    if (!/^[a-z][a-z0-9_]*$/.test(name)) { validateRoleName(document.getElementById('nr-name')); alert('Role name must be snake_case (e.g. warehouse_manager)'); return; }
-    if (!name || !displayName || !permissions.length) { alert('Name, display name, and at least one permission required'); return; }
-    setLoading(btn, true);
-    try {
-      const data = await api('POST', '/roles', { name, displayName, cityScoped, permissions });
-      showResponse('nr-response', data, false);
-      document.getElementById('nr-name').value = '';
-      document.getElementById('nr-display').value = '';
-      document.getElementById('nr-name-hint').style.display = 'none';
-      document.querySelectorAll('#nr-perm-chips .perm-chip.selected').forEach(el => el.classList.remove('selected'));
-      loadRoles();
-    } catch (e) {
-      showResponse('nr-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  // ── Permission Check ──
-  async function checkPermission() {
-    const btn = document.querySelector('[onclick="checkPermission()"]');
-    const email  = document.getElementById('pc-email').value.trim();
-    const action = document.getElementById('pc-action').value;
-    const city   = document.getElementById('pc-city').value.trim();
-    if (!email) { alert('Enter an email address'); return; }
-    setLoading(btn, true);
-    try {
-      let url = `/permissions/check?email=${encodeURIComponent(email)}&action=${action}`;
-      if (city) url += `&cityId=${city}`;
-      const data = await api('GET', url);
-      document.getElementById('pc-result').innerHTML =
-        `<div class="perm-result ${data.allowed ? 'allowed' : 'denied'}">
-          ${data.allowed ? '✅' : '❌'} ${data.allowed ? 'Allowed' : 'Denied'} — ${esc(data.reason)}
-        </div>`;
-    } catch (e) {
-      document.getElementById('pc-result').innerHTML =
-        `<div class="perm-result denied">❌ ${esc(fmtError(e))}</div>`;
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  // ── Health Check ──
-  async function checkHealth() {
-    const btn = document.querySelector('[onclick="checkHealth()"]');
-    setLoading(btn, true);
-    try {
-      const data = await api('GET', '/auth/health');
-      showResponse('health-response', data, false);
-    } catch (e) {
-      showResponse('health-response', e.body || e, true);
-    } finally {
-      setLoading(btn, false);
-    }
-  }
-
-  // ── Onboarding Requests ──
-  async function loadOnboardingRequests() {
-    const container = document.getElementById('ob-list-container');
-    container.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
-    document.getElementById('ob-response').className = 'response';
-    try {
-      const reqs = await api('GET', '/onboarding-requests');
-      if (!reqs.length) { container.innerHTML = '<div class="empty-state">No onboarding requests</div>'; return; }
-      container.innerHTML = `
-        <table class="data-table">
-          <thead><tr>
-            <th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Submitted</th><th>Actions</th>
-          </tr></thead>
-          <tbody>
-            ${reqs.map(r => `
-              <tr>
-                <td>${esc(r.email)}</td>
-                <td>${esc(r.name)}</td>
-                <td><span class="badge badge-blue">${esc(r.requestedRole)}</span></td>
-                <td><span class="badge ${r.status === 'PENDING' ? 'badge-gray' : r.status === 'APPROVED' ? 'badge-green' : 'badge-red'}">${esc(r.status)}</span></td>
-                <td>${new Date(r.createdAt).toLocaleDateString()}</td>
-                <td style="display:flex;gap:.4rem;flex-wrap:wrap">
-                  ${r.status === 'PENDING' ? `
-                    <button class="btn btn-sm btn-success" onclick="approveOnboarding('${r.id}', this)">
-                      Approve <span class="tag tag-post" style="margin-left:.2rem">POST</span>
-                    </button>
-                    <button class="btn btn-sm btn-danger" onclick="rejectOnboarding('${r.id}', this)">
-                      Reject <span class="tag tag-post" style="margin-left:.2rem">POST</span>
-                    </button>
-                  ` : `<span style="color:#aaa;font-size:.8rem">${r.status === 'APPROVED' ? `Approved by ${esc(r.reviewedBy || '')}` : `Rejected — ${esc(r.rejectionReason || 'no reason')}`}</span>`}
-                </td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`;
-    } catch (e) {
-      container.innerHTML = `<div class="empty-state" style="color:#e63946">${fmtError(e)}</div>`;
-    }
-  }
-
-  async function approveOnboarding(id, btn) {
-    if (!confirm('Approve this onboarding request? A user account will be created.')) return;
-    setLoading(btn, true);
-    try {
-      await api('POST', `/onboarding-requests/${id}/approve`);
-      showResponse('ob-response', 'Request approved. User account created with mustChangePassword=true.', false);
-      loadOnboardingRequests();
-    } catch (e) {
-      showResponse('ob-response', e.body || e, true);
-      setLoading(btn, false);
-    }
-  }
-
-  async function rejectOnboarding(id, btn) {
-    const reason = prompt('Rejection reason (optional):');
-    if (reason === null) return; // cancelled
-    setLoading(btn, true);
-    try {
-      await api('POST', `/onboarding-requests/${id}/reject`, { reason: reason || null });
-      showResponse('ob-response', 'Request rejected.', false);
-      loadOnboardingRequests();
-    } catch (e) {
-      showResponse('ob-response', e.body || e, true);
-      setLoading(btn, false);
-    }
-  }
-
-  // ── Helpers ──
-  function esc(s) {
-    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  // ── Dark mode ──
-  function toggleDark() {
-    const dark = document.body.classList.toggle('dark');
-    document.getElementById('dark-toggle').textContent = dark ? '☀️' : '🌙';
-  }
-
-  // ── Keyboard ──
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      if (document.getElementById('login-fields').classList.contains('visible')) login();
-      else if (document.getElementById('register-fields').classList.contains('visible')) register();
-    }
-  });
-</script>
+<script src="js/core.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/users.js"></script>
+<script src="js/orders.js"></script>
+<script src="js/admin.js"></script>
+<script src="js/init.js"></script>
 </body>
 </html>

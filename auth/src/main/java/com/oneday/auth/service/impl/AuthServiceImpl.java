@@ -195,7 +195,7 @@ class AuthServiceImpl implements AuthService {
         String token = jwtService.createToken(user);
         Instant expiresAt = jwtService.expiryFor(user);
         return new LoginResponse(token, expiresAt, user.getRole().getName(),
-                user.getCityId(), user.isMustChangePassword());
+                user.getCityId(), user.getName(), user.isMustChangePassword());
     }
 
     private void writeAuditLog(UUID actorId, UUID targetUserId, String action,

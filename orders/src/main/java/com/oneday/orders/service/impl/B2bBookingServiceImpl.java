@@ -10,6 +10,7 @@ import com.oneday.common.port.dto.EtaRequest;
 import com.oneday.common.port.dto.EtaResult;
 import com.oneday.common.port.dto.QuoteRequest;
 import com.oneday.common.port.dto.QuoteResult;
+import com.oneday.common.port.dto.ServiceabilityQuery;
 import com.oneday.common.port.dto.ServiceabilityResult;
 import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.Shipment;
@@ -102,10 +103,19 @@ class B2bBookingServiceImpl implements B2bBookingService {
             throw new AccountInactiveException(
                     "B2B account is inactive: " + req.getB2bAccountId());
         }
+        // Ownership: the caller must own the account (when an owner is set). Prevents one
+        // B2B user drawing down another account's credit. ADMIN-on-behalf is not modelled yet.
+        if (account.getOwnerUserId() != null && !account.getOwnerUserId().toString().equals(userId)) {
+            throw new AccountAccessException(
+                    "Caller is not authorized for B2B account: " + req.getB2bAccountId());
+        }
 
         // ── 2. Serviceability (outside TX) ────────────────────────────────────
         ServiceabilityResult serviceability = callWithTimeout(serviceabilityTl, serviceabilityCb,
-                () -> serviceabilityPort.check(req.getOriginPincode(), req.getDestPincode()));
+                () -> serviceabilityPort.check(new ServiceabilityQuery(
+                        req.getOriginPincode(), req.getDestPincode(),
+                        req.getOriginAddress().getLatitude(), req.getOriginAddress().getLongitude(),
+                        req.getDestAddress().getLatitude(), req.getDestAddress().getLongitude())));
         if (!serviceability.serviceable()) {
             throw new BookingService.ServiceabilityException(
                     "Route not serviceable: " + req.getOriginPincode() + " → " + req.getDestPincode());
@@ -190,9 +200,11 @@ class B2bBookingServiceImpl implements B2bBookingService {
         shipment.setDropType(req.getDropType());
         shipment.setState(ShipmentState.BOOKED);
         shipment.setOriginTileId(serviceability.originTileId());
+        shipment.setDestTileId(serviceability.destTileId());
         shipment.setPaymentMode(null);   // B2B: credit; no payment mode column value
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());
+        shipment.setBookedByUserId(UserIds.parse(userId));
 
         shipment = shipmentRepository.save(shipment);
 
@@ -238,6 +250,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
 
         BookingResponse response = new BookingResponse();
         response.setShipmentRef(shipment.getShipmentRef());
+        response.setCustomerType(CustomerType.B2B);
         response.setState(ShipmentState.BOOKED);
         response.setStateLabel(stateMapper.labelFor(ShipmentState.BOOKED));
         response.setDeliveryType(serviceability.deliveryType());

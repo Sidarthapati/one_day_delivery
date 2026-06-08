@@ -38,6 +38,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lombok.version>1.18.44</lombok.version>
         <springdoc.version>2.3.0</springdoc.version>
+        <!-- Override Spring Boot 3.2.5's managed versions to patched releases that clear the
+             CRITICAL CVEs flagged by Trivy. Same minor lines (drop-in compatible):
+             tomcat 10.1.20 → 10.1.55 (CVE-2025-24813, CVE-2026-41293/43512/43515),
+             spring-security 6.2.4 → 6.2.7 (CVE-2024-38821). The remaining CVE-2026-22732
+             has no fix in the 6.2.x line — accepted in .trivyignore until a Boot upgrade. -->
+        <tomcat.version>10.1.55</tomcat.version>
+        <spring-security.version>6.2.7</spring-security.version>
     </properties>
 
     <dependencyManagement>
