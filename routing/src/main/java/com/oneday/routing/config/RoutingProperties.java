@@ -32,6 +32,9 @@ public class RoutingProperties {
     /** Lateness past plan that escalates to VAN_RUNNING_LATE (§14.4). */
     private int lateThresholdMinutes = 10;
 
+    /** Min spacing between a DA's meeting times — must be ≥ M5's CRON_FREEZE_MINUTES (C6, §10). */
+    private int cronFreezeMinutes = 30;
+
     /** Flat per-km van cost until M2's CostFloorPort lands (M6-D-010). INR. */
     private double costPerKm = 15.0;
 
