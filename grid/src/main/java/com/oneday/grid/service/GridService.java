@@ -2,6 +2,7 @@ package com.oneday.grid.service;
 
 import com.oneday.grid.domain.Grid;
 import com.oneday.grid.dto.response.AssignmentResponse;
+import com.oneday.grid.dto.response.DaTerritoryResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
@@ -39,4 +40,8 @@ public interface GridService {
 
     // ACTIVE assignments for this city on the given date, scoped to the city's tile set.
     List<AssignmentResponse> getActiveAssignments(UUID cityId, LocalDate date);
+
+    // DA territories for the date — DA → hexes (+ demand) → corner vertices. M6's planning input
+    // (§6); built from ACTIVE da_hex_assignment rows joined to the date's demand snapshot.
+    List<DaTerritoryResponse> getDaTerritories(UUID cityId, LocalDate date);
 }

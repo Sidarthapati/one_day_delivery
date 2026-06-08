@@ -13,9 +13,11 @@ import com.oneday.grid.domain.HexDemandSnapshot;
 import com.oneday.grid.domain.HexVertex;
 import com.oneday.grid.domain.PincodeMapping;
 import com.oneday.grid.dto.response.AssignmentResponse;
+import com.oneday.grid.dto.response.DaTerritoryResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.grid.dto.response.ServiceabilityResponse;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
+import com.oneday.grid.dto.response.TerritoryHexResponse;
 import com.oneday.grid.dto.response.TileAtResponse;
 import com.oneday.grid.dto.response.TileDetailResponse;
 import com.oneday.grid.repository.DaHexAssignmentRepository;
@@ -201,6 +203,59 @@ public class GridServiceImpl implements GridService {
                         a.getValidDate(), a.getNDasOnHex(), a.getStatus(),
                         a.getProposedAt(), a.getApprovedBy(), a.getApprovedAt()))
                 .toList();
+    }
+
+    @Override
+    public List<DaTerritoryResponse> getDaTerritories(UUID cityId, LocalDate date) {
+        Grid grid = getGrid(cityId);
+
+        // City's hexes, by id — also the scope filter for assignments.
+        Map<UUID, Hex> hexById = hexRepository.findByH3GridId(grid.getId()).stream()
+                .collect(Collectors.toMap(Hex::getId, h -> h));
+
+        // The date's demand snapshot, by hex (absent → 0 demand).
+        Map<UUID, HexDemandSnapshot> snapshotByHex = demandSnapshotRepository
+                .findBySnapshotDate(date).stream()
+                .collect(Collectors.toMap(HexDemandSnapshot::getHexId, s -> s));
+
+        // Vertex rows for this grid, keyed by their globally-unique H3 vertex index, so a hex's
+        // h3Core.cellToVertexes(...) corners resolve to the persisted (deduped) GridVertexResponse.
+        Map<Long, GridVertexResponse> vertexByH3Index = hexVertexRepository.findByH3GridId(grid.getId())
+                .stream()
+                .collect(Collectors.toMap(
+                        HexVertex::getH3VertexIndex,
+                        v -> new GridVertexResponse(v.getId(), v.getLat(), v.getLon())));
+
+        // ACTIVE assignments for the date, scoped to this city's hexes, grouped per DA.
+        Map<UUID, List<DaHexAssignment>> byDa = assignmentRepository
+                .findByHexIdInAndValidDateAndStatus(hexById.keySet(), date, AssignmentStatus.ACTIVE)
+                .stream()
+                .collect(Collectors.groupingBy(DaHexAssignment::getDaId));
+
+        List<DaTerritoryResponse> territories = new ArrayList<>(byDa.size());
+        for (Map.Entry<UUID, List<DaHexAssignment>> entry : byDa.entrySet()) {
+            List<TerritoryHexResponse> hexes = new ArrayList<>(entry.getValue().size());
+            for (DaHexAssignment a : entry.getValue()) {
+                Hex hex = hexById.get(a.getHexId());
+                if (hex == null) continue; // assignment outside this city's grid — skip defensively
+
+                List<GridVertexResponse> vertices = new ArrayList<>(6);
+                for (long vIdx : h3Core.cellToVertexes(hex.getH3Index())) {
+                    GridVertexResponse v = vertexByH3Index.get(vIdx);
+                    if (v != null) vertices.add(v);
+                }
+
+                HexDemandSnapshot snap = snapshotByHex.get(hex.getId());
+                hexes.add(new TerritoryHexResponse(
+                        hex.getId(),
+                        hex.getH3Index(),
+                        snap != null ? snap.getDemandScoreOrders() : 0.0,
+                        snap != null ? snap.getServiceTimeMin() : 0.0,
+                        vertices));
+            }
+            territories.add(new DaTerritoryResponse(entry.getKey(), hexes));
+        }
+        return territories;
     }
 
     @Override
