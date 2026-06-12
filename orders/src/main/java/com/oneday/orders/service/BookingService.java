@@ -39,6 +39,16 @@ public interface BookingService {
     BookingResponse book(BookingRequest request, String idempotencyKey, String userId, CustomerType customerType);
 
     /**
+     * Books a retail shipment whose payment has already been settled once at the cart level
+     * (the B2C aggregate Razorpay capture). Runs serviceability → pricing → persist, marks the
+     * shipment PREPAID, but writes <b>no</b> per-shipment {@code PaymentTransaction} and performs
+     * no gateway call. Used by cart checkout; re-prices the request so cart staleness is caught.
+     *
+     * @throws ServiceabilityException if the route is no longer serviceable at checkout time
+     */
+    BookingResponse bookSettled(BookingRequest request, String idempotencyKey, String userId, CustomerType customerType);
+
+    /**
      * Prices a request without booking or taking payment (serviceability → pricing).
      * Used by the payment flow to mint a gateway order for the exact amount before checkout.
      *

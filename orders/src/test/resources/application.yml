@@ -15,6 +15,9 @@ spring:
     # which this orders-only location can't resolve. Skip cross-module checksum validation here;
     # Hibernate ddl-auto=validate still enforces that the entities match the live schema.
     validate-on-migrate: false
+    # The top-level V10 migration sorts numerically as 10 > 4.x, so without out-of-order Flyway
+    # treats the schema as "ahead" of every new V4_NN and skips it. Matches app/application.yml.
+    out-of-order: true
   # Match the production API JSON contract (app/application.yml) so the E2E tests assert the
   # same snake_case payloads the frontend actually consumes.
   jackson:

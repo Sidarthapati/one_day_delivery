@@ -56,6 +56,7 @@ class OnboardingServiceImpl implements OnboardingService {
         var onboardingRequest = new OnboardingRequest();
         onboardingRequest.setEmail(request.email());
         onboardingRequest.setName(request.name());
+        onboardingRequest.setPhone(request.phone());
         onboardingRequest.setRequestedRole(request.requestedRole());
         onboardingRequest.setPasswordHash(passwordEncoder.encode(request.password()));
         onboardingRequest.setStatus("PENDING");
@@ -93,6 +94,7 @@ class OnboardingServiceImpl implements OnboardingService {
         var user = new User();
         user.setEmail(onboardingRequest.getEmail());
         user.setName(onboardingRequest.getName());
+        user.setPhone(onboardingRequest.getPhone());
         user.setPasswordHash(onboardingRequest.getPasswordHash());
         user.setRole(role);
         user.setActive(true);

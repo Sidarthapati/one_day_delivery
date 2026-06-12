@@ -45,8 +45,11 @@
     document.getElementById('order-no-booking').style.display = (canBook || isOrdersViewer) ? 'none' : '';
 
     // For a retail (B2C/C2C) booking the sender IS the logged-in account, so auto-fill the sender
-    // name from the stored account and lock it. (B2B's sender is the warehouse → stays editable.)
-    if (showB2c) applyAccountSender('o-b2c-sname');
+    // name and phone from the stored account and lock them. (B2B's sender is the warehouse → editable.)
+    if (showB2c) {
+      applyAccountSender('o-b2c-sname', currentUser && currentUser.name);
+      applyAccountSender('o-b2c-sphone', currentUser && currentUser.phone);
+    }
 
     recentBookings = [];
     renderRecent();
@@ -58,13 +61,13 @@
     switchTab('orders');
   }
 
-  // Fills the given sender-name input from the logged-in account and locks it (read-only),
-  // since the booker is the sender. No-op if the account name is unknown (older token).
-  function applyAccountSender(inputId) {
+  // Fills the given sender input from the logged-in account and locks it (read-only),
+  // since the booker is the sender. No-op if the value is unknown (older token without it).
+  function applyAccountSender(inputId, value) {
     const el = document.getElementById(inputId);
     if (!el) return;
-    if (currentUser && currentUser.name) {
-      el.value = currentUser.name;
+    if (value) {
+      el.value = value;
       el.readOnly = true;
       el.classList.add('locked-field');
       el.title = 'Auto-filled from your account';
@@ -84,7 +87,10 @@
   function legAddress(p) {
     const c = ORDER_CITIES[p.city];
     return {
-      line1: p.line1 || c.addr,
+      house_floor: p.houseFloor || null,
+      building_street: p.buildingStreet || null,
+      area_locality: p.areaLocality || null,
+      line1: p.line1 || p.buildingStreet || c.addr,
       city: c.name, pincode: p.pincode, state: c.state,
       latitude: p.lat, longitude: p.lon,
     };
@@ -287,15 +293,19 @@
       (p.label ? `<div class="loc-addr">${esc(p.label)}</div>` : '');
   }
 
-  function openMapPicker(form, leg) {
-    _mapState = { form, leg };
+  // opts (optional) lets other modules reuse the picker: { title, onConfirm(pick) }. When given,
+  // confirm fires onConfirm instead of writing to the booking form's picked[form][leg].
+  function openMapPicker(form, leg, opts) {
+    _mapState = opts || { form, leg };
     _mapPick = null;
+    const isLeg = _mapState.leg === 'origin' || _mapState.leg === 'dest';
     document.getElementById('map-title').textContent =
-      (leg === 'origin' ? '📦 Pickup' : '🎯 Drop') + ' location';
+      (_mapState.title) ? _mapState.title
+      : (_mapState.leg === 'origin' ? '📦 Pickup' : '🎯 Drop') + ' location';
     document.getElementById('map-search').value = '';
     document.getElementById('map-search-results').style.display = 'none';
     document.getElementById('map-confirm').disabled = true;
-    setMapStatus('Search for an area, then click or drag the pin to the exact ' + (leg === 'origin' ? 'pickup' : 'drop') + ' point.');
+    setMapStatus('Search for an area, then click or drag the pin to the exact point.');
     document.getElementById('map-modal').style.display = 'flex';
 
     // Init after the container is visible so Leaflet measures it correctly.
@@ -306,14 +316,22 @@
           { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(_map);
         _map.on('click', e => placeMarker(e.latlng.lat, e.latlng.lng));
       }
-      const prev = picked[form][leg];
+      const prev = isLeg && _mapState.form ? picked[_mapState.form][_mapState.leg] : null;
       if (prev) { _map.setView([prev.lat, prev.lon], 15); placeMarker(prev.lat, prev.lon); }
       else      { _map.setView(INDIA_VIEW.center, INDIA_VIEW.zoom); if (_marker) { _map.removeLayer(_marker); _marker = null; } }
       _map.invalidateSize();
     }, 60);
   }
 
-  function closeMapPicker() { document.getElementById('map-modal').style.display = 'none'; }
+  function closeMapPicker() {
+    document.getElementById('map-modal').style.display = 'none';
+    // If the picker was opened from the address form, bring that form back (confirm or cancel).
+    if (window._reopenAddrForm) {
+      window._reopenAddrForm = false;
+      const m = document.getElementById('addr-modal');
+      if (m) m.style.display = 'flex';
+    }
+  }
 
   function setMapStatus(html, cls) {
     const el = document.getElementById('map-status');
@@ -376,6 +394,11 @@
 
   function confirmMapPicker() {
     if (!_mapPick || !_mapPick.city) return;
+    if (_mapState && typeof _mapState.onConfirm === 'function') {
+      _mapState.onConfirm(_mapPick);    // reused by the address book (cart.js)
+      closeMapPicker();
+      return;
+    }
     const { form, leg } = _mapState;
     picked[form][leg] = _mapPick;       // the pin is now the source of truth for city + pincode
     renderLocCard(form, leg, _mapPick);

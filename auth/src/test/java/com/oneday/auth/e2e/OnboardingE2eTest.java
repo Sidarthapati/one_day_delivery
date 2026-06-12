@@ -18,7 +18,7 @@ class OnboardingE2eTest extends AuthE2eSupport {
     @Test
     void submitOnboarding_isPublicAndPending() throws Exception {
         mvc.perform(asJson(post("/auth/request-onboarding"),
-                        new OnboardingSubmitRequest(uniqueEmail(), "Acme Corp", "Signup123!", "B2B_USER")))
+                        new OnboardingSubmitRequest(uniqueEmail(), "Acme Corp", "Signup123!", "+919000000001", "B2B_USER")))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.requestedRole").value("B2B_USER"));
@@ -30,7 +30,7 @@ class OnboardingE2eTest extends AuthE2eSupport {
     void adminApproves_userCanThenLogin() throws Exception {
         String email = uniqueEmail();
         mvc.perform(asJson(post("/auth/request-onboarding"),
-                        new OnboardingSubmitRequest(email, "Acme Corp", "Signup123!", "B2B_USER")))
+                        new OnboardingSubmitRequest(email, "Acme Corp", "Signup123!", "+919000000001", "B2B_USER")))
                 .andExpect(status().isAccepted());
 
         String admin = adminToken();
@@ -52,7 +52,7 @@ class OnboardingE2eTest extends AuthE2eSupport {
     void adminRejects_noUserCreated() throws Exception {
         String email = uniqueEmail();
         mvc.perform(asJson(post("/auth/request-onboarding"),
-                        new OnboardingSubmitRequest(email, "Reject Me", "Signup123!", "B2C_CUSTOMER")))
+                        new OnboardingSubmitRequest(email, "Reject Me", "Signup123!", "+919000000001", "B2C_CUSTOMER")))
                 .andExpect(status().isAccepted());
 
         String admin = adminToken();

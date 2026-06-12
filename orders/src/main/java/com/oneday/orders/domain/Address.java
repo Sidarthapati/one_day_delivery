@@ -14,6 +14,12 @@ import lombok.Setter;
 @NoArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Address {
+    // Granular components from the two-step map capture (Swiggy-style). All optional —
+    // persisted inside the address JSONB blob, no schema column needed.
+    @Size(max = 200) private String houseFloor;
+    @Size(max = 200) private String buildingStreet;
+    @Size(max = 300) private String areaLocality;
+
     @NotBlank @Size(max = 200) private String line1;
     @Size(max = 200) private String line2;
     @NotBlank @Size(max = 100) private String city;

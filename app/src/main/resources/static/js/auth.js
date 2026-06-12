@@ -31,6 +31,7 @@
   async function register() {
     const btn = document.querySelector('#register-fields .btn-accent');
     const name = document.getElementById('reg-name').value.trim();
+    const phone = document.getElementById('reg-phone').value.trim();
     const email = document.getElementById('reg-email').value.trim();
     const password = document.getElementById('reg-password').value;
     const accountType = document.querySelector('#reg-type-group .type-btn.selected')?.dataset.type || 'C2C_CUSTOMER';
@@ -40,12 +41,25 @@
     setLoading(btn, true);
     try {
       if (accountType === 'C2C_CUSTOMER') {
-        const data = await api('POST', '/auth/register', { name, email, password });
+        // C2C captures a phone too — it becomes the locked sender contact on every booking.
+        if (!/^\+91[0-9]{10}$/.test(phone)) {
+          errEl.className = 'response error visible';
+          errEl.textContent = 'Enter a valid phone in +91XXXXXXXXXX format.';
+          setLoading(btn, false); return;
+        }
+        const data = await api('POST', '/auth/register', { name, phone, email, password });
         token = data.token;
         currentUser = { email, role: data.role, cityId: data.cityId, expiresAt: data.expiresAt };
         await showDashboard(data);
       } else {
-        await api('POST', '/auth/request-onboarding', { name, email, password, requestedRole: accountType });
+        // B2C/B2B also capture a phone (locked as the sender contact once approved).
+        if (!/^\+91[0-9]{10}$/.test(phone)) {
+          errEl.className = 'response error visible';
+          errEl.textContent = 'Enter a valid phone in +91XXXXXXXXXX format.';
+          setLoading(btn, false); return;
+        }
+        // Backend JSON is snake_case → send requested_role + phone.
+        await api('POST', '/auth/request-onboarding', { name, email, password, phone, requested_role: accountType });
         errEl.className = 'response success visible';
         errEl.textContent = 'Request submitted! An admin will review your account. You can log in once approved.';
       }
@@ -64,6 +78,7 @@
     data.mustChangePassword = data.mustChangePassword ?? data.must_change_password;
     currentUser.cityId = data.cityId;
     currentUser.name = data.name;   // stored account name — used to auto-fill the sender
+    currentUser.phone = data.phone; // stored account phone — locked as the C2C sender contact
 
     document.getElementById('login-view').style.display = 'none';
     document.getElementById('dashboard-view').style.display = 'flex';
@@ -111,6 +126,8 @@
 
     // Bring the M4 order experience online for this identity
     setupOrderExperience(data.role);
+    // Saved addresses + cart + bulk upload (customer roles only)
+    if (typeof setupCartExperience === 'function') setupCartExperience(data.role);
   }
 
   function logout() {

@@ -117,6 +117,18 @@ class BookingServiceImpl implements BookingService {
         return priceRequest(req, CustomerType.B2C).quote();
     }
 
+    @Override
+    public BookingResponse bookSettled(BookingRequest req, String idempotencyKey, String userId,
+                                       CustomerType customerType) {
+        // Cart checkout already settled payment once for the whole cart, so we re-price (to catch
+        // staleness) and persist — but write NO per-shipment PaymentTransaction and take no payment.
+        Priced priced = priceRequest(req, customerType);
+        return tx.execute(status ->
+                persist(req, idempotencyKey, userId, customerType, priced.serviceability(),
+                        priced.volumetricWeightGrams(), priced.chargeableWeightGrams(), priced.quote(),
+                        /* recordPayment */ false));
+    }
+
     // Steps 1-3 of booking, with no payment or DB write — reused by book() and quote()
     // (the payment create-order flow prices the shipment via quote() before checkout).
     private Priced priceRequest(BookingRequest req, CustomerType customerType) {
@@ -192,7 +204,7 @@ class BookingServiceImpl implements BookingService {
         try {
             return tx.execute(status ->
                     persist(req, idempotencyKey, userId, customerType, serviceability,
-                            finalVolumetricWeight, finalChargeableWeight, quote));
+                            finalVolumetricWeight, finalChargeableWeight, quote, /* recordPayment */ true));
         } catch (RuntimeException dbEx) {
             if (isPrepaid) {
                 try {
@@ -214,7 +226,7 @@ class BookingServiceImpl implements BookingService {
     private BookingResponse persist(BookingRequest req, String idempotencyKey, String userId,
                                     CustomerType customerType, ServiceabilityResult serviceability,
                                     int volumetricWeightGrams, int chargeableWeightGrams,
-                                    QuoteResult quote) {
+                                    QuoteResult quote, boolean recordPayment) {
         Instant bookedAt = Instant.now();
         String shipmentRef = shipmentRefService.generateRef(req.getOriginCity());
 
@@ -257,7 +269,7 @@ class BookingServiceImpl implements BookingService {
 
         shipment = shipmentRepository.save(shipment);
 
-        if (PaymentMode.PREPAID == req.getPaymentMode()) {
+        if (recordPayment && PaymentMode.PREPAID == req.getPaymentMode()) {
             PaymentTransaction payment = new PaymentTransaction();
             payment.setShipmentId(shipment.getId());
             payment.setRazorpayOrderId(req.getRazorpayOrderId());

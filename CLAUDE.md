@@ -71,11 +71,22 @@ com.oneday.{module}/
 
 ## Local Dev Setup
 
-- **PostgreSQL 16** installed via Homebrew. Start: `brew services start postgresql@16`
-- **DB:** `oneday`, **user:** `oneday`, **password:** `secret`, **port:** 5432
-- **GUI:** TablePlus (`/Applications/TablePlus.app`) — connect to localhost:5432
-- `grid/src/main/resources/application.yml` already has `spring.datasource` pointing at the local DB
-- Migrations run automatically via Flyway on app startup; to run manually: `psql -U oneday -d oneday -f <migration.sql>`
+### Databases — **default to the DEVELOPMENT (Render) DB**
+
+There are two Postgres databases. **Unless told otherwise, connect to the development (Render) DB by default** — it's the shared DB that TablePlus's "DEVELOPMENT" connection and the deployed app use, so it's the source of truth for verifying real data/state.
+
+- **DEVELOPMENT (default):** Render-hosted Postgres 16, Oregon — DB `oneday_cipv`, user `oneday`, `sslmode=require`. **Credentials are not committed**; source them from `.env` (`SPRING_DATASOURCE_URL` / `SPRING_DATASOURCE_USERNAME` / `SPRING_DATASOURCE_PASSWORD`). To run psql against it:
+  ```bash
+  set -a; source .env; set +a
+  HOST=$(echo "$SPRING_DATASOURCE_URL" | sed -E 's#jdbc:postgresql://([^:/]+):.*#\1#')
+  DB=$(echo "$SPRING_DATASOURCE_URL"   | sed -E 's#.*:[0-9]+/([^?]+).*#\1#')
+  PGPASSWORD="$SPRING_DATASOURCE_PASSWORD" PGSSLMODE=require \
+    psql -h "$HOST" -p 5432 -U "$SPRING_DATASOURCE_USERNAME" -d "$DB" -c "SELECT current_database();"
+  ```
+  Caution: it's shared and remote — DML/DDL here affects everyone. Flyway DDL is best applied by booting the app against it (`SPRING_FLYWAY_TARGET=<version>` to scope) so checksums are recorded, not by raw `ALTER`.
+- **LOCAL (offline/throwaway):** PostgreSQL 16 via Homebrew (`brew services start postgresql@16`) — DB `oneday`, user `oneday`, password `secret`, port 5432. `grid/src/main/resources/application.yml` points the app here by default; a locally-run app (`mvn spring-boot:run` without sourcing `.env`) writes here. Use for isolated/offline work.
+- **GUI:** TablePlus (`/Applications/TablePlus.app`) — "DEVELOPMENT" → Render `oneday_cipv`; add a separate connection to localhost:5432 for the local DB.
+- Migrations run automatically via Flyway on app startup; to run manually against local: `psql -U oneday -d oneday -f <migration.sql>`.
 - **Run the M1+M4 demo:** build/run **must** use JDK 21 (`export JAVA_HOME=/opt/homebrew/opt/openjdk@21`; system default JDK 25 is rejected by the enforcer), then `mvn spring-boot:run -pl app` → `http://localhost:8080/`. The 5 city H3 grids seed on startup so serviceability is live. Demo UI is `app/src/main/resources/static/index.html`; `spring-boot:run` serves static files from `app/target/classes/static/`, so hot-update via `cp app/src/main/resources/static/index.html app/target/classes/static/index.html` + hard-refresh (backend changes still need `mvn clean install -pl orders,app -am -DskipTests` + restart). PREPAID uses the mock gateway by default; real Razorpay with `RAZORPAY_LIVE=true RAZORPAY_KEY_ID=… RAZORPAY_KEY_SECRET=…`.
 
 ## Open Questions (block implementation of specific modules)
