@@ -179,7 +179,7 @@ class CartServiceImpl implements CartService {
         long captureTotal = 0L;
         for (CartItem item : items) {
             try {
-                captureTotal += bookingService.quote(toBookingRequest(item, customerType)).totalPricePaise();
+                captureTotal += bookingService.quote(toBookingRequest(item)).totalPricePaise();
                 payable.add(item);
             } catch (RuntimeException e) {
                 results.add(CartCheckoutResponse.Result.fail(item.getId(), reasonOf(e)));
@@ -198,7 +198,7 @@ class CartServiceImpl implements CartService {
         for (CartItem item : payable) {
             try {
                 BookingResponse r = bookingService.bookSettled(
-                        toBookingRequest(item, customerType), "cart-" + item.getId(), cart.getUserId().toString(), customerType);
+                        toBookingRequest(item), "cart-" + item.getId(), cart.getUserId().toString(), customerType);
                 results.add(CartCheckoutResponse.Result.ok(item.getId(), r.getShipmentRef()));
                 cartItemRepository.delete(item);
             } catch (RuntimeException e) {
@@ -265,7 +265,7 @@ class CartServiceImpl implements CartService {
 
     /** Validates serviceability and caches the display quote; throws if the route is not serviceable. */
     private void priceItem(CartItem item) {
-        long total = bookingService.quote(toBookingRequest(item, CustomerType.B2C)).totalPricePaise();
+        long total = bookingService.quote(toBookingRequest(item)).totalPricePaise();
         item.setQuotedTotalPaise(total);
         item.setValidationStatus("VALID");
     }
@@ -299,7 +299,9 @@ class CartServiceImpl implements CartService {
         item.setDropType(r.getDropType());
     }
 
-    private static BookingRequest toBookingRequest(CartItem i, CustomerType type) {
+    // No CustomerType param: cart items always price on the retail rate card (B2C and C2C share it),
+    // and the real customer type is applied later by bookSettled when the shipment is persisted.
+    private static BookingRequest toBookingRequest(CartItem i) {
         BookingRequest b = new BookingRequest();
         b.setSenderName(i.getSenderName());
         b.setSenderPhone(i.getSenderPhone());
