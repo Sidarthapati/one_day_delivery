@@ -11,7 +11,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * M6's single seam onto M3 (§6). Imports only grid's <b>public service interface</b> and its
@@ -33,6 +35,16 @@ public class GridDataAdapter {
         return gridService.getDaTerritories(cityId, date).stream()
                 .map(GridDataAdapter::toTerritory)
                 .toList();
+    }
+
+    /**
+     * vertexId → {lat, lon} for the whole city grid. The demo's route view resolves each stop's
+     * {@code hexVertexId} to a coordinate to draw van polylines (stops carry only the vertex id).
+     */
+    public Map<UUID, double[]> vertexCoords(UUID cityId) {
+        return gridService.getVertices(cityId).stream()
+                .collect(Collectors.toMap(GridVertexResponse::id,
+                        v -> new double[]{v.lat(), v.lon()}, (a, b) -> a));
     }
 
     private static DaTerritory toTerritory(DaTerritoryResponse dto) {

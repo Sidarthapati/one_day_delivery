@@ -19,5 +19,12 @@ class WebConfig implements WebMvcConfigurer {
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .maxAge(3600);
+        // M6 plan-time endpoints the routing demo calls (fleet / nodes / plans / stops). Without this
+        // a direct cross-origin call from the demo UI to /routing/** is blocked by the browser.
+        registry.addMapping("/routing/**")
+                .allowedOriginPatterns("*")
+                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+                .allowedHeaders("*")
+                .maxAge(3600);
     }
 }

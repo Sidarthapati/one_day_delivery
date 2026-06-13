@@ -85,6 +85,11 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
             return matrix.travel(manager.indexToNode(fromIndex), to) + nodes.get(to).serviceTimeSeconds();
         });
         routing.addDimension(timeCb, 0, cycleMaxSeconds, true, "Time");
+        // Balance the work across the fleet: penalise the longest route so the solver spreads stops
+        // over the available vans (minimise makespan) instead of consolidating onto the fewest vans
+        // — without this, plentiful capacity + a loose cycle bound let one van swallow the whole city.
+        RoutingDimension timeDim = routing.getDimensionOrDie("Time");
+        timeDim.setGlobalSpanCostCoefficient(100);
 
         // "Delivered": per-vehicle end cumul = total deliveries it carries.
         int deliveredCb = routing.registerUnaryTransitCallback((long fromIndex) ->

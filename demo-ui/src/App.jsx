@@ -1,0 +1,246 @@
+import { useState, useMemo, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import HexMap from './components/HexMap.jsx'
+import Legend from './components/Legend.jsx'
+import DaControls from './components/DaControls.jsx'
+import FleetControls from './components/FleetControls.jsx'
+import HexPanel from './components/HexPanel.jsx'
+import ProposalPanel from './components/ProposalPanel.jsx'
+import RoutesPanel from './components/RoutesPanel.jsx'
+import { hashDaColor } from './utils/daColors.js'
+import { CITIES, PLAN_DATE } from './cities.js'
+import {
+  fetchTiles, fetchAssignments, seedDemand, replan, approveProposal, activateAssignments,
+} from './api/gridApi.js'
+import {
+  getFleet, putFleet, getNodes, m6Replan, m6Approve, getAllStops, osrmRoute,
+} from './api/routingApi.js'
+
+// Build per-van polylines: hub → loop stops → hub (per loop), road-snapped via OSRM (straight
+// fallback). Returns [{ vanId, geometry:[[lat,lon]…], stops:[…] }].
+async function buildRoutes(stops, nodes) {
+  const hub = nodes.find(n => n.kind === 'HUB')
+  const hubLL = hub ? [hub.lat, hub.lon] : null
+  const byVan = new Map()
+  for (const s of stops) {
+    if (!byVan.has(s.vanId)) byVan.set(s.vanId, [])
+    byVan.get(s.vanId).push(s)
+  }
+  const result = []
+  for (const [vanId, vanStops] of byVan) {
+    vanStops.sort((a, b) => a.loopIndex - b.loopIndex || a.stopSeq - b.stopSeq)
+    const loops = [...new Set(vanStops.map(s => s.loopIndex))]
+    const waypoints = []
+    if (hubLL) waypoints.push(hubLL)
+    for (const lp of loops) {
+      vanStops.filter(s => s.loopIndex === lp).forEach(s => waypoints.push([s.lat, s.lon]))
+      if (hubLL) waypoints.push(hubLL)
+    }
+    const r = await osrmRoute(waypoints)
+    result.push({
+      vanId,
+      geometry: r?.geometry || waypoints,
+      distanceKm: r?.distanceKm ?? null,
+      loops: loops.length,
+      stops: vanStops,
+    })
+  }
+  return result
+}
+
+export default function App() {
+  const [cityCode, setCityCode] = useState('delhi')
+  const [mode, setMode] = useState('demand') // demand | territories | routes
+  const [selectedHexId, setSelectedHexId] = useState(null)
+  const [proposal, setProposal] = useState(null)
+  const [plan, setPlan] = useState(null)
+  const [stops, setStops] = useState([])
+  const [routes, setRoutes] = useState([])
+  const [selectedVan, setSelectedVan] = useState(null)
+  const [genT, setGenT] = useState(false)
+  const [genR, setGenR] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  const city = CITIES[cityCode]
+  const cityId = city.id
+
+  const { data: tiles = [], isLoading: tilesLoading } = useQuery({
+    queryKey: ['tiles', cityCode, refreshKey],
+    queryFn: () => fetchTiles(cityCode, PLAN_DATE),
+    retry: 1,
+  })
+
+  const { data: assignments = [] } = useQuery({
+    queryKey: ['assignments', cityCode, refreshKey],
+    queryFn: () => fetchAssignments(cityCode, PLAN_DATE),
+    enabled: mode !== 'demand',
+    retry: 1,
+  })
+
+  const { data: fleet } = useQuery({
+    queryKey: ['fleet', cityId],
+    queryFn: () => getFleet(cityId),
+    retry: 1,
+  })
+
+  // Hub + airport coords — loaded for every city so the markers show in all map modes.
+  const { data: nodes = [] } = useQuery({
+    queryKey: ['nodes', cityId],
+    queryFn: () => getNodes(cityId),
+    retry: 1,
+  })
+
+  const assignmentMap = useMemo(() => {
+    const m = {}
+    if (proposal?.regions?.length) {
+      proposal.regions.forEach(r => r.hexIds?.forEach(hexId => { m[hexId] = r.daId }))
+    } else {
+      assignments.forEach(a => { m[a.hexId] = a.daId })
+    }
+    return m
+  }, [proposal, assignments])
+
+  const uniqueDaIds = useMemo(() => {
+    if (proposal?.regions?.length) return [...new Set(proposal.regions.map(r => r.daId))]
+    return [...new Set(assignments.map(a => a.daId))]
+  }, [proposal, assignments])
+
+  const vans = useMemo(() => [...new Set(stops.map(s => s.vanId))], [stops])
+  const hasTerritories = (proposal?.regions?.length || assignments.length) > 0
+
+  function handleCityChange(newCity) {
+    setCityCode(newCity)
+    setSelectedHexId(null); setProposal(null); setPlan(null)
+    setStops([]); setRoutes([]); setSelectedVan(null)
+    setMode('demand')
+    setRefreshKey(k => k + 1)
+  }
+
+  async function handleGenerateTerritories(daCount) {
+    setGenT(true)
+    try {
+      await seedDemand(cityCode, PLAN_DATE)
+      const prop = await replan(cityCode, daCount, PLAN_DATE)
+      await approveProposal(prop.id)
+      await activateAssignments(cityCode, PLAN_DATE)
+      // The flow already approved + activated it; reflect that so the panel shows LIVE, not a
+      // (redundant, re-approve → error) Approve button.
+      setProposal({ ...prop, status: 'APPROVED' })
+      setPlan(null); setStops([]); setRoutes([]); setSelectedVan(null)
+      setSelectedHexId(null)
+      setMode('territories')
+      setRefreshKey(k => k + 1)
+    } catch (e) {
+      alert('Generate territories failed: ' + e.message)
+    } finally {
+      setGenT(false)
+    }
+  }
+
+  async function handleGenerateRoutes(fleetPatch) {
+    setGenR(true)
+    try {
+      await putFleet(cityId, fleetPatch)
+      const p = await m6Replan(cityId, PLAN_DATE)
+      if (!p.vansUsed) {
+        setPlan(p); setStops([]); setRoutes([]); setMode('routes')
+        alert(`No feasible routes: ${p.notes || 'under-provisioned'}`)
+        return
+      }
+      await m6Approve(p.planId)
+      const stopsData = await getAllStops(cityId, PLAN_DATE)
+      const nodesData = nodes.length ? nodes : await getNodes(cityId)
+      const built = await buildRoutes(stopsData, nodesData)
+      setPlan(p); setStops(stopsData); setRoutes(built)
+      setSelectedVan(null); setSelectedHexId(null)
+      setMode('routes')
+    } catch (e) {
+      alert('Generate routes failed: ' + e.message)
+    } finally {
+      setGenR(false)
+    }
+  }
+
+  const MODES = [
+    { k: 'demand', label: 'Demand heatmap' },
+    { k: 'territories', label: 'DA territories' },
+    { k: 'routes', label: 'Van routes' },
+  ]
+
+  if (tilesLoading) {
+    return <div className="flex h-full items-center justify-center text-gray-500">Loading {city.label} grid…</div>
+  }
+
+  const activeHexCount = tiles.filter(t => t.active).length
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="flex items-center gap-4 px-4 py-2 bg-white border-b border-gray-200 shadow-sm z-10">
+        <div className="font-bold text-gray-800">OneDay — M6 Route Planning</div>
+        <select value={cityCode} onChange={e => handleCityChange(e.target.value)}
+          className="text-sm border border-gray-300 rounded px-2 py-1 text-gray-700 bg-white">
+          {Object.entries(CITIES).map(([code, c]) => <option key={code} value={code}>{c.label}</option>)}
+        </select>
+        <div className="text-sm text-gray-500">{activeHexCount} active hexes · {PLAN_DATE}</div>
+        <div className="flex-1" />
+        <div className="flex gap-1">
+          {MODES.map(m => (
+            <button key={m.k} onClick={() => setMode(m.k)}
+              className={`text-sm px-3 py-1 border rounded transition-colors ${
+                mode === m.k ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 hover:bg-gray-50'}`}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 relative">
+          {tiles.length > 0 && (
+            <>
+              <HexMap
+                tiles={tiles} assignmentMap={assignmentMap} mode={mode}
+                onHexClick={id => setSelectedHexId(id === selectedHexId ? null : id)}
+                selectedHexId={selectedHexId} center={city.center}
+                routes={routes} nodes={nodes} selectedVan={selectedVan} vanColor={hashDaColor}
+              />
+              {mode !== 'routes' && <Legend mode={mode} daIds={uniqueDaIds} />}
+            </>
+          )}
+        </div>
+
+        {/* Sidebar */}
+        <div className="w-80 bg-white border-l border-gray-200 flex flex-col overflow-y-auto">
+          <DaControls onGenerate={handleGenerateTerritories} loading={genT} />
+          <FleetControls fleet={fleet} onGenerate={handleGenerateRoutes}
+            loading={genR} disabled={!hasTerritories} />
+
+          {selectedHexId && (
+            <HexPanel hexId={selectedHexId} cityCode={cityCode} date={PLAN_DATE}
+              onClose={() => setSelectedHexId(null)} onStale={() => setRefreshKey(k => k + 1)} />
+          )}
+
+          {!selectedHexId && mode === 'routes' && plan && (
+            <RoutesPanel plan={plan} routes={routes}
+              selectedVan={selectedVan} onSelectVan={setSelectedVan} vanColor={hashDaColor} />
+          )}
+
+          {!selectedHexId && mode !== 'routes' && proposal && (
+            <ProposalPanel proposal={proposal} date={PLAN_DATE} />
+          )}
+
+          {!selectedHexId && !proposal && mode !== 'routes' && (
+            <div className="p-4 text-sm text-gray-400">
+              <strong className="text-gray-600">1 · Generate territories</strong> seeds demand, runs the
+              M3 nightly replan, approves + activates it. Then <strong className="text-gray-600">2 ·
+              Generate routes</strong> sets the fleet and solves the M6 van plan.
+              <br /><br />Click any hex to inspect or edit its demand.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

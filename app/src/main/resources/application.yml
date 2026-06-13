@@ -45,3 +45,35 @@ grid:
     bangalore: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
     hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
     chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+
+# M6 routing config. Same shadowing rule as grid above: the assembled app loads ITS OWN
+# application.yml, so RoutingProperties must bind here (the routing module's yaml is shadowed and
+# would otherwise leave osrm.base-url at its localhost default). The M6 solver hard-depends on
+# OSRM /table (no geometric fallback), so base-url must point at the real engine.
+# Override with ROUTING_OSRM_BASEURL; default is the shared Hetzner OSRM (full India coverage).
+routing:
+  osrm:
+    base-url: ${ROUTING_OSRM_BASEURL:http://46.225.155.64:5000}
+  # Demo: small node sets (≤ a few dozen meeting vertices) solve in <1s, so a short limit keeps the
+  # interactive "set vans → generate routes" loop responsive. recommendVanCount runs several solves
+  # back-to-back, so a 45s limit per solve made a single replan take minutes.
+  solver:
+    time-limit-seconds: 8
+  cycle:
+    min-minutes: 120
+    max-minutes: 180
+  shuttle:
+    cadence-minutes: 30
+  window:
+    start-hour: 7
+    end-hour: 20
+  dwell-minutes: 5
+  max-da-to-vertex-minutes: 12
+  late-threshold-minutes: 10
+  cost-per-km: 15.0
+  cities:
+    delhi: f47ac10b-58cc-4372-a567-0e02b2c3d479
+    mumbai: 550e8400-e29b-41d4-a716-446655440000
+    bangalore: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+    hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+    chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8

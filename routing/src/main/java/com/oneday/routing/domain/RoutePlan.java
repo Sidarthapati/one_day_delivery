@@ -6,7 +6,6 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -23,8 +22,10 @@ import java.util.UUID;
 @AllArgsConstructor
 public class RoutePlan {
 
+    // Application-assigned: the planning/override/fallback paths set the id up front so the assembled
+    // route_plan_stop / da_cron_schedule children can reference it before persist. A DB-side generator
+    // here would overwrite that id and orphan the children (FK violation), so the id is never generated.
     @Id
-    @UuidGenerator
     @Column(updatable = false, nullable = false)
     private UUID id;
 
