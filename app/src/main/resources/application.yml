@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday?reWriteBatchedInserts=true}
     username: ${SPRING_DATASOURCE_USERNAME:oneday}
     password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: org.postgresql.Driver
@@ -8,6 +8,14 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          # Batch multi-row inserts/updates (e.g. bulk cart upload) into single round trips.
+          # IDs are app-side GenerationType.UUID, so batching is not disabled by IDENTITY.
+          batch_size: 100
+        order_inserts: true
+        order_updates: true
   flyway:
     enabled: true
     # Single recursive location catches auth/ and orders/ subfolders AND grid's V3_x +

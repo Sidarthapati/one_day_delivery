@@ -41,9 +41,10 @@ class AuthE2eTest extends AuthE2eSupport {
     @Test
     void register_thenLogin_succeedsAsC2cCustomer() throws Exception {
         String email = uniqueEmail();
-        mvc.perform(asJson(post("/auth/register"), new RegisterRequest(email, PW, "New Customer")))
+        mvc.perform(asJson(post("/auth/register"), new RegisterRequest(email, PW, "New Customer", "+919000000001")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.role").value("C2C_CUSTOMER"))
+                .andExpect(jsonPath("$.phone").value("+919000000001"))
                 .andExpect(jsonPath("$.token").isNotEmpty());
 
         mvc.perform(asJson(post("/auth/login"), new LoginRequest(email, PW)))
@@ -54,9 +55,9 @@ class AuthE2eTest extends AuthE2eSupport {
     @Test
     void register_duplicateEmail_returns409() throws Exception {
         String email = uniqueEmail();
-        mvc.perform(asJson(post("/auth/register"), new RegisterRequest(email, PW, "First")))
+        mvc.perform(asJson(post("/auth/register"), new RegisterRequest(email, PW, "First", "+919000000001")))
                 .andExpect(status().isOk());
-        mvc.perform(asJson(post("/auth/register"), new RegisterRequest(email, PW, "Second")))
+        mvc.perform(asJson(post("/auth/register"), new RegisterRequest(email, PW, "Second", "+919000000002")))
                 .andExpect(status().isConflict());
     }
 

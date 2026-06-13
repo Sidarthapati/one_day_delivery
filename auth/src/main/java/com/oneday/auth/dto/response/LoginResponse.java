@@ -8,5 +8,6 @@ public record LoginResponse(
         String role,
         String cityId,
         String name,
+        String phone,
         boolean mustChangePassword
 ) {}
