@@ -4,10 +4,35 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:oneday}
     password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # SELF-HEAL after the laptop sleeps / network drops, which sever the pooled TCP connections to
+      # the remote DB. The warm-pool settings (minimum-idle / keepalive-time / max-lifetime) stay in
+      # .env and are untouched — healthy calls still reuse a warm connection with no per-call setup
+      # cost. This only makes a DEAD connection fail FAST on borrow instead of hanging on the OS TCP
+      # timeout, so Hikari discards it and opens a fresh one rather than wedging the whole pool for
+      # 20s (the connection-timeout) until a manual restart. The driver-level backstop (socketTimeout)
+      # is a JDBC URL param in .env — it can't be set here, because data-source-properties is a Map
+      # and Spring lowercases the key to "sockettimeout" (the PG driver needs camelCase) AND applies
+      # it after the pool is sealed. Same camelCase-in-a-Map gotcha as hibernate.jdbc.batch_size.
+      validation-timeout: 3000          # cap the on-borrow isValid() check (must be < connection-timeout=20000)
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
+    properties:
+      hibernate:
+        # MUST live here, not in .env: spring.jpa.properties is a Map, and an env var like
+        # SPRING_JPA_PROPERTIES_HIBERNATE_JDBC_BATCH_SIZE binds the map key as
+        # "hibernate.jdbc.batch.size" (every _ → .), which Hibernate ignores — it wants the
+        # literal "hibernate.jdbc.batch_size". YAML preserves the underscore, so batching
+        # actually engages. Without this, seeding 40k+ grid rows over the WAN flushes one
+        # INSERT per row (an hour+); with it + reWriteBatchedInserts (in the JDBC URL) it's
+        # a handful of multi-row round-trips.
+        jdbc:
+          batch_size: 2000
+        order_inserts: true
+        order_updates: true
+        batch_versioned_data: true
   flyway:
     enabled: true
     # Single recursive location catches auth/ and orders/ subfolders AND grid's V3_x +
@@ -67,10 +92,12 @@ routing:
   window:
     start-hour: 7
     end-hour: 20
-  dwell-minutes: 5
+  dwell-minutes: 10            # per-stop DA handoff (was 5)
   max-da-to-vertex-minutes: 12
   late-threshold-minutes: 10
   cost-per-km: 15.0
+  congestion-factor: 1.6       # scale OSRM free-flow times → realistic urban speed (Q5)
+  hub-turnaround-minutes: 15   # unload + reload at the hub on each loop return
   cities:
     delhi: f47ac10b-58cc-4372-a567-0e02b2c3d479
     mumbai: 550e8400-e29b-41d4-a716-446655440000

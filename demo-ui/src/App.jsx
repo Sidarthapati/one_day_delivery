@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import HexMap from './components/HexMap.jsx'
 import Legend from './components/Legend.jsx'
 import DaControls from './components/DaControls.jsx'
+import SeedControls from './components/SeedControls.jsx'
 import FleetControls from './components/FleetControls.jsx'
 import HexPanel from './components/HexPanel.jsx'
 import ProposalPanel from './components/ProposalPanel.jsx'
@@ -10,10 +11,10 @@ import RoutesPanel from './components/RoutesPanel.jsx'
 import { hashDaColor } from './utils/daColors.js'
 import { CITIES, PLAN_DATE } from './cities.js'
 import {
-  fetchTiles, fetchAssignments, seedDemand, replan, approveProposal, activateAssignments,
+  fetchTiles, fetchAssignments, seedDemand, demandCount, replan, approveProposal, activateAssignments,
 } from './api/gridApi.js'
 import {
-  getFleet, putFleet, getNodes, m6Replan, m6Approve, getAllStops, osrmRoute,
+  getFleet, putFleet, getNodes, getPlan, m6Replan, m6Approve, getAllStops, osrmRoute,
 } from './api/routingApi.js'
 
 // Build per-van route geometry. Every loop visits the SAME vertices in the SAME order (only the
@@ -94,6 +95,8 @@ export default function App() {
   function selectVan(vanId) { setSelectedVan(vanId); setSelectedLoop(0) }
   const [genT, setGenT] = useState(false)
   const [genR, setGenR] = useState(false)
+  const [seeding, setSeeding] = useState(false)
+  const [lastSeed, setLastSeed] = useState(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
   const city = CITIES[cityCode]
@@ -125,6 +128,27 @@ export default function App() {
     retry: 1,
   })
 
+  // Restore a previously-saved route plan from the DB on load/city-change (404 → no plan yet).
+  const { data: savedPlan = null } = useQuery({
+    queryKey: ['savedPlan', cityId, refreshKey],
+    queryFn: async () => { try { return await getPlan(cityId, PLAN_DATE) } catch { return null } },
+    retry: 0,
+  })
+
+  // When a saved plan + nodes are available, rebuild the route geometry so a refresh shows the routes.
+  useEffect(() => {
+    if (!savedPlan || !nodes.length || plan) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const stopsData = await getAllStops(cityId, PLAN_DATE)
+        const built = await buildRoutes(stopsData, nodes)
+        if (!cancelled) { setPlan(savedPlan); setRoutes(built) }
+      } catch { /* no stops / plan gone — ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [savedPlan, nodes, cityId, plan])
+
   const assignmentMap = useMemo(() => {
     const m = {}
     if (proposal?.regions?.length) {
@@ -151,10 +175,30 @@ export default function App() {
     setRefreshKey(k => k + 1)
   }
 
+  async function handleSeedDemand(opts) {
+    setSeeding(true)
+    try {
+      const res = await seedDemand(cityCode, PLAN_DATE, opts)
+      setLastSeed(res.seedUsed)
+      setMode('demand')
+      setRefreshKey(k => k + 1)
+    } catch (e) {
+      alert('Seed demand failed: ' + e.message)
+    } finally {
+      setSeeding(false)
+    }
+  }
+
   async function handleGenerateTerritories(daCount) {
     setGenT(true)
     try {
-      await seedDemand(cityCode, PLAN_DATE)
+      // Reuse the existing demand snapshot — seeding is a separate, explicit step now. Hard-fail
+      // if the city/date has no demand rather than replanning over an empty surface.
+      const { count } = await demandCount(cityCode, PLAN_DATE)
+      if (!count) {
+        alert('No demand seeded for this city/date yet — click "Seed demand" first.')
+        return
+      }
       const prop = await replan(cityCode, daCount, PLAN_DATE)
       await approveProposal(prop.id)
       await activateAssignments(cityCode, PLAN_DATE)
@@ -248,6 +292,7 @@ export default function App() {
 
         {/* Sidebar */}
         <div className="w-80 bg-white border-l border-gray-200 flex flex-col overflow-y-auto">
+          <SeedControls onSeed={handleSeedDemand} loading={seeding} lastSeed={lastSeed} />
           <DaControls onGenerate={handleGenerateTerritories} loading={genT} />
           <FleetControls fleet={fleet} onGenerate={handleGenerateRoutes}
             loading={genR} disabled={!hasTerritories} />
@@ -269,9 +314,12 @@ export default function App() {
 
           {!selectedHexId && !proposal && mode !== 'routes' && (
             <div className="p-4 text-sm text-gray-400">
-              <strong className="text-gray-600">1 · Generate territories</strong> seeds demand, runs the
-              M3 nightly replan, approves + activates it. Then <strong className="text-gray-600">2 ·
-              Generate routes</strong> sets the fleet and solves the M6 van plan.
+              <strong className="text-gray-600">1 · Seed demand</strong> once (pick a seed to make it
+              reproducible). Then <strong className="text-gray-600">2 · Generate territories</strong> runs
+              the M3 nightly replan over that demand, approves + activates it. Then
+              <strong className="text-gray-600"> 3 · Generate routes</strong> sets the fleet and solves the
+              M6 van plan. Territory/route runs reuse the seeded demand — re-seed only when you want a new
+              demand surface.
               <br /><br />Click any hex to inspect or edit its demand.
             </div>
           )}

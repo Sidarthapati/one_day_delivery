@@ -183,7 +183,9 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
     private List<RoutingNode> buildNodes(CityLogisticsNode hub, MeetingPlan plan,
                                          Map<UUID, TerritoryDemand> demandByDa, int nLoops) {
         List<RoutingNode> nodes = new ArrayList<>(plan.vertices().size() + 1);
-        nodes.add(RoutingNode.hub(hub.getId(), hub.getLat(), hub.getLon()));
+        // Hub carries the per-loop turnaround (unload + reload) so it counts against the cycle.
+        nodes.add(RoutingNode.hub(hub.getId(), hub.getLat(), hub.getLon(),
+                properties.getHubTurnaroundMinutes() * 60));
         int dwellSeconds = properties.getDwellMinutes() * 60;
         int idx = 1;
         for (MeetingVertex vertex : plan.vertices()) {

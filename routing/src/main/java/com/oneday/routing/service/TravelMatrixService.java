@@ -1,5 +1,6 @@
 package com.oneday.routing.service;
 
+import com.oneday.routing.config.RoutingProperties;
 import com.oneday.routing.service.model.RoutingNode;
 import com.oneday.routing.service.model.TravelMatrix;
 import com.oneday.routing.service.osrm.RoutingOsrmClient;
@@ -21,9 +22,11 @@ public class TravelMatrixService {
     private static final long UNREACHABLE_PENALTY_SECONDS = 100_000L;
 
     private final RoutingOsrmClient osrmClient;
+    private final RoutingProperties properties;
 
-    TravelMatrixService(RoutingOsrmClient osrmClient) {
+    TravelMatrixService(RoutingOsrmClient osrmClient, RoutingProperties properties) {
         this.osrmClient = osrmClient;
+        this.properties = properties;
     }
 
     /**
@@ -38,14 +41,16 @@ public class TravelMatrixService {
         }
 
         double[][] durations = osrmClient.getTable(latLons);
+        double congestion = properties.getCongestionFactor() > 0 ? properties.getCongestionFactor() : 1.0;
         long[][] seconds = new long[n][n];
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
                 double d = (durations.length > i && durations[i] != null && durations[i].length > j)
                         ? durations[i][j] : Double.NaN;
+                // OSRM is free-flow; scale up to approximate real congestion before the solver sees it.
                 seconds[i][j] = (i == j) ? 0L
                         : (Double.isNaN(d) || d < 0) ? UNREACHABLE_PENALTY_SECONDS
-                        : Math.round(d);
+                        : Math.round(d * congestion);
             }
         }
         return new TravelMatrix(nodes, seconds);

@@ -21,6 +21,11 @@ public record RoutingNode(
         int serviceTimeSeconds
 ) {
     public static RoutingNode hub(UUID hubId, double lat, double lon) {
-        return new RoutingNode(0, StopNodeKind.HUB, hubId, lat, lon, 0, 0, 0);
+        return hub(hubId, lat, lon, 0);
+    }
+
+    /** Hub with a turnaround service time (unload + reload) charged on each loop return. */
+    public static RoutingNode hub(UUID hubId, double lat, double lon, int turnaroundSeconds) {
+        return new RoutingNode(0, StopNodeKind.HUB, hubId, lat, lon, 0, 0, turnaroundSeconds);
     }
 }

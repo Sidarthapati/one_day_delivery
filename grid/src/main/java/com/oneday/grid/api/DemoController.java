@@ -21,6 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -146,7 +147,26 @@ public class DemoController {
         return new ActivateResult(approved.size());
     }
 
-    public record SeedResult(int hexesSeeded, double minMinutes, double maxMinutes) {}
+    public record SeedResult(int hexesSeeded, double minMinutes, double maxMinutes, long seedUsed) {}
+
+    public record DemandCountResult(int count) {}
+
+    /**
+     * How many demand rows a city/date already has. The UI calls this before generating territories
+     * so it can hard-fail ("seed demand first") instead of replanning over an empty demand surface —
+     * demand seeding is now an explicit, separate step, never folded into territory generation.
+     */
+    @GetMapping("/demand-count")
+    public DemandCountResult demandCount(
+            @RequestParam String cityCode,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+
+        UUID cityId = gridService.resolveCityId(cityCode);
+        Grid grid = gridService.getGrid(cityId);
+        LocalDate today = date != null ? date : LocalDate.now();
+        List<UUID> hexIds = hexRepository.findByH3GridId(grid.getId()).stream().map(Hex::getId).toList();
+        return new DemandCountResult(demandSnapshotRepository.countByHexIdInAndSnapshotDate(hexIds, today));
+    }
 
     @PostMapping("/seed")
     @Transactional
@@ -154,6 +174,7 @@ public class DemoController {
             @RequestParam String cityCode,
             @RequestParam(defaultValue = "30") double minMinutes,
             @RequestParam(defaultValue = "150") double maxMinutes,
+            @RequestParam(required = false) Long seed,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 
         UUID cityId = gridService.resolveCityId(cityCode);
@@ -165,7 +186,10 @@ public class DemoController {
         }
 
         LocalDate today = date != null ? date : LocalDate.now();
-        ThreadLocalRandom rng = ThreadLocalRandom.current();
+        // Seeded RNG so a demand surface is reproducible: the UI pins (and can re-randomize) the seed,
+        // and territory/route runs reuse this snapshot rather than re-rolling demand under each plan.
+        long seedUsed = seed != null ? seed : ThreadLocalRandom.current().nextLong();
+        Random rng = new Random(seedUsed);
 
         List<UUID> hexIds = hexes.stream().map(Hex::getId).toList();
         demandSnapshotRepository.deleteByHexIdInAndSnapshotDate(hexIds, today);
@@ -196,6 +220,6 @@ public class DemoController {
         }
         demandSnapshotRepository.saveAll(snapshots);
 
-        return new SeedResult(snapshots.size(), minMinutes, maxMinutes);
+        return new SeedResult(snapshots.size(), minMinutes, maxMinutes, seedUsed);
     }
 }

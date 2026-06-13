@@ -410,17 +410,18 @@ class ProposalServiceImpl implements ProposalService {
 
     private ProposalResponse toResponse(AssignmentProposal proposal) {
         List<AssignmentProposalRegion> regions = regionRepository.findByProposalId(proposal.getId());
+        // Fetch the proposal's assignments ONCE and group by DA, instead of re-querying all ~3.5k
+        // rows per region. Over a remote DB that loop-invariant query was K (=DA count) sequential
+        // round-trips — ~60s for a 200-DA proposal; grouping in memory makes it a single query.
+        Map<UUID, List<UUID>> hexIdsByDa = assignmentRepository.findByProposalId(proposal.getId()).stream()
+                .filter(a -> a.getStatus() != AssignmentStatus.SUPERSEDED)
+                .collect(Collectors.groupingBy(DaHexAssignment::getDaId,
+                        Collectors.mapping(DaHexAssignment::getHexId, Collectors.toList())));
         List<RegionResponse> regionResponses = regions.stream()
-                .map(r -> {
-                    List<UUID> hexIds = assignmentRepository.findByProposalId(proposal.getId()).stream()
-                            .filter(a -> a.getDaId().equals(r.getDaId())
-                                      && a.getStatus() != AssignmentStatus.SUPERSEDED)
-                            .map(DaHexAssignment::getHexId)
-                            .toList();
-                    return new RegionResponse(r.getId(), r.getDaId(), r.getNDasRequired(),
-                            r.getEstimatedDemandMin(), r.getEstimatedUtilPct(),
-                            r.isHasBootstrappedTiles(), hexIds);
-                })
+                .map(r -> new RegionResponse(r.getId(), r.getDaId(), r.getNDasRequired(),
+                        r.getEstimatedDemandMin(), r.getEstimatedUtilPct(),
+                        r.isHasBootstrappedTiles(),
+                        hexIdsByDa.getOrDefault(r.getDaId(), List.of())))
                 .toList();
 
         return new ProposalResponse(

@@ -44,10 +44,22 @@ export const fetchProposals = (cityCode, date) =>
 export const fetchVertices = (cityCode) =>
   req(`/api/grid/${cityCode}/vertices`)
 
-// ── M3 lifecycle (territories) ───────────────────────────────────────────────
-export const seedDemand = (cityCode, date, minMinutes = 4, maxMinutes = 10) =>
-  req(`/api/demo/seed?cityCode=${cityCode}&minMinutes=${minMinutes}&maxMinutes=${maxMinutes}&date=${date}`,
+// ── Demand seeding (explicit, separate step) ─────────────────────────────────
+// Seeding is its own action now — territory/route generation REUSES whatever snapshot exists
+// rather than re-rolling demand each run. `seed` makes the surface reproducible; omit it to let
+// the backend pick (and return) a random one.
+export const seedDemand = (cityCode, date, { minMinutes = 4, maxMinutes = 10, seed } = {}) => {
+  const seedParam = seed != null && seed !== '' ? `&seed=${seed}` : ''
+  return req(
+    `/api/demo/seed?cityCode=${cityCode}&minMinutes=${minMinutes}&maxMinutes=${maxMinutes}${seedParam}&date=${date}`,
     { method: 'POST' })
+}
+
+// How many demand rows already exist for a city/date — used to hard-fail territory gen if unseeded.
+export const demandCount = (cityCode, date) =>
+  req(`/api/demo/demand-count?cityCode=${cityCode}&date=${date}`)
+
+// ── M3 lifecycle (territories) ───────────────────────────────────────────────
 
 export const replan = (cityCode, daCount, date) => {
   const daIds = Array.from({ length: daCount }, () => crypto.randomUUID())

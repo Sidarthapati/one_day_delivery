@@ -38,6 +38,20 @@ public class RoutingProperties {
     /** Flat per-km van cost until M2's CostFloorPort lands (M6-D-010). INR. */
     private double costPerKm = 15.0;
 
+    /**
+     * Multiplier applied to OSRM free-flow travel times to approximate real urban congestion
+     * (Q5 calibration). 1.0 = raw OSRM (optimistic). Demo uses ~1.6 so loop times — and therefore
+     * the fleet/loop counts — are realistic rather than highway-speed.
+     */
+    private double congestionFactor = 1.0;
+
+    /**
+     * Minutes a van spends at the hub on each loop return: unload collected parcels + load the next
+     * loop's deliveries. Added as the hub node's service time so it counts against the cycle and the
+     * loops-per-day sizing. 0 = not modelled (old behaviour).
+     */
+    private int hubTurnaroundMinutes = 0;
+
     // Maps cityCode (e.g. "delhi") → fixed cityId UUID, shared with M3's grid.cities.
     private Map<String, UUID> cities = new HashMap<>();
 
