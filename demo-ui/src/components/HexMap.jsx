@@ -120,15 +120,17 @@ export default function HexMap({
         )
       })}
 
-      {/* Numbered stop markers (per van, in visit order) */}
+      {/* One numbered marker per meeting vertex (visit order within a loop). The same vertex is
+          revisited every loop, so the tooltip lists all of the day's visit times at that point. */}
       {routesMode && routes.map(r => (
-        (selectedVan && r.vanId !== selectedVan) ? null : r.stops.map((s, i) => (
-          <Marker key={s.stopId} position={[s.lat, s.lon]} icon={stopIcon(vanColor(r.vanId), i + 1)}>
+        (selectedVan && r.vanId !== selectedVan) ? null : (r.markers || []).map(m => (
+          <Marker key={m.stopId} position={[m.lat, m.lon]} icon={stopIcon(vanColor(r.vanId), m.seq)}>
             <Tooltip>
               <div style={{ fontSize: 12 }}>
-                <strong>Stop {i + 1}</strong> · loop {s.loopIndex}<br />
-                arrive {s.plannedArrival} · depart {s.plannedDeparture}<br />
-                deliver {s.deliverQty} · collect {s.collectQty} · load {s.loadAfter}
+                <strong>Stop {m.seq}</strong> · {m.visits.length} visit{m.visits.length > 1 ? 's' : ''}/day<br />
+                {m.visits.map(v => (
+                  <span key={v.loop}>loop {v.loop + 1}: {v.arr}–{v.dep} · ▼{v.deliver} ▲{v.collect}<br /></span>
+                ))}
               </div>
             </Tooltip>
           </Marker>

@@ -16,8 +16,11 @@ import {
   getFleet, putFleet, getNodes, m6Replan, m6Approve, getAllStops, osrmRoute,
 } from './api/routingApi.js'
 
-// Build per-van polylines: hub → loop stops → hub (per loop), road-snapped via OSRM (straight
-// fallback). Returns [{ vanId, geometry:[[lat,lon]…], stops:[…] }].
+// Build per-van route geometry. Every loop visits the SAME vertices in the SAME order (only the
+// times differ), so we road-snap ONE representative loop (hub → vertices → hub) via OSRM and report
+// per-loop vs whole-day distance. Returns one entry per van:
+//   { vanId, geometry, markers[{seq,lat,lon,visits[]}], stopsByLoop[][], loopIndices[],
+//     loopCount, vertexCount, perLoopDistanceKm, totalDistanceKm }
 async function buildRoutes(stops, nodes) {
   const hub = nodes.find(n => n.kind === 'HUB')
   const hubLL = hub ? [hub.lat, hub.lon] : null
@@ -26,23 +29,51 @@ async function buildRoutes(stops, nodes) {
     if (!byVan.has(s.vanId)) byVan.set(s.vanId, [])
     byVan.get(s.vanId).push(s)
   }
+
   const result = []
   for (const [vanId, vanStops] of byVan) {
     vanStops.sort((a, b) => a.loopIndex - b.loopIndex || a.stopSeq - b.stopSeq)
-    const loops = [...new Set(vanStops.map(s => s.loopIndex))]
+    const loopIndices = [...new Set(vanStops.map(s => s.loopIndex))].sort((a, b) => a - b)
+    const loopCount = loopIndices.length
+
+    // Representative loop = the first loop, ordered by stop sequence (one entry per vertex).
+    const repStops = vanStops.filter(s => s.loopIndex === loopIndices[0]).sort((a, b) => a.stopSeq - b.stopSeq)
+    const vertexCount = repStops.length
+
+    // All visit times for each vertex, grouped by its sequence position (same across loops).
+    const visitsBySeq = {}
+    for (const s of vanStops) {
+      (visitsBySeq[s.stopSeq] ||= []).push({
+        loop: s.loopIndex, arr: s.plannedArrival, dep: s.plannedDeparture,
+        deliver: s.deliverQty, collect: s.collectQty, load: s.loadAfter,
+      })
+    }
+    const markers = repStops.map(s => ({
+      stopId: s.stopId, seq: s.stopSeq, lat: s.lat, lon: s.lon, visits: visitsBySeq[s.stopSeq] || [],
+    }))
+
+    // Stops grouped per loop (each already ordered) for the timeline.
+    const stopsByLoop = loopIndices.map(li =>
+      vanStops.filter(s => s.loopIndex === li).sort((a, b) => a.stopSeq - b.stopSeq))
+
+    // One-loop road geometry: hub → vertices → hub.
     const waypoints = []
     if (hubLL) waypoints.push(hubLL)
-    for (const lp of loops) {
-      vanStops.filter(s => s.loopIndex === lp).forEach(s => waypoints.push([s.lat, s.lon]))
-      if (hubLL) waypoints.push(hubLL)
-    }
+    repStops.forEach(s => waypoints.push([s.lat, s.lon]))
+    if (hubLL) waypoints.push(hubLL)
     const r = await osrmRoute(waypoints)
+    const perLoopDistanceKm = r?.distanceKm ?? null
+
     result.push({
       vanId,
       geometry: r?.geometry || waypoints,
-      distanceKm: r?.distanceKm ?? null,
-      loops: loops.length,
-      stops: vanStops,
+      markers,
+      stopsByLoop,
+      loopIndices,
+      loopCount,
+      vertexCount,
+      perLoopDistanceKm,
+      totalDistanceKm: perLoopDistanceKm != null ? perLoopDistanceKm * loopCount : null,
     })
   }
   return result
@@ -57,6 +88,10 @@ export default function App() {
   const [stops, setStops] = useState([])
   const [routes, setRoutes] = useState([])
   const [selectedVan, setSelectedVan] = useState(null)
+  const [selectedLoop, setSelectedLoop] = useState(0)
+
+  // Selecting a van resets the loop view to the first loop.
+  function selectVan(vanId) { setSelectedVan(vanId); setSelectedLoop(0) }
   const [genT, setGenT] = useState(false)
   const [genR, setGenR] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -224,7 +259,8 @@ export default function App() {
 
           {!selectedHexId && mode === 'routes' && plan && (
             <RoutesPanel plan={plan} routes={routes}
-              selectedVan={selectedVan} onSelectVan={setSelectedVan} vanColor={hashDaColor} />
+              selectedVan={selectedVan} onSelectVan={selectVan}
+              selectedLoop={selectedLoop} onSelectLoop={setSelectedLoop} vanColor={hashDaColor} />
           )}
 
           {!selectedHexId && mode !== 'routes' && proposal && (
