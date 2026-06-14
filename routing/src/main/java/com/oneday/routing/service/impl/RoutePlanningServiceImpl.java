@@ -138,17 +138,20 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
             nLoops = newNLoops;
         }
 
-        Integer recommended = recommendVanCount(nodes, seconds, fleet);
-        ProvisioningFlag flag = (recommended != null && fleet.getVansAvailable() < recommended)
+        VanRecommendation rec = recommendVanCount(nodes, seconds, fleet);
+        Integer recommended = rec.count();
+        ProvisioningFlag flag = (fleet.getVansAvailable() < recommended)
                 ? ProvisioningFlag.UNDER_PROVISIONED : ProvisioningFlag.OK;
         if (flag == ProvisioningFlag.UNDER_PROVISIONED) {
-            log.warn("City {} under-provisioned for {}: {} vans available, {} recommended",
-                    cityId, date, fleet.getVansAvailable(), recommended);
+            log.warn("City {} under-provisioned for {}: {} vans available, {} recommended{}",
+                    cityId, date, fleet.getVansAvailable(), recommended,
+                    rec.note() != null ? " — " + rec.note() : "");
         }
 
         if (constrained == null || !constrained.feasible() || constrained.routes().isEmpty()) {
             String note = "No feasible routing with " + fleet.getVansAvailable() + " vans"
-                    + (recommended != null ? " (recommended " + recommended + ")" : "");
+                    + " (recommended " + recommended + ")"
+                    + (rec.note() != null ? "; " + rec.note() : "");
             RoutingSolverType engine = constrained != null ? constrained.solverType() : RoutingSolverType.OR_TOOLS;
             return persistPlan(cityId, date, engine, 0, 0, 0, recommended,
                     ProvisioningFlag.UNDER_PROVISIONED, note, List.of(), List.of());
@@ -162,22 +165,55 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
 
         int vansUsed = constrained.routes().size();
         return persistPlanWithId(planId, cityId, date, constrained.solverType(),
-                vansUsed, assembly.nLoops(), assembly.realisedCycleMinutes(), recommended, flag, null,
+                vansUsed, assembly.nLoops(), assembly.realisedCycleMinutes(), recommended, flag, rec.note(),
                 assembly.stops(), assembly.crons());
     }
 
+    /** Recommended fleet size; {@code note} is set only when the figure is a structural fallback. */
+    private record VanRecommendation(int count, String note) {}
+
     /** Min vans to cover all vertices within capacity AND the 2–3h cycle target (M6-D-005). */
-    private Integer recommendVanCount(List<RoutingNode> nodes, long[][] seconds, CityFleetConfig fleet) {
-        if (nodes == null || nodes.size() <= 1) return 0;
+    private VanRecommendation recommendVanCount(List<RoutingNode> nodes, long[][] seconds, CityFleetConfig fleet) {
+        if (nodes == null || nodes.size() <= 1) return new VanRecommendation(0, null);
         int vertexCount = nodes.size() - 1;
-        int totalDeliver = nodes.stream().mapToInt(RoutingNode::deliverQty).sum();
-        int lowerBound = Math.max(1, (int) Math.ceil((double) totalDeliver / fleet.getCapacityPackets()));
-        TravelMatrix matrix = new TravelMatrix(nodes, seconds);
-        for (int k = lowerBound; k <= vertexCount; k++) {
-            SolveResult r = solver.solve(matrix, k, fleet.getCapacityPackets(), fleet.getCycleTimeMaxMinutes());
-            if (r.feasible() && !r.routes().isEmpty()) return k;
+        int capacity = fleet.getCapacityPackets();
+        long cycleMaxSeconds = (long) fleet.getCycleTimeMaxMinutes() * 60;
+
+        // (A) A vertex no fleet size can ever serve within the cycle — bail before the scan, with why.
+        long hubTurnaroundSeconds = nodes.get(0).serviceTimeSeconds();
+        for (int i = 1; i < nodes.size(); i++) {
+            RoutingNode v = nodes.get(i);
+            int peak = Math.max(v.deliverQty(), v.collectQty());
+            if (peak > capacity) {
+                return new VanRecommendation(vertexCount, "vertex " + v.refId() + " needs " + peak
+                        + " packets/loop > van capacity " + capacity
+                        + " — split the territory or raise capacity");
+            }
+            long soloSpanSeconds = seconds[0][i] + v.serviceTimeSeconds() + seconds[i][0] + hubTurnaroundSeconds;
+            if (soloSpanSeconds > cycleMaxSeconds) {
+                return new VanRecommendation(vertexCount, "vertex " + v.refId() + " solo round-trip "
+                        + (soloSpanSeconds / 60) + "min exceeds the " + fleet.getCycleTimeMaxMinutes()
+                        + "min cycle target — relax the cycle or move the vertex");
+            }
         }
-        return vertexCount; // even one-van-per-vertex couldn't hold the cycle target — best effort
+
+        // (B + C) Binary-search the min feasible fleet (feasibility is monotonic in van count), using
+        // the fast probe per candidate instead of a full solve.
+        int totalDeliver = nodes.stream().mapToInt(RoutingNode::deliverQty).sum();
+        int lowerBound = Math.max(1, (int) Math.ceil((double) totalDeliver / capacity));
+        TravelMatrix matrix = new TravelMatrix(nodes, seconds);
+        int lo = lowerBound, hi = vertexCount, best = -1;
+        while (lo <= hi) {
+            int mid = lo + (hi - lo) / 2;
+            SolveResult r = solver.probe(matrix, mid, capacity, fleet.getCycleTimeMaxMinutes());
+            if (r.feasible() && !r.routes().isEmpty()) {
+                best = mid;
+                hi = mid - 1;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        return new VanRecommendation(best > 0 ? best : vertexCount, null);
     }
 
     private List<RoutingNode> buildNodes(CityLogisticsNode hub, MeetingPlan plan,

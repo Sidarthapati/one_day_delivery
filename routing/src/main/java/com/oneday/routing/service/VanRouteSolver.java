@@ -18,4 +18,13 @@ public interface VanRouteSolver {
      * {@code vansAvailable} vans.
      */
     SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes);
+
+    /**
+     * Fast feasibility-only variant of {@link #solve} for fleet sizing: may stop at the first feasible
+     * solution rather than optimise, so {@code recommendVanCount} can binary-search the minimum fleet
+     * cheaply. Default delegates to {@link #solve}; OR-Tools overrides it with a first-solution config.
+     */
+    default SolveResult probe(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
+        return solve(matrix, vansAvailable, capacityPackets, cycleMaxMinutes);
+    }
 }

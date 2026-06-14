@@ -59,6 +59,16 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
 
     @Override
     public SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, false);
+    }
+
+    @Override
+    public SolveResult probe(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, true);
+    }
+
+    private SolveResult solveInternal(TravelMatrix matrix, int vansAvailable, int capacityPackets,
+                                      int cycleMaxMinutes, boolean feasibilityOnly) {
         ensureNativeLoaded();
 
         int n = matrix.size();
@@ -89,7 +99,9 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
         // over the available vans (minimise makespan) instead of consolidating onto the fewest vans
         // — without this, plentiful capacity + a loose cycle bound let one van swallow the whole city.
         RoutingDimension timeDim = routing.getDimensionOrDie("Time");
-        timeDim.setGlobalSpanCostCoefficient(100);
+        if (!feasibilityOnly) {
+            timeDim.setGlobalSpanCostCoefficient(100); // balance makespan; irrelevant to a yes/no probe
+        }
 
         // "Delivered": per-vehicle end cumul = total deliveries it carries.
         int deliveredCb = routing.registerUnaryTransitCallback((long fromIndex) ->
@@ -113,16 +125,25 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
             solver.addConstraint(solver.makeEquality(loadStart, deliveredEnd));
         }
 
-        RoutingSearchParameters params = main.defaultRoutingSearchParameters().toBuilder()
+        RoutingSearchParameters.Builder paramsBuilder = main.defaultRoutingSearchParameters().toBuilder()
                 .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
-                .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
-                .setTimeLimit(Duration.newBuilder().setSeconds(properties.getSolver().getTimeLimitSeconds()).build())
-                .build();
+                .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH);
+        if (feasibilityOnly) {
+            // Stop at the first feasible solution instead of optimising to the full time limit.
+            paramsBuilder.setSolutionLimit(1)
+                    .setTimeLimit(Duration.newBuilder()
+                            .setSeconds(properties.getSolver().getProbeTimeLimitSeconds()).build());
+        } else {
+            paramsBuilder.setTimeLimit(Duration.newBuilder()
+                    .setSeconds(properties.getSolver().getTimeLimitSeconds()).build());
+        }
+        RoutingSearchParameters params = paramsBuilder.build();
 
         Assignment solution = routing.solveWithParameters(params);
         if (solution == null) {
-            log.info("OR-Tools found no feasible routing for {} vans, capacity {}, cycleMax {}min over {} nodes",
-                    vansAvailable, capacityPackets, cycleMaxMinutes, n);
+            String msg = "OR-Tools found no feasible routing for {} vans, capacity {}, cycleMax {}min over {} nodes";
+            if (feasibilityOnly) log.debug(msg, vansAvailable, capacityPackets, cycleMaxMinutes, n);
+            else log.info(msg, vansAvailable, capacityPackets, cycleMaxMinutes, n);
             return new SolveResult(List.of(), RoutingSolverType.OR_TOOLS, false);
         }
 

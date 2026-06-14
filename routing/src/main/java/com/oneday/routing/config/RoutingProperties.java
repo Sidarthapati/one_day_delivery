@@ -64,6 +64,9 @@ public class RoutingProperties {
     @Data
     public static class Solver {
         private int timeLimitSeconds = 45;
+
+        /** Backstop budget per feasibility probe (fleet sizing); short since it stops at first feasible. */
+        private int probeTimeLimitSeconds = 3;
     }
 
     @Data

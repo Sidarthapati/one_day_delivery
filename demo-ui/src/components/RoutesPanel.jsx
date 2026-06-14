@@ -5,6 +5,9 @@ export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, se
   if (!plan) return null
 
   const flagColor = plan.provisioningFlag === 'UNDER_PROVISIONED' ? 'text-red-600' : 'text-emerald-600'
+  // The backend sets `notes` only when the recommended count is a structural fallback (= vertex count,
+  // not a real fleet size) — show "—" + the reason instead of a misleading number.
+  const recoUnavailable = !!plan.notes
   const sel = routes.find(r => r.vanId === selectedVan && r.stopsByLoop)
   const loopIdx = sel ? Math.min(selectedLoop, sel.stopsByLoop.length - 1) : 0
   const timeline = sel ? sel.stopsByLoop[loopIdx] || [] : []
@@ -15,11 +18,18 @@ export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, se
 
       <div className="grid grid-cols-2 gap-y-1 mb-3 text-gray-600">
         <div>Vans used</div><div className="text-right font-medium text-gray-800">{plan.vansUsed}</div>
-        <div>Recommended (min)</div><div className="text-right font-medium text-gray-800">{plan.recommendedVanCount}</div>
+        <div>Recommended vans</div>
+        <div className="text-right font-medium text-gray-800">{recoUnavailable ? '—' : plan.recommendedVanCount}</div>
         <div>Provisioning</div><div className={`text-right font-medium ${flagColor}`}>{plan.provisioningFlag}</div>
         <div>Loops / day</div><div className="text-right font-medium text-gray-800">{plan.nLoops}</div>
         <div>Cycle / loop (min)</div><div className="text-right font-medium text-gray-800">{plan.realisedCycleMinutes}</div>
       </div>
+
+      {plan.notes && (
+        <div className="mb-3 text-xs rounded border border-amber-300 bg-amber-50 text-amber-800 px-2 py-1.5">
+          <span className="font-semibold">⚠ Fleet recommendation unavailable.</span> {plan.notes}
+        </div>
+      )}
 
       <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Vans — click to isolate</div>
       <button onClick={() => onSelectVan(null)}
@@ -41,6 +51,7 @@ export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, se
                 <span className="ml-auto text-gray-500">{r.vertexCount} stops · {r.loopCount} loops</span>
               </div>
               <div className="text-gray-400 pl-5 mt-0.5">
+                {r.loopMinutes != null && `${r.loopMinutes} min/loop · `}
                 {r.perLoopDistanceKm != null
                   ? `${r.perLoopDistanceKm.toFixed(0)} km/loop · ${r.totalDistanceKm.toFixed(0)} km/day`
                   : 'distance n/a'}

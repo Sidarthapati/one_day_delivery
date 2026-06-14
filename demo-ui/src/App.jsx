@@ -21,7 +21,7 @@ import {
 // times differ), so we road-snap ONE representative loop (hub → vertices → hub) via OSRM and report
 // per-loop vs whole-day distance. Returns one entry per van:
 //   { vanId, geometry, markers[{seq,lat,lon,visits[]}], stopsByLoop[][], loopIndices[],
-//     loopCount, vertexCount, perLoopDistanceKm, totalDistanceKm }
+//     loopCount, vertexCount, loopMinutes, perLoopDistanceKm, totalDistanceKm }
 async function buildRoutes(stops, nodes) {
   const hub = nodes.find(n => n.kind === 'HUB')
   const hubLL = hub ? [hub.lat, hub.lon] : null
@@ -57,6 +57,18 @@ async function buildRoutes(stops, nodes) {
     const stopsByLoop = loopIndices.map(li =>
       vanStops.filter(s => s.loopIndex === li).sort((a, b) => a.stopSeq - b.stopSeq))
 
+    // Per-van loop time (minutes): with ≥2 loops it's the period between successive loop starts
+    // (accurate); with a single loop, the span of that loop's stops.
+    const toMin = t => { const [h, m, s] = t.split(':').map(Number); return h * 60 + m + (s || 0) / 60 }
+    let loopMinutes = null
+    if (repStops.length) {
+      if (loopCount >= 2 && stopsByLoop[0][0] && stopsByLoop[1][0]) {
+        loopMinutes = Math.round(toMin(stopsByLoop[1][0].plannedArrival) - toMin(stopsByLoop[0][0].plannedArrival))
+      } else {
+        loopMinutes = Math.round(toMin(repStops[repStops.length - 1].plannedDeparture) - toMin(repStops[0].plannedArrival))
+      }
+    }
+
     // One-loop road geometry: hub → vertices → hub.
     const waypoints = []
     if (hubLL) waypoints.push(hubLL)
@@ -73,6 +85,7 @@ async function buildRoutes(stops, nodes) {
       loopIndices,
       loopCount,
       vertexCount,
+      loopMinutes,
       perLoopDistanceKm,
       totalDistanceKm: perLoopDistanceKm != null ? perLoopDistanceKm * loopCount : null,
     })
