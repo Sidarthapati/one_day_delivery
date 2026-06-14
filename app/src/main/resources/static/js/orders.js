@@ -15,6 +15,7 @@
   // so login just resets both forms' pickup/drop cards to empty.
   function resetLocationCards() {
     ['b2c', 'b2b'].forEach(form => ['origin', 'dest'].forEach(leg => clearPick(form, leg)));
+    refreshQuote('b2c');   // back to the placeholder state
   }
 
   function setupOrderExperience(role) {
@@ -80,6 +81,137 @@
   function selectPay(btn) {
     document.querySelectorAll('#b2c-pay-seg button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    refreshQuote('b2c');   // COD vs PREPAID changes the price (COD surcharge)
+  }
+
+  // ── Live M2 price preview (read-only cost box) ──────────────────────────────
+  // Mirrors what M4 sends to M2 at booking: chargeable weight = max(actual, L·W·H/5).
+  let _quoteTimer = null;
+  function quoteDirty(form) {
+    clearTimeout(_quoteTimer);
+    _quoteTimer = setTimeout(() => refreshQuote(form), 350);
+  }
+
+  function setCostBox(form, amount, note, state) {
+    const box = document.getElementById(`o-${form}-cost-box`);
+    if (!box) return;
+    document.getElementById(`o-${form}-cost-amount`).textContent = amount;
+    document.getElementById(`o-${form}-cost-note`).innerHTML = note;
+    box.classList.toggle('warn', state === 'warn');
+    box.classList.toggle('loading', state === 'loading');
+  }
+
+  async function refreshQuote(form) {
+    if (form !== 'b2c') return;                  // live preview wired for B2C
+    const o = picked.b2c.origin, d = picked.b2c.dest;
+    if (!o || !d) { setCostBox('b2c', '—', 'Set pickup &amp; drop on the map to see the price.', ''); return; }
+    const weight = +val('o-b2c-weight') || 0;
+    if (weight <= 0) { setCostBox('b2c', '—', 'Enter a weight to see the price.', ''); return; }
+    const l = +val('o-b2c-len') || 0, w = +val('o-b2c-wid') || 0, h = +val('o-b2c-hei') || 0;
+    const chargeable = Math.max(weight, Math.floor(l * w * h / 5));
+    const mode = document.querySelector('#b2c-pay-seg button.active').dataset.mode;
+    const reqBody = {
+      customer_type: 'B2C',
+      delivery_type: o.city === d.city ? 'SAME_CITY' : 'INTERCITY',
+      origin_city: o.city, dest_city: d.city,
+      chargeable_weight_grams: chargeable,
+      declared_value_paise: (+val('o-b2c-dval') || 0) * 100 || null,
+      payment_mode: mode,
+    };
+    setCostBox('b2c', '…', 'Pricing…', 'loading');
+    try {
+      const { status, data } = await orderApi('POST', '/api/v1/pricing/quote', reqBody);
+      if (status >= 200 && status < 300) {
+        const b = data.breakdown || {};
+        const parts = [`base ${inr(b.base_freight)}`];
+        if (b.cod_charge) parts.push(`COD ${inr(b.cod_charge)}`);
+        parts.push(`+ GST`);
+        setCostBox('b2c', inr(data.total_price_paise),
+          `Chargeable ${(chargeable / 1000).toFixed(2)} kg · ${parts.join(' · ')}`, '');
+      } else if (status === 422) {
+        setCostBox('b2c', '—', '⚠️ ' + esc(data && (data.detail || data.title) || 'No rate configured for this route.'), 'warn');
+      } else {
+        setCostBox('b2c', '—', 'Could not fetch price right now.', '');
+      }
+    } catch {
+      setCostBox('b2c', '—', 'Could not reach pricing service.', '');
+    }
+  }
+
+  // ── Published rate chart (read-only tariff browser) ─────────────────────────
+  const CITY_NAMES = {
+    DEL: 'Delhi', BBI: 'Bhubaneswar', CCU: 'Kolkata', BOM: 'Mumbai', HYD: 'Hyderabad',
+    BLR: 'Bengaluru', IXC: 'Chandigarh', GAU: 'Guwahati', MAA: 'Chennai',
+  };
+  const CITY_ORDER = ['DEL', 'BBI', 'CCU', 'BOM', 'HYD', 'BLR', 'IXC', 'GAU', 'MAA'];
+
+  async function openRateChart(customerType) {
+    const type = customerType || 'B2C';
+    document.getElementById('rate-chart-modal').style.display = 'flex';
+    const bodyEl = document.getElementById('rate-chart-body');
+    bodyEl.innerHTML = 'Loading…';
+    try {
+      const { status, data } = await orderApi('GET', '/api/v1/pricing/rate-card?customer_type=' + type);
+      if (status >= 200 && status < 300) renderRateChart(data, type);
+      else bodyEl.innerHTML = rateChartToggle(type) + `<p class="muted">No published tariff for ${type}.</p>`;
+    } catch {
+      bodyEl.innerHTML = '<p class="muted">Could not reach the pricing service.</p>';
+    }
+  }
+  function closeRateChart() { document.getElementById('rate-chart-modal').style.display = 'none'; }
+
+  // Customer-type switcher so any user (B2C / C2C / B2B) can view each published tariff.
+  function rateChartToggle(active) {
+    return '<div class="rate-toggle">' + ['B2C', 'C2C', 'B2B'].map(tp =>
+      `<button class="${tp === active ? 'active' : ''}" onclick="openRateChart('${tp}')">${tp}</button>`).join('') + '</div>';
+  }
+
+  function renderRateChart(t, activeType) {
+    document.getElementById('rate-chart-sub').textContent =
+      `${t.customer_type} · ${t.code} ${t.version} · base price = first ${(t.slab_grams / 1000)} kg`;
+
+    // Build the symmetric city-pair matrix from the flat rate list.
+    const lookup = {}; const present = new Set();
+    (t.rates || []).forEach(r => {
+      (lookup[r.origin_city] = lookup[r.origin_city] || {})[r.dest_city] = r.base_price_paise;
+      present.add(r.origin_city); present.add(r.dest_city);
+    });
+    const cities = [...present].sort((a, b) => {
+      const ia = CITY_ORDER.indexOf(a), ib = CITY_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+    const cityLabel = c => `${CITY_NAMES[c] || c}<br><span class="muted">${c}</span>`;
+
+    let head = '<tr><th>From \\ To</th>' + cities.map(c => `<th>${cityLabel(c)}</th>`).join('') + '</tr>';
+    let rows = cities.map(o => {
+      const tds = cities.map(d => {
+        if (o === d) return '<td class="rm-diag">—</td>';
+        const p = lookup[o] && lookup[o][d];
+        return `<td>${p ? '₹' + (p / 100) : '<span class="muted">—</span>'}</td>`;
+      }).join('');
+      return `<tr><th>${cityLabel(o)}</th>${tds}</tr>`;
+    }).join('');
+
+    const r = p => '₹' + (p / 100).toLocaleString('en-IN');
+    const discountNote = t.discount_bps > 0
+      ? `<li><b>Account discount:</b> ${(t.discount_bps / 100)}% off the base freight, applied at booking (B2B negotiated rate).</li>`
+      : '';
+    const rules = `
+      <ul class="rate-rules">
+        <li><b>Base price</b> is the charge for the first <b>${t.slab_grams / 1000} kg</b> of a city pair (table above, in ₹).</li>
+        <li><b>Volumetric weight</b> = L × W × H ÷ ${t.volumetric_divisor} (kg). Chargeable weight = <b>max(actual, volumetric)</b>.
+            <span class="muted">e.g. a 40×30×20 cm box = 24,000 ÷ ${t.volumetric_divisor} = 4.8 kg.</span></li>
+        <li><b>Additional weight:</b> each extra ${t.slab_grams / 1000} kg slab is charged at ${t.first_slab_pct - t.slab_decrement_pct}% of the base
+            and decreases ${t.slab_decrement_pct}% per slab, down to a floor of <b>${t.slab_floor_pct}%</b>.</li>
+        <li><b>COD charge:</b> max(${r(t.cod_min_paise)}, ${(t.cod_pct_bps / 100)}% of declared value). Prepaid has none.</li>
+        <li><b>GST:</b> ${(t.gst_bps / 100)}% on (freight + COD).</li>
+        <li><b>Same-city</b> base price: ${r(t.same_city_base_price_paise)} for the first slab.</li>
+        ${discountNote}
+      </ul>`;
+
+    document.getElementById('rate-chart-body').innerHTML =
+      rateChartToggle(activeType || t.customer_type) +
+      `<table class="rate-matrix"><thead>${head}</thead><tbody>${rows}</tbody></table>${rules}`;
   }
 
   // Builds an address block from a confirmed map pin (city + pincode are derived
@@ -291,6 +423,8 @@
       `<div class="loc-coords">${p.lat}, ${p.lon}</div>` +
       (p.hex ? `<div class="loc-addr">M3 hex ${p.hex}</div>` : '') +
       (p.label ? `<div class="loc-addr">${esc(p.label)}</div>` : '');
+    // Single funnel for both the map picker and the saved-address picker → keep the M2 cost box live.
+    refreshQuote(form);
   }
 
   // opts (optional) lets other modules reuse the picker: { title, onConfirm(pick) }. When given,
@@ -401,7 +535,7 @@
     }
     const { form, leg } = _mapState;
     picked[form][leg] = _mapPick;       // the pin is now the source of truth for city + pincode
-    renderLocCard(form, leg, _mapPick);
+    renderLocCard(form, leg, _mapPick); // renderLocCard refreshes the M2 cost box
     closeMapPicker();
   }
 

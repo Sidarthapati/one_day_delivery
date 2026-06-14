@@ -463,3 +463,50 @@ body.dark .data-table thead tr.filter-row th { border-bottom-color: #242b42; }
   border-color: #e2e8f0;
 }
 body.dark .locked-field { background: #161d2e; color: #94a3b8; border-color: #242b42; }
+
+/* Read-only live shipping cost from M2 */
+.cost-box {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  margin: .25rem 0 .75rem; padding: .7rem .95rem;
+  background: #f1f5f9; border: 1.5px solid #e2e8f0; border-radius: 10px;
+}
+.cost-box-info { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.cost-box-label { font-weight: 600; font-size: .9rem; color: #334155; }
+.cost-box-note { font-size: .78rem; color: #64748b; }
+.cost-box-amount { font-size: 1.35rem; font-weight: 700; color: #0f766e; white-space: nowrap; }
+.cost-box.loading .cost-box-amount { color: #94a3b8; }
+.cost-box.warn { background: #fff7ed; border-color: #fdba74; }
+.cost-box.warn .cost-box-amount { color: #c2410c; }
+.cost-box.warn .cost-box-note { color: #c2410c; }
+body.dark .cost-box { background: #161d2e; border-color: #242b42; }
+body.dark .cost-box-label { color: #cbd5e1; }
+body.dark .cost-box-note { color: #94a3b8; }
+body.dark .cost-box-amount { color: #34d399; }
+body.dark .cost-box.warn { background: #2a1b12; border-color: #7c4a22; }
+body.dark .cost-box.warn .cost-box-amount,
+body.dark .cost-box.warn .cost-box-note { color: #fdba74; }
+.cost-box-link { font-size: .78rem; color: #2563eb; text-decoration: none; margin-top: .15rem; }
+.cost-box-link:hover { text-decoration: underline; }
+body.dark .cost-box-link { color: #60a5fa; }
+
+/* Rate chart modal */
+.rate-toggle { display: flex; gap: .4rem; margin-bottom: .8rem; }
+.rate-toggle button {
+  padding: .3rem .85rem; border: 1.5px solid #e2e8f0; border-radius: 999px;
+  background: #fff; color: #475569; cursor: pointer; font-size: .82rem; font-weight: 600;
+}
+.rate-toggle button.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+.rate-matrix { border-collapse: collapse; width: 100%; font-size: .82rem; margin-bottom: 1rem; }
+.rate-matrix th, .rate-matrix td {
+  border: 1px solid #e2e8f0; padding: .35rem .5rem; text-align: center; white-space: nowrap;
+}
+.rate-matrix thead th, .rate-matrix tbody th { background: #f8fafc; font-weight: 600; }
+.rate-matrix td.rm-diag { background: #f1f5f9; color: #94a3b8; }
+.rate-rules { margin: 0; padding-left: 1.1rem; font-size: .85rem; line-height: 1.5; color: #334155; }
+.rate-rules li { margin-bottom: .3rem; }
+body.dark .rate-toggle button { background: #1a2035; color: #94a3b8; border-color: #2e3a5c; }
+body.dark .rate-toggle button.active { background: #f4a261; color: #1a1a2e; border-color: #f4a261; }
+body.dark .rate-matrix th, body.dark .rate-matrix td { border-color: #2a3050; }
+body.dark .rate-matrix thead th, body.dark .rate-matrix tbody th { background: #161d2e; }
+body.dark .rate-matrix td.rm-diag { background: #11162a; }
+body.dark .rate-rules { color: #cbd5e1; }
