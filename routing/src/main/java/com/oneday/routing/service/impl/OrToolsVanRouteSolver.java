@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * OR-Tools {@code RoutingModel} VRP solver (M6-D-006, §7.3). Models the loop as:
@@ -43,6 +44,10 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
 
     private static final Logger log = LoggerFactory.getLogger(OrToolsVanRouteSolver.class);
 
+    // Far above any seconds-based arc/makespan cost, so a vertex is dropped only when it genuinely
+    // cannot be served within the cycle — never merely because serving it is expensive.
+    private static final long DROP_PENALTY = 1_000_000_000L;
+
     private final RoutingProperties properties;
     private volatile boolean nativeLoaded = false;
 
@@ -59,16 +64,22 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
 
     @Override
     public SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
-        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, false);
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, false, false);
+    }
+
+    @Override
+    public SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets,
+                             int cycleMaxMinutes, boolean allowDrops) {
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, false, allowDrops);
     }
 
     @Override
     public SolveResult probe(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
-        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, true);
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, true, false);
     }
 
     private SolveResult solveInternal(TravelMatrix matrix, int vansAvailable, int capacityPackets,
-                                      int cycleMaxMinutes, boolean feasibilityOnly) {
+                                      int cycleMaxMinutes, boolean feasibilityOnly, boolean allowDrops) {
         ensureNativeLoaded();
 
         int n = matrix.size();
@@ -125,6 +136,14 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
             solver.addConstraint(solver.makeEquality(loadStart, deliveredEnd));
         }
 
+        // Drop-and-flag: make each vertex optional at a prohibitive penalty, so the solver leaves a
+        // vertex unserved only when no van can reach it within the cycle (M6 drop-and-flag).
+        if (allowDrops) {
+            for (int i = 1; i < n; i++) {
+                routing.addDisjunction(new long[]{manager.nodeToIndex(i)}, DROP_PENALTY);
+            }
+        }
+
         RoutingSearchParameters.Builder paramsBuilder = main.defaultRoutingSearchParameters().toBuilder()
                 .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
                 .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH);
@@ -147,19 +166,30 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
             return new SolveResult(List.of(), RoutingSolverType.OR_TOOLS, false);
         }
 
+        boolean[] visited = new boolean[n];
         List<VanRoute> routes = new ArrayList<>();
         for (int v = 0; v < vansAvailable; v++) {
             List<Integer> seq = new ArrayList<>();
             long index = routing.start(v);
             while (!routing.isEnd(index)) {
                 int node = manager.indexToNode(index);
-                if (node != 0) seq.add(node);
+                if (node != 0) {
+                    seq.add(node);
+                    visited[node] = true;
+                }
                 index = solution.value(routing.nextVar(index));
             }
             if (!seq.isEmpty()) {
                 routes.add(RouteEvaluator.evaluate(matrix, v, seq));
             }
         }
-        return new SolveResult(routes, RoutingSolverType.OR_TOOLS, true);
+
+        List<UUID> dropped = new ArrayList<>();
+        if (allowDrops) {
+            for (int i = 1; i < n; i++) {
+                if (!visited[i]) dropped.add(nodes.get(i).refId());
+            }
+        }
+        return new SolveResult(routes, RoutingSolverType.OR_TOOLS, true, dropped);
     }
 }

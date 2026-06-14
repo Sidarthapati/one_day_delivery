@@ -1,11 +1,14 @@
 package com.oneday.routing.api;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oneday.routing.domain.CityFleetConfig;
 import com.oneday.routing.domain.RoutePlan;
 import com.oneday.routing.dto.FleetConfigResponse;
 import com.oneday.routing.dto.FleetConfigUpdateRequest;
 import com.oneday.routing.dto.LogisticsNodeResponse;
 import com.oneday.routing.dto.RouteStopGeoResponse;
+import com.oneday.routing.dto.VertexGeoResponse;
 import com.oneday.routing.repository.CityFleetConfigRepository;
 import com.oneday.routing.repository.CityLogisticsNodeRepository;
 import com.oneday.routing.repository.RoutePlanStopRepository;
@@ -43,19 +46,24 @@ public class RoutingFleetController {
     private final RoutePlanLifecycleService lifecycleService;
     private final RoutePlanStopRepository stopRepository;
     private final GridDataAdapter gridDataAdapter;
+    private final ObjectMapper objectMapper;
     private final Clock clock;
+
+    private static final TypeReference<List<UUID>> ID_LIST = new TypeReference<>() {};
 
     RoutingFleetController(CityFleetConfigRepository fleetRepository,
                            CityLogisticsNodeRepository nodeRepository,
                            RoutePlanLifecycleService lifecycleService,
                            RoutePlanStopRepository stopRepository,
                            GridDataAdapter gridDataAdapter,
+                           ObjectMapper objectMapper,
                            Clock clock) {
         this.fleetRepository = fleetRepository;
         this.nodeRepository = nodeRepository;
         this.lifecycleService = lifecycleService;
         this.stopRepository = stopRepository;
         this.gridDataAdapter = gridDataAdapter;
+        this.objectMapper = objectMapper;
         this.clock = clock;
     }
 
@@ -104,6 +112,34 @@ public class RoutingFleetController {
         return stopRepository.findByRoutePlanId(plan.getId()).stream()
                 .map(s -> RouteStopGeoResponse.from(s, coords))
                 .toList();
+    }
+
+    // ── Deferred vertices (drop-and-flag corners, with coordinates) ────────────
+
+    @GetMapping("/plans/{cityId}/deferred-vertices")
+    public List<VertexGeoResponse> getDeferredVertices(
+            @PathVariable UUID cityId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate d = date != null ? date : LocalDate.now(clock);
+        RoutePlan plan = lifecycleService.activePlan(cityId, d)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "No active route plan for cityId=" + cityId + " date=" + d));
+        List<UUID> ids = parseIds(plan.getDeferredVertexIds());
+        if (ids.isEmpty()) return List.of();
+        Map<UUID, double[]> coords = gridDataAdapter.vertexCoords(cityId);
+        return ids.stream().map(id -> {
+            double[] ll = coords.get(id);
+            return new VertexGeoResponse(id, ll != null ? ll[0] : null, ll != null ? ll[1] : null);
+        }).toList();
+    }
+
+    private List<UUID> parseIds(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, ID_LIST);
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     private CityFleetConfig requireFleet(UUID cityId) {

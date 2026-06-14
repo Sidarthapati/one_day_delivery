@@ -269,12 +269,22 @@ solution = model.solveWithParameters(params)
 - **Balance** (b, span coefficient): minimise the *longest* route → use more vans, shorter loops.
 - **Objective**: minimise total travel + the makespan penalty.
 
-Output per van: an ordered node sequence, e.g. `hub → v5 → v2 → v9 → hub`. The assembler then turns
-that into timestamped stops and figures out how many loops fit the day.
+> **Update 2026-06-14 — drop-and-flag (`solve(..., allowDrops=true)`):** the shipping solve now runs
+> against `cycle_time_max` (not the full window) and makes each vertex **optional** via an OR-Tools
+> disjunction with a `1e9` penalty. Far corners whose **solo** hub round-trip exceeds the cycle are
+> **deferred** (returned in `SolveResult.droppedVertexIds`, persisted to `route_plan.deferred_vertex_ids`)
+> instead of forcing the whole fleet onto a slow cadence. Toggle: `routing.solver.drop-infeasible-vertices`.
+> See `M6-INFEASIBLE-VERTICES.md`.
 
-`recommendVanCount` re-solves with `cycle_time_max` and rising van counts to report the *minimum*
-fleet that holds the cycle target (this can read **lower** than `vans_used` now that balancing
-spreads wider — they answer different questions).
+Output per van: an ordered node sequence, e.g. `hub → v5 → v2 → v9 → hub`. The assembler then turns
+that into timestamped stops and figures out how many loops fit the day — **per van** now: each van
+repeats at its own cadence `max(itsSpan, cronFreeze)` and sweeps `window / itsCadence` times, so a
+near-hub van sweeps more (M5 reads each van's times into the DA queue, so no shared cadence is needed).
+
+`recommendVanCount` reports the *minimum* fleet that holds the cycle target for the **served** vertices.
+It's now fast: a **structural-infeasibility bail** (vertex load > capacity, or solo round-trip > cycle)
+then a **binary search** over van counts using a short **probe** (first-feasible) solve — not the old
+linear scan of full solves. Can read **lower** than `vans_used` (balancing spreads wider).
 
 ---
 

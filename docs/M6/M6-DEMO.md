@@ -12,11 +12,14 @@ watch the road-snapped loops drawn across the city with ETAs.
 ## Prerequisites
 - **JDK 21** (`export JAVA_HOME=/opt/homebrew/opt/openjdk@21`; the enforcer rejects JDK 25).
 - **PostgreSQL** — either local Postgres 16 (`brew services start postgresql@16`, db/user/pw `oneday`/`oneday`/`secret`)
-  **or** the shared **Render Oregon** cloud DB. The demo now runs the **local app against the cloud DB**;
-  all of its config (URL + `socketTimeout`/`reWriteBatchedInserts`, Hikari warm-pool, Flyway
-  ignore-missing) lives in `.env` — load it with `set -a && source .env && set +a` before starting.
-  Cloud DB adds ~0.30s/round-trip, so Hibernate batching (`jdbc.batch_size: 2000`, app yaml) and the
-  Hikari warm pool are what keep seeding/replan fast — see `M6-DEMO-CARRYOVER.md` D10.
+  **or** a shared Render cloud DB: **Oregon** (default in `.env`) **or Singapore** (`singapore1dd`, far
+  lower RTT — boot ~3s vs ~50s). The demo runs the **local app against the cloud DB**; its config (URL +
+  `socketTimeout`/`reWriteBatchedInserts`, Hikari warm-pool, Flyway ignore-missing) lives in `.env` —
+  load it with `set -a && source .env && set +a` before starting. To use **Singapore**, after sourcing
+  `.env` override the three `SPRING_DATASOURCE_URL/USERNAME/PASSWORD` vars (export **after** the source so
+  they win) — host `dpg-d8mrgfrsq97s739rk1r0-a.singapore-postgres.render.com/singapore1dd`. Cloud DB adds
+  RTT/round-trip, so Hibernate batching (`jdbc.batch_size: 2000`, app yaml) + the Hikari warm pool keep
+  seeding/replan fast — see `M6-DEMO-CARRYOVER.md` D10/D13.
 - **Node 18+** / npm.
 - **OSRM** — the shared Hetzner instance `http://46.225.155.64:5000` (full India, `/table` + `/route`).
   Override with `ROUTING_OSRM_BASEURL` (backend) and `VITE_OSRM` (UI) if it moves. The M6 solver
@@ -67,7 +70,11 @@ The plan date is **tomorrow** (the nightly "plan for tomorrow" semantics); every
    - **□ hub** and **✈ airport** markers.
    - **Meeting-vertex dots** — hover for arrival/departure ETA + deliver/collect/load.
    - **Van selector** (sidebar) filters the map to one van; the **plan summary** shows vans-used,
-     recommended, provisioning flag, loops/day, realised cycle.
+     recommended, provisioning flag, loops/day, realised cycle. Loops/day and cycle are shown as a
+     **range** because each van now runs its own cadence (carryover #7), so they vary across the fleet.
+   - **Meeting vertices** section (sidebar) — **Covered (N) / Deferred (M)** toggles. *Deferred* (red ✕)
+     are the far corners drop-and-flag left out (carryover #8/#9); toggling it zooms the map to show
+     them. Deferred is on by default when a plan has any.
 5. **Toggle views** any time with the **Demand / DA territories / Van routes** buttons (top-right).
 6. Click any **hex** to inspect / edit its demand (then re-generate territories/routes — no reseed).
 
@@ -78,12 +85,15 @@ The plan date is **tomorrow** (the nightly "plan for tomorrow" semantics); every
   `gridApi.seedDemand(...)` or via `POST /api/demo/seed`.
 - Delhi reference: **10 DAs + 6 vans → ~2 vans used, 2 loops/day, OK**. More DAs = more (smaller)
   territories = more meeting vertices = lower per-stop load.
-- Solver time limit is `routing.solver.time-limit-seconds: 8` (app yaml). A replan can take **minutes**
-  in the worst case: `recommendVanCount` **linearly scans** van counts and each *infeasible* count burns
-  the full 8s budget (~60 attempts ≈ 8 min). If the alert says `recommended 62` (= the vertex count),
-  that's the **infeasible fallback**, not a real number — the demand is structurally too big for
-  `capacity_packets`. Lower the seed minutes or raise capacity; don't add vans. (Fix flagged in
-  carryover #2: early infeasibility bail + binary search.)
+- Solver time limit is `routing.solver.time-limit-seconds: 8` (app yaml). `recommendVanCount` is now
+  fast (carryover #2 ✅): a **structural-infeasibility bail** + **binary search** over van counts using a
+  short **probe** (first-feasible) solve — Delhi cycle-180 went ~8 min → ~23s. If a vertex's per-loop
+  load > `capacity_packets` or its solo round-trip > the cycle, the recommendation note names it.
+- **Drop-and-flag** (`routing.solver.drop-infeasible-vertices: true`, carryover #8): the solve runs
+  against the **cycle target** and *defers* far corners no van can reach within it instead of slowing the
+  whole fleet. Lower the cycle → more sweeps but more deferred corners; raise it → fewer deferred, fewer
+  sweeps. Deferred corners show as red ✕ on the map and in `route_plan.deferred_vertex_ids`. Set the flag
+  `false` to revert to serve-everything-on-a-relaxed-cycle. Full writeup: `M6-INFEASIBLE-VERTICES.md`.
 - **Demand units:** seeded *minutes* become *packets* via `÷15` (15 min/order, 1 order = 1 packet),
   then split 50/50 deliver/collect. So "6 min/hex" ≈ small per-vertex load; bumping max-minutes high
   is what tips a vertex past `capacity_packets`. Full chain in `M6-DEMO-FLOW.md` §3a.

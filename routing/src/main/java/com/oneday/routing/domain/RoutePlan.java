@@ -73,6 +73,10 @@ public class RoutePlan {
     @Column(name = "notes", columnDefinition = "text", updatable = false)
     private String notes;
 
+    // JSON array of meeting-vertex UUIDs deferred by the drop-and-flag solve (M6-INFEASIBLE-VERTICES).
+    @Column(name = "deferred_vertex_ids", columnDefinition = "text", updatable = false)
+    private String deferredVertexIds;
+
     @Column(name = "approved_by")
     private UUID approvedBy;
 

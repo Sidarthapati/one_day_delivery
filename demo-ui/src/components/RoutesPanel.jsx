@@ -1,13 +1,13 @@
 // M6 plan summary + clickable van list + per-loop stop timeline. Each van repeats one loop several
 // times a day; the map shows that single loop (one marker per vertex), and here you pick which loop
 // to read the schedule for. Distances are reported per-loop and whole-day (per-loop × loops).
-export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, selectedLoop, onSelectLoop, vanColor }) {
+export default function RoutesPanel({
+  plan, routes, selectedVan, onSelectVan, selectedLoop, onSelectLoop, vanColor,
+  coveredCount = 0, deferredCount = 0, showVertices = {}, onToggleVertices = () => {},
+}) {
   if (!plan) return null
 
   const flagColor = plan.provisioningFlag === 'UNDER_PROVISIONED' ? 'text-red-600' : 'text-emerald-600'
-  // The backend sets `notes` only when the recommended count is a structural fallback (= vertex count,
-  // not a real fleet size) — show "—" + the reason instead of a misleading number.
-  const recoUnavailable = !!plan.notes
   const sel = routes.find(r => r.vanId === selectedVan && r.stopsByLoop)
   const loopIdx = sel ? Math.min(selectedLoop, sel.stopsByLoop.length - 1) : 0
   const timeline = sel ? sel.stopsByLoop[loopIdx] || [] : []
@@ -27,7 +27,7 @@ export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, se
       <div className="grid grid-cols-2 gap-y-1 mb-3 text-gray-600">
         <div>Vans used</div><div className="text-right font-medium text-gray-800">{plan.vansUsed}</div>
         <div>Recommended vans</div>
-        <div className="text-right font-medium text-gray-800">{recoUnavailable ? '—' : plan.recommendedVanCount}</div>
+        <div className="text-right font-medium text-gray-800">{plan.recommendedVanCount ?? '—'}</div>
         <div>Provisioning</div><div className={`text-right font-medium ${flagColor}`}>{plan.provisioningFlag}</div>
         <div>Loops / day</div><div className="text-right font-medium text-gray-800">{range(routes.map(r => r.loopCount), plan.nLoops)}</div>
         <div>Cycle / loop (min)</div><div className="text-right font-medium text-gray-800">{range(routes.map(r => r.loopMinutes), plan.realisedCycleMinutes)}</div>
@@ -35,9 +35,30 @@ export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, se
 
       {plan.notes && (
         <div className="mb-3 text-xs rounded border border-amber-300 bg-amber-50 text-amber-800 px-2 py-1.5">
-          <span className="font-semibold">⚠ Fleet recommendation unavailable.</span> {plan.notes}
+          <span className="font-semibold">⚠ Note.</span> {plan.notes}
         </div>
       )}
+
+      {/* Meeting vertices: toggle the covered (served) and deferred (left-out) sets on the map. */}
+      <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Meeting vertices</div>
+      <div className="flex gap-1 mb-3">
+        <button onClick={() => onToggleVertices('covered')}
+          className={`flex-1 text-xs px-2 py-1.5 rounded border transition-colors ${
+            showVertices.covered
+              ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+              : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+          ● Covered ({coveredCount})
+        </button>
+        <button onClick={() => onToggleVertices('deferred')}
+          disabled={!deferredCount}
+          className={`flex-1 text-xs px-2 py-1.5 rounded border transition-colors ${
+            !deferredCount ? 'border-gray-100 text-gray-300 cursor-not-allowed'
+              : showVertices.deferred
+                ? 'border-red-500 bg-red-50 text-red-700'
+                : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+          ✕ Deferred ({deferredCount})
+        </button>
+      </div>
 
       <div className="text-xs font-semibold text-gray-500 uppercase mb-1">Vans — click to isolate</div>
       <button onClick={() => onSelectVan(null)}

@@ -40,6 +40,17 @@ class VanRouteSolverSelector implements VanRouteSolver {
     }
 
     @Override
+    public SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets,
+                             int cycleMaxMinutes, boolean allowDrops) {
+        try {
+            return orTools.solve(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, allowDrops);
+        } catch (Throwable t) {
+            log.warn("OR-Tools drop-and-flag solve failed ({}); falling back to Clarke–Wright savings", t.toString());
+            return savings.solve(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, allowDrops);
+        }
+    }
+
+    @Override
     public SolveResult probe(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
         try {
             return orTools.probe(matrix, vansAvailable, capacityPackets, cycleMaxMinutes);

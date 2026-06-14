@@ -67,6 +67,13 @@ public class RoutingProperties {
 
         /** Backstop budget per feasibility probe (fleet sizing); short since it stops at first feasible. */
         private int probeTimeLimitSeconds = 3;
+
+        /**
+         * Drop-and-flag (M6): solve against the cycle target and leave unreachable far corners
+         * unserved (flagged in the plan notes) instead of relaxing the whole fleet to the slowest
+         * vertex. false = old behaviour (relax the cycle to the full window, serve everything).
+         */
+        private boolean dropInfeasibleVertices = true;
     }
 
     @Data

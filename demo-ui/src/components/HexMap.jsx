@@ -24,6 +24,25 @@ function stopIcon(color, label) {
     iconSize: [24, 24], iconAnchor: [12, 12],
   })
 }
+// Covered meeting vertex — small green dot.
+function coveredIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div style="background:#16a34a;width:11px;height:11px;border-radius:50%;
+      border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.5)"></div>`,
+    iconSize: [11, 11], iconAnchor: [5, 5],
+  })
+}
+// Deferred (left-out) meeting vertex — red ✕, drawn larger so it stands out as an exception.
+function deferredIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div style="background:#dc2626;color:#fff;width:22px;height:22px;border-radius:50%;
+      display:flex;align-items:center;justify-content:center;font:800 13px/1 sans-serif;
+      border:2px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.55)">✕</div>`,
+    iconSize: [22, 22], iconAnchor: [11, 11],
+  })
+}
 function nodeIcon(kind) {
   const hub = kind === 'HUB'
   const bg = hub ? '#111827' : '#2563eb'
@@ -44,7 +63,8 @@ function RecenterMap({ center, active }) {
 }
 
 // In routes mode, fit the map to the visible van loops + nodes so the routes fill the screen.
-function FitToRoutes({ routes, selectedVan, nodes, active }) {
+// When deferred vertices are toggled on, include them too so the left-out corners come into view.
+function FitToRoutes({ routes, selectedVan, nodes, deferred, showDeferred, active }) {
   const map = useMap()
   useEffect(() => {
     if (!active) return
@@ -54,14 +74,16 @@ function FitToRoutes({ routes, selectedVan, nodes, active }) {
       r.geometry.forEach(p => pts.push(p))
     })
     nodes.forEach(n => pts.push([n.lat, n.lon]))
+    if (showDeferred) deferred.forEach(v => { if (v.lat != null) pts.push([v.lat, v.lon]) })
     if (pts.length >= 2) map.fitBounds(pts, { padding: [50, 50] })
-  }, [routes, selectedVan, active, nodes, map])
+  }, [routes, selectedVan, active, nodes, deferred, showDeferred, map])
   return null
 }
 
 export default function HexMap({
   tiles, assignmentMap, mode, onHexClick, selectedHexId, center,
   routes = [], nodes = [], selectedVan = null, vanColor = hashDaColor,
+  coveredVertices = [], deferredVertices = [], showVertices = {},
 }) {
   const maxDemand = Math.max(...tiles.map(t => t.demandScoreMinutes || 0), 1)
   const routesMode = mode === 'routes'
@@ -73,7 +95,8 @@ export default function HexMap({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
       />
       <RecenterMap center={center} active={!routesMode} />
-      <FitToRoutes routes={routes} selectedVan={selectedVan} nodes={nodes} active={routesMode} />
+      <FitToRoutes routes={routes} selectedVan={selectedVan} nodes={nodes}
+        deferred={deferredVertices} showDeferred={!!showVertices.deferred} active={routesMode} />
 
       {/* Hex layer. In routes mode the territory colouring is drawn faded UNDER the loops so you can
           check the meeting-vertex set sits sensibly within each DA territory. */}
@@ -135,6 +158,27 @@ export default function HexMap({
             </Tooltip>
           </Marker>
         ))
+      ))}
+
+      {/* Covered meeting vertices (green dots) — optional overlay; the numbered stops already mark them. */}
+      {routesMode && showVertices.covered && coveredVertices.map((v, i) => (
+        <Marker key={`cov-${i}`} position={[v.lat, v.lon]} icon={coveredIcon()} zIndexOffset={500}>
+          <Tooltip>Covered meeting vertex</Tooltip>
+        </Marker>
+      ))}
+
+      {/* Deferred meeting vertices (red ✕) — the corners drop-and-flag left out of this plan. */}
+      {routesMode && showVertices.deferred && deferredVertices.map((v, i) => (
+        v.lat == null ? null : (
+          <Marker key={`def-${v.vertexId || i}`} position={[v.lat, v.lon]} icon={deferredIcon()} zIndexOffset={900}>
+            <Tooltip>
+              <div style={{ fontSize: 12 }}>
+                <strong>Deferred corner</strong><br />
+                Solo round-trip exceeds the cycle — not served this plan.
+              </div>
+            </Tooltip>
+          </Marker>
+        )
       ))}
 
       {/* Hub + airport — always visible, clearly labelled */}

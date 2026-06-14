@@ -14,7 +14,7 @@ import {
   fetchTiles, fetchAssignments, seedDemand, demandCount, replan, approveProposal, activateAssignments,
 } from './api/gridApi.js'
 import {
-  getFleet, putFleet, getNodes, getPlan, m6Replan, m6Approve, getAllStops, osrmRoute,
+  getFleet, putFleet, getNodes, getPlan, m6Replan, m6Approve, getAllStops, getDeferredVertices, osrmRoute,
 } from './api/routingApi.js'
 
 // Build per-van route geometry. Every loop visits the SAME vertices in the SAME order (only the
@@ -101,6 +101,10 @@ export default function App() {
   const [plan, setPlan] = useState(null)
   const [stops, setStops] = useState([])
   const [routes, setRoutes] = useState([])
+  const [deferredVertices, setDeferredVertices] = useState([])
+  // Vertex overlays for routes mode: deferred shown by default (the whole point — see what's left out);
+  // covered off by default since the numbered van markers already mark them.
+  const [showVertices, setShowVertices] = useState({ covered: false, deferred: true })
   const [selectedVan, setSelectedVan] = useState(null)
   const [selectedLoop, setSelectedLoop] = useState(0)
 
@@ -156,7 +160,8 @@ export default function App() {
       try {
         const stopsData = await getAllStops(cityId, PLAN_DATE)
         const built = await buildRoutes(stopsData, nodes)
-        if (!cancelled) { setPlan(savedPlan); setRoutes(built) }
+        const deferred = await getDeferredVertices(cityId, PLAN_DATE).catch(() => [])
+        if (!cancelled) { setPlan(savedPlan); setStops(stopsData); setRoutes(built); setDeferredVertices(deferred) }
       } catch { /* no stops / plan gone — ignore */ }
     })()
     return () => { cancelled = true }
@@ -180,10 +185,23 @@ export default function App() {
   const vans = useMemo(() => [...new Set(stops.map(s => s.vanId))], [stops])
   const hasTerritories = (proposal?.regions?.length || assignments.length) > 0
 
+  // Covered meeting vertices = the served stop coordinates (one per vertex, deduped). Derived from
+  // routes (set in both the generate and the on-load restore paths) so the overlay survives a refresh.
+  const coveredVertices = useMemo(() => {
+    const seen = new Set(); const out = []
+    for (const r of routes) for (const m of (r.markers || [])) {
+      if (m.lat == null) continue
+      const key = `${m.lat},${m.lon}`
+      if (!seen.has(key)) { seen.add(key); out.push({ lat: m.lat, lon: m.lon }) }
+    }
+    return out
+  }, [routes])
+  const toggleVertices = kind => setShowVertices(v => ({ ...v, [kind]: !v[kind] }))
+
   function handleCityChange(newCity) {
     setCityCode(newCity)
     setSelectedHexId(null); setProposal(null); setPlan(null)
-    setStops([]); setRoutes([]); setSelectedVan(null)
+    setStops([]); setRoutes([]); setDeferredVertices([]); setSelectedVan(null)
     setMode('demand')
     setRefreshKey(k => k + 1)
   }
@@ -218,7 +236,7 @@ export default function App() {
       // The flow already approved + activated it; reflect that so the panel shows LIVE, not a
       // (redundant, re-approve → error) Approve button.
       setProposal({ ...prop, status: 'APPROVED' })
-      setPlan(null); setStops([]); setRoutes([]); setSelectedVan(null)
+      setPlan(null); setStops([]); setRoutes([]); setDeferredVertices([]); setSelectedVan(null)
       setSelectedHexId(null)
       setMode('territories')
       setRefreshKey(k => k + 1)
@@ -235,7 +253,7 @@ export default function App() {
       await putFleet(cityId, fleetPatch)
       const p = await m6Replan(cityId, PLAN_DATE)
       if (!p.vansUsed) {
-        setPlan(p); setStops([]); setRoutes([]); setMode('routes')
+        setPlan(p); setStops([]); setRoutes([]); setDeferredVertices([]); setMode('routes')
         alert(`No feasible routes: ${p.notes || 'under-provisioned'}`)
         return
       }
@@ -243,7 +261,8 @@ export default function App() {
       const stopsData = await getAllStops(cityId, PLAN_DATE)
       const nodesData = nodes.length ? nodes : await getNodes(cityId)
       const built = await buildRoutes(stopsData, nodesData)
-      setPlan(p); setStops(stopsData); setRoutes(built)
+      const deferred = await getDeferredVertices(cityId, PLAN_DATE).catch(() => [])
+      setPlan(p); setStops(stopsData); setRoutes(built); setDeferredVertices(deferred)
       setSelectedVan(null); setSelectedHexId(null)
       setMode('routes')
     } catch (e) {
@@ -297,6 +316,8 @@ export default function App() {
                 onHexClick={id => setSelectedHexId(id === selectedHexId ? null : id)}
                 selectedHexId={selectedHexId} center={city.center}
                 routes={routes} nodes={nodes} selectedVan={selectedVan} vanColor={hashDaColor}
+                coveredVertices={coveredVertices} deferredVertices={deferredVertices}
+                showVertices={showVertices}
               />
               {mode !== 'routes' && <Legend mode={mode} daIds={uniqueDaIds} />}
             </>
@@ -318,7 +339,9 @@ export default function App() {
           {!selectedHexId && mode === 'routes' && plan && (
             <RoutesPanel plan={plan} routes={routes}
               selectedVan={selectedVan} onSelectVan={selectVan}
-              selectedLoop={selectedLoop} onSelectLoop={setSelectedLoop} vanColor={hashDaColor} />
+              selectedLoop={selectedLoop} onSelectLoop={setSelectedLoop} vanColor={hashDaColor}
+              coveredCount={coveredVertices.length} deferredCount={deferredVertices.length}
+              showVertices={showVertices} onToggleVertices={toggleVertices} />
           )}
 
           {!selectedHexId && mode !== 'routes' && proposal && (

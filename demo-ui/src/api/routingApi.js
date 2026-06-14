@@ -35,6 +35,10 @@ export const getPlan = (cityId, date) => req(`/routing/plans/${cityId}?date=${da
 
 export const getAllStops = (cityId, date) => req(`/routing/plans/${cityId}/stops?date=${date}`)
 
+// Meeting vertices the drop-and-flag solve deferred (far corners) — [{ vertexId, lat, lon }].
+export const getDeferredVertices = (cityId, date) =>
+  req(`/routing/plans/${cityId}/deferred-vertices?date=${date}`)
+
 export const getShuttle = (cityId, date) => req(`/routing/shuttle/${cityId}?date=${date}`)
 
 // ── OSRM road-snapped geometry ───────────────────────────────────────────────

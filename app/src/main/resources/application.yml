@@ -84,6 +84,7 @@ routing:
   # back-to-back, so a 45s limit per solve made a single replan take minutes.
   solver:
     time-limit-seconds: 8
+    drop-infeasible-vertices: true   # M6 drop-and-flag; false = relax cycle to the window, serve all
   cycle:
     min-minutes: 120
     max-minutes: 180

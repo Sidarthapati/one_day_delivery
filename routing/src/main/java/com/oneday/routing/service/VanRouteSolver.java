@@ -20,6 +20,17 @@ public interface VanRouteSolver {
     SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes);
 
     /**
+     * Drop-and-flag variant: when {@code allowDrops}, a meeting vertex that no van can serve within
+     * {@code cycleMaxMinutes} (e.g. a far corner whose solo round-trip already exceeds the cycle) is
+     * left unserved and reported in {@link SolveResult#droppedVertexIds()} rather than forcing the
+     * whole fleet onto a slower cadence. Default ignores drops; OR-Tools overrides it.
+     */
+    default SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets,
+                              int cycleMaxMinutes, boolean allowDrops) {
+        return solve(matrix, vansAvailable, capacityPackets, cycleMaxMinutes);
+    }
+
+    /**
      * Fast feasibility-only variant of {@link #solve} for fleet sizing: may stop at the first feasible
      * solution rather than optimise, so {@code recommendVanCount} can binary-search the minimum fleet
      * cheaply. Default delegates to {@link #solve}; OR-Tools overrides it with a first-solution config.
