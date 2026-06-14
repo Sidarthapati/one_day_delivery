@@ -26,6 +26,9 @@ public class ResilienceConfig {
                 .failureRateThreshold(props.getFailureRateThreshold())
                 .minimumNumberOfCalls(props.getMinimumNumberOfCalls())
                 .slidingWindowSize(props.getSlidingWindowSize())
+                // A missing rate card is a business outcome, not a downstream fault — don't let
+                // repeated unpriced-lane attempts trip the breaker and 503 the priced lanes too.
+                .ignoreExceptions(com.oneday.pricing.service.NoRateConfiguredException.class)
                 .build();
         return CircuitBreakerRegistry.of(config);
     }
