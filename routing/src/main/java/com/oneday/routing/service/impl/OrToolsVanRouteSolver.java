@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * OR-Tools {@code RoutingModel} VRP solver (M6-D-006, §7.3). Models the loop as:
@@ -43,6 +44,10 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
 
     private static final Logger log = LoggerFactory.getLogger(OrToolsVanRouteSolver.class);
 
+    // Far above any seconds-based arc/makespan cost, so a vertex is dropped only when it genuinely
+    // cannot be served within the cycle — never merely because serving it is expensive.
+    private static final long DROP_PENALTY = 1_000_000_000L;
+
     private final RoutingProperties properties;
     private volatile boolean nativeLoaded = false;
 
@@ -59,6 +64,22 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
 
     @Override
     public SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, false, false);
+    }
+
+    @Override
+    public SolveResult solve(TravelMatrix matrix, int vansAvailable, int capacityPackets,
+                             int cycleMaxMinutes, boolean allowDrops) {
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, false, allowDrops);
+    }
+
+    @Override
+    public SolveResult probe(TravelMatrix matrix, int vansAvailable, int capacityPackets, int cycleMaxMinutes) {
+        return solveInternal(matrix, vansAvailable, capacityPackets, cycleMaxMinutes, true, false);
+    }
+
+    private SolveResult solveInternal(TravelMatrix matrix, int vansAvailable, int capacityPackets,
+                                      int cycleMaxMinutes, boolean feasibilityOnly, boolean allowDrops) {
         ensureNativeLoaded();
 
         int n = matrix.size();
@@ -85,6 +106,13 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
             return matrix.travel(manager.indexToNode(fromIndex), to) + nodes.get(to).serviceTimeSeconds();
         });
         routing.addDimension(timeCb, 0, cycleMaxSeconds, true, "Time");
+        // Balance the work across the fleet: penalise the longest route so the solver spreads stops
+        // over the available vans (minimise makespan) instead of consolidating onto the fewest vans
+        // — without this, plentiful capacity + a loose cycle bound let one van swallow the whole city.
+        RoutingDimension timeDim = routing.getDimensionOrDie("Time");
+        if (!feasibilityOnly) {
+            timeDim.setGlobalSpanCostCoefficient(100); // balance makespan; irrelevant to a yes/no probe
+        }
 
         // "Delivered": per-vehicle end cumul = total deliveries it carries.
         int deliveredCb = routing.registerUnaryTransitCallback((long fromIndex) ->
@@ -108,32 +136,60 @@ class OrToolsVanRouteSolver implements VanRouteSolver {
             solver.addConstraint(solver.makeEquality(loadStart, deliveredEnd));
         }
 
-        RoutingSearchParameters params = main.defaultRoutingSearchParameters().toBuilder()
+        // Drop-and-flag: make each vertex optional at a prohibitive penalty, so the solver leaves a
+        // vertex unserved only when no van can reach it within the cycle (M6 drop-and-flag).
+        if (allowDrops) {
+            for (int i = 1; i < n; i++) {
+                routing.addDisjunction(new long[]{manager.nodeToIndex(i)}, DROP_PENALTY);
+            }
+        }
+
+        RoutingSearchParameters.Builder paramsBuilder = main.defaultRoutingSearchParameters().toBuilder()
                 .setFirstSolutionStrategy(FirstSolutionStrategy.Value.PATH_CHEAPEST_ARC)
-                .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH)
-                .setTimeLimit(Duration.newBuilder().setSeconds(properties.getSolver().getTimeLimitSeconds()).build())
-                .build();
+                .setLocalSearchMetaheuristic(LocalSearchMetaheuristic.Value.GUIDED_LOCAL_SEARCH);
+        if (feasibilityOnly) {
+            // Stop at the first feasible solution instead of optimising to the full time limit.
+            paramsBuilder.setSolutionLimit(1)
+                    .setTimeLimit(Duration.newBuilder()
+                            .setSeconds(properties.getSolver().getProbeTimeLimitSeconds()).build());
+        } else {
+            paramsBuilder.setTimeLimit(Duration.newBuilder()
+                    .setSeconds(properties.getSolver().getTimeLimitSeconds()).build());
+        }
+        RoutingSearchParameters params = paramsBuilder.build();
 
         Assignment solution = routing.solveWithParameters(params);
         if (solution == null) {
-            log.info("OR-Tools found no feasible routing for {} vans, capacity {}, cycleMax {}min over {} nodes",
-                    vansAvailable, capacityPackets, cycleMaxMinutes, n);
+            String msg = "OR-Tools found no feasible routing for {} vans, capacity {}, cycleMax {}min over {} nodes";
+            if (feasibilityOnly) log.debug(msg, vansAvailable, capacityPackets, cycleMaxMinutes, n);
+            else log.info(msg, vansAvailable, capacityPackets, cycleMaxMinutes, n);
             return new SolveResult(List.of(), RoutingSolverType.OR_TOOLS, false);
         }
 
+        boolean[] visited = new boolean[n];
         List<VanRoute> routes = new ArrayList<>();
         for (int v = 0; v < vansAvailable; v++) {
             List<Integer> seq = new ArrayList<>();
             long index = routing.start(v);
             while (!routing.isEnd(index)) {
                 int node = manager.indexToNode(index);
-                if (node != 0) seq.add(node);
+                if (node != 0) {
+                    seq.add(node);
+                    visited[node] = true;
+                }
                 index = solution.value(routing.nextVar(index));
             }
             if (!seq.isEmpty()) {
                 routes.add(RouteEvaluator.evaluate(matrix, v, seq));
             }
         }
-        return new SolveResult(routes, RoutingSolverType.OR_TOOLS, true);
+
+        List<UUID> dropped = new ArrayList<>();
+        if (allowDrops) {
+            for (int i = 1; i < n; i++) {
+                if (!visited[i]) dropped.add(nodes.get(i).refId());
+            }
+        }
+        return new SolveResult(routes, RoutingSolverType.OR_TOOLS, true, dropped);
     }
 }

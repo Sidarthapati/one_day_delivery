@@ -4,11 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oneday.routing.domain.DaCronSchedule;
 import com.oneday.routing.domain.RoutePlanStop;
 import com.oneday.routing.domain.RoutingSolverType;
-import com.oneday.routing.domain.StopNodeKind;
 import com.oneday.routing.service.model.MeetingPlan;
 import com.oneday.routing.service.model.MeetingVertex;
 import com.oneday.routing.service.model.RouteStop;
-import com.oneday.routing.service.model.RoutingNode;
 import com.oneday.routing.service.model.SolveResult;
 import com.oneday.routing.service.model.VanRoute;
 import org.junit.jupiter.api.Test;
@@ -44,11 +42,9 @@ class RoutePlanAssemblerTest {
         return new SolveResult(List.of(route), RoutingSolverType.OR_TOOLS, true);
     }
 
-    private List<RoutingNode> nodes() {
-        return List.of(
-                RoutingNode.hub(UUID.randomUUID(), 12.9, 77.5),
-                new RoutingNode(1, StopNodeKind.MEETING_VERTEX, vertexA, 12.95, 77.6, 5, 3, 300),
-                new RoutingNode(2, StopNodeKind.MEETING_VERTEX, vertexB, 13.0, 77.7, 4, 2, 300));
+    /** Daily {deliver, collect} per vertex; split by the van's 6 loops → A (5,3), B (4,2) per loop. */
+    private Map<UUID, double[]> dailyByVertex() {
+        return Map.of(vertexA, new double[]{30, 18}, vertexB, new double[]{24, 12});
     }
 
     private MeetingPlan plan() {
@@ -61,7 +57,7 @@ class RoutePlanAssemblerTest {
     private RoutePlanAssembler.Assembly assemble() {
         UUID vanId = UUID.randomUUID();
         return RoutePlanAssembler.assemble(UUID.randomUUID(), cityId, LocalDate.of(2026, 6, 9),
-                singleVanTwoStops(), nodes(), plan(),
+                singleVanTwoStops(), plan(), dailyByVertex(),
                 WINDOW_START_HOUR, WINDOW_MINUTES, DWELL_MINUTES, CRON_FREEZE, MAPPER, idx -> vanId);
     }
 
@@ -90,10 +86,11 @@ class RoutePlanAssemblerTest {
         RoutePlanStop loop1A = stopOf(stops, 1, vertexA);
         assertThat(loop1A.getPlannedArrival()).isEqualTo(LocalTime.of(9, 10));
 
-        // Per-loop quantities carried from the node.
+        // Per-loop quantities = daily split by the van's 6 loops; load walked from start load 9 (=5+4):
+        // after A → 9 − 5 + 3 = 7.
         assertThat(loop0A.getDeliverQty()).isEqualTo(5);
         assertThat(loop0A.getCollectQty()).isEqualTo(3);
-        assertThat(loop0A.getLoadAfter()).isEqualTo(2);
+        assertThat(loop0A.getLoadAfter()).isEqualTo(7);
     }
 
     @Test
@@ -117,7 +114,7 @@ class RoutePlanAssemblerTest {
     @Test
     void emptySolveYieldsEmptyAssembly() {
         RoutePlanAssembler.Assembly a = RoutePlanAssembler.assemble(UUID.randomUUID(), cityId, LocalDate.now(),
-                new SolveResult(List.of(), RoutingSolverType.OR_TOOLS, true), nodes(), plan(),
+                new SolveResult(List.of(), RoutingSolverType.OR_TOOLS, true), plan(), dailyByVertex(),
                 WINDOW_START_HOUR, WINDOW_MINUTES, DWELL_MINUTES, CRON_FREEZE, MAPPER, idx -> UUID.randomUUID());
         assertThat(a.nLoops()).isZero();
         assertThat(a.stops()).isEmpty();

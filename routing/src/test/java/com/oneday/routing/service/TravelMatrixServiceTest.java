@@ -1,5 +1,6 @@
 package com.oneday.routing.service;
 
+import com.oneday.routing.config.RoutingProperties;
 import com.oneday.routing.domain.StopNodeKind;
 import com.oneday.routing.service.model.RoutingNode;
 import com.oneday.routing.service.model.TravelMatrix;
@@ -33,13 +34,20 @@ class TravelMatrixServiceTest {
                 12.9 + index, 77.5 + index, 2, 1, 60);
     }
 
+    /** Default props → congestionFactor 1.0 (raw OSRM); a test can set its own. */
+    private static RoutingProperties props(double congestion) {
+        RoutingProperties p = new RoutingProperties();
+        p.setCongestionFactor(congestion);
+        return p;
+    }
+
     @Test
     void buildsMatrixFromOsrmTable() {
         TravelMatrixService service = new TravelMatrixService(stubOsrm(new double[][]{
                 {0.0, 120.4, 300.6},
                 {119.8, 0.0, 180.2},
                 {301.1, 181.9, 0.0}
-        }));
+        }), props(1.0));
 
         TravelMatrix matrix = service.buildMatrix(List.of(
                 RoutingNode.hub(UUID.randomUUID(), 12.9, 77.5), vertex(1), vertex(2)));
@@ -56,12 +64,26 @@ class TravelMatrixServiceTest {
         TravelMatrixService service = new TravelMatrixService(stubOsrm(new double[][]{
                 {0.0, -1.0},
                 {Double.NaN, 0.0}
-        }));
+        }), props(1.0));
 
         TravelMatrix matrix = service.buildMatrix(List.of(
                 RoutingNode.hub(UUID.randomUUID(), 12.9, 77.5), vertex(1)));
 
         assertThat(matrix.travel(0, 1)).isGreaterThan(50_000L);
         assertThat(matrix.travel(1, 0)).isGreaterThan(50_000L);
+    }
+
+    @Test
+    void congestionFactorScalesTravelTimes() {
+        TravelMatrixService service = new TravelMatrixService(stubOsrm(new double[][]{
+                {0.0, 100.0},
+                {100.0, 0.0}
+        }), props(1.6));
+
+        TravelMatrix matrix = service.buildMatrix(List.of(
+                RoutingNode.hub(UUID.randomUUID(), 12.9, 77.5), vertex(1)));
+
+        assertThat(matrix.travel(0, 1)).isEqualTo(160);   // 100s × 1.6
+        assertThat(matrix.travel(0, 0)).isZero();         // diagonal still 0
     }
 }

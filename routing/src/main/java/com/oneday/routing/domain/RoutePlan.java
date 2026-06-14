@@ -6,7 +6,6 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -23,8 +22,10 @@ import java.util.UUID;
 @AllArgsConstructor
 public class RoutePlan {
 
+    // Application-assigned: the planning/override/fallback paths set the id up front so the assembled
+    // route_plan_stop / da_cron_schedule children can reference it before persist. A DB-side generator
+    // here would overwrite that id and orphan the children (FK violation), so the id is never generated.
     @Id
-    @UuidGenerator
     @Column(updatable = false, nullable = false)
     private UUID id;
 
@@ -71,6 +72,10 @@ public class RoutePlan {
 
     @Column(name = "notes", columnDefinition = "text", updatable = false)
     private String notes;
+
+    // JSON array of meeting-vertex UUIDs deferred by the drop-and-flag solve (M6-INFEASIBLE-VERTICES).
+    @Column(name = "deferred_vertex_ids", columnDefinition = "text", updatable = false)
+    private String deferredVertexIds;
 
     @Column(name = "approved_by")
     private UUID approvedBy;
