@@ -265,7 +265,7 @@
       hex: m3.h3_index,
     };
     picked[form][leg] = pick;
-    renderLocCard(form, leg, pick);
+    renderLocCard(form, leg, pick);   // renderLocCard refreshes the M2 cost box
   }
 
   // ════════════════════ CART ════════════════════

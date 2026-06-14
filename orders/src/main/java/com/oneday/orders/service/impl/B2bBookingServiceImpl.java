@@ -134,7 +134,8 @@ class B2bBookingServiceImpl implements B2bBookingService {
                         req.getDestCity().toUpperCase(),
                         chargeableWeightGrams,
                         req.getDeclaredValuePaise(),
-                        account.getRateCardId())));
+                        account.getRateCardId(),
+                        null)));  // B2B is credit-billed — no COD surcharge
 
         // ── 5. DB transaction: credit check → persist → balance increment ──────
         final int finalVolumetric = volumetricWeightGrams;

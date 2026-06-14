@@ -11,7 +11,7 @@
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <!-- Razorpay hosted checkout (used when the backend runs in live/test-API mode) -->
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/app.css?v=m2-ratechart" />
 </head>
 <body>
 
@@ -149,11 +149,20 @@
           <div class="field"><label>Receiver Phone</label><input id="o-b2c-rphone" value="+919000000002" /></div>
         </div>
         <div class="form-row">
-          <div class="field" style="max-width:130px"><label>Weight (g)</label><input id="o-b2c-weight" type="number" value="1000" /></div>
-          <div class="field" style="max-width:90px"><label>L (cm)</label><input id="o-b2c-len" type="number" value="20" /></div>
-          <div class="field" style="max-width:90px"><label>W (cm)</label><input id="o-b2c-wid" type="number" value="15" /></div>
-          <div class="field" style="max-width:90px"><label>H (cm)</label><input id="o-b2c-hei" type="number" value="10" /></div>
-          <div class="field" style="max-width:140px"><label>Declared Value (₹)</label><input id="o-b2c-dval" type="number" value="500" /></div>
+          <div class="field" style="max-width:130px"><label>Weight (g)</label><input id="o-b2c-weight" type="number" value="1000" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:90px"><label>L (cm)</label><input id="o-b2c-len" type="number" value="20" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:90px"><label>W (cm)</label><input id="o-b2c-wid" type="number" value="15" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:90px"><label>H (cm)</label><input id="o-b2c-hei" type="number" value="10" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:140px"><label>Declared Value (₹)</label><input id="o-b2c-dval" type="number" value="500" oninput="quoteDirty('b2c')" /></div>
+        </div>
+        <!-- Live shipping cost computed by M2 (read-only) -->
+        <div class="cost-box" id="o-b2c-cost-box">
+          <div class="cost-box-info">
+            <span class="cost-box-label">📦 Shipping cost <span class="muted">(computed by M2)</span></span>
+            <span class="cost-box-note" id="o-b2c-cost-note">Set pickup, drop &amp; weight to see the price.</span>
+            <a href="#" class="cost-box-link" onclick="openRateChart('B2C');return false;">📋 View full rate chart</a>
+          </div>
+          <span class="cost-box-amount" id="o-b2c-cost-amount">—</span>
         </div>
         <div class="form-row" style="align-items:center">
           <div class="field" style="flex:0">
@@ -228,6 +237,7 @@
           <button class="btn btn-primary" onclick="bookB2b()">Book on Credit</button>
           <button class="btn btn-ghost" onclick="addCurrentToCart('b2b')">🛒 Add to Cart</button>
           <button class="btn btn-ghost" onclick="bookB2b(true)" title="Books against the near-limit QuickShip demo account → 402">Demo: Over Credit Limit</button>
+          <a href="#" class="cost-box-link" onclick="openRateChart('B2B');return false;" style="align-self:center;margin-left:.4rem">📋 View rate chart</a>
         </div>
         <div id="b2b-booking-summary"></div>
         <div id="b2b-booking-response" class="response"></div>
@@ -669,6 +679,20 @@
   </div>
 </div>
 
+<!-- ══════════ RATE CHART MODAL ══════════ -->
+<div id="rate-chart-modal" class="map-modal" style="display:none">
+  <div class="pay-dialog" style="max-width:820px;width:94%">
+    <div class="pay-head">
+      <div>
+        <strong>📋 Rate chart</strong>
+        <div class="muted" id="rate-chart-sub">Published tariff</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeRateChart()" style="color:#fff;border-color:#3a4a6b">✕</button>
+    </div>
+    <div class="pay-body" id="rate-chart-body" style="max-height:72vh;overflow:auto">Loading…</div>
+  </div>
+</div>
+
 <!-- ══════════ ADDRESS FORM MODAL ══════════ -->
 <div id="addr-modal" class="map-modal" style="display:none">
   <div class="map-dialog" style="max-width:520px">
@@ -756,12 +780,12 @@
   </div>
 </div>
 
-<script src="js/core.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/users.js"></script>
-<script src="js/orders.js"></script>
-<script src="js/cart.js"></script>
-<script src="js/admin.js"></script>
-<script src="js/init.js"></script>
+<script src="js/core.js?v=m2-ratechart"></script>
+<script src="js/auth.js?v=m2-ratechart"></script>
+<script src="js/users.js?v=m2-ratechart"></script>
+<script src="js/orders.js?v=m2-ratechart"></script>
+<script src="js/cart.js?v=m2-ratechart"></script>
+<script src="js/admin.js?v=m2-ratechart"></script>
+<script src="js/init.js?v=m2-ratechart"></script>
 </body>
 </html>

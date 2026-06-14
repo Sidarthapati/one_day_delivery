@@ -158,7 +158,8 @@ class BookingServiceImpl implements BookingService {
                         req.getDestCity().toUpperCase(),
                         chargeableWeightGrams,
                         req.getDeclaredValuePaise(),
-                        null)));
+                        null,
+                        req.getPaymentMode())));
         return new Priced(serviceability, volumetricWeightGrams, chargeableWeightGrams, quote);
     }
 

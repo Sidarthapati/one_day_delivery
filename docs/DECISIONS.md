@@ -275,16 +275,23 @@ _No design doc written yet. Decisions will be added when M1 design is authored._
 
 ## M2 — Pricing & Costing Engine
 
-_No design doc written yet. Decisions will be added when M2 design is authored._
+Design doc: `docs/M2/M2-PRICING-DESIGN.md`. API: `docs/M2/M2-API-DOCS.md`. Implemented in `pricing/`
+(`com.oneday.pricing`); DB-backed versioned rate cards seeded from the published rate sheet; replaces
+the former `StubPricingAdapter`.
 
-### Placeholder Assumptions
+### Decisions
 
-| ID | Assumption | Status | Source |
+| ID | Decision | Status | Source |
 |---|---|---|---|
-| M2-D-001 | Volumetric weight divisor is contractually set per B2B account | ASSUMED | MODULES.md M2 |
-| M2-D-002 | Pricing data is versioned; historical orders re-compute against the rate card active at booking time | DECIDED | MODULES.md M2 |
-| M2-D-003 | B2B accounts have account-level negotiated rate tables; B2C uses a published rate card | DECIDED | MODULES.md M2 |
-| M2-D-004 | Per-parcel cost floor is internal only; not exposed to customers | DECIDED | MODULES.md M2 |
+| M2-D-001 | Volumetric divisor is **5000** (`L×W×H/5000` kg). M4 computes chargeable weight; M2 does not recompute it. The divisor is recorded on the rate card for reference. | DECIDED | rate sheet |
+| M2-D-002 | Pricing data is versioned; rate cards are append-only (publish = new ACTIVE + supersede prior). Historical orders reconcile against the `rate_card_version` stored on the shipment. | DECIDED | MODULES.md M2 |
+| M2-D-003 | B2B accounts reference an account-level card by id (negotiated `discount_bps`); B2C/C2C use the single ACTIVE published card per type. | DECIDED | MODULES.md M2 |
+| M2-D-004 | Per-parcel cost floor is internal only (M5/M6 feasibility), never customer-facing; ADMIN-gated endpoint. | DECIDED | MODULES.md M2 |
+| M2-D-005 | Base price = price for the first **0.5 kg** per city-pair (symmetric matrix). Each additional 0.5 kg slab decays 10 pp from 90% and floors at **60%**: `pct(n)=max(60,110−10n)`. | DECIDED | rate sheet |
+| M2-D-006 | **COD charge** = `max(₹50, 1.5% of declared value)`, applied only when `paymentMode=COD` (B2C/C2C). B2B is credit-billed → no COD. Added `paymentMode` to `QuoteRequest`. | DECIDED | rate sheet |
+| M2-D-007 | **GST 18%** applies to (freight after discount + COD). Owned by M2 (supersedes the M4-D-020 stub). | DECIDED | rate sheet + M4-D-020 |
+| M2-D-008 | Per-parcel cost floor = DA share (shift cost ÷ effective capacity at ~70% utilisation) + van share + hub + airline, from per-city `costing_params`. | DECIDED | DA-utilisation invariant |
+| M2-D-009 | Chennai (MAA) is serviceable but **unpriced** in the v1 sheet → MAA bookings return `422 No rate configured` until ops adds rows. | ACCEPTED GAP | rate sheet |
 
 ---
 
