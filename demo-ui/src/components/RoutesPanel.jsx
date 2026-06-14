@@ -12,6 +12,14 @@ export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, se
   const loopIdx = sel ? Math.min(selectedLoop, sel.stopsByLoop.length - 1) : 0
   const timeline = sel ? sel.stopsByLoop[loopIdx] || [] : []
 
+  // Each van now runs its own cadence, so loops/day and cycle vary across the fleet — show the range.
+  const range = (vals, fallback) => {
+    const a = vals.filter(v => v != null)
+    if (!a.length) return fallback
+    const lo = Math.min(...a), hi = Math.max(...a)
+    return lo === hi ? `${lo}` : `${lo}–${hi}`
+  }
+
   return (
     <div className="p-4 text-sm">
       <div className="font-semibold text-gray-700 mb-2">Route plan · {plan.status}</div>
@@ -21,8 +29,8 @@ export default function RoutesPanel({ plan, routes, selectedVan, onSelectVan, se
         <div>Recommended vans</div>
         <div className="text-right font-medium text-gray-800">{recoUnavailable ? '—' : plan.recommendedVanCount}</div>
         <div>Provisioning</div><div className={`text-right font-medium ${flagColor}`}>{plan.provisioningFlag}</div>
-        <div>Loops / day</div><div className="text-right font-medium text-gray-800">{plan.nLoops}</div>
-        <div>Cycle / loop (min)</div><div className="text-right font-medium text-gray-800">{plan.realisedCycleMinutes}</div>
+        <div>Loops / day</div><div className="text-right font-medium text-gray-800">{range(routes.map(r => r.loopCount), plan.nLoops)}</div>
+        <div>Cycle / loop (min)</div><div className="text-right font-medium text-gray-800">{range(routes.map(r => r.loopMinutes), plan.realisedCycleMinutes)}</div>
       </div>
 
       {plan.notes && (

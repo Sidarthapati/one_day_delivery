@@ -39,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -109,6 +110,7 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
         Map<UUID, TerritoryDemand> demandByDa = demandAggregationService.aggregate(territories).stream()
                 .collect(Collectors.toMap(TerritoryDemand::daId, d -> d));
         MeetingPlan meetingPlan = meetingPointSelectionService.select(territories);
+        Map<UUID, double[]> dailyByVertex = dailyDemandByVertex(meetingPlan, demandByDa);
 
         int windowMinutes = (properties.getWindow().getEndHour() - properties.getWindow().getStartHour()) * 60;
 
@@ -119,14 +121,14 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
         }
 
         // OSRM is called once: the node coordinates are fixed; only per-loop quantities change.
-        long[][] seconds = travelMatrixService.buildMatrix(buildNodes(hub, meetingPlan, demandByDa, 1)).travelSeconds();
+        long[][] seconds = travelMatrixService.buildMatrix(buildNodes(hub, meetingPlan, dailyByVertex, 1)).travelSeconds();
 
         // Fixed-point on n_loops: the realised cycle that sets n_loops only emerges from the solve.
         int nLoops = Math.max(1, windowMinutes / fleet.getCycleTimeMaxMinutes());
         SolveResult constrained = null;
         List<RoutingNode> nodes = null;
         for (int iter = 0; iter < MAX_NLOOPS_ITERATIONS; iter++) {
-            nodes = buildNodes(hub, meetingPlan, demandByDa, nLoops);
+            nodes = buildNodes(hub, meetingPlan, dailyByVertex, nLoops);
             TravelMatrix matrix = new TravelMatrix(nodes, seconds);
             constrained = solver.solve(matrix, fleet.getVansAvailable(), fleet.getCapacityPackets(), windowMinutes);
             if (!constrained.feasible() || constrained.routes().isEmpty()) break;
@@ -159,7 +161,7 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
 
         UUID planId = UUID.randomUUID(); // assign up front so assembled children reference it
         RoutePlanAssembler.Assembly assembly = RoutePlanAssembler.assemble(
-                planId, cityId, date, constrained, nodes, meetingPlan,
+                planId, cityId, date, constrained, meetingPlan, dailyByVertex,
                 properties.getWindow().getStartHour(), windowMinutes, fleet.getDwellMinutes(),
                 properties.getCronFreezeMinutes(), objectMapper, idx -> vanId(cityId, idx));
 
@@ -217,7 +219,7 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
     }
 
     private List<RoutingNode> buildNodes(CityLogisticsNode hub, MeetingPlan plan,
-                                         Map<UUID, TerritoryDemand> demandByDa, int nLoops) {
+                                         Map<UUID, double[]> dailyByVertex, int nLoops) {
         List<RoutingNode> nodes = new ArrayList<>(plan.vertices().size() + 1);
         // Hub carries the per-loop turnaround (unload + reload) so it counts against the cycle.
         nodes.add(RoutingNode.hub(hub.getId(), hub.getLat(), hub.getLon(),
@@ -225,20 +227,32 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
         int dwellSeconds = properties.getDwellMinutes() * 60;
         int idx = 1;
         for (MeetingVertex vertex : plan.vertices()) {
-            double dailyDeliver = 0, dailyCollect = 0;
-            for (UUID daId : plan.vertexToDaIds().getOrDefault(vertex.vertexId(), List.of())) {
-                TerritoryDemand d = demandByDa.get(daId);
-                if (d == null) continue;
-                dailyDeliver += d.lastMileQty();
-                dailyCollect += d.firstMileQty();
-            }
-            int perLoopDeliver = (int) Math.ceil(dailyDeliver / nLoops);
-            int perLoopCollect = (int) Math.ceil(dailyCollect / nLoops);
+            double[] daily = dailyByVertex.getOrDefault(vertex.vertexId(), ZERO_DEMAND);
+            int perLoopDeliver = (int) Math.ceil(daily[0] / nLoops);
+            int perLoopCollect = (int) Math.ceil(daily[1] / nLoops);
             nodes.add(new RoutingNode(idx, StopNodeKind.MEETING_VERTEX, vertex.vertexId(),
                     vertex.lat(), vertex.lon(), perLoopDeliver, perLoopCollect, dwellSeconds));
             idx++;
         }
         return nodes;
+    }
+
+    private static final double[] ZERO_DEMAND = {0, 0};
+
+    /** Daily {deliver, collect} packets at each meeting vertex, summed over the DAs meeting there. */
+    private Map<UUID, double[]> dailyDemandByVertex(MeetingPlan plan, Map<UUID, TerritoryDemand> demandByDa) {
+        Map<UUID, double[]> out = new HashMap<>();
+        for (MeetingVertex vertex : plan.vertices()) {
+            double deliver = 0, collect = 0;
+            for (UUID daId : plan.vertexToDaIds().getOrDefault(vertex.vertexId(), List.of())) {
+                TerritoryDemand d = demandByDa.get(daId);
+                if (d == null) continue;
+                deliver += d.lastMileQty();
+                collect += d.firstMileQty();
+            }
+            out.put(vertex.vertexId(), new double[]{deliver, collect});
+        }
+        return out;
     }
 
     /** Deterministic van id per (city, vehicle index) — no fleet registry exists yet. */
