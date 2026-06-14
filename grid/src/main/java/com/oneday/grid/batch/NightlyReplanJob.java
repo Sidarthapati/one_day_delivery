@@ -116,7 +116,7 @@ public class NightlyReplanJob {
     void applyFallback(UUID cityId, LocalDate today, AssignmentProposal yesterdayProposal) {
         List<DaHexAssignment> yesterdayActive = assignmentRepository
                 .findByProposalId(yesterdayProposal.getId())
-                .stream().filter(a -> a.getStatus() == AssignmentStatus.ACTIVE).toList();
+                .stream().filter(a -> a.getStatus() == AssignmentStatus.APPROVED).toList();
 
         long daCount = yesterdayActive.stream().map(DaHexAssignment::getDaId).distinct().count();
 
@@ -140,7 +140,7 @@ public class NightlyReplanJob {
                         .hexId(a.getHexId())
                         .validDate(today)
                         .nDasOnHex(a.getNDasOnHex())
-                        .status(AssignmentStatus.ACTIVE)
+                        .status(AssignmentStatus.APPROVED)
                         .build())
                 .collect(Collectors.toList());
         assignmentRepository.saveAll(todayAssignments);

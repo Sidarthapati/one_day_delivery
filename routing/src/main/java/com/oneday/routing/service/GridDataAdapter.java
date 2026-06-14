@@ -30,7 +30,8 @@ public class GridDataAdapter {
         this.gridService = gridService;
     }
 
-    /** DA → hexes (+ demand) → corner vertices for the city on the date (ACTIVE assignments only). */
+    /** DA → hexes (+ demand) → corner vertices for the city on the date (APPROVED assignments — the
+     *  approval-lifecycle state M3 writes for a day's grid; the old ACTIVE state was collapsed into it). */
     public List<DaTerritory> getDaTerritories(UUID cityId, LocalDate date) {
         return gridService.getDaTerritories(cityId, date).stream()
                 .map(GridDataAdapter::toTerritory)

@@ -104,8 +104,8 @@ class IntradayMonitorJobTest {
 
         DaHexAssignment assignment = DaHexAssignment.builder()
                 .daId(UUID.randomUUID()).hexId(hexId).validDate(today)
-                .proposalId(UUID.randomUUID()).status(AssignmentStatus.ACTIVE).build();
-        when(assignmentRepository.findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.ACTIVE))
+                .proposalId(UUID.randomUUID()).status(AssignmentStatus.APPROVED).build();
+        when(assignmentRepository.findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.APPROVED))
                 .thenReturn(List.of(assignment));
 
         invokeMonitorCity();

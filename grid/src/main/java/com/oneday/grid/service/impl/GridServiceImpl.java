@@ -196,7 +196,7 @@ public class GridServiceImpl implements GridService {
         Set<UUID> cityHexIds = hexRepository.findByH3GridId(grid.getId()).stream()
                 .map(Hex::getId).collect(Collectors.toSet());
         return assignmentRepository
-                .findByHexIdInAndValidDateAndStatus(cityHexIds, date, AssignmentStatus.ACTIVE)
+                .findByHexIdInAndValidDateAndStatus(cityHexIds, date, AssignmentStatus.APPROVED)
                 .stream()
                 .map(a -> new AssignmentResponse(
                         a.getId(), a.getProposalId(), a.getDaId(), a.getHexId(),
@@ -226,9 +226,9 @@ public class GridServiceImpl implements GridService {
                         HexVertex::getH3VertexIndex,
                         v -> new GridVertexResponse(v.getId(), v.getLat(), v.getLon())));
 
-        // ACTIVE assignments for the date, scoped to this city's hexes, grouped per DA.
+        // APPROVED assignments for the date, scoped to this city's hexes, grouped per DA.
         Map<UUID, List<DaHexAssignment>> byDa = assignmentRepository
-                .findByHexIdInAndValidDateAndStatus(hexById.keySet(), date, AssignmentStatus.ACTIVE)
+                .findByHexIdInAndValidDateAndStatus(hexById.keySet(), date, AssignmentStatus.APPROVED)
                 .stream()
                 .collect(Collectors.groupingBy(DaHexAssignment::getDaId));
 

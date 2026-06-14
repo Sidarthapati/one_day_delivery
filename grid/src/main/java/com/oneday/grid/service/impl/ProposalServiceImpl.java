@@ -197,15 +197,15 @@ class ProposalServiceImpl implements ProposalService {
         LocalDate today = LocalDate.now();
         Set<UUID> moveSet = new HashSet<>(hexIdsToMove);
 
-        // Load current ACTIVE assignments for both DAs
+        // Load current APPROVED assignments for both DAs
         List<UUID> fromCurrent = activeAssignedHexes(fromDaId, today);
         List<UUID> toCurrent   = activeAssignedHexes(toDaId,   today);
 
-        // Validate all hexes to move are actively assigned to fromDaId
+        // Validate all hexes to move are currently assigned to fromDaId
         Set<UUID> fromSet = new HashSet<>(fromCurrent);
         for (UUID hexId : hexIdsToMove) {
             require(fromSet.contains(hexId),
-                    "Hex " + hexId + " is not ACTIVE under DA " + fromDaId);
+                    "Hex " + hexId + " is not assigned under DA " + fromDaId);
         }
 
         Map<UUID, List<UUID>> adjacencyGraph = loadAdjacencyGraph(cityId);
@@ -271,20 +271,19 @@ class ProposalServiceImpl implements ProposalService {
                 .map(DaHexAssignment::getDaId)
                 .collect(Collectors.toSet());
 
-        // Supersede ACTIVE assignments for the affected DAs on today's date
+        // Supersede the standing APPROVED assignments for the affected DAs on today's date
         for (UUID daId : affectedDaIds) {
             assignmentRepository.findByDaIdAndValidDate(daId, proposal.getValidForDate()).stream()
-                    .filter(a -> a.getStatus() == AssignmentStatus.ACTIVE
-                              || a.getStatus() == AssignmentStatus.APPROVED)
+                    .filter(a -> a.getStatus() == AssignmentStatus.APPROVED)
                     .forEach(a -> {
                         a.setStatus(AssignmentStatus.SUPERSEDED);
                         assignmentRepository.save(a);
                     });
         }
 
-        // Activate the override's new assignments
+        // Approve the override's new assignments (they become the standing plan for the date)
         overrideAssignments.forEach(a -> {
-            a.setStatus(AssignmentStatus.ACTIVE);
+            a.setStatus(AssignmentStatus.APPROVED);
             a.setApprovedBy(reviewerId);
             a.setApprovedAt(now);
         });
@@ -307,10 +306,10 @@ class ProposalServiceImpl implements ProposalService {
     public TileShareResponse requestTileShare(UUID cityId, UUID daId, UUID hexId, UUID requestedBy) {
         LocalDate today = LocalDate.now();
 
-        // Validate the hex is currently ACTIVE (at least one DA covers it)
+        // Validate the hex is currently assigned (at least one DA covers it)
         List<DaHexAssignment> active = assignmentRepository
-                .findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.ACTIVE);
-        require(!active.isEmpty(), "Hex " + hexId + " has no ACTIVE assignment to share");
+                .findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.APPROVED);
+        require(!active.isEmpty(), "Hex " + hexId + " has no APPROVED assignment to share");
 
         AssignmentProposal shareProposal = proposalRepository.save(AssignmentProposal.builder()
                 .cityId(cityId)
@@ -352,7 +351,7 @@ class ProposalServiceImpl implements ProposalService {
 
         List<DaHexAssignment> shareAssignments = assignmentRepository.findByProposalId(proposalId);
         shareAssignments.forEach(a -> {
-            a.setStatus(AssignmentStatus.ACTIVE);
+            a.setStatus(AssignmentStatus.APPROVED);
             a.setApprovedBy(reviewerId);
             a.setApprovedAt(now);
         });
@@ -385,8 +384,7 @@ class ProposalServiceImpl implements ProposalService {
 
     private List<UUID> activeAssignedHexes(UUID daId, LocalDate date) {
         return assignmentRepository.findByDaIdAndValidDate(daId, date).stream()
-                .filter(a -> a.getStatus() == AssignmentStatus.ACTIVE
-                          || a.getStatus() == AssignmentStatus.APPROVED)
+                .filter(a -> a.getStatus() == AssignmentStatus.APPROVED)
                 .map(DaHexAssignment::getHexId)
                 .toList();
     }
