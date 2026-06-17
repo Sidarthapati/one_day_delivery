@@ -1,35 +1,21 @@
 package com.oneday.common.kafka;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.stereotype.Component;
-
 /**
- * Single shared producer. Every module injects this instead of wiring KafkaTemplate + try/catch
- * by hand. Keys the message by the event's {@link DomainEvent#partitionKey()} so per-entity
- * ordering is automatic, and never lets a broker hiccup break the calling business flow
- * (a failed send is logged, not thrown — Kafka is best-effort for the producing module).
+ * The producer port. Every module injects this and calls {@code publish(stream, event)} —
+ * it never touches the broker client directly. The active adapter (today
+ * {@link RabbitEventPublisher}) decides the transport, so swapping RabbitMQ for another broker,
+ * or adding a DB outbox, is an adapter change with zero business-code change. See
+ * {@code docs/EVENT-BUS-ARCHITECTURE.md}.
  *
- * Usage:  eventPublisher.publish(KafkaTopics.CRON_EVENTS, cronDepartedEvent);
+ * <p>Usage:  {@code eventPublisher.publish(EventStreams.CRON_EVENTS, daCronScheduledEvent);}</p>
  */
-@Component
-public class EventPublisher {
+public interface EventPublisher {
 
-    private static final Logger log = LoggerFactory.getLogger(EventPublisher.class);
-
-    private final KafkaTemplate<String, Object> kafkaTemplate;
-
-    EventPublisher(KafkaTemplate<String, Object> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
-    public void publish(String topic, DomainEvent event) {
-        try {
-            kafkaTemplate.send(topic, event.partitionKey(), event);
-        } catch (Exception e) {
-            log.warn("Kafka publish failed — topic={} type={} key={}: {}",
-                    topic, event.eventTypeName(), event.partitionKey(), e.getMessage());
-        }
-    }
+    /**
+     * Publish an event to a logical stream.
+     *
+     * @param stream a logical stream name — an {@link EventStreams} constant (a RabbitMQ exchange).
+     * @param event  the payload; its {@link DomainEvent#eventTypeName()} becomes the routing key.
+     */
+    void publish(String stream, DomainEvent event);
 }

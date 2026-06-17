@@ -4,7 +4,7 @@
 |-------|-------|
 | **Status** | Design / convention — applies to **every** module (M3–M11) |
 | **Decision** | Inter-module events run over **RabbitMQ** (publish-direct, no DB outbox). Cheap, push-based (low latency), simple. |
-| **Migration** | The codebase is currently wired for **Kafka** (spring-kafka). §10 below is the step-by-step switch. |
+| **Migration** | ✅ **DONE (2026-06-17).** The whole repo was migrated off Kafka to RabbitMQ — §10 records exactly what changed. Build green: common/grid/routing/orders compile + unit tests pass; no `spring-kafka` / `org.springframework.kafka` references remain. |
 | **Portability** | All business code depends only on two ports — `EventPublisher` + `EventHandler`. The broker is an adapter. Swapping RabbitMQ for Kafka/SQS later, or bolting on a DB outbox for stronger delivery guarantees, is an adapter change — **zero business-code change.** |
 | **Accepted trade-off** | Publish-direct means a crash between DB-commit and publish can lose an event (no outbox). Mitigated by idempotent handlers + a reconciliation sweep. Add the outbox later (§11) if loss ever bites. |
 
@@ -282,9 +282,9 @@ Declare, per stream, a `<stream>.dlx` exchange + a `<stream>.dlq` queue bound to
 
 ---
 
-## 10. Migration from the current Kafka wiring → RabbitMQ
+## 10. Migration from the Kafka wiring → RabbitMQ — ✅ DONE (2026-06-17)
 
-The code is broker-shaped already, so this is mechanical. Touch points found in the repo:
+This was executed across the repo. Touch points and what changed:
 
 | # | Change | Files |
 |---|--------|-------|

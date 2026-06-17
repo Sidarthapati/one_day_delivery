@@ -5,22 +5,22 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
 
-import com.oneday.common.kafka.KafkaTopics;
+import com.oneday.common.kafka.EventPublisher;
+import com.oneday.common.kafka.EventStreams;
+import com.oneday.grid.events.payload.NoDaAlertEvent;
 
 import java.time.LocalDate;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class NoDaAlertProducerTest {
 
-    @Mock KafkaTemplate<String, Object> kafkaTemplate;
+    @Mock EventPublisher eventPublisher;
 
     NoDaAlertProducer producer;
 
@@ -30,24 +30,17 @@ class NoDaAlertProducerTest {
 
     @BeforeEach
     void setUp() {
-        producer = new NoDaAlertProducer(kafkaTemplate);
+        producer = new NoDaAlertProducer(eventPublisher);
     }
 
     // ---- A5 tests ----------------------------------------------------------
+    // Best-effort broker-failure handling is covered by EventPublisherTest; this producer is a
+    // thin pass-through onto the shared EventPublisher port.
 
     @Test
-    void send_happyPath_callsKafkaTemplateWithCorrectTopic() {
+    void send_happyPath_publishesToGridExchange() {
         producer.emit(cityId, tileId, date, "NO_DA_AVAILABLE");
 
-        verify(kafkaTemplate).send(eq(KafkaTopics.GRID_EVENTS), eq(tileId.toString()), any());
-    }
-
-    @Test
-    void send_kafkaTemplateThrows_doesNotPropagateException() {
-        doThrow(new RuntimeException("broker down"))
-                .when(kafkaTemplate).send(any(String.class), any(String.class), any());
-
-        // Should complete without throwing
-        producer.emit(cityId, tileId, date, "NO_DA_AVAILABLE");
+        verify(eventPublisher).publish(eq(EventStreams.GRID_EVENTS), any(NoDaAlertEvent.class));
     }
 }

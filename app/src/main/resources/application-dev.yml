@@ -1,21 +1,12 @@
-# Shared TEAM-TESTING cluster. Confluent Cloud Basic by default; Redpanda Cloud also works
-# (the Kafka wire protocol is identical — switching brokers is ENV-ONLY, no Java/topic changes).
+# Shared TEAM-TESTING broker — managed RabbitMQ on CloudAMQP.
 # Activate with:  SPRING_PROFILES_ACTIVE=dev
 # Secrets come from env vars (see .env, which is gitignored) — never commit real keys.
 #
-#   export KAFKA_BOOTSTRAP_SERVERS=<your-cluster-bootstrap:9092>
-#   export KAFKA_KEY=<api-key / username>
-#   export KAFKA_SECRET=<api-secret / password>
+#   export CLOUDAMQP_URL='amqps://<user>:<pass>@<host>.rmq.cloudamqp.com/<vhost>'
 #
-# Works with any SASL_SSL managed cluster. The mechanism and full JAAS login string come
-# from env vars so the same config serves Confluent Cloud (PLAIN + PlainLoginModule) and
-# Redpanda Cloud (SCRAM-SHA-256 + ScramLoginModule) without code changes:
-#   export KAFKA_SASL_MECHANISM=PLAIN
-#   export KAFKA_JAAS_CONFIG='org.apache.kafka.common.security.plain.PlainLoginModule required username="<key>" password="<secret>";'
+# The amqps:// scheme makes Spring enable TLS (port 5671) and the trailing /<vhost> sets the
+# CloudAMQP virtual host. The same `addresses` property serves the local Docker broker (plain
+# amqp://guest:guest@localhost:5672) when CLOUDAMQP_URL is unset — switching brokers is ENV-ONLY.
 spring:
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
-    properties:
-      security.protocol: SASL_SSL
-      sasl.mechanism: ${KAFKA_SASL_MECHANISM:PLAIN}
-      sasl.jaas.config: ${KAFKA_JAAS_CONFIG}
+  rabbitmq:
+    addresses: ${CLOUDAMQP_URL}

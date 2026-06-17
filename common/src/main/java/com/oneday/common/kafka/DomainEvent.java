@@ -1,19 +1,18 @@
 package com.oneday.common.kafka;
 
 /**
- * Contract every Kafka event payload implements so the shared infra (EventPublisher,
- * error handling, logging) can treat any event uniformly without knowing its concrete type.
+ * Contract every event payload implements so the shared infra (EventPublisher, logging) can
+ * treat any event uniformly without knowing its concrete type.
  *
  * Keep payloads as plain data (records, or Lombok POJOs) — no behaviour beyond these two
  * derivations. The event TYPE (e.g. CREATED, NO_DA_ALERT) stays a per-module enum field on
- * the payload; eventTypeName() just exposes its name for logging/DLQ headers.
+ * the payload; {@link #eventTypeName()} exposes its name — used as the RabbitMQ routing key.
  */
 public interface DomainEvent {
 
-    /** Kafka message key — the entity this event is about (shipmentId, tileId, …).
-     *  Same key ⇒ same partition ⇒ ordered per entity. Never null. */
+    /** The entity this event is about (shipmentId, tileId, …) — for logging/correlation. Never null. */
     String partitionKey();
 
-    /** The event type as a string (usually {@code someEnum.name()}) — for logging and DLQ headers. */
+    /** The event type as a string (usually {@code someEnum.name()}) — used as the routing key. */
     String eventTypeName();
 }

@@ -3,7 +3,7 @@ package com.oneday.routing.events;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.KafkaTopics;
+import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.events.cron.DaCronScheduledEvent;
 import com.oneday.common.kafka.events.cron.RouteChangedEvent;
 import com.oneday.common.kafka.events.cron.RoutePlanPublishedEvent;
@@ -40,7 +40,7 @@ public class CronEventProducer {
 
     /** DA_CRON_SCHEDULED → M5: the DA's vertex + the day's meeting times. */
     public void emitDaCronScheduled(DaCronSchedule cron, double meetingLat, double meetingLon) {
-        eventPublisher.publish(KafkaTopics.CRON_EVENTS, new DaCronScheduledEvent(
+        eventPublisher.publish(EventStreams.CRON_EVENTS, new DaCronScheduledEvent(
                 cron.getCityId(),
                 cron.getValidDate(),
                 cron.getDaId(),
@@ -54,7 +54,7 @@ public class CronEventProducer {
 
     /** ROUTE_PLAN_PUBLISHED → M10, van app: a city's plan is approved & active. */
     public void emitRoutePlanPublished(RoutePlan plan) {
-        eventPublisher.publish(KafkaTopics.CRON_EVENTS, new RoutePlanPublishedEvent(
+        eventPublisher.publish(EventStreams.CRON_EVENTS, new RoutePlanPublishedEvent(
                 plan.getCityId(),
                 plan.getValidForDate(),
                 plan.getId(),
@@ -65,7 +65,7 @@ public class CronEventProducer {
 
     /** ROUTE_CHANGED → M5, M10, station mgr: an intraday override took effect. */
     public void emitRouteChanged(RoutePlan revision, java.util.UUID actorId, String reason) {
-        eventPublisher.publish(KafkaTopics.CRON_EVENTS, new RouteChangedEvent(
+        eventPublisher.publish(EventStreams.CRON_EVENTS, new RouteChangedEvent(
                 revision.getCityId(),
                 revision.getValidForDate(),
                 revision.getId(),
@@ -75,7 +75,7 @@ public class CronEventProducer {
 
     /** SHUTTLE_SCHEDULED → M9, M10: the periodic hub↔airport timetable. */
     public void emitShuttleScheduled(ShuttleTimetable timetable, java.util.UUID routePlanId) {
-        eventPublisher.publish(KafkaTopics.CRON_EVENTS, new ShuttleScheduledEvent(
+        eventPublisher.publish(EventStreams.CRON_EVENTS, new ShuttleScheduledEvent(
                 timetable.cityId(),
                 timetable.validDate(),
                 routePlanId,

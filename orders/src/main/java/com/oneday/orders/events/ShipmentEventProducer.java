@@ -1,7 +1,7 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.KafkaTopics;
+import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.enums.ShipmentEventType;
 import com.oneday.common.kafka.events.ShipmentCancelledEvent;
 import com.oneday.common.kafka.events.ShipmentCreatedEvent;
@@ -17,11 +17,11 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * M4's outbound Kafka producer. Listens for in-process {@link ShipmentTransitioned} events
- * (published by the state machine) and emits one Kafka STATE_CHANGED event per committed
- * transition to {@link KafkaTopics#SHIPMENTS_EVENTS}.
+ * M4's outbound event producer. Listens for in-process {@link ShipmentTransitioned} events
+ * (published by the state machine) and emits one STATE_CHANGED event per committed
+ * transition to {@link EventStreams#SHIPMENTS_EVENTS}.
  *
- * <p><b>AFTER_COMMIT:</b> the Kafka publish happens only once the DB transaction has
+ * <p><b>AFTER_COMMIT:</b> the publish happens only once the DB transaction has
  * committed, so a rolled-back transition never produces a phantom event. {@link EventPublisher}
  * is best-effort — a broker hiccup is logged, not thrown, and never affects the (already
  * committed) shipment state.</p>
@@ -56,7 +56,7 @@ public class ShipmentEventProducer {
 
         log.debug("Publishing STATE_CHANGED shipmentId={} {}->{}",
                 e.shipmentId(), e.fromState(), e.toState());
-        eventPublisher.publish(KafkaTopics.SHIPMENTS_EVENTS, event);
+        eventPublisher.publish(EventStreams.SHIPMENTS_EVENTS, event);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -91,7 +91,7 @@ public class ShipmentEventProducer {
         event.setReceiverAddressLine(s.getDestAddress() != null ? s.getDestAddress().getLine1() : null);
 
         log.debug("Publishing CREATED shipmentId={} ref={}", s.getId(), s.getShipmentRef());
-        eventPublisher.publish(KafkaTopics.SHIPMENTS_EVENTS, event);
+        eventPublisher.publish(EventStreams.SHIPMENTS_EVENTS, event);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -109,6 +109,6 @@ public class ShipmentEventProducer {
 
         log.debug("Publishing CANCELLED shipmentId={} ref={} cancelledAtState={}",
                 e.shipmentId(), e.shipmentRef(), e.cancelledAtState());
-        eventPublisher.publish(KafkaTopics.SHIPMENTS_EVENTS, event);
+        eventPublisher.publish(EventStreams.SHIPMENTS_EVENTS, event);
     }
 }
