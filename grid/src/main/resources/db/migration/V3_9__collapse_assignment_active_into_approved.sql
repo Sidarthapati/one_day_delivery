@@ -1,0 +1,11 @@
+-- Collapse AssignmentStatus.ACTIVE into APPROVED.
+--
+-- The system never implemented an APPROVED->ACTIVE "go-live" flip, so the two states were
+-- ambiguous: nightly approve left assignments APPROVED, while intraday override, tile-share and
+-- the auto-fallback wrote ACTIVE. M6 nightly planning (and the grid map view / intraday monitor)
+-- read ACTIVE only, so a freshly-approved grid exposed zero territories. "Which day" is already
+-- carried by valid_date and "which assignment wins" by SUPERSEDED, so ACTIVE was redundant.
+--
+-- Going forward all code writes/reads APPROVED. This converts any existing ACTIVE rows so they
+-- remain visible. No schema change (status is a plain VARCHAR with no CHECK constraint).
+UPDATE da_hex_assignment SET status = 'APPROVED' WHERE status = 'ACTIVE';

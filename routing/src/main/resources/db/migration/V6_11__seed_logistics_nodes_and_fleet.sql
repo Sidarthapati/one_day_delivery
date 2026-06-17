@@ -24,11 +24,11 @@ ON CONFLICT (city_id, kind) DO UPDATE
 INSERT INTO city_fleet_config
     (city_id, vans_available, capacity_packets, cycle_time_min_minutes, cycle_time_max_minutes,
      shuttle_cadence_minutes, max_da_to_vertex_minutes, dwell_minutes) VALUES
-    ('f47ac10b-58cc-4372-a567-0e02b2c3d479', 6, 120, 120, 180, 30, 12, 5),
-    ('550e8400-e29b-41d4-a716-446655440000', 6, 120, 120, 180, 30, 12, 5),
-    ('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 6, 120, 120, 180, 30, 12, 5),
-    ('6ba7b811-9dad-11d1-80b4-00c04fd430c8', 6, 120, 120, 180, 30, 12, 5),
-    ('6ba7b812-9dad-11d1-80b4-00c04fd430c8', 6, 120, 120, 180, 30, 12, 5)
+    ('f47ac10b-58cc-4372-a567-0e02b2c3d479', 6, 120, 120, 180, 30, 12, 10),
+    ('550e8400-e29b-41d4-a716-446655440000', 6, 120, 120, 180, 30, 12, 10),
+    ('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 6, 120, 120, 180, 30, 12, 10),
+    ('6ba7b811-9dad-11d1-80b4-00c04fd430c8', 6, 120, 120, 180, 30, 12, 10),
+    ('6ba7b812-9dad-11d1-80b4-00c04fd430c8', 6, 120, 120, 180, 30, 12, 10)
 ON CONFLICT (city_id) DO UPDATE
     SET vans_available           = EXCLUDED.vans_available,
         capacity_packets         = EXCLUDED.capacity_packets,

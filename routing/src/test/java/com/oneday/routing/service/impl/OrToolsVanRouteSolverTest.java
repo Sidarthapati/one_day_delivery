@@ -65,6 +65,38 @@ class OrToolsVanRouteSolverTest {
     }
 
     @Test
+    void dropAndFlagDefersFarVertexAndServesTheRest() {
+        assumeTrue(nativeAvailable, "OR-Tools native library not available");
+
+        // Node 3's solo round-trip (1800 + 60 + 1800 = 3660s) exceeds a 60-min cycle; 1 and 2 fit.
+        TravelMatrix matrix = lineMatrix(
+                new int[]{0, 1, 1, 1}, new int[]{0, 1, 1, 1}, new int[]{0, 60, 60, 60});
+
+        SolveResult result = solver().solve(matrix, 3, 100, 60, true);
+
+        assertThat(result.feasible()).isTrue();
+        assertThat(SolverFixtures.visitedNodeIndices(result)).containsExactlyInAnyOrder(1, 2);
+        assertThat(result.droppedVertexIds()).containsExactly(matrix.nodes().get(3).refId());
+        for (VanRoute route : result.routes()) {
+            assertThat(route.spanSeconds()).isLessThanOrEqualTo(60L * 60);
+        }
+    }
+
+    @Test
+    void noDropsWhenAllowDropsIsFalse() {
+        assumeTrue(nativeAvailable, "OR-Tools native library not available");
+
+        // Same geometry, but a 180-min cycle fits every vertex → nothing deferred.
+        TravelMatrix matrix = lineMatrix(
+                new int[]{0, 1, 1, 1}, new int[]{0, 1, 1, 1}, new int[]{0, 60, 60, 60});
+
+        SolveResult result = solver().solve(matrix, 3, 100, 180);
+
+        assertThat(SolverFixtures.visitedNodeIndices(result)).containsExactlyInAnyOrder(1, 2, 3);
+        assertThat(result.droppedVertexIds()).isEmpty();
+    }
+
+    @Test
     void capacityNeverExceededAtAnyRoutePoint() {
         assumeTrue(nativeAvailable, "OR-Tools native library not available");
 

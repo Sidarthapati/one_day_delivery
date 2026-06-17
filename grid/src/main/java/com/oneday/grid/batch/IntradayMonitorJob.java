@@ -132,10 +132,10 @@ public class IntradayMonitorJob {
         return minutesSince >= suppressionMinutes;
     }
 
-    // Returns the first active DA ID assigned to the hex today, or null if none found.
+    // Returns the first DA ID assigned to the hex today, or null if none found.
     private UUID resolveDaId(UUID hexId, LocalDate today) {
         List<DaHexAssignment> active = assignmentRepository
-                .findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.ACTIVE);
+                .findByHexIdAndValidDateAndStatus(hexId, today, AssignmentStatus.APPROVED);
         return active.isEmpty() ? null : active.get(0).getDaId();
     }
 

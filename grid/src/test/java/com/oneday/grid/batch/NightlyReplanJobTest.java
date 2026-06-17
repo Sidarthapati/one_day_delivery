@@ -120,7 +120,7 @@ class NightlyReplanJobTest {
 
         DaHexAssignment activeAssignment = DaHexAssignment.builder()
                 .proposalId(yesterdayProposalId).daId(UUID.randomUUID()).hexId(UUID.randomUUID())
-                .validDate(LocalDate.now().minusDays(1)).status(AssignmentStatus.ACTIVE).build();
+                .validDate(LocalDate.now().minusDays(1)).status(AssignmentStatus.APPROVED).build();
         when(assignmentRepository.findByProposalId(yesterdayProposalId))
                 .thenReturn(List.of(activeAssignment));
         when(proposalRegionRepository.findByProposalId(yesterdayProposalId))

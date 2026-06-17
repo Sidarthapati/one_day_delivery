@@ -93,7 +93,7 @@ class ProposalServiceImplTest {
 
     private DaHexAssignment activeAssignment(UUID proposalId, UUID daId, UUID hexId) {
         DaHexAssignment a = proposedAssignment(proposalId, daId, hexId);
-        a.setStatus(AssignmentStatus.ACTIVE);
+        a.setStatus(AssignmentStatus.APPROVED);
         return a;
     }
 
@@ -331,7 +331,7 @@ class ProposalServiceImplTest {
         assertThatThrownBy(() -> service.requestIntradayReassignment(
                 cityId, fromDaId, toDaId, List.of(notFromDaHex), reviewerId))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("not ACTIVE under DA");
+                .hasMessageContaining("not assigned under DA");
     }
 
     // ---- requestTileShare -------------------------------------------------
@@ -343,7 +343,7 @@ class ProposalServiceImplTest {
         DaHexAssignment existingActive = activeAssignment(UUID.randomUUID(), UUID.randomUUID(), hexId);
 
         when(assignmentRepository.findByHexIdAndValidDateAndStatus(
-                eq(hexId), any(LocalDate.class), eq(AssignmentStatus.ACTIVE)))
+                eq(hexId), any(LocalDate.class), eq(AssignmentStatus.APPROVED)))
                 .thenReturn(List.of(existingActive));
         when(proposalRepository.save(any())).thenAnswer(inv -> {
             AssignmentProposal p = inv.getArgument(0);
@@ -380,12 +380,12 @@ class ProposalServiceImplTest {
         UUID hexId  = UUID.randomUUID();
 
         when(assignmentRepository.findByHexIdAndValidDateAndStatus(
-                eq(hexId), any(LocalDate.class), eq(AssignmentStatus.ACTIVE)))
+                eq(hexId), any(LocalDate.class), eq(AssignmentStatus.APPROVED)))
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> service.requestTileShare(cityId, daId, hexId, reviewerId))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("no ACTIVE assignment");
+                .hasMessageContaining("no APPROVED assignment");
     }
 
     // ---- approveTileShare -------------------------------------------------
@@ -412,7 +412,7 @@ class ProposalServiceImplTest {
         service.approveTileShare(shareProposalId, reviewerId);
 
         assertThat(shareProposal.getStatus()).isEqualTo(ProposalStatus.APPROVED);
-        assertThat(shareAssignment.getStatus()).isEqualTo(AssignmentStatus.ACTIVE);
+        assertThat(shareAssignment.getStatus()).isEqualTo(AssignmentStatus.APPROVED);
         assertThat(shareAssignment.getApprovedBy()).isEqualTo(reviewerId);
     }
 
