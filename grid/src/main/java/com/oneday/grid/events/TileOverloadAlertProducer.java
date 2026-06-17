@@ -1,11 +1,9 @@
 package com.oneday.grid.events;
 
-import com.oneday.common.kafka.KafkaTopics;
+import com.oneday.common.kafka.EventPublisher;
+import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.enums.GridEventType;
 import com.oneday.grid.events.payload.TileOverloadAlertEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -15,12 +13,10 @@ import java.util.UUID;
 @Component
 public class TileOverloadAlertProducer {
 
-    private static final Logger log = LoggerFactory.getLogger(TileOverloadAlertProducer.class);
+    private final EventPublisher eventPublisher;
 
-    private final KafkaTemplate<String, Object> kafkaTemplate;
-
-    TileOverloadAlertProducer(KafkaTemplate<String, Object> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
+    TileOverloadAlertProducer(EventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
     }
 
     public void emit(UUID cityId, UUID tileId, UUID daId, LocalDate date,
@@ -31,11 +27,6 @@ public class TileOverloadAlertProducer {
                 expectedOrders, unservedOrders, adjustedScore, sustainedMinutes,
                 Instant.now()
         );
-        try {
-            kafkaTemplate.send(KafkaTopics.GRID_EVENTS, tileId.toString(), event);
-        } catch (Exception e) {
-            log.warn("TILE_OVERLOAD_ALERT kafka send failed — tile={} severity={}: {}",
-                    tileId, severity, e.getMessage());
-        }
+        eventPublisher.publish(EventStreams.GRID_EVENTS, event);
     }
 }

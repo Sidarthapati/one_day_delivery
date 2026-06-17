@@ -1,16 +1,15 @@
 spring:
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-    consumer:
-      group-id: grid-service
-      auto-offset-reset: latest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
-      properties:
-        spring.json.trusted.packages: "com.oneday.grid.events.payload"
+  rabbitmq:
+    # Local Docker broker by default; CLOUDAMQP_URL (amqps://…) overrides for shared/prod.
+    addresses: ${CLOUDAMQP_URL:amqp://guest:guest@localhost:5672}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        prefetch: 10
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
   datasource:
     url: jdbc:postgresql://localhost:5432/oneday
     username: oneday
@@ -44,9 +43,6 @@ grid:
     warning-sustained-minutes: 15
     critical-sustained-minutes: 10
     re-alert-suppression-minutes: 30
-  kafka:
-    consumer:
-      auto-startup: false
   h3:
     resolution: 8
   cities:

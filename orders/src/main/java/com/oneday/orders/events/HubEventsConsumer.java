@@ -1,17 +1,15 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.KafkaTopics;
 import com.oneday.common.kafka.events.HubEvent;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
-import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes M7 hub events from {@code oneday.hub.events} and drives the M4 state machine.
- *
- * <p>Dormant by default ({@code autoStartup=false}) until M7 produces on this topic.</p>
+ * Consumes M7 hub events from the {@code oneday.hub.events} exchange (queue {@code orders.hub})
+ * and drives the M4 state machine. Until M7 produces, the queue stays empty.</p>
  *
  * <p>OD-9 (open): the event triggering {@code DEST_HUB_PROCESSING → AWAITING_HUB_COLLECT}
  * (HUB_COLLECT path) is not yet decided — recommended a new {@code HUB_COLLECT_STAGED} value in
@@ -28,8 +26,7 @@ public class HubEventsConsumer {
         this.stateMachine = stateMachine;
     }
 
-    @KafkaListener(topics = KafkaTopics.HUB_EVENTS, groupId = "orders-service",
-            autoStartup = "${orders.kafka.consumer.auto-startup:false}")
+    @RabbitListener(queues = OrdersMessagingTopology.HUB_QUEUE)
     public void onHubEvent(HubEvent event) {
         ShipmentState target = switch (event.eventType()) {
             case STAND_ASSIGNED     -> ShipmentState.ORIGIN_HUB_PROCESSING;

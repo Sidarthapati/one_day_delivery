@@ -4,13 +4,14 @@ import com.oneday.grid.events.payload.TileQueueDepthEvent;
 import com.oneday.grid.service.IntradayLoadScoreService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
-// autoStartup = false until M4 is publishing on orders.tile_queue_depth.
-// Flip grid.kafka.consumer.auto-startup=true in application.yml to enable.
+// Reads M4's tile-queue-depth feed. The queue (grid.tile-queue-depth, bound to the
+// orders.tile_queue_depth exchange) is declared in GridMessagingTopology; until M4 publishes,
+// it simply stays empty.
 @Component
 public class TileQueueDepthConsumer {
 
@@ -22,11 +23,7 @@ public class TileQueueDepthConsumer {
         this.loadScoreService = loadScoreService;
     }
 
-    @KafkaListener(
-            topics = KafkaTopics.TILE_QUEUE_DEPTH,
-            groupId = "grid-service",
-            autoStartup = "${grid.kafka.consumer.auto-startup:false}"
-    )
+    @RabbitListener(queues = GridMessagingTopology.TILE_QUEUE_DEPTH_QUEUE)
     public void onQueueDepth(TileQueueDepthEvent event) {
         log.debug("TILE_QUEUE_DEPTH tileId={} unserved={} booked={} date={}",
                 event.tileId(), event.unservedOrders(), event.bookedOrders(), event.date());

@@ -52,15 +52,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Shared base for the M4 full-stack end-to-end tests. Each test drives a real HTTP request
  * through the real M1 JWT filter → controller → service → state machine → <b>real Postgres</b>,
  * with only the cross-module/external ports mocked (M3 grid serviceability, M2 pricing, M9 ETA,
- * Razorpay payments, JWT crypto, Kafka publisher). Kafka auto-config is excluded so no broker is
- * needed. Tests are {@code @Transactional} → every booking is rolled back, keeping the shared dev
- * DB clean and each scenario isolated.
+ * Razorpay payments, JWT crypto, event publisher). RabbitMQ auto-config is excluded so no broker
+ * is needed. Tests are {@code @Transactional} → every booking is rolled back, keeping the shared
+ * dev DB clean and each scenario isolated.
  */
 // Tagged "e2e" (inherited by every subclass) so CI can exclude these real-Postgres
 // full-stack tests with -DexcludedGroups=e2e; they still run locally against the dev DB.
 @Tag("e2e")
 @SpringBootTest(properties =
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration")
+        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration")
 @AutoConfigureMockMvc
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import(E2eSecurityConfig.class)

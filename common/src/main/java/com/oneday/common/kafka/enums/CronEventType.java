@@ -2,7 +2,7 @@ package com.oneday.common.kafka.enums;
 
 /**
  * Discriminator for events M6 (routing) publishes on {@code oneday.cron.events}
- * ({@link com.oneday.common.kafka.KafkaTopics#CRON_EVENTS}). See M6 design §17.1.
+ * ({@link com.oneday.common.kafka.EventStreams#CRON_EVENTS}). See M6 design §17.1.
  *
  * <p>Custody <em>scans</em> (VAN_LOAD / VAN_TO_DA / DA_TO_VAN / VAN_UNLOAD) are NOT here —
  * they are written to M8's append-only scan ledger, not duplicated on this topic.

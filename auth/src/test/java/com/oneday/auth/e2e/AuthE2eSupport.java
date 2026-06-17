@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * through the real Spring Security chain (the production {@code SecurityConfig}: JWT filter +
  * method security), real {@code JwtService} (HS256 sign/verify), real {@code BCryptPasswordEncoder},
  * and a <b>real Postgres</b>. Auth has no external ports, so nothing is mocked — this is the whole
- * module exercised as it runs in production. Kafka auto-config is excluded (auth publishes nothing).
+ * module exercised as it runs in production. RabbitMQ auto-config is excluded (auth publishes nothing).
  * Tests are {@code @Transactional}, so users/roles/onboarding rows created in a test roll back,
  * keeping the shared dev DB clean and each scenario isolated. The seeded admin
  * ({@code admin@oneday.in}, from {@code DataInitializer}) is the bootstrap identity.
@@ -33,7 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // full-stack tests with -DexcludedGroups=e2e; they still run locally against the dev DB.
 @Tag("e2e")
 @SpringBootTest(properties =
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration")
+        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration")
 @AutoConfigureMockMvc
 @Transactional
 abstract class AuthE2eSupport {

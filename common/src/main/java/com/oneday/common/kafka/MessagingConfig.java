@@ -1,0 +1,42 @@
+package com.oneday.common.kafka;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.amqp.support.converter.DefaultClassMapper;
+import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
+
+/**
+ * Shared RabbitMQ messaging config. Defining a single {@link MessageConverter} bean makes Spring
+ * Boot's auto-configured {@code RabbitTemplate} (producer) and listener container factory
+ * (consumer) both serialize/deserialize event payloads as JSON — the drop-in replacement for the
+ * Kafka {@code JsonSerializer}/{@code JsonDeserializer} pair.
+ *
+ * <p>Retry + dead-lettering are configured declaratively: listener retry via
+ * {@code spring.rabbitmq.listener.simple.retry.*} (app config), and a {@code <stream>.dlx} /
+ * {@code <stream>.dlq} per consumer queue via the {@code *MessagingTopology} configs
+ * ({@link RabbitStreamSupport}). See {@code docs/EVENT-BUS-ARCHITECTURE.md} §3, §6.</p>
+ */
+@Configuration
+public class MessagingConfig {
+
+    @Bean
+    public MessageConverter jsonMessageConverter(ObjectMapper objectMapper) {
+        Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter(objectMapper);
+        // In-house monolith: every producer is our own code. Trust our own event packages so the
+        // __TypeId__ header deserializes to the concrete payload class. Tighten the list if an
+        // external producer ever writes to a stream we consume.
+        DefaultClassMapper classMapper = new DefaultClassMapper();
+        classMapper.setTrustedPackages("com.oneday.*");
+        converter.setClassMapper(classMapper);
+        return converter;
+    }
+
+    /** Convenience for tests/aliases that still reference a List of trusted packages. */
+    static List<String> trustedPackages() {
+        return List.of("com.oneday.*");
+    }
+}

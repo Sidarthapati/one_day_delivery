@@ -1,17 +1,16 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.KafkaTopics;
 import com.oneday.common.kafka.events.ExceptionsEvent;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
-import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes M11 exception events from {@code oneday.exceptions.events} and drives the M4 state
- * machine (RTO and reschedule flows). Dormant by default ({@code autoStartup=false}) until M11
- * produces on this topic.
+ * Consumes M11 exception events from the {@code oneday.exceptions.events} exchange (queue
+ * {@code orders.exceptions}) and drives the M4 state machine (RTO and reschedule flows).
+ * Until M11 produces, the queue stays empty.
  */
 @Component
 public class ExceptionsEventsConsumer {
@@ -24,8 +23,7 @@ public class ExceptionsEventsConsumer {
         this.stateMachine = stateMachine;
     }
 
-    @KafkaListener(topics = KafkaTopics.EXCEPTIONS_EVENTS, groupId = "orders-service",
-            autoStartup = "${orders.kafka.consumer.auto-startup:false}")
+    @RabbitListener(queues = OrdersMessagingTopology.EXCEPTIONS_QUEUE)
     public void onExceptionsEvent(ExceptionsEvent event) {
         ShipmentState target = switch (event.eventType()) {
             case RTO_INITIATED        -> ShipmentState.RTO_INITIATED;

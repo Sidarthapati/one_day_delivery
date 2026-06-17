@@ -1,21 +1,20 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.KafkaTopics;
 import com.oneday.common.kafka.events.DaEvent;
 import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes M5 DA events from {@code oneday.da.events} and drives the M4 state machine.
+ * Consumes M5 DA events from the {@code oneday.da.events} exchange (queue {@code orders.da}) and
+ * drives the M4 state machine.
  *
- * <p>Dormant by default ({@code autoStartup=false}) until M5 produces on this topic — set
- * {@code orders.kafka.consumer.auto-startup=true} to enable.</p>
+ * <p>Until M5 produces, the queue simply stays empty.</p>
  *
  * <p><b>Pickup-OTP side-effect:</b> when a shipment enters {@code PICKUP_ASSIGNED}, a fresh
  * pickup OTP is generated (BCrypt-hashed, 10-min expiry) so the DA can verify it with the sender.
@@ -38,8 +37,7 @@ public class DaEventsConsumer {
         this.pickupOtpService = pickupOtpService;
     }
 
-    @KafkaListener(topics = KafkaTopics.DA_EVENTS, groupId = "orders-service",
-            autoStartup = "${orders.kafka.consumer.auto-startup:false}")
+    @RabbitListener(queues = OrdersMessagingTopology.DA_QUEUE)
     public void onDaEvent(DaEvent event) {
         ShipmentState target = switch (event.eventType()) {
             case PICKUP_ASSIGNED       -> ShipmentState.PICKUP_ASSIGNED;

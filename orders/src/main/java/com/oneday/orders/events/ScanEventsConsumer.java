@@ -1,21 +1,19 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.KafkaTopics;
 import com.oneday.common.kafka.events.ScanEvent;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes M8 scan events from {@code oneday.scan.events} and drives the M4 state machine.
- *
- * <p>Dormant by default ({@code autoStartup=false}) until M8 produces on this topic. ETA
- * recalculation + customer notification on {@code HUB_ORIGIN_IN}/{@code SELF_DROP_ACCEPTED}
- * are deferred until the base state flow is proven — see TODO.</p>
+ * Consumes M8 scan events from the {@code oneday.scan.events} exchange (queue {@code orders.scan})
+ * and drives the M4 state machine. Until M8 produces, the queue stays empty. ETA recalculation +
+ * customer notification on {@code HUB_ORIGIN_IN}/{@code SELF_DROP_ACCEPTED} are deferred until the
+ * base state flow is proven — see TODO.
  */
 @Component
 public class ScanEventsConsumer {
@@ -29,8 +27,7 @@ public class ScanEventsConsumer {
         this.stateMachine = stateMachine;
     }
 
-    @KafkaListener(topics = KafkaTopics.SCAN_EVENTS, groupId = "orders-service",
-            autoStartup = "${orders.kafka.consumer.auto-startup:false}")
+    @RabbitListener(queues = OrdersMessagingTopology.SCAN_QUEUE)
     public void onScanEvent(ScanEvent event) {
         ShipmentState target = switch (event.eventType()) {
             case HUB_ORIGIN_IN         -> ShipmentState.AT_ORIGIN_HUB;   // TODO: recalc ETA + notify customer

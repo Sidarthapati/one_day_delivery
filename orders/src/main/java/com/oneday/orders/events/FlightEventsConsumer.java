@@ -1,17 +1,16 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.KafkaTopics;
 import com.oneday.common.kafka.events.FlightEvent;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
-import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes M9 flight events from {@code oneday.flight.events} and drives the M4 state machine.
- * All three are INTERCITY-only legs. Dormant by default ({@code autoStartup=false}) until M9
- * produces on this topic.
+ * Consumes M9 flight events from the {@code oneday.flight.events} exchange (queue
+ * {@code orders.flight}) and drives the M4 state machine. All three are INTERCITY-only legs.
+ * Until M9 produces, the queue stays empty.
  */
 @Component
 public class FlightEventsConsumer {
@@ -24,8 +23,7 @@ public class FlightEventsConsumer {
         this.stateMachine = stateMachine;
     }
 
-    @KafkaListener(topics = KafkaTopics.FLIGHT_EVENTS, groupId = "orders-service",
-            autoStartup = "${orders.kafka.consumer.auto-startup:false}")
+    @RabbitListener(queues = OrdersMessagingTopology.FLIGHT_QUEUE)
     public void onFlightEvent(FlightEvent event) {
         ShipmentState target = switch (event.eventType()) {
             case DEPARTED       -> ShipmentState.DEPARTED;
