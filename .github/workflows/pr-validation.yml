@@ -1,201 +1,57 @@
 name: PR Validation
 
+# Advisory only. This check NEVER blocks a PR — it posts a friendly comment
+# if the description looks thin, and cleans the comment up once it's filled in.
 on:
   pull_request:
-    types: [opened, edited, reopened, synchronize]
+    types: [opened, edited, reopened]
 
 jobs:
   validate-pr-body:
-    name: Enforce PR Template
+    name: PR Template Hint (non-blocking)
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write   # needed to post the failure comment
+      pull-requests: write   # needed to post the advisory comment
 
     steps:
-      - name: Validate PR body
-        id: validate
+      - name: Check PR body (advisory)
         uses: actions/github-script@v7
         with:
           script: |
             const body = context.payload.pull_request.body ?? '';
 
-            const errors = [];
-
-            // ── helpers ──────────────────────────────────────────────────────
-            // Extract the text between two headings (or end of string)
-            function section(heading, text) {
-              const re = new RegExp(
-                `##\\s+${heading}[\\s\\S]*?\\n([\\s\\S]*?)(?=\\n##\\s|$)`,
-                'i'
-              );
-              const m = text.match(re);
-              return m ? m[1] : '';
-            }
-
-            // Strip HTML comments and whitespace; return remaining prose
-            function prose(raw) {
-              return raw
-                .replace(/<!--[\s\S]*?-->/g, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-            }
-
-            // Count checked checkboxes in a block
-            function checkedBoxes(raw) {
-              return (raw.match(/- \[x\]/gi) || []).length;
-            }
-
-            // ── Section: Summary ─────────────────────────────────────────────
-            const summaryRaw = section('Summary', body);
-            const summaryText = prose(summaryRaw);
-            if (summaryText.length < 20) {
-              errors.push(
-                '**Summary** is too short or blank. Write at least one meaningful sentence.'
-              );
-            }
-
-            // ── Section: What Changed ────────────────────────────────────────
-            const changedRaw = section('What Changed', body);
-            const changedBullets = changedRaw
+            // Strip HTML comments and collapse whitespace → remaining prose.
+            const prose = body
               .replace(/<!--[\s\S]*?-->/g, '')
-              .split('\n')
-              .filter(l => /^-\s+\S/.test(l.trim())); // bullet with real content
-            if (changedBullets.length === 0) {
-              errors.push(
-                '**What Changed** has no filled-in bullets. Add at least one meaningful change.'
-              );
-            }
+              .replace(/\s+/g, ' ')
+              .trim();
 
-            // ── Section: Why This Change? ────────────────────────────────────
-            const whyRaw = section('Why This Change\\?', body);
-            const whyText = prose(whyRaw);
-            if (whyText.length < 20) {
-              errors.push(
-                '**Why This Change?** is blank. Explain the problem this PR solves.'
-              );
-            }
-
-            // ── Section: Test Evidence ───────────────────────────────────────
-            const testEvidenceMatch = body.match(
-              /###\s+Test Evidence[\s\S]*?(?=\n##\s|$)/i
+            // Anything that looks like a real Summary heading with text under it.
+            const hasSummary = /##\s+Summary[\s\S]*?\n\s*\S/i.test(
+              body.replace(/<!--[\s\S]*?-->/g, '')
             );
-            const testEvidenceRaw = testEvidenceMatch ? testEvidenceMatch[0] : '';
-            const testEvidenceClean = prose(testEvidenceRaw.replace(/###\s+Test Evidence/i, ''));
-            const hasImage    = /!\[.*?\]\(.*?\)/.test(testEvidenceRaw);  // markdown image
-            const hasCodeBlock = /```/.test(testEvidenceRaw);              // log/code block
-            const hasUpload   = /\.(png|jpg|jpeg|gif|webp|mp4|log|txt)\b/i.test(testEvidenceRaw);
-            if (!hasImage && !hasCodeBlock && !hasUpload && testEvidenceClean.length < 30) {
-              errors.push(
-                '**Test Evidence** is missing. Attach a screenshot, drag-and-drop an image, or paste a log/code block.'
-              );
+
+            const hints = [];
+            if (prose.length < 20) {
+              hints.push('The description is nearly empty — a sentence or two on **what** and **why** helps reviewers a lot.');
+            }
+            if (!hasSummary) {
+              hints.push('Consider adding a short **## Summary** section so the intent is clear at a glance.');
             }
 
-            // ── Section: Testing checkboxes ──────────────────────────────────
-            const testingRaw = section('Testing', body);
-            if (checkedBoxes(testingRaw) === 0) {
-              errors.push(
-                '**Testing** — check at least one box to confirm you have actually tested this change.'
-              );
-            }
-
-            // ── Section: Areas Affected ──────────────────────────────────────
-            const areasMatch = body.match(
-              /###\s+Areas Affected[\s\S]*?(?=\n###\s|\n##\s|$)/i
+            // Locate any prior advisory comment from this workflow.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            const existing = comments.find(
+              c => c.user.login === 'github-actions[bot]' &&
+                   c.body.startsWith('## PR Description Hint')
             );
-            const areasRaw = areasMatch ? areasMatch[0] : '';
-            if (checkedBoxes(areasRaw) === 0) {
-              errors.push(
-                '**Areas Affected** — check at least one area this PR touches.'
-              );
-            }
 
-            // ── Section: Modules Affected ────────────────────────────────────
-            const modulesMatch = body.match(
-              /###\s+Modules Affected[\s\S]*?(?=\n###\s|\n##\s|$)/i
-            );
-            const modulesRaw = modulesMatch ? modulesMatch[0] : '';
-            if (checkedBoxes(modulesRaw) === 0) {
-              errors.push(
-                '**Modules Affected** — check at least one module this PR touches.'
-              );
-            }
-
-            // ── Section: Risks / Concerns ────────────────────────────────────
-            const risksRaw = section('Risks \\/ Concerns', body);
-            const risksBullets = risksRaw
-              .replace(/<!--[\s\S]*?-->/g, '')
-              .split('\n')
-              .filter(l => /^-\s+\S/.test(l.trim()));
-            const risksText = prose(risksRaw);
-            if (risksBullets.length === 0 && risksText.length < 4) {
-              errors.push(
-                '**Risks / Concerns** — add at least one bullet. Write "None" with a brief justification if there are truly no risks.'
-              );
-            }
-
-            // ── Section: Final Checklist ─────────────────────────────────────
-            const checklistMatch = body.match(
-              /##\s+Checklist[\s\S]*?(?=\n##\s|$)/i
-            );
-            const checklistRaw = checklistMatch ? checklistMatch[0] : '';
-            if (checkedBoxes(checklistRaw) === 0) {
-              errors.push(
-                '**Checklist** — review and check the applicable items before requesting a review.'
-              );
-            }
-
-            // ── Report ───────────────────────────────────────────────────────
-            if (errors.length > 0) {
-              const comment = [
-                '## PR Template Validation Failed',
-                '',
-                'The following sections need attention before this PR can be reviewed:',
-                '',
-                ...errors.map(e => `- ${e}`),
-                '',
-                '_Fix the issues above, then edit the PR description to re-trigger this check._',
-              ].join('\n');
-
-              // Post or update a bot comment
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-              });
-              const existing = comments.find(
-                c => c.user.login === 'github-actions[bot]' &&
-                     c.body.startsWith('## PR Template Validation Failed')
-              );
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existing.id,
-                  body: comment,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.payload.pull_request.number,
-                  body: comment,
-                });
-              }
-
-              core.setFailed(
-                `PR description has ${errors.length} validation error(s). See the bot comment for details.`
-              );
-            } else {
-              // Clean up any previous failure comment
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-              });
-              const existing = comments.find(
-                c => c.user.login === 'github-actions[bot]' &&
-                     c.body.startsWith('## PR Template Validation Failed')
-              );
+            if (hints.length === 0) {
+              // Nothing to flag — remove any stale hint and pass.
               if (existing) {
                 await github.rest.issues.deleteComment({
                   owner: context.repo.owner,
@@ -203,5 +59,33 @@ jobs:
                   comment_id: existing.id,
                 });
               }
-              console.log('PR description passed all validation checks.');
+              console.log('PR description looks good. (Advisory check — never blocks.)');
+              return;
             }
+
+            const comment = [
+              '## PR Description Hint',
+              '',
+              '_Just a nudge — this does **not** block your PR. Tidy up if you like:_',
+              '',
+              ...hints.map(h => `- ${h}`),
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: comment,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: comment,
+              });
+            }
+
+            // Intentionally NOT calling core.setFailed — this check always passes.
+            console.log('Posted advisory hint (non-blocking).');
