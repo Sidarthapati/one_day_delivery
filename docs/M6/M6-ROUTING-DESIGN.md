@@ -330,10 +330,12 @@ A DA accumulates PICKED_UP parcels through the day. Each carries a **hub-arrival
 ### 12.3 The combined binding rule (`M6-D-016`)
 > **SLA-first, capacity-bounded.** Order candidate parcels by deadline; assign each to the earliest feasible loop with capacity. This is *deadline-first*, not *next-loop-with-room* — a tight parcel never waits behind a slack one.
 
+> **v1 (shipped) = FCFS.** v1 binds greedily — each parcel takes its earliest (deliver) / latest (collect) feasible loop with live capacity, in arrival order; if full ⇒ overflow (§12.4). Capacity is configured high in v1, so loops don't fill and the SLA-first *reactive bump* never needs to fire. The deadline-first reordering above is the **post-v1** target, switched on by lowering `city_fleet_config.capacity_packets` to real van capacity — the seams (`LoopSlot`, deadline-feasible loop sets, the per-loop capacity guard) are already in place, so it's an additive change with no rewrite. Deliver and collect are symmetric in v1 (both greedy + overflow).
+
 ### 12.4 Runtime overflow / back-pressure (`M6-D-017`)
 Capacity per loop is fixed by the locked plan. If actual demand on a loop exceeds capacity:
-1. **Bump** the latest-deadline parcels to the next feasible loop.
-2. If a bumped parcel then has **no loop before its deadline** ⇒ raise `LOOP_OVERFLOW` → station manager + M10; recommend an ad-hoc extra van (intraday van add needs approval, NFR-3) or a direct hub run.
+1. **Bump** the latest-deadline parcels to the next feasible loop. *(Post-v1; deferred — see §12.3. v1 skips straight to step 2.)*
+2. If a parcel has **no feasible loop with room** ⇒ raise `LOOP_OVERFLOW` → station manager + M10; recommend an ad-hoc extra van (intraday van add needs approval, NFR-3) or a direct hub run.
 3. Never silently drop SLA (mirrors M7 hub overload, PRD §9.5).
 
 ### 12.5 Why this can't be planned away

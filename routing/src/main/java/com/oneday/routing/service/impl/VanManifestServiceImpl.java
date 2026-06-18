@@ -103,21 +103,15 @@ class VanManifestServiceImpl implements VanManifestService {
         List<LoopSlot> feasible = LoopBinder.feasibleDeliverLoopsAsc(
                 ctx.deliverSlots(van, cron.getHexVertexId()), slaDeadline, daDelivery);
 
-        if (feasible.isEmpty()) {
-            return overflow(cityId, van, parcelId, slaDeadline);
-        }
-        // 1) earliest feasible loop with live capacity.
+        // v1: greedy earliest-feasible loop with live capacity, else overflow (FCFS). The SLA-first
+        // reactive bump (§12.3/§12.4) is deferred post-v1 — capacity is configured high in v1 so loops
+        // don't fill; symmetric with bindCollect. See docs/M6/M6-ROUTING-DESIGN.md §12.
         for (LoopSlot slot : feasible) {
             VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), date);
             if (itemRepository.countByManifestIdAndDirection(manifest.getId(), HandoffDirection.DELIVER) < ctx.capacity) {
                 VanManifestItem item = appendItem(manifest, HandoffDirection.DELIVER, parcelId, slot, cron.getDaId(), slaDeadline);
                 return BindOutcome.bound(parcelId, slot.loopIndex(), van, item.getId(), List.of());
             }
-        }
-        // 2) all full → reactive bump: displace a slacker parcel to a later loop to make room.
-        for (LoopSlot slot : feasible) {
-            BindOutcome bumped = tryBump(ctx, van, cron, slot, parcelId, slaDeadline);
-            if (bumped != null) return bumped;
         }
         return overflow(cityId, van, parcelId, slaDeadline);
     }
@@ -140,10 +134,8 @@ class VanManifestServiceImpl implements VanManifestService {
                 .orElse(ctx.windowEnd);
         List<LoopSlot> feasible = LoopBinder.feasibleCollectLoopsDesc(ctx.collectSlots(van, cron.getHexVertexId()), deadline);
 
-        // Latest feasible loop with live capacity, else overflow. No reactive bump on the collect side:
-        // (1) the cutoff is city-level, so every collect parcel shares one deadline — none is "slacker" to
-        // bump; (2) greedy-latest already parks each parcel at its latest feasible loop, so a victim can't
-        // move later. Bump only becomes meaningful with per-flight cutoffs (M9) + slot-freeing (cancels).
+        // v1: greedy latest-feasible loop with live capacity, else overflow (FCFS). Same shape as
+        // bindDelivery — no reactive bump in v1. See docs/M6/M6-ROUTING-DESIGN.md §12.
         for (LoopSlot slot : feasible) {
             VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), date);
             if (itemRepository.countByManifestIdAndDirection(manifest.getId(), HandoffDirection.COLLECT) < ctx.capacity) {
@@ -196,50 +188,6 @@ class VanManifestServiceImpl implements VanManifestService {
 
     private DaCronSchedule resolveCron(PlanCtx ctx, UUID daId) {
         return daId == null ? null : ctx.daToCron.get(daId);
-    }
-
-    // Deliver-only (§12.3): free `slot` by bumping its slackest item to a later loop, then bind the
-    // newcomer there. Deliver greedy parks parcels on early loops, so a slacker one can shift right.
-    // (Collect has no equivalent — see bindCollect.)
-    private BindOutcome tryBump(PlanCtx ctx, UUID van, DaCronSchedule cron, LoopSlot slot, UUID parcelId, Instant deadline) {
-        VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), ctx.date);
-        VanManifestItem slack = slackestBumpable(manifest);
-        if (slack == null || slack.getSlaDeadline() == null || !slack.getSlaDeadline().isAfter(deadline)) {
-            return null;
-        }
-        if (!rebindToLaterLoop(ctx, van, cron.getHexVertexId(), slack, slot.loopIndex())) {
-            return null;
-        }
-        VanManifestItem item = appendItem(manifest, HandoffDirection.DELIVER, parcelId, slot, cron.getDaId(), deadline);
-        log.info("Bumped slacker parcel {} to make room for {} on van {} loop {}", slack.getParcelId(), parcelId, van, slot.loopIndex());
-        return BindOutcome.bound(parcelId, slot.loopIndex(), van, item.getId(), List.of(slack.getParcelId()));
-    }
-
-    // Slackest (latest-deadline) still-bumpable DELIVER item, or null. Only PLANNED items can move
-    // (once LOADED onto the van, custody has started — PR6).
-    private VanManifestItem slackestBumpable(VanManifest manifest) {
-        return itemRepository.findByManifestIdAndDirection(manifest.getId(), HandoffDirection.DELIVER).stream()
-                .filter(i -> i.getStatus() == ManifestItemStatus.PLANNED && i.getSlaDeadline() != null)
-                .max(Comparator.comparing(VanManifestItem::getSlaDeadline))
-                .orElse(null);
-    }
-
-    // Move a bumped deliver item to the earliest loop after `afterLoop` still feasible for it with room.
-    private boolean rebindToLaterLoop(PlanCtx ctx, UUID van, UUID vertex, VanManifestItem item, int afterLoop) {
-        Duration daDelivery = Duration.ofMinutes(properties.getBinding().getDaDeliveryMinutes());
-        List<LoopSlot> later = LoopBinder.feasibleDeliverLoopsAsc(ctx.deliverSlots(van, vertex), item.getSlaDeadline(), daDelivery)
-                .stream().filter(s -> s.loopIndex() > afterLoop).toList();
-        for (LoopSlot slot : later) {
-            VanManifest target = lockOrCreate(ctx, van, slot.loopIndex(), ctx.date);
-            if (itemRepository.countByManifestIdAndDirection(target.getId(), HandoffDirection.DELIVER) < ctx.capacity) {
-                item.setManifestId(target.getId());
-                item.setStopSeq(slot.stopSeq());
-                item.setMeetingVertexId(slot.vertexId());
-                itemRepository.save(item);
-                return true;
-            }
-        }
-        return false;
     }
 
     private VanManifestItem appendItem(VanManifest manifest, HandoffDirection direction, UUID parcelId,

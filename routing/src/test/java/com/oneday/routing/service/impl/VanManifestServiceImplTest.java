@@ -125,28 +125,15 @@ class VanManifestServiceImplTest {
     }
 
     @Test
-    void deliverBumpsSlackerParcelToGiveTheTightOneTheEarliestLoop() {
-        // capacity 1/loop. Slack bound first to loop 0; tight then bumps slack to loop 1 and takes loop 0.
-        UUID slack = bind(LocalTime.of(9, 30)).parcelId(); // both loops feasible
-        UUID tight = UUID.randomUUID();
-        BindOutcome tightOut = service.bindDelivery(CITY, DATE, tight, HEX, instant(LocalTime.of(8, 15))); // only loop 0
-
-        assertThat(tightOut.outcome()).isEqualTo(BindOutcome.Outcome.BOUND);
-        assertThat(tightOut.loopIndex()).isEqualTo(0);
-        assertThat(tightOut.bumped()).containsExactly(slack);
-        assertThat(loopOfParcel(slack)).isEqualTo(1); // slack displaced, not dropped
-        assertThat(loopOfParcel(tight)).isEqualTo(0);
-    }
-
-    @Test
-    void overflowEscalates_neverDrops_whenNothingBumpable() {
-        UUID tight1 = bind(LocalTime.of(8, 15)).parcelId();
-        UUID tight2 = UUID.randomUUID();
-        BindOutcome out2 = service.bindDelivery(CITY, DATE, tight2, HEX, instant(LocalTime.of(8, 15))); // equal deadline → not bumpable
+    void greedyEarliestFeasibleLoop_thenOverflow_neverDrops() {
+        // v1 FCFS: capacity 1/loop, both parcels feasible only for loop 0 → first binds, second overflows.
+        UUID first = bind(LocalTime.of(8, 15)).parcelId();
+        UUID second = UUID.randomUUID();
+        BindOutcome out2 = service.bindDelivery(CITY, DATE, second, HEX, instant(LocalTime.of(8, 15)));
 
         assertThat(out2.outcome()).isEqualTo(BindOutcome.Outcome.OVERFLOW);
-        verify(cronEventProducer, times(1)).emitLoopOverflow(eq(CITY), eq(VAN), eq(tight2), eq(-1), any());
-        assertThat(loopOfParcel(tight1)).isEqualTo(0); // first one still bound
+        verify(cronEventProducer, times(1)).emitLoopOverflow(eq(CITY), eq(VAN), eq(second), eq(-1), any());
+        assertThat(loopOfParcel(first)).isEqualTo(0); // first one still bound, not displaced
     }
 
     @Test
