@@ -38,6 +38,14 @@ public class GridDataAdapter {
                 .toList();
     }
 
+    // hexId → owning DA for the city/date; M6 binds a sorted parcel's destination hex to its DA (§12.1).
+    public Map<UUID, UUID> hexToDa(UUID cityId, LocalDate date) {
+        Map<UUID, UUID> out = new java.util.HashMap<>();
+        gridService.getDaTerritories(cityId, date).forEach(t ->
+                t.hexes().forEach(h -> out.put(h.hexId(), t.daId())));
+        return out;
+    }
+
     /**
      * vertexId → {lat, lon} for the whole city grid. The demo's route view resolves each stop's
      * {@code hexVertexId} to a coordinate to draw van polylines (stops carry only the vertex id).
