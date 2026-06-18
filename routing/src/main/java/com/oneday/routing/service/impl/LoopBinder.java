@@ -4,6 +4,7 @@ import com.oneday.routing.service.model.LoopSlot;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.OptionalInt;
 import java.util.function.IntPredicate;
@@ -12,6 +13,23 @@ import java.util.function.IntPredicate;
 final class LoopBinder {
 
     private LoopBinder() {}
+
+    // Deliver: feasible loops (vanArrival + daDelivery ≤ deadline) earliest-first — the per-parcel
+    // binder walks these and stops at the first with live capacity.
+    static List<LoopSlot> feasibleDeliverLoopsAsc(List<LoopSlot> slots, Instant deadline, Duration daDelivery) {
+        return slots.stream()
+                .filter(s -> !s.vanArrival().plus(daDelivery).isAfter(deadline))
+                .sorted(Comparator.comparingInt(LoopSlot::loopIndex))
+                .toList();
+    }
+
+    // Collect: feasible loops (hubReturn ≤ deadline) latest-first.
+    static List<LoopSlot> feasibleCollectLoopsDesc(List<LoopSlot> slots, Instant deadline) {
+        return slots.stream()
+                .filter(s -> !s.hubReturn().isAfter(deadline))
+                .sorted(Comparator.comparingInt(LoopSlot::loopIndex).reversed())
+                .toList();
+    }
 
     // Deliver (§12.1): earliest loop where vanArrival + daDelivery ≤ deadline and the loop has room.
     static OptionalInt earliestDeliverLoop(List<LoopSlot> slots, Instant deadline,

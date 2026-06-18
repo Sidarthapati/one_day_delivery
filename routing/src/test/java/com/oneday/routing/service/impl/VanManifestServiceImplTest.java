@@ -19,18 +19,24 @@ import com.oneday.routing.repository.RoutePlanStopRepository;
 import com.oneday.routing.repository.VanManifestItemRepository;
 import com.oneday.routing.repository.VanManifestRepository;
 import com.oneday.routing.service.GridDataAdapter;
-import com.oneday.routing.service.model.BindingResult;
+import com.oneday.routing.service.model.BindOutcome;
+import com.oneday.routing.service.port.DaAccumulationPort;
+import com.oneday.routing.service.port.FlightCutoffPort;
 import com.oneday.routing.service.port.HubSortPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,11 +52,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT) // stateful fakes below; not every stub fires per test
 class VanManifestServiceImplTest {
 
     @Mock HubSortPort hubSortPort;
-    @Mock com.oneday.routing.service.port.DaAccumulationPort daAccumulationPort;
-    @Mock com.oneday.routing.service.port.FlightCutoffPort flightCutoffPort;
+    @Mock DaAccumulationPort daAccumulationPort;
+    @Mock FlightCutoffPort flightCutoffPort;
     @Mock RoutePlanRepository planRepository;
     @Mock RoutePlanStopRepository stopRepository;
     @Mock DaCronScheduleRepository cronRepository;
@@ -70,6 +77,9 @@ class VanManifestServiceImplTest {
     private static final UUID HEX = UUID.randomUUID();
     private static final LocalDate DATE = LocalDate.of(2026, 6, 18);
 
+    private final Map<String, VanManifest> manifestStore = new HashMap<>(); // van|loop → manifest
+    private final List<VanManifestItem> itemStore = new ArrayList<>();
+
     private VanManifestServiceImpl service;
 
     @BeforeEach
@@ -78,93 +88,94 @@ class VanManifestServiceImplTest {
                 planRepository, stopRepository, cronRepository, fleetConfigRepository,
                 manifestRepository, itemRepository, gridDataAdapter, cronEventProducer, properties);
 
-        RoutePlan plan = RoutePlan.builder().id(PLAN).cityId(CITY).validForDate(DATE)
-                .status(RoutePlanStatus.APPROVED).revision(1).build();
         when(planRepository.findByCityIdAndValidForDateAndStatus(CITY, DATE, RoutePlanStatus.APPROVED))
-                .thenReturn(List.of(plan));
+                .thenReturn(List.of(RoutePlan.builder().id(PLAN).cityId(CITY).validForDate(DATE)
+                        .status(RoutePlanStatus.APPROVED).revision(1).build()));
         when(fleetConfigRepository.findByCityId(CITY))
                 .thenReturn(Optional.of(CityFleetConfig.builder().cityId(CITY).capacityPackets(1).build()));
         when(gridDataAdapter.hexToDa(CITY, DATE)).thenReturn(Map.of(HEX, DA));
         when(cronRepository.findByRoutePlanId(PLAN)).thenReturn(List.of(
                 DaCronSchedule.builder().routePlanId(PLAN).daId(DA).hexVertexId(VERTEX).vanId(VAN)
                         .meetingTimes("[]").cityId(CITY).validDate(DATE).build()));
-        // Two loops at the same vertex: loop 0 arrives 07:30, loop 1 arrives 08:30.
         when(stopRepository.findByRoutePlanId(PLAN)).thenReturn(List.of(
                 stop(0, 1, LocalTime.of(7, 30)),
                 stop(1, 1, LocalTime.of(8, 30))));
-    }
 
-    // Manifests/items get an id on save so children can reference it. Only stubbed where a bind happens.
-    private void stubManifestPersistence() {
-        when(manifestRepository.findByVanIdAndLoopIndexAndValidDate(any(), anyInt(), eq(DATE)))
-                .thenReturn(Optional.empty());
-        when(manifestRepository.save(any(VanManifest.class))).thenAnswer(inv -> {
+        // Stateful fakes so capacity counting + the bump (moving an item between manifests) behave for real.
+        when(manifestRepository.lockByVanLoopDate(any(), anyInt(), eq(DATE)))
+                .thenAnswer(inv -> Optional.ofNullable(manifestStore.get(inv.getArgument(0) + "|" + inv.getArgument(1))));
+        when(manifestRepository.saveAndFlush(any(VanManifest.class))).thenAnswer(inv -> {
             VanManifest m = inv.getArgument(0);
             m.setId(UUID.randomUUID());
+            manifestStore.put(m.getVanId() + "|" + m.getLoopIndex(), m);
             return m;
         });
+        when(itemRepository.countByManifestIdAndDirection(any(), any())).thenAnswer(inv -> (int) itemStore.stream()
+                .filter(i -> i.getManifestId().equals(inv.getArgument(0)) && i.getDirection() == inv.getArgument(1)).count());
+        when(itemRepository.findByManifestIdAndDirection(any(), any())).thenAnswer(inv -> itemStore.stream()
+                .filter(i -> i.getManifestId().equals(inv.getArgument(0)) && i.getDirection() == inv.getArgument(1)).toList());
+        when(itemRepository.findByParcelId(any())).thenAnswer(inv -> itemStore.stream()
+                .filter(i -> i.getParcelId().equals(inv.getArgument(0))).toList());
         when(itemRepository.save(any(VanManifestItem.class))).thenAnswer(inv -> {
             VanManifestItem i = inv.getArgument(0);
-            i.setId(UUID.randomUUID());
+            if (i.getId() == null) i.setId(UUID.randomUUID());
+            if (!itemStore.contains(i)) itemStore.add(i);
             return i;
         });
     }
 
     @Test
-    void deliveriesBindSlaFirst_tightParcelJumpsAheadOfSlackOne() {
-        // Slack listed first, tight second; capacity is 1/loop. SLA-first must give loop 0 to the tight one.
-        stubManifestPersistence();
-        HubSortPort.ReadyForDeliveryParcel slack = parcel(LocalTime.of(9, 30)); // both loops feasible
-        HubSortPort.ReadyForDeliveryParcel tight = parcel(LocalTime.of(8, 15)); // only loop 0 (08:00 ≤ 08:15)
-        when(hubSortPort.readyForDelivery(CITY)).thenReturn(List.of(slack, tight));
+    void deliverBumpsSlackerParcelToGiveTheTightOneTheEarliestLoop() {
+        // capacity 1/loop. Slack bound first to loop 0; tight then bumps slack to loop 1 and takes loop 0.
+        UUID slack = bind(LocalTime.of(9, 30)).parcelId(); // both loops feasible
+        UUID tight = UUID.randomUUID();
+        BindOutcome tightOut = service.bindDelivery(CITY, DATE, tight, HEX, instant(LocalTime.of(8, 15))); // only loop 0
 
-        BindingResult result = service.bindDeliveries(CITY, DATE);
-
-        assertThat(result.overflowed()).isEmpty();
-        assertThat(result.bound()).hasSize(2);
-        assertThat(loopOf(result, tight)).isEqualTo(0);
-        assertThat(loopOf(result, slack)).isEqualTo(1);
-        verify(cronEventProducer, never()).emitLoopOverflow(any(), any(), any(), anyInt(), any());
+        assertThat(tightOut.outcome()).isEqualTo(BindOutcome.Outcome.BOUND);
+        assertThat(tightOut.loopIndex()).isEqualTo(0);
+        assertThat(tightOut.bumped()).containsExactly(slack);
+        assertThat(loopOfParcel(slack)).isEqualTo(1); // slack displaced, not dropped
+        assertThat(loopOfParcel(tight)).isEqualTo(0);
     }
 
     @Test
-    void overflowEscalates_neverSilentlyDrops() {
-        // Two tight parcels, both only feasible on loop 0, capacity 1 → second overflows, not dropped.
-        stubManifestPersistence();
-        HubSortPort.ReadyForDeliveryParcel tight1 = parcel(LocalTime.of(8, 15));
-        HubSortPort.ReadyForDeliveryParcel tight2 = parcel(LocalTime.of(8, 15));
-        when(hubSortPort.readyForDelivery(CITY)).thenReturn(List.of(tight1, tight2));
+    void overflowEscalates_neverDrops_whenNothingBumpable() {
+        UUID tight1 = bind(LocalTime.of(8, 15)).parcelId();
+        UUID tight2 = UUID.randomUUID();
+        BindOutcome out2 = service.bindDelivery(CITY, DATE, tight2, HEX, instant(LocalTime.of(8, 15))); // equal deadline → not bumpable
 
-        BindingResult result = service.bindDeliveries(CITY, DATE);
-
-        assertThat(result.bound()).hasSize(1);
-        assertThat(result.overflowed()).hasSize(1);
-        verify(cronEventProducer, times(1)).emitLoopOverflow(eq(CITY), eq(VAN), any(), eq(-1), any());
-        verify(itemRepository, times(1)).save(any(VanManifestItem.class)); // only the bound one persisted
+        assertThat(out2.outcome()).isEqualTo(BindOutcome.Outcome.OVERFLOW);
+        verify(cronEventProducer, times(1)).emitLoopOverflow(eq(CITY), eq(VAN), eq(tight2), eq(-1), any());
+        assertThat(loopOfParcel(tight1)).isEqualTo(0); // first one still bound
     }
 
     @Test
     void unresolvedHex_isReportedNotBoundNotOverflowed() {
-        HubSortPort.ReadyForDeliveryParcel orphan = new HubSortPort.ReadyForDeliveryParcel(
-                UUID.randomUUID(), UUID.randomUUID(), instant(LocalTime.of(7, 0)), instant(LocalTime.of(9, 0)));
-        when(hubSortPort.readyForDelivery(CITY)).thenReturn(List.of(orphan));
+        BindOutcome out = service.bindDelivery(CITY, DATE, UUID.randomUUID(), UUID.randomUUID(), instant(LocalTime.of(9, 0)));
 
-        BindingResult result = service.bindDeliveries(CITY, DATE);
-
-        assertThat(result.bound()).isEmpty();
-        assertThat(result.overflowed()).isEmpty();
-        assertThat(result.unresolved()).hasSize(1);
-        verify(itemRepository, never()).save(any());
+        assertThat(out.outcome()).isEqualTo(BindOutcome.Outcome.UNRESOLVED);
+        verify(cronEventProducer, never()).emitLoopOverflow(any(), any(), any(), anyInt(), any());
+        assertThat(itemStore).isEmpty();
     }
 
-    private int loopOf(BindingResult r, HubSortPort.ReadyForDeliveryParcel p) {
-        return r.bound().stream().filter(b -> b.parcelId().equals(p.parcelId()))
-                .findFirst().orElseThrow().loopIndex();
+    @Test
+    void replayedParcel_isIdempotent() {
+        UUID parcel = UUID.randomUUID();
+        service.bindDelivery(CITY, DATE, parcel, HEX, instant(LocalTime.of(9, 0)));
+        BindOutcome second = service.bindDelivery(CITY, DATE, parcel, HEX, instant(LocalTime.of(9, 0)));
+
+        assertThat(second.outcome()).isEqualTo(BindOutcome.Outcome.BOUND);
+        assertThat(itemStore).hasSize(1); // not double-bound
     }
 
-    private HubSortPort.ReadyForDeliveryParcel parcel(LocalTime deadline) {
-        return new HubSortPort.ReadyForDeliveryParcel(UUID.randomUUID(), HEX,
-                instant(LocalTime.of(7, 0)), instant(deadline));
+    private BindOutcome bind(LocalTime deadline) {
+        return service.bindDelivery(CITY, DATE, UUID.randomUUID(), HEX, instant(deadline));
+    }
+
+    private int loopOfParcel(UUID parcelId) {
+        VanManifestItem item = itemStore.stream().filter(i -> i.getParcelId().equals(parcelId)).findFirst().orElseThrow();
+        return manifestStore.values().stream().filter(m -> m.getId().equals(item.getManifestId()))
+                .findFirst().orElseThrow().getLoopIndex();
     }
 
     private RoutePlanStop stop(int loop, int seq, LocalTime arrival) {

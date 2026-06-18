@@ -20,14 +20,15 @@ import com.oneday.routing.repository.VanManifestItemRepository;
 import com.oneday.routing.repository.VanManifestRepository;
 import com.oneday.routing.service.GridDataAdapter;
 import com.oneday.routing.service.VanManifestService;
+import com.oneday.routing.service.model.BindOutcome;
 import com.oneday.routing.service.model.BindingResult;
-import com.oneday.routing.service.model.BindingResult.ParcelBinding;
 import com.oneday.routing.service.model.LoopSlot;
 import com.oneday.routing.service.port.DaAccumulationPort;
 import com.oneday.routing.service.port.FlightCutoffPort;
 import com.oneday.routing.service.port.HubSortPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,8 +42,8 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 class VanManifestServiceImpl implements VanManifestService {
@@ -61,6 +62,9 @@ class VanManifestServiceImpl implements VanManifestService {
     private final GridDataAdapter gridDataAdapter;
     private final CronEventProducer cronEventProducer;
     private final RoutingProperties properties;
+
+    // Per-(city,date) immutable plan data, safe to cache for the day (nightly-stability invariant).
+    private final Map<String, PlanCtx> contextCache = new ConcurrentHashMap<>();
 
     VanManifestServiceImpl(HubSortPort hubSortPort, DaAccumulationPort daAccumulationPort,
                            FlightCutoffPort flightCutoffPort, RoutePlanRepository planRepository,
@@ -84,90 +88,162 @@ class VanManifestServiceImpl implements VanManifestService {
 
     @Override
     @Transactional
-    public BindingResult bindDeliveries(UUID cityId, LocalDate date) {
-        PlanContext ctx = load(cityId, date);
-        Duration daDelivery = Duration.ofMinutes(properties.getBinding().getDaDeliveryMinutes());
+    public BindOutcome bindDelivery(UUID cityId, LocalDate date, UUID parcelId, UUID destinationHexId, Instant slaDeadline) {
+        BindOutcome existing = alreadyBound(parcelId, HandoffDirection.DELIVER);
+        if (existing != null) return existing;
 
-        List<HubSortPort.ReadyForDeliveryParcel> parcels = new ArrayList<>(hubSortPort.readyForDelivery(cityId));
-        parcels.sort(Comparator.comparing(HubSortPort.ReadyForDeliveryParcel::slaDeadline)); // SLA-first (§12.3)
-
-        List<ParcelBinding> bound = new ArrayList<>();
-        List<ParcelBinding> overflow = new ArrayList<>();
-        List<ParcelBinding> unresolved = new ArrayList<>();
-
-        for (HubSortPort.ReadyForDeliveryParcel p : parcels) {
-            UUID daId = ctx.hexToDa.get(p.destinationHexId());
-            DaCronSchedule cron = daId == null ? null : ctx.daToCron.get(daId);
-            if (cron == null) {
-                log.warn("Deliver parcel {} unresolved: hex {} → da {} has no cron slot", p.parcelId(), p.destinationHexId(), daId);
-                unresolved.add(ParcelBinding.unresolved(p.parcelId()));
-                continue;
-            }
-            UUID van = cron.getVanId();
-            List<LoopSlot> slots = ctx.deliverSlots(van, cron.getHexVertexId());
-            OptionalInt loop = LoopBinder.earliestDeliverLoop(slots, p.slaDeadline(), daDelivery,
-                    l -> ctx.remaining(van, l, HandoffDirection.DELIVER) > 0);
-            if (loop.isEmpty()) {
-                cronEventProducer.emitLoopOverflow(cityId, van, p.parcelId(), -1, p.slaDeadline());
-                overflow.add(ParcelBinding.overflow(p.parcelId(), van));
-                continue;
-            }
-            LoopSlot slot = ctx.slot(slots, loop.getAsInt());
-            VanManifestItem item = ctx.appendItem(this, HandoffDirection.DELIVER, p.parcelId(), slot, daId, p.slaDeadline());
-            bound.add(ParcelBinding.bound(p.parcelId(), slot.loopIndex(), van, item.getId()));
+        PlanCtx ctx = context(cityId, date);
+        DaCronSchedule cron = resolveCron(ctx, ctx.hexToDa.get(destinationHexId));
+        if (cron == null) {
+            log.warn("Deliver parcel {} unresolved: hex {} not in any DA territory / no cron", parcelId, destinationHexId);
+            return BindOutcome.unresolved(parcelId);
         }
-        return new BindingResult(bound, overflow, unresolved);
+        UUID van = cron.getVanId();
+        Duration daDelivery = Duration.ofMinutes(properties.getBinding().getDaDeliveryMinutes());
+        List<LoopSlot> feasible = LoopBinder.feasibleDeliverLoopsAsc(
+                ctx.deliverSlots(van, cron.getHexVertexId()), slaDeadline, daDelivery);
+
+        if (feasible.isEmpty()) {
+            return overflow(cityId, van, parcelId, slaDeadline);
+        }
+        // 1) earliest feasible loop with live capacity.
+        for (LoopSlot slot : feasible) {
+            VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), date);
+            if (itemRepository.countByManifestIdAndDirection(manifest.getId(), HandoffDirection.DELIVER) < ctx.capacity) {
+                VanManifestItem item = appendItem(manifest, HandoffDirection.DELIVER, parcelId, slot, cron.getDaId(), slaDeadline);
+                return BindOutcome.bound(parcelId, slot.loopIndex(), van, item.getId(), List.of());
+            }
+        }
+        // 2) all full → reactive bump: displace a slacker parcel to a later loop to make room.
+        for (LoopSlot slot : feasible) {
+            BindOutcome bumped = tryBump(ctx, van, cron, slot, parcelId, slaDeadline);
+            if (bumped != null) return bumped;
+        }
+        return overflow(cityId, van, parcelId, slaDeadline);
     }
 
     @Override
     @Transactional
-    public BindingResult bindCollections(UUID cityId, LocalDate date) {
-        PlanContext ctx = load(cityId, date);
+    public BindOutcome bindCollect(UUID cityId, LocalDate date, UUID parcelId, UUID daId) {
+        BindOutcome existing = alreadyBound(parcelId, HandoffDirection.COLLECT);
+        if (existing != null) return existing;
+
+        PlanCtx ctx = context(cityId, date);
+        DaCronSchedule cron = resolveCron(ctx, daId);
+        if (cron == null) {
+            log.warn("Collect parcel {} unresolved: DA {} has no cron slot", parcelId, daId);
+            return BindOutcome.unresolved(parcelId);
+        }
+        UUID van = cron.getVanId();
         Instant deadline = flightCutoffPort.outboundFlightCutoff(cityId, date)
                 .map(c -> c.minus(Duration.ofMinutes(properties.getBinding().getHubTailMinutes())))
-                .orElse(ctx.windowEnd); // no cutoff known → only the window bounds the latest loop
+                .orElse(ctx.windowEnd);
+        List<LoopSlot> feasible = LoopBinder.feasibleCollectLoopsDesc(ctx.collectSlots(van, cron.getHexVertexId()), deadline);
 
-        record Candidate(UUID parcelId, DaCronSchedule cron, Instant pickedUpAt) {}
-        List<Candidate> candidates = new ArrayList<>();
-        for (DaCronSchedule cron : ctx.daToCron.values()) {
-            for (DaAccumulationPort.AccumulatedParcel a : daAccumulationPort.collectedAwaitingPickup(cron.getDaId(), date)) {
-                candidates.add(new Candidate(a.parcelId(), cron, a.pickedUpAt()));
+        // Latest feasible loop with live capacity, else overflow. No reactive bump on the collect side:
+        // (1) the cutoff is city-level, so every collect parcel shares one deadline — none is "slacker" to
+        // bump; (2) greedy-latest already parks each parcel at its latest feasible loop, so a victim can't
+        // move later. Bump only becomes meaningful with per-flight cutoffs (M9) + slot-freeing (cancels).
+        for (LoopSlot slot : feasible) {
+            VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), date);
+            if (itemRepository.countByManifestIdAndDirection(manifest.getId(), HandoffDirection.COLLECT) < ctx.capacity) {
+                VanManifestItem item = appendItem(manifest, HandoffDirection.COLLECT, parcelId, slot, daId, deadline);
+                return BindOutcome.bound(parcelId, slot.loopIndex(), van, item.getId(), List.of());
             }
         }
-        candidates.sort(Comparator.comparing(Candidate::pickedUpAt)); // earliest-picked first
-
-        List<ParcelBinding> bound = new ArrayList<>();
-        List<ParcelBinding> overflow = new ArrayList<>();
-
-        for (Candidate c : candidates) {
-            UUID van = c.cron().getVanId();
-            List<LoopSlot> slots = ctx.collectSlots(van, c.cron().getHexVertexId());
-            OptionalInt loop = LoopBinder.latestCollectLoop(slots, deadline,
-                    l -> ctx.remaining(van, l, HandoffDirection.COLLECT) > 0);
-            if (loop.isEmpty()) {
-                cronEventProducer.emitLoopOverflow(cityId, van, c.parcelId(), -1, deadline);
-                overflow.add(ParcelBinding.overflow(c.parcelId(), van));
-                continue;
-            }
-            LoopSlot slot = ctx.slot(slots, loop.getAsInt());
-            VanManifestItem item = ctx.appendItem(this, HandoffDirection.COLLECT, c.parcelId(), slot, c.cron().getDaId(), deadline);
-            bound.add(ParcelBinding.bound(c.parcelId(), slot.loopIndex(), van, item.getId()));
-        }
-        return new BindingResult(bound, overflow, List.of());
+        return overflow(cityId, van, parcelId, deadline);
     }
 
-    // get-or-create the (van, loop, date) manifest in BUILDING, then append a PLANNED item.
-    private VanManifestItem persistItem(PlanContext ctx, HandoffDirection direction, UUID parcelId,
-                                        LoopSlot slot, UUID counterpartyDaId, Instant slaDeadline) {
-        VanManifest manifest = manifestRepository
-                .findByVanIdAndLoopIndexAndValidDate(slot.vanId(), slot.loopIndex(), ctx.date)
-                .orElseGet(() -> manifestRepository.save(VanManifest.builder()
-                        .routePlanId(ctx.plan.getId())
-                        .vanId(slot.vanId())
-                        .loopIndex(slot.loopIndex())
-                        .validDate(ctx.date)
-                        .status(ManifestStatus.BUILDING)
-                        .build()));
+    @Override
+    @Transactional
+    public BindingResult reconcileDeliveries(UUID cityId, LocalDate date) {
+        List<HubSortPort.ReadyForDeliveryParcel> parcels = new ArrayList<>(hubSortPort.readyForDelivery(cityId, date));
+        parcels.sort(Comparator.comparing(HubSortPort.ReadyForDeliveryParcel::slaDeadline)); // SLA-first backlog
+        List<BindOutcome> outcomes = parcels.stream()
+                .map(p -> bindDelivery(cityId, date, p.parcelId(), p.destinationHexId(), p.slaDeadline()))
+                .toList();
+        return BindingResult.from(outcomes);
+    }
+
+    @Override
+    @Transactional
+    public BindingResult reconcileCollections(UUID cityId, LocalDate date) {
+        PlanCtx ctx = context(cityId, date);
+        List<BindOutcome> outcomes = new ArrayList<>();
+        for (UUID daId : ctx.daToCron.keySet()) {
+            for (DaAccumulationPort.AccumulatedParcel a : daAccumulationPort.collectedAwaitingPickup(daId, date)) {
+                outcomes.add(bindCollect(cityId, date, a.parcelId(), daId));
+            }
+        }
+        return BindingResult.from(outcomes);
+    }
+
+    // ── helpers ───────────────────────────────────────────────────────────
+
+    private BindOutcome overflow(UUID cityId, UUID van, UUID parcelId, Instant deadline) {
+        cronEventProducer.emitLoopOverflow(cityId, van, parcelId, -1, deadline);
+        return BindOutcome.overflow(parcelId, van);
+    }
+
+    // Returns a BOUND outcome if the parcel already has an item for the direction (replay-safe), else null.
+    private BindOutcome alreadyBound(UUID parcelId, HandoffDirection direction) {
+        return itemRepository.findByParcelId(parcelId).stream()
+                .filter(i -> i.getDirection() == direction)
+                .findFirst()
+                .map(i -> BindOutcome.bound(parcelId, null, null, i.getId(), List.of()))
+                .orElse(null);
+    }
+
+    private DaCronSchedule resolveCron(PlanCtx ctx, UUID daId) {
+        return daId == null ? null : ctx.daToCron.get(daId);
+    }
+
+    // Deliver-only (§12.3): free `slot` by bumping its slackest item to a later loop, then bind the
+    // newcomer there. Deliver greedy parks parcels on early loops, so a slacker one can shift right.
+    // (Collect has no equivalent — see bindCollect.)
+    private BindOutcome tryBump(PlanCtx ctx, UUID van, DaCronSchedule cron, LoopSlot slot, UUID parcelId, Instant deadline) {
+        VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), ctx.date);
+        VanManifestItem slack = slackestBumpable(manifest);
+        if (slack == null || slack.getSlaDeadline() == null || !slack.getSlaDeadline().isAfter(deadline)) {
+            return null;
+        }
+        if (!rebindToLaterLoop(ctx, van, cron.getHexVertexId(), slack, slot.loopIndex())) {
+            return null;
+        }
+        VanManifestItem item = appendItem(manifest, HandoffDirection.DELIVER, parcelId, slot, cron.getDaId(), deadline);
+        log.info("Bumped slacker parcel {} to make room for {} on van {} loop {}", slack.getParcelId(), parcelId, van, slot.loopIndex());
+        return BindOutcome.bound(parcelId, slot.loopIndex(), van, item.getId(), List.of(slack.getParcelId()));
+    }
+
+    // Slackest (latest-deadline) still-bumpable DELIVER item, or null. Only PLANNED items can move
+    // (once LOADED onto the van, custody has started — PR6).
+    private VanManifestItem slackestBumpable(VanManifest manifest) {
+        return itemRepository.findByManifestIdAndDirection(manifest.getId(), HandoffDirection.DELIVER).stream()
+                .filter(i -> i.getStatus() == ManifestItemStatus.PLANNED && i.getSlaDeadline() != null)
+                .max(Comparator.comparing(VanManifestItem::getSlaDeadline))
+                .orElse(null);
+    }
+
+    // Move a bumped deliver item to the earliest loop after `afterLoop` still feasible for it with room.
+    private boolean rebindToLaterLoop(PlanCtx ctx, UUID van, UUID vertex, VanManifestItem item, int afterLoop) {
+        Duration daDelivery = Duration.ofMinutes(properties.getBinding().getDaDeliveryMinutes());
+        List<LoopSlot> later = LoopBinder.feasibleDeliverLoopsAsc(ctx.deliverSlots(van, vertex), item.getSlaDeadline(), daDelivery)
+                .stream().filter(s -> s.loopIndex() > afterLoop).toList();
+        for (LoopSlot slot : later) {
+            VanManifest target = lockOrCreate(ctx, van, slot.loopIndex(), ctx.date);
+            if (itemRepository.countByManifestIdAndDirection(target.getId(), HandoffDirection.DELIVER) < ctx.capacity) {
+                item.setManifestId(target.getId());
+                item.setStopSeq(slot.stopSeq());
+                item.setMeetingVertexId(slot.vertexId());
+                itemRepository.save(item);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private VanManifestItem appendItem(VanManifest manifest, HandoffDirection direction, UUID parcelId,
+                                       LoopSlot slot, UUID counterpartyDaId, Instant deadline) {
         return itemRepository.save(VanManifestItem.builder()
                 .manifestId(manifest.getId())
                 .parcelId(parcelId)
@@ -175,27 +251,43 @@ class VanManifestServiceImpl implements VanManifestService {
                 .stopSeq(slot.stopSeq())
                 .meetingVertexId(slot.vertexId())
                 .counterpartyDaId(counterpartyDaId)
-                .slaDeadline(slaDeadline)
+                .slaDeadline(deadline)
                 .status(ManifestItemStatus.PLANNED)
                 .build());
     }
 
-    private PlanContext load(UUID cityId, LocalDate date) {
+    // Lock the loop's manifest row (creating it if absent); the unique constraint makes create race-safe.
+    private VanManifest lockOrCreate(PlanCtx ctx, UUID van, int loop, LocalDate date) {
+        return manifestRepository.lockByVanLoopDate(van, loop, date).orElseGet(() -> {
+            try {
+                manifestRepository.saveAndFlush(VanManifest.builder()
+                        .routePlanId(ctx.planId).vanId(van).loopIndex(loop).validDate(date)
+                        .status(ManifestStatus.BUILDING).build());
+            } catch (DataIntegrityViolationException raced) {
+                // another thread created it first — fall through and lock the existing row
+            }
+            return manifestRepository.lockByVanLoopDate(van, loop, date)
+                    .orElseThrow(() -> new IllegalStateException("manifest vanished for van=" + van + " loop=" + loop));
+        });
+    }
+
+    private PlanCtx context(UUID cityId, LocalDate date) {
+        return contextCache.computeIfAbsent(cityId + "|" + date, k -> buildContext(cityId, date));
+    }
+
+    private PlanCtx buildContext(UUID cityId, LocalDate date) {
         RoutePlan plan = planRepository.findByCityIdAndValidForDateAndStatus(cityId, date, RoutePlanStatus.APPROVED)
                 .stream().max(Comparator.comparingInt(RoutePlan::getRevision))
                 .orElseThrow(() -> new IllegalStateException("No APPROVED route plan for city=" + cityId + " date=" + date));
         int capacity = fleetConfigRepository.findByCityId(cityId)
                 .orElseThrow(() -> new IllegalStateException("No fleet config for city=" + cityId))
                 .getCapacityPackets();
-
         Map<UUID, UUID> hexToDa = gridDataAdapter.hexToDa(cityId, date);
-
         Map<UUID, DaCronSchedule> daToCron = new HashMap<>();
         cronRepository.findByRoutePlanId(plan.getId()).forEach(c -> daToCron.put(c.getDaId(), c));
-
         List<RoutePlanStop> stops = stopRepository.findByRoutePlanId(plan.getId());
         Instant windowEnd = atDate(date, LocalTime.of(properties.getWindow().getEndHour(), 0));
-        return new PlanContext(plan, date, capacity, hexToDa, daToCron, stops, windowEnd,
+        return new PlanCtx(plan.getId(), date, capacity, hexToDa, daToCron, stops, windowEnd,
                 properties.getBinding().getHubReturnMinutes());
     }
 
@@ -203,36 +295,16 @@ class VanManifestServiceImpl implements VanManifestService {
         return LocalDateTime.of(date, time).atZone(ClockConfig.IST).toInstant();
     }
 
-    // Per-call lookups over the locked plan + live capacity counters.
-    private static final class PlanContext {
-        final RoutePlan plan;
-        final LocalDate date;
-        final int capacity;
-        final Map<UUID, UUID> hexToDa;
-        final Map<UUID, DaCronSchedule> daToCron;
-        final List<RoutePlanStop> stops;
-        final Instant windowEnd;
-        final int hubReturnMinutes;
-        final Map<String, Integer> used = new HashMap<>(); // (van|loop|dir) → bound count
-
-        PlanContext(RoutePlan plan, LocalDate date, int capacity, Map<UUID, UUID> hexToDa,
-                    Map<UUID, DaCronSchedule> daToCron, List<RoutePlanStop> stops, Instant windowEnd, int hubReturnMinutes) {
-            this.plan = plan;
-            this.date = date;
-            this.capacity = capacity;
-            this.hexToDa = hexToDa;
-            this.daToCron = daToCron;
-            this.stops = stops;
-            this.windowEnd = windowEnd;
-            this.hubReturnMinutes = hubReturnMinutes;
-        }
+    // Immutable per-day plan lookups. Capacity is checked live against the DB, not from here.
+    private record PlanCtx(UUID planId, LocalDate date, int capacity, Map<UUID, UUID> hexToDa,
+                           Map<UUID, DaCronSchedule> daToCron, List<RoutePlanStop> stops,
+                           Instant windowEnd, int hubReturnMinutes) {
 
         List<LoopSlot> deliverSlots(UUID van, UUID vertex) {
             List<LoopSlot> out = new ArrayList<>();
             for (RoutePlanStop s : stops) {
                 if (s.getVanId().equals(van) && vertex.equals(s.getHexVertexId())) {
-                    out.add(new LoopSlot(s.getLoopIndex(), van, vertex, s.getStopSeq(),
-                            atDate(date, s.getPlannedArrival()), null));
+                    out.add(new LoopSlot(s.getLoopIndex(), van, vertex, s.getStopSeq(), atDate(date, s.getPlannedArrival()), null));
                 }
             }
             return out;
@@ -243,39 +315,18 @@ class VanManifestServiceImpl implements VanManifestService {
             for (RoutePlanStop s : stops) {
                 if (s.getVanId().equals(van) && vertex.equals(s.getHexVertexId())) {
                     Instant hubReturn = atDate(date, lastDeparture(van, s.getLoopIndex())).plus(Duration.ofMinutes(hubReturnMinutes));
-                    out.add(new LoopSlot(s.getLoopIndex(), van, vertex, s.getStopSeq(),
-                            atDate(date, s.getPlannedArrival()), hubReturn));
+                    out.add(new LoopSlot(s.getLoopIndex(), van, vertex, s.getStopSeq(), atDate(date, s.getPlannedArrival()), hubReturn));
                 }
             }
             return out;
         }
 
-        // Latest planned departure among a van's stops on a loop — the loop's last vertex before hub.
         LocalTime lastDeparture(UUID van, int loop) {
             return stops.stream()
                     .filter(s -> s.getVanId().equals(van) && s.getLoopIndex() == loop)
                     .map(RoutePlanStop::getPlannedDeparture)
                     .max(Comparator.naturalOrder())
                     .orElse(LocalTime.of(0, 0));
-        }
-
-        LoopSlot slot(List<LoopSlot> slots, int loopIndex) {
-            return slots.stream().filter(s -> s.loopIndex() == loopIndex).findFirst().orElseThrow();
-        }
-
-        int remaining(UUID van, int loop, HandoffDirection dir) {
-            return capacity - used.getOrDefault(key(van, loop, dir), 0);
-        }
-
-        VanManifestItem appendItem(VanManifestServiceImpl svc, HandoffDirection dir, UUID parcelId,
-                                   LoopSlot slot, UUID counterpartyDaId, Instant deadline) {
-            VanManifestItem item = svc.persistItem(this, dir, parcelId, slot, counterpartyDaId, deadline);
-            used.merge(key(slot.vanId(), slot.loopIndex(), dir), 1, Integer::sum);
-            return item;
-        }
-
-        private static String key(UUID van, int loop, HandoffDirection dir) {
-            return van + "|" + loop + "|" + dir;
         }
     }
 }
