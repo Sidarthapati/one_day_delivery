@@ -1,5 +1,6 @@
 package com.oneday.routing.repository;
 
+import com.oneday.routing.domain.HandoffDirection;
 import com.oneday.routing.domain.VanManifestItem;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -13,4 +14,8 @@ public interface VanManifestItemRepository extends JpaRepository<VanManifestItem
     List<VanManifestItem> findByManifestId(UUID manifestId);
 
     List<VanManifestItem> findByParcelId(UUID parcelId);
+
+    int countByManifestIdAndDirection(UUID manifestId, HandoffDirection direction);
+
+    List<VanManifestItem> findByManifestIdAndDirection(UUID manifestId, HandoffDirection direction);
 }

@@ -22,6 +22,7 @@ public class RoutingProperties {
     private Cycle cycle = new Cycle();
     private Shuttle shuttle = new Shuttle();
     private Window window = new Window();
+    private Binding binding = new Binding();
 
     /** Dwell window per stop — the van never waits past it (C7, M6-D-019, Q9). */
     private int dwellMinutes = 5;
@@ -93,5 +94,18 @@ public class RoutingProperties {
         // Operating window, shared with M3's shift (07:00–20:00).
         private int startHour = 7;
         private int endHour = 20;
+    }
+
+    // Parcel→loop binding knobs (§12). Flat v1 constants until M5/M9 feeds land.
+    @Data
+    public static class Binding {
+        // Deliver (§12.1): DA last-mile time; loop feasible if vanArrival + this ≤ slaDeadline.
+        private int daDeliveryMinutes = 30;
+
+        // Collect (§12.2): hub tail (sort+bag+shuttle); deadline = flightCutoff − this.
+        private int hubTailMinutes = 45;
+
+        // Collect: last-vertex→hub leg (stops carry no hub return); hub arrival = lastDeparture + this.
+        private int hubReturnMinutes = 20;
     }
 }

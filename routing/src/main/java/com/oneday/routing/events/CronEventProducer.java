@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oneday.common.kafka.EventPublisher;
 import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.events.cron.DaCronScheduledEvent;
+import com.oneday.common.kafka.events.cron.LoopOverflowEvent;
 import com.oneday.common.kafka.events.cron.RouteChangedEvent;
 import com.oneday.common.kafka.events.cron.RoutePlanPublishedEvent;
 import com.oneday.common.kafka.events.cron.ShuttleScheduledEvent;
@@ -15,8 +16,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Publishes M6's plan-time cron events on {@code oneday.cron.events} (§17.1) via the shared
@@ -71,6 +74,12 @@ public class CronEventProducer {
                 revision.getId(),
                 actorId,
                 reason));
+    }
+
+    // LOOP_OVERFLOW → M10, station mgr: a parcel found no feasible loop before its deadline (loopIndex = -1).
+    public void emitLoopOverflow(UUID cityId, UUID vanId, UUID parcelId, int loopIndex, Instant deadline) {
+        eventPublisher.publish(EventStreams.CRON_EVENTS,
+                new LoopOverflowEvent(cityId, vanId, parcelId, loopIndex, deadline));
     }
 
     /** SHUTTLE_SCHEDULED → M9, M10: the periodic hub↔airport timetable. */

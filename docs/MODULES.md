@@ -215,7 +215,7 @@
 **Execution (custody — the van as mini-hub)**
 - **Four custody scans per parcel:** LOAD (hub→van), DELIVER (van→DA), COLLECT (DA→van), UNLOAD (van→hub) — each an M8 scan + an M4 state transition. The parcel is never "nowhere": between scans it is *on a specific van/loop*.
 - **Van manifest:** M6 builds the per-van, per-loop manifest (which specific parcels ride, to/from which DA, at which stop) from M7's sort output (deliver) + DA accumulation (collect). Parcels loaded in reverse stop-order.
-- **Parcel→loop binding:** SLA-first, then capacity-bounded — earliest deadline-feasible loop, not "next loop with room". Runtime **overflow → bump then escalate**, never silently drop SLA.
+- **Parcel→loop binding:** SLA-first, then capacity-bounded — earliest deadline-feasible loop, not "next loop with room". Runtime **overflow → bump then escalate**, never silently drop SLA. *(v1 ships the FCFS subset: greedy earliest/latest feasible loop + overflow; capacity configured high so loops don't fill. The SLA-first reactive bump is deferred post-v1 — see M6-ROUTING-DESIGN §12.3.)*
 - **Handoff protocol:** bounded dwell window per stop; multi-DA choreography; scan-reconciliation (expected = actual) per DA; discrepancies → M11.
 - **Failure handling:** DA no-show, van breakdown (recovery van on approval), mis-sort, lost/damaged-on-van — each with detection, carry-back/recovery, escalation.
 
