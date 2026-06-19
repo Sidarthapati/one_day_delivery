@@ -118,20 +118,24 @@ Unit (39 routing tests green): greedy earliest-feasible loop then overflow (neve
 
 ---
 
-## PR #6 — Custody scans, handoff & failure handling
+## PR #6 — Custody scans, handoff & failure handling ✅ (shipped)
 
 Implements §11.1, §13, §16, `M6-D-014/-018/-019/-021`. *Clubs the 4 custody scans + handoff protocol + failures/recovery.*
 
 ### Read first
 §11.1 (4 scans + RACI), §13 (handoff + failures), §16 (boundaries); `ScanLedgerPort` stub.
 
-### What to build
-1. **`service.CustodyService`** — the 4 transfer points (LOAD/DELIVER/COLLECT/UNLOAD): validate vs manifest, write scan via `ScanLedgerPort` (M8), advance `van_manifest_item.status`, emit the M4 transition signal (`HANDED_TO_DROP_VAN`/`DROP_COLLECTED`/`HANDED_TO_PICKUP_VAN`/`AT_ORIGIN_HUB`). Enforce **C12** (custody continuity).
-2. **`service.HandoffService`** — per stop: open dwell window (`dwellMinutes`); per-DA reconcile expected (manifest) vs scanned; write `handoff_reconciliation`; emit `HANDOFF_COMPLETED` or `HANDOFF_DISCREPANCY` (MISSING/EXTRA/REJECTED → M11 + M10). Partial handoff legal (`M6-D-018/-019`).
-3. **Failures** (`M6-D-021`) — DA no-show (carry deliveries → rebind next loop; defer collections; escalate if deadline at risk); van breakdown (`POST /routing/vans/{vanId}/recovery` → reassign manifest to recovery van, recompute deadlines, rebind; emit `VAN_BREAKDOWN`); mis-sort (carry back to hub sort, rebind).
+### What was built
+1. **`service.CustodyService`** + impl — `record(VanCustodyCommand)` for the 4 transfer points (`VAN_LOAD`/`VAN_TO_DA`/`DA_TO_VAN`/`VAN_UNLOAD`): **always** writes the scan to `ScanLedgerPort` first (M8, still the NoOp stub — a synchronous **port**, not a cron event, since M8 is unbuilt), then advances `van_manifest_item.status` only from its legal predecessor (C12: `PLANNED→LOADED→HANDED_OFF` deliver, `PLANNED→ONBOARD→RECONCILED` collect). Replay → `IDEMPOTENT`; off-manifest → `UNKNOWN_PARCEL`; out-of-order → `ILLEGAL_TRANSITION` (no state change, scan still logged). Seals the manifest `BUILDING→LOADED` on first load, `→RECONCILED` when all items terminal. **The scan *is* the M4 transition signal** — there is no separate cron event (consistent with §17.1: van scans go to the M8 ledger, not `cron.events`).
+2. **`service.HandoffService`** + impl — `reconcileStop(van,loop,date,stopSeq,daId,deliverScanned,collectScanned,rejected)`: set-math of expected (manifest, filtered by `stop_seq`+`da_id`+direction) vs scanned → MISSING/EXTRA/REJECTED per direction; one append-only `handoff_reconciliation` row per bucket (a `NONE` row when clean); marks missing/rejected items `EXCEPTION`; emits `HANDOFF_COMPLETED` (clean) or `HANDOFF_DISCREPANCY` per bucket → M11 + M10. Partial handoff legal. *(The dwell-window timer itself is driven by telemetry in PR7; this service is the reconcile half.)*
+3. **Failures** (`M6-D-021`) — **`service.RecoveryService`** + impl + **`api.RecoveryController`** (`POST /routing/vans/{vanId}/recovery`): van breakdown emits `VAN_BREAKDOWN` and re-points the broken van's **open** (non-terminal) items to fresh recovery-van manifests (append-only — broken rows kept, C18); DA no-show carries undelivered (`PLANNED`/`LOADED`) deliveries to the next loop via new `VanManifestService.rebindDelivery` (marks the item `EXCEPTION`, re-binds strictly later). Collections are deferred to the next pickup-driven bind.
+
+### Shipped at v1 depth (deferred — additive, no rewrite)
+- **`rebindCollect`** for no-show collections (they ride the next pickup re-bind); **recovery deadline-recompute / rebind of now-infeasible items** (v1 moves custody only); **manifest `IN_PROGRESS`/`RETURNED`** transitions and the **dwell-window timer / driver-app scan endpoints** are telemetry-driven → **PR7**. Custody/handoff are service-layer in PR6; only recovery has a controller.
+- **Feed filtering still `#`:** the `routing.da`/`routing.hub` queues bind all routing keys (placeholder — M5/M7 unbuilt). Before M5/M7 go live this must be tightened so M6 only acts on the pickup / sorted-for-delivery type — either bind the specific routing key, or `switch` on the `RECEIVED_ROUTING_KEY` header in the consumer (read the type from the **header**, deserialize **after** deciding — never coerce every body into one type). Open item, see blockers.
 
 ### Verify
-Full chain on one parcel (LOAD→DELIVER, COLLECT→UNLOAD): statuses progress; unmatched scan → `HANDOFF_DISCREPANCY` → M11. Late-DA → partial handoff + rebind; breakdown → manifest reassigned + `VAN_BREAKDOWN` (recovery is the only sanctioned intraday fleet change, C18).
+51 routing tests green (was 39; +12). `CustodyServiceImplTest` (full LOAD→DELIVER + COLLECT→UNLOAD chains advance state & hit the ledger; C12 out-of-order rejected; replay idempotent; off-manifest → UNKNOWN). `HandoffServiceImplTest` (clean → COMPLETED; missing/extra/rejected/no-show → DISCREPANCY + items EXCEPTION). `RecoveryServiceImplTest` (breakdown reassigns only open items + emits `VAN_BREAKDOWN`; no-show carries only undelivered). App jar assembles; architecture import-rule guard still green. **No new migration** (`van_manifest_item` V6_8, `handoff_reconciliation` V6_9 pre-existed from PR1).
 
 ---
 
@@ -204,7 +208,8 @@ Strictly linear — each PR builds on the last; no parallel branches to track.
 | **M9 `FlightCutoffPort` + the §12.2 end-to-end tail budget (Q2)** | PR #5 | Stub now; Q2 is cross-module (M7/M9/M10) — open early. |
 | **M8 `ScanLedgerPort`** — is the van a new scan-location type? (Q12) | PR #6 | Confirm with M8 owner; stub writes locally until M8 exists. |
 | **M4 custody state names** (`HANDED_TO_DROP_VAN` etc.) | PR #6 | Confirm with M4 owner (already in M5's design). |
-| **Driver vs van identity on scans (Q14)** | PR #6 | Confirm with M1 — put both on each scan. |
+| **Driver vs van identity on scans (Q14)** | PR #6 | Confirm with M1 — put both on each scan. *(Done: `VanCustodyScan` carries both `vanId` + `driverId`.)* |
+| **Feed routing-key filtering** — `routing.da`/`routing.hub` bind `#` (all event types); M5/M7 each emit many types, M6 wants one each (pickup / sorted-for-delivery) | before M5/M7 live | Agree M5's pickup + M7's sorted routing-key strings, then either bind that specific key, or `switch` on the `RECEIVED_ROUTING_KEY` header in the consumer (read type from header, deserialize after deciding). Today's `#` is a placeholder while the payloads are provisional. |
 | **OSRM in CI** | PR #2+ | Mock `/table` in tests; document a self-hosted OSRM URL for E2E. |
 
 ---
