@@ -56,7 +56,6 @@ class HandoffServiceImplTest {
     private static final LocalDate DATE = LocalDate.of(2026, 6, 18);
 
     private final List<VanManifestItem> itemStore = new ArrayList<>();
-    private final List<HandoffReconciliation> recons = new ArrayList<>();
 
     private HandoffServiceImpl service;
 
@@ -71,10 +70,7 @@ class HandoffServiceImplTest {
                 .thenReturn(Optional.of(RoutePlan.builder().id(PLAN).cityId(CITY).build()));
         when(itemRepository.findByManifestIdAndStopSeq(eq(MANIFEST), eq(STOP))).thenAnswer(inv -> itemStore);
         when(itemRepository.save(any(VanManifestItem.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(reconciliationRepository.save(any(HandoffReconciliation.class))).thenAnswer(inv -> {
-            recons.add(inv.getArgument(0));
-            return inv.getArgument(0);
-        });
+        when(reconciliationRepository.save(any(HandoffReconciliation.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
