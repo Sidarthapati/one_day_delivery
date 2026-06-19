@@ -1,0 +1,144 @@
+package com.oneday.dispatch.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Every tunable threshold in M5 lives here — there are NO hardcoded literals anywhere else in the
+ * module. Bound from the {@code dispatch.*} tree:
+ *
+ * <pre>{@code
+ * dispatch:
+ *   cron:
+ *     freeze-minutes: 30
+ *     proximity-meters: 200
+ *   da:
+ *     absent-threshold-minutes: 15
+ *   gps:
+ *     heartbeat-interval-seconds: 30
+ *     flush-interval-seconds: 120
+ *   osrm:
+ *     confirm-threshold-minutes: 20
+ *   travel:
+ *     road-factor: 1.4
+ *     avg-speed-kmph: 25
+ *   shift:
+ *     load-offset-minutes: 15
+ *     load-cron: "0 45 5,13 * * *"   # 15 min before the 06:00 / 14:00 IST shift starts
+ *     zone: Asia/Kolkata
+ *     cities: [delhi, mumbai, bengaluru, hyderabad, chennai]
+ * }</pre>
+ */
+@ConfigurationProperties(prefix = "dispatch")
+public class DispatchProperties {
+
+    @NestedConfigurationProperty
+    private Cron cron = new Cron();
+    @NestedConfigurationProperty
+    private Da da = new Da();
+    @NestedConfigurationProperty
+    private Gps gps = new Gps();
+    @NestedConfigurationProperty
+    private Osrm osrm = new Osrm();
+    @NestedConfigurationProperty
+    private Travel travel = new Travel();
+    @NestedConfigurationProperty
+    private Shift shift = new Shift();
+
+    public Cron getCron() { return cron; }
+    public void setCron(Cron cron) { this.cron = cron; }
+    public Da getDa() { return da; }
+    public void setDa(Da da) { this.da = da; }
+    public Gps getGps() { return gps; }
+    public void setGps(Gps gps) { this.gps = gps; }
+    public Osrm getOsrm() { return osrm; }
+    public void setOsrm(Osrm osrm) { this.osrm = osrm; }
+    public Travel getTravel() { return travel; }
+    public void setTravel(Travel travel) { this.travel = travel; }
+    public Shift getShift() { return shift; }
+    public void setShift(Shift shift) { this.shift = shift; }
+
+    /** Cron-meeting protection (the hard constraint). */
+    public static class Cron {
+        /** Within this many minutes of the scheduled meeting, a DA is frozen (CRON_LOCKED). */
+        private int freezeMinutes = 30;
+        /** GPS within this radius of the cron vertex flips CRON_LOCKED → AT_CRON. */
+        private int proximityMeters = 200;
+
+        public int getFreezeMinutes() { return freezeMinutes; }
+        public void setFreezeMinutes(int freezeMinutes) { this.freezeMinutes = freezeMinutes; }
+        public int getProximityMeters() { return proximityMeters; }
+        public void setProximityMeters(int proximityMeters) { this.proximityMeters = proximityMeters; }
+    }
+
+    public static class Da {
+        /** GPS silent for longer than this → ABSENT. */
+        private int absentThresholdMinutes = 15;
+
+        public int getAbsentThresholdMinutes() { return absentThresholdMinutes; }
+        public void setAbsentThresholdMinutes(int absentThresholdMinutes) {
+            this.absentThresholdMinutes = absentThresholdMinutes;
+        }
+    }
+
+    public static class Gps {
+        /** Expected ping cadence from the DA app. */
+        private int heartbeatIntervalSeconds = 30;
+        /** How often dirty in-memory status rows are batch-flushed to {@code da_status}. */
+        private int flushIntervalSeconds = 120;
+
+        public int getHeartbeatIntervalSeconds() { return heartbeatIntervalSeconds; }
+        public void setHeartbeatIntervalSeconds(int heartbeatIntervalSeconds) {
+            this.heartbeatIntervalSeconds = heartbeatIntervalSeconds;
+        }
+        public int getFlushIntervalSeconds() { return flushIntervalSeconds; }
+        public void setFlushIntervalSeconds(int flushIntervalSeconds) {
+            this.flushIntervalSeconds = flushIntervalSeconds;
+        }
+    }
+
+    public static class Osrm {
+        /** Cron feasibility margin: confirm only if the parcel can reach the hub this far ahead. */
+        private int confirmThresholdMinutes = 20;
+
+        public int getConfirmThresholdMinutes() { return confirmThresholdMinutes; }
+        public void setConfirmThresholdMinutes(int confirmThresholdMinutes) {
+            this.confirmThresholdMinutes = confirmThresholdMinutes;
+        }
+    }
+
+    public static class Travel {
+        /** Multiplier on straight-line distance to approximate road distance (haversine fallback). */
+        private double roadFactor = 1.4;
+        /** Assumed average DA speed for the haversine ETA fallback. */
+        private double avgSpeedKmph = 25;
+
+        public double getRoadFactor() { return roadFactor; }
+        public void setRoadFactor(double roadFactor) { this.roadFactor = roadFactor; }
+        public double getAvgSpeedKmph() { return avgSpeedKmph; }
+        public void setAvgSpeedKmph(double avgSpeedKmph) { this.avgSpeedKmph = avgSpeedKmph; }
+    }
+
+    public static class Shift {
+        /** Shift roster + queues are loaded this many minutes before shift start. */
+        private int loadOffsetMinutes = 15;
+        /** Cron trigger for {@code ShiftLoadJob}; default = 15 min before 06:00 and 14:00. */
+        private String loadCron = "0 45 5,13 * * *";
+        /** Time zone the shift cron is evaluated in. */
+        private String zone = "Asia/Kolkata";
+        /** City codes (as known to M3) whose rosters are loaded at shift start. */
+        private List<String> cities = new ArrayList<>();
+
+        public int getLoadOffsetMinutes() { return loadOffsetMinutes; }
+        public void setLoadOffsetMinutes(int loadOffsetMinutes) { this.loadOffsetMinutes = loadOffsetMinutes; }
+        public String getLoadCron() { return loadCron; }
+        public void setLoadCron(String loadCron) { this.loadCron = loadCron; }
+        public String getZone() { return zone; }
+        public void setZone(String zone) { this.zone = zone; }
+        public List<String> getCities() { return cities; }
+        public void setCities(List<String> cities) { this.cities = cities; }
+    }
+}
