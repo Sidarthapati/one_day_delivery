@@ -210,7 +210,15 @@ And the **hub↔airport shuttle** — a simple periodic timetable (not a VRP), c
 bags. (`GET /routing/shuttle/{cityId}` — not surfaced in the demo UI.)
 
 <a id="kt-m6-runtime"></a>
-### 3.2 Part II — Run-time (all day) — *DESIGNED, NOT BUILT* ⚠️
+### 3.2 Part II — Run-time (all day) — *NOW PARTLY BUILT on `main`* ⚠️
+> **UPDATE (post-merge):** M6 Phase 5–6 landed on `main`. The custody/handoff backbone is **built**:
+> `CustodyService` (4-state ledger — find bound state, check move legal, advance, seal manifest),
+> `HandoffService` (DA↔van reconciliation → `HANDOFF_COMPLETED`/`HANDOFF_DISCREPANCY`),
+> `VanManifestService` (load/bind/unload), `RecoveryService` (van breakdown). The event wires are
+> live too: `CronEventProducer` (→ `CRON_EVENTS`), `HubFeedConsumer`, and **`DaFeedConsumer` which
+> consumes our `oneday.da.events`** (see §7.3 for the contract you must match). The van-driver UI and
+> live telemetry (`VAN_ARRIVED`/`VAN_RUNNING_LATE`) are still pending.
+
 This is the half the demo does **not** show, and it's the half **you (M5) integrate with at
 run-time.** Know it exists:
 - **The van is a mobile mini-hub / cross-dock.** Every van↔DA meeting is a *simultaneous, two-way,
@@ -427,8 +435,8 @@ This is the section to keep open while designing M5. Sourced from `M5-DEPENDENCY
 | Need | Source | Status |
 |---|---|---|
 | **Per-DA cron schedule** — vertex + day's meeting times + van | `DaCronScheduledEvent` on `EventStreams.CRON_EVENTS`; and/or `da_cron_schedule` table; and/or `GET /routing/cron/da/{daId}?date=` + `/next?at=` | ✅ **implemented** (event producer + table + REST). **Q-M6-1 / Q-M4-9 RESOLVED.** Remaining M5-side work (M6-D-008): M5 currently models *one* `scheduled_meeting_time`; the event/table carry a **`List<LocalTime>`** — M5 must store the list and pick the next. |
-| **Live van lateness** to re-check feasibility | `VAN_RUNNING_LATE` (run-time) | ⚠️ Designed, **not built** (M6 Part II). Code to the event contract; integrate when P12–P13 land. |
-| **Handoff completion / discrepancy** | `HANDOFF_COMPLETED` / `HANDOFF_DISCREPANCY` | ⚠️ Designed, not built. |
+| **Live van lateness** to re-check feasibility | `VanRunningLateEvent` / `VanArrivedEvent` on `CRON_EVENTS` | ⚠️ Payload records **now exist** in `common.kafka.events.cron`; M6 *emission* of the run-time telemetry is still pending (van-driver app). Code to the contract now. |
+| **Handoff completion / discrepancy** | `HandoffCompletedEvent` / `HandoffDiscrepancyEvent` on `CRON_EVENTS` | ✅ **now built.** M6's `HandoffService` reconciles a stop and `CronEventProducer.emitHandoff*` publishes these. M5 consumes them (close SLA / surface a discrepancy) — M5 does **not** reconcile. |
 
 <a id="kt-gives"></a>
 ### 7.3 What M5 GIVES the rest of the system
@@ -436,7 +444,7 @@ This is the section to keep open while designing M5. Sourced from `M5-DEPENDENCY
 |---|---|---|
 | **DA assignment + pickup OTP flow** — assigns a booked shipment to a DA, drives `PICKUP_ASSIGNED → PICKED_UP` | M4 (state machine) | M4 already generates the OTP on `PICKUP_ASSIGNED` (`DaEventsConsumer`); M5 verifies via M4's internal endpoint (`/internal/v1/shipments/{ref}/pickup-otp/verify` — confirm {ref} vs {id}, Q-M4-3). |
 | **DA-side events** on `EventStreams.DA_EVENTS` (`oneday.da.events`) | M4 (state transitions) | `DaEventType` **already exists** with the 8 M4-consumed values (`PICKUP_ASSIGNED`, `PICKUP_FAILED`, `VAN_HANDOFF_COMPLETED`, `DROP_ASSIGNED`, `DROP_COLLECTED`, `DROP_COMPLETED`, `DROP_FAILED`, `PICKUP_COMPLETED`), and `common.kafka.events.DaEvent(shipmentId, eventType)` is the **minimal consumer record** M4 reads. M5 adds the 5 *internal* values (`QUEUE_REORDERED`, `DA_ABSENT`, `CRON_MISSED`, `COD_COLLECTED`, `TASK_DEFERRED_SHIFT_ENDED`) and may produce a richer payload record (M4 ignores extra fields). Q-M4-6. |
-| **DA→van collect handoff (DA side)** | M6 (reconciles van side) | M5 scans the DA's first-mile parcels onto the van; M6 matches against its manifest. |
+| **DA→van collect handoff (DA side)** — first-mile parcel picked up, to be flown out | **M6 `DaFeedConsumer`** (binds it to a van loop) — and reconciles the van side at handoff | 🚨 **CONTRACT NOW CONCRETE & UNRESOLVED.** M6 binds queue `routing.da` to `DA_EVENTS` with **`#` (catch-all)** and reads every message as **`DaParcelPickedUpEvent(parcelId, cityId, daId, validDate, pickedUpAt)`** → `InboundParcel(COLLECT)` + `VanManifestService.bindCollect(...)`. Our `DaLifecycleEvent` is **shipment-level** (`shipmentId`/`occurredAt`, no `validDate`) → 3 fields deserialize **null** and corrupt M6's table. **Must resolve before M5 publishes to `DA_EVENTS`:** (a) parcel-vs-shipment id (with M8) + add `validDate`/`pickedUpAt`; (b) M6 narrows the `#` binding to the one collect key (else `DA_ABSENT`/`QUEUE_REORDERED`/etc. poison `routing.da`); (c) bind trigger = `PICKUP_COMPLETED`. `DaParcelPickedUpEvent` is flagged *PROVISIONAL — finalize with M5 owner* on the M6 side. |
 | **Tile queue-depth** snapshot every ~5 min | M3 (computes load-score) | ⚠️ **Ownership now ambiguous — confirm before building.** M3's consumer `TileQueueDepthConsumer` is wired to `EventStreams.TILE_QUEUE_DEPTH = "orders.tile_queue_depth"` and its comment attributes the feed to **M4**, reading a `TileQueueDepthEvent(cityId, tileId, unservedOrders, bookedOrders, date)`. The M5 plan assumes **M5** publishes it. Cleanest path: M5 publishes that same `TileQueueDepthEvent` to the existing `TILE_QUEUE_DEPTH` exchange (M3's consumer is ready) rather than a new `dispatch.*` exchange. Decide M4-vs-M5 producer ownership with the M3/M4 owners. |
 | **Cron-feasibility verdict** | the parcel's fate | The hard gate: a first-mile parcel only gets committed if its DA can hand it to the van on a loop that reaches the hub before the flight cutoff. |
 

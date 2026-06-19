@@ -16,6 +16,15 @@ import java.util.UUID;
  * ({@code @JsonIgnoreProperties}). So this record may grow new <em>nullable</em> fields per event
  * type without breaking any consumer; the exact per-{@link DaEventType} field set is finalised in
  * Q-M4-6. Fields not relevant to a given event type are simply left null.</p>
+ *
+ * <p><b>⚠️ M6 also consumes {@code DA_EVENTS} now.</b> {@code routing.events.DaFeedConsumer} binds
+ * its queue to this exchange with a catch-all ({@code #}) and reads messages as a <em>parcel-level</em>
+ * {@code DaParcelPickedUpEvent(parcelId, cityId, daId, validDate, pickedUpAt)} to bind a collected
+ * first-mile parcel to a van loop. This shipment-level record does <b>not</b> satisfy that shape
+ * (no {@code parcelId}/{@code validDate}/{@code pickedUpAt}). <b>Do not wire an M5 producer to
+ * {@code DA_EVENTS} until the M5↔M6 contract is settled</b> — see
+ * {@code docs/M5/M5-Implementation-Plan.md} addendum §7 (parcel-vs-shipment id, routing-key
+ * narrowing, and the {@code PICKUP_COMPLETED} bind trigger).</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record DaLifecycleEvent(

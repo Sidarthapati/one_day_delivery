@@ -71,6 +71,30 @@ These global corrections **override** the per-phase text wherever they conflict:
    an internal `grid.service.osrm.OsrmClient`. PR #6 still needs M3 to expose a public routing port,
    or M5 must call OSRM `/route` over HTTP itself. This is the real Phase-3 blocker.
 
+7. **🚨 M6 now CONSUMES our DA feed — the M5→M6 contract is UNRESOLVED (new top blocker).**
+   `main` landed M6 run-time (Custody/Handoff/Manifest/Recovery). M6's
+   `routing.events.DaFeedConsumer` binds queue **`routing.da`** to **`EventStreams.DA_EVENTS`** and
+   deserializes every message as
+   **`DaParcelPickedUpEvent(parcelId, cityId, daId, validDate, pickedUpAt)`**, then records an
+   `InboundParcel(COLLECT)` and calls `VanManifestService.bindCollect(...)` — i.e. it binds the
+   *collected* (fly-out) parcel to its van loop. Two hard mismatches vs our PR #1 `DaLifecycleEvent`:
+   - **Granularity/shape:** M6 wants **parcel-level** (`parcelId`, `validDate`, `pickedUpAt`); our
+     event is **shipment-level** (`shipmentId`, `occurredAt`, no `validDate`). Under
+     `@JsonIgnoreProperties(ignoreUnknown=true)` this fails *silently* — `parcelId`/`validDate`/
+     `pickedUpAt` deserialize **null** and corrupt M6's inbound table.
+   - **Catch-all binding:** the bind is **`.with("#")`** (see `RabbitStreamSupport.consumer`), so
+     *every* DA event M5 ever publishes (`PICKUP_ASSIGNED`, `DA_ABSENT`, `DROP_*`, …) is delivered to
+     `routing.da` and mis-bound as a collected parcel.
+
+   **Decisions required with the M6 (and M8) owner BEFORE any M5 producer is wired (Phase 4/7):**
+   (a) parcel vs shipment id — is it 1:1 in v1, or must M5 emit the M8 `parcelId`? (b) routing-key
+   discipline — M6 narrows its `#` binding to the single collect routing key, **or** M5 emits the
+   collect event on a dedicated key/exchange; (c) trigger — M6's "first-mile accumulation / bind
+   immediately" implies **`PICKUP_COMPLETED`**, not van-handoff — confirm. **Until resolved, M5 must
+   not publish to `DA_EVENTS`.** `DaParcelPickedUpEvent` is marked *PROVISIONAL — finalize with M5
+   owner* on the M6 side. **Reconciliation itself stays M6's `HandoffService`; M5 only feeds the
+   DA-side pickup/custody events.**
+
 ---
 
 ## 🏃 2-Day Sprint Plan
@@ -621,8 +645,22 @@ mvn clean install -pl dispatch
        ? shipmentId.toString()
        : daId.toString();   // QUEUE_REORDERED, DA_ABSENT, CRON_MISSED → keyed by daId
    ```
+   > 🚨 **BLOCKED on the M5→M6 contract (addendum §7).** M6's `DaFeedConsumer` `#`-binds
+   > `routing.da` to this exchange and reads every message as parcel-level
+   > `DaParcelPickedUpEvent(parcelId, cityId, daId, validDate, pickedUpAt)`. Before this producer
+   > goes live: (a) settle parcel-vs-shipment id + add `validDate`/`pickedUpAt` for the collect
+   > event, (b) get M6 to narrow its `#` binding (or emit collect on a dedicated key) so internal
+   > events (`DA_ABSENT`, `QUEUE_REORDERED`, …) don't poison `routing.da`, (c) confirm the bind
+   > trigger is `PICKUP_COMPLETED`. **Do not publish to `DA_EVENTS` until these are resolved.**
 
-**Tests (Testcontainers RabbitMQ):** delivery assignment; QUEUED vs IN_PROGRESS cancellation; reschedule re-runs assignment; `QUEUE_REORDERED` uses `daId` as its `partitionKey()`.
+5. **`DaCronScheduledConsumer`** (feeds PR #4's `ShiftLoadJob`) — queue `m5.cron-scheduled` bound to
+   `EventStreams.CRON_EVENTS`; on `DaCronScheduledEvent` (now a real payload in
+   `common.kafka.events.cron`) **upsert `da_cron_assignment`** for `(daId, operatingDate)`. Carries
+   the **`meetingTimes` `List<LocalTime>`** (M6-D-008) → add migration **`V5_6`** to store the list
+   (e.g. `meeting_times JSONB`); `ShiftLoadJob`/`CronMonitorJob` pick the next meeting from it instead
+   of the single `scheduled_meeting_time` flattened in PR #3.
+
+**Tests (Testcontainers RabbitMQ):** delivery assignment; QUEUED vs IN_PROGRESS cancellation; reschedule re-runs assignment; `QUEUE_REORDERED` uses `daId` as its `partitionKey()`; `DaCronScheduledEvent` upserts `da_cron_assignment` with the full meeting-times list.
 
 ### Verify
 
@@ -635,8 +673,10 @@ mvn clean install -pl dispatch
 ## Phase 5 — DA-Facing API (PRs #10–11)
 
 > 📎 **Prior context (M3/M6):** the van-handoff endpoint sits on M6's custody chain (deliver/collect
-> at the meeting vertex) — read [KT §3.2 · M6 run-time](M3-M6-KT-AND-HANDS-ON.md#kt-m6-runtime)
-> (designed, not yet built) before wiring `van-handoff`. ↩ back here after.
+> at the meeting vertex) — read [KT §3.2 · M6 run-time](M3-M6-KT-AND-HANDS-ON.md#kt-m6-runtime).
+> **Now BUILT on `main`:** M6's `CustodyService` (4-state ledger), `HandoffService` (DA↔van
+> reconciliation), `VanManifestService`, `RecoveryService`. M5 does **not** reconcile — it feeds the
+> DA-side pickup/custody events into M6's `DaFeedConsumer` (see addendum §7 for the open contract). ↩ back here after.
 
 **Module:** `dispatch`
 
@@ -910,6 +950,7 @@ mvn clean install -pl dispatch
 
 | Item | Needed before | Action |
 |------|--------------|--------|
+| **🚨 M5→M6 DA-feed contract** — M6's `DaFeedConsumer` expects parcel-level `DaParcelPickedUpEvent` on a `#`-bound `routing.da`; our `DaLifecycleEvent` is shipment-level (addendum §7) | **Phase 4/7 (any DA_EVENTS producer)** | Settle parcel-vs-shipment id (with M8), routing-key narrowing, and the bind trigger with the M6 owner. **Do not publish to `DA_EVENTS` until resolved.** |
 | **`OsrmRoutingPort`** public interface in `com.oneday.grid.service` — **still absent (the real blocker)** | Phase 3 (PR #6) | Raise with M3 team now; or fall back to calling OSRM `/route` over HTTP (addendum §6) |
 | **Tile queue-depth producer ownership** — M4 vs M5 (M3's consumer reads `orders.tile_queue_depth`, attributed to M4) | Phase 7 (PR #13) | Confirm with M3/M4 owners; if M5, publish to existing `EventStreams.TILE_QUEUE_DEPTH` (addendum §4) |
 | Q-M4-5 — OD-8 delivery verification (OTP vs QR) | Phase 5 (PR #10) | Raise with M4 team urgently — shapes the `drop-completed` endpoint |
