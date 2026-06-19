@@ -24,5 +24,21 @@ public enum DaEventType {
     DROP_COMPLETED,
 
     // M4 consumer: DROP_COLLECTED → DELIVERY_FAILED
-    DROP_FAILED
+    DROP_FAILED,
+
+    // ── M5-internal events (NOT consumed by M4 for state transitions) ──────────
+    // Queue order changed (insertion / cancel / reschedule); keyed by daId. → ops/UI
+    QUEUE_REORDERED,
+
+    // DA missed the GPS-heartbeat threshold and was marked ABSENT; keyed by daId. → M10, M11
+    DA_ABSENT,
+
+    // A parcel could not make its DA's cron meeting in time. → M10, M11
+    CRON_MISSED,
+
+    // COD cash collected at delivery; emitted alongside DROP_COMPLETED. → finance / M10
+    COD_COLLECTED,
+
+    // QUEUED tasks deferred at shift end (carried to next day / RTO path). → M11
+    TASK_DEFERRED_SHIFT_ENDED
 }
