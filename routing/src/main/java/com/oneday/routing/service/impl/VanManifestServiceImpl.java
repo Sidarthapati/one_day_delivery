@@ -98,15 +98,19 @@ class VanManifestServiceImpl implements VanManifestService {
             log.warn("Deliver parcel {} unresolved: hex {} not in any DA territory / no cron", parcelId, destinationHexId);
             return BindOutcome.unresolved(parcelId);
         }
+        return bindDeliverToCron(ctx, cityId, date, parcelId, cron, slaDeadline, -1);
+    }
+
+    // Greedy earliest-feasible deliver loop with live capacity (FCFS, §12.3); loops ≤ afterLoopExclusive
+    // are skipped so a carried/no-show parcel lands strictly after its failed loop (§13.2).
+    private BindOutcome bindDeliverToCron(PlanCtx ctx, UUID cityId, LocalDate date, UUID parcelId,
+                                          DaCronSchedule cron, Instant slaDeadline, int afterLoopExclusive) {
         UUID van = cron.getVanId();
         Duration daDelivery = Duration.ofMinutes(properties.getBinding().getDaDeliveryMinutes());
         List<LoopSlot> feasible = LoopBinder.feasibleDeliverLoopsAsc(
                 ctx.deliverSlots(van, cron.getHexVertexId()), slaDeadline, daDelivery);
-
-        // v1: greedy earliest-feasible loop with live capacity, else overflow (FCFS). The SLA-first
-        // reactive bump (§12.3/§12.4) is deferred post-v1 — capacity is configured high in v1 so loops
-        // don't fill; symmetric with bindCollect. See docs/M6/M6-ROUTING-DESIGN.md §12.
         for (LoopSlot slot : feasible) {
+            if (slot.loopIndex() <= afterLoopExclusive) continue;
             VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), date);
             if (itemRepository.countByManifestIdAndDirection(manifest.getId(), HandoffDirection.DELIVER) < ctx.capacity) {
                 VanManifestItem item = appendItem(manifest, HandoffDirection.DELIVER, parcelId, slot, cron.getDaId(), slaDeadline);
@@ -114,6 +118,30 @@ class VanManifestServiceImpl implements VanManifestService {
             }
         }
         return overflow(cityId, van, parcelId, slaDeadline);
+    }
+
+    @Override
+    @Transactional
+    public BindOutcome rebindDelivery(UUID parcelId) {
+        VanManifestItem old = itemRepository.findByParcelId(parcelId).stream()
+                .filter(i -> i.getDirection() == HandoffDirection.DELIVER && i.getStatus() != ManifestItemStatus.EXCEPTION)
+                .findFirst()
+                .orElse(null);
+        if (old == null) return BindOutcome.unresolved(parcelId);
+
+        VanManifest oldManifest = manifestRepository.findById(old.getManifestId())
+                .orElseThrow(() -> new IllegalStateException("manifest missing for item " + old.getId()));
+        int failedLoop = oldManifest.getLoopIndex();
+        old.setStatus(ManifestItemStatus.EXCEPTION); // carried off this loop; the rebind below re-places it
+        itemRepository.save(old);
+
+        RoutePlan plan = planRepository.findById(oldManifest.getRoutePlanId())
+                .orElseThrow(() -> new IllegalStateException("plan missing for manifest " + oldManifest.getId()));
+        PlanCtx ctx = context(plan.getCityId(), oldManifest.getValidDate());
+        DaCronSchedule cron = ctx.daToCron.get(old.getCounterpartyDaId());
+        if (cron == null) return BindOutcome.unresolved(parcelId);
+        return bindDeliverToCron(ctx, plan.getCityId(), oldManifest.getValidDate(), parcelId, cron,
+                old.getSlaDeadline(), failedLoop);
     }
 
     @Override
@@ -177,10 +205,11 @@ class VanManifestServiceImpl implements VanManifestService {
         return BindOutcome.overflow(parcelId, van);
     }
 
-    // Returns a BOUND outcome if the parcel already has an item for the direction (replay-safe), else null.
+    // Returns a BOUND outcome if the parcel already has a live item for the direction (replay-safe),
+    // else null. EXCEPTION items (carried/no-show) are ignored so the parcel can be re-bound.
     private BindOutcome alreadyBound(UUID parcelId, HandoffDirection direction) {
         return itemRepository.findByParcelId(parcelId).stream()
-                .filter(i -> i.getDirection() == direction)
+                .filter(i -> i.getDirection() == direction && i.getStatus() != ManifestItemStatus.EXCEPTION)
                 .findFirst()
                 .map(i -> BindOutcome.bound(parcelId, null, null, i.getId(), List.of()))
                 .orElse(null);

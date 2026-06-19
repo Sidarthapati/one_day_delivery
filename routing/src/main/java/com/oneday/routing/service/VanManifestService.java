@@ -22,4 +22,8 @@ public interface VanManifestService {
     BindingResult reconcileDeliveries(UUID cityId, LocalDate date);
 
     BindingResult reconcileCollections(UUID cityId, LocalDate date);
+
+    // Carry a delivery the DA didn't take (no-show / late, §13.2) onto its next feasible loop: the
+    // current item is marked EXCEPTION and the parcel re-bound to a later loop, else overflow.
+    BindOutcome rebindDelivery(UUID parcelId);
 }

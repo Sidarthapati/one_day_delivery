@@ -16,6 +16,9 @@ public interface VanManifestRepository extends JpaRepository<VanManifest, UUID> 
 
     Optional<VanManifest> findByVanIdAndLoopIndexAndValidDate(UUID vanId, int loopIndex, LocalDate validDate);
 
+    // All of a van's manifests for a day — recovery reassigns these to the recovery van (§13.5).
+    List<VanManifest> findByVanIdAndValidDate(UUID vanId, LocalDate validDate);
+
     // SELECT FOR UPDATE: lock the loop's manifest row before counting capacity so binds can't race.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select m from VanManifest m where m.vanId = :van and m.loopIndex = :loop and m.validDate = :date")
