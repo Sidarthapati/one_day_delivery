@@ -2,6 +2,8 @@
 -- cron-locked / DA absent / shift ended). The deferred-retry job re-attempts PENDING rows.
 CREATE TABLE deferred_dispatch (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @CreationTimestamp
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @UpdateTimestamp
     city_id        UUID NOT NULL,
     shipment_id    UUID NOT NULL,
     task_type      VARCHAR(20) NOT NULL,       -- PICKUP | DELIVERY

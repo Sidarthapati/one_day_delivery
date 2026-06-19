@@ -5,6 +5,8 @@
 -- lands (Phase 2). One row per DA per operating date.
 CREATE TABLE da_cron_assignment (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @CreationTimestamp
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @UpdateTimestamp
     da_id                  UUID NOT NULL,
     city_id                UUID NOT NULL,
     operating_date         DATE NOT NULL,

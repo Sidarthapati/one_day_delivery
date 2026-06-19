@@ -3,6 +3,7 @@
 -- the shared set_updated_at() trigger.
 CREATE TABLE da_status (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @CreationTimestamp
     da_id            UUID NOT NULL UNIQUE,
     city_id          UUID NOT NULL,
     shift_date       DATE NOT NULL,

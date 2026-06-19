@@ -4,6 +4,8 @@
 -- module boundaries.
 CREATE TABLE dispatch_queue (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @CreationTimestamp
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @UpdateTimestamp
     da_id            UUID NOT NULL,
     city_id          UUID NOT NULL,
     shipment_id      UUID NOT NULL,

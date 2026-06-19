@@ -3,6 +3,8 @@
 -- or deleted.
 CREATE TABLE da_assignment_audit (
     id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @CreationTimestamp
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),  -- BaseEntity @UpdateTimestamp (append-only: == created_at)
     shipment_id               UUID NOT NULL,
     task_type                 VARCHAR(20) NOT NULL,
     city_id                   UUID NOT NULL,
