@@ -95,22 +95,26 @@ Job test with fixed `Clock`: 01:00 → PROPOSED; unapproved by 07:00 → fallbac
 
 # Part II — Execution & run-time
 
-## PR #5 — Manifest engine & parcel→loop binding
+## PR #5 — Manifest engine & parcel→loop binding ✅ (shipped, FCFS variant)
 
 Implements §11.2, §12, `M6-D-015/-016/-017`. *Clubs deliver + collect binding + overflow.*
 
 ### Read first
 §11.2 (manifest), §12 (binding); `HubSortPort`, `DaAccumulationPort`, `FlightCutoffPort` stubs.
 
-### What to build
-1. **`service.VanManifestService`** + impl:
-   - **Deliver** — on `HubSortPort` "ready to load": destination hex → DA → vertex + van; delivery deadline (M4 SLA stub); bind to **earliest deadline-feasible loop with capacity** (`M6-D-016`); append `van_manifest_item(DELIVER, …, PLANNED)`.
-   - **Collect** — from `DaAccumulationPort`: hub-arrival deadline = cutoff − (sort+bag+shuttle) tail (`FlightCutoffPort`, §12.2) → latest feasible collect loop.
-   - Manifest lifecycle BUILDING→LOADED→IN_PROGRESS→RETURNED→RECONCILED.
-2. **Overflow** (`M6-D-017`) — loop load > capacity ⇒ bump latest-deadline items to next feasible loop; none before deadline ⇒ emit `LOOP_OVERFLOW` (station mgr + M10), recommend ad-hoc van. Never silent-drop.
+### What was built
+1. **`service.VanManifestService`** + impl (`VanManifestServiceImpl`), **event-driven per-parcel binding** (no batch timer): `HubFeedConsumer`/`DaFeedConsumer` (@RabbitListener on `routing.hub`/`routing.da`) call `bindDelivery`/`bindCollect` on each event; an `inbound_parcel` buffer (V6_13) is the audit ledger + `reconcile*` sweep source.
+   - **Deliver** — destination hex → DA → vertex + van; delivery deadline (M4 SLA); bind to **earliest deadline-feasible loop with live capacity**; append `van_manifest_item(DELIVER, …, PLANNED)`.
+   - **Collect** — hub-arrival deadline = cutoff − tail (`FlightCutoffPort`, §12.2) → **latest feasible collect loop with live capacity**.
+   - Concurrency: `van_manifest` UNIQUE(van,loop,date) (V6_14) + pessimistic `lockByVanLoopDate` before the live capacity count; locks taken in ascending loop order.
+   - Idempotency: replay-safe via existing manifest-item (`alreadyBound`).
+2. **Overflow** (`M6-D-017`) — no feasible loop with room ⇒ emit `LOOP_OVERFLOW` (station mgr + M10). Never silent-drop.
+
+### Shipped as FCFS (bump deferred — see §12.3)
+The SLA-first **reactive bump** of `M6-D-016/-017` was **deliberately not shipped in v1**. v1 binds greedily (earliest/latest feasible loop with capacity) and overflows when full — capacity is configured high so loops don't fill. Deliver and collect are symmetric. The bump is additive post-v1 (lower `capacity_packets` → re-add `tryBump`); seams (`LoopSlot`, `feasibleDeliverLoopsAsc`/`feasibleCollectLoopsDesc`, capacity guard) remain. Removing it dropped ~40 lines + 1 test.
 
 ### Verify
-Unit: SLA-first ordering (tight parcel jumps a slack one); overflow bumps then escalates; no-feasible-loop ⇒ `LOOP_OVERFLOW`, never a drop.
+Unit (39 routing tests green): greedy earliest-feasible loop then overflow (never a drop); unresolved hex reported, not bound/overflowed; replayed parcel idempotent. `HubFeedToManifestWiringTest`: event → consumer → buffer + immediate bind → manifest item, no broker.
 
 ---
 
