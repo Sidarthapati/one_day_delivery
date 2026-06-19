@@ -55,7 +55,7 @@ public class ShiftLoadJob {
     }
 
     /** Scheduled trigger — fires {@code dispatch.shift.load-offset-minutes} before each shift start. */
-    @Scheduled(cron = "${dispatch.shift.load-cron}", zone = "${dispatch.shift.zone}")
+    @Scheduled(cron = "${dispatch.shift.load-cron:0 45 5,13 * * *}", zone = "${dispatch.shift.zone:Asia/Kolkata}")
     public void onSchedule() {
         loadShiftsForDate(LocalDate.now());
     }

@@ -19,6 +19,7 @@ import java.util.UUID;
 @AllArgsConstructor
 public class DaLiveStatus {
     private UUID daId;
+    private UUID cityId;
     private Double lat;
     private Double lon;
     private Instant lastHeartbeat;

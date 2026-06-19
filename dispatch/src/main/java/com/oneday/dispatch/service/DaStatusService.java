@@ -44,6 +44,12 @@ public interface DaStatusService {
     /** The in-memory task queue for a DA, or {@code null} if not loaded. */
     DaQueue getQueue(UUID daId);
 
+    /** Snapshot of every DA currently loaded in memory (the day's roster). */
+    java.util.Set<UUID> loadedDaIds();
+
     /** Batch-flush every dirty DA's live state to {@code da_status}; clean rows are skipped. */
     void flushDirtyStatuses();
+
+    /** Drop all in-memory state (called at shift end, after a final flush). */
+    void clearAll();
 }

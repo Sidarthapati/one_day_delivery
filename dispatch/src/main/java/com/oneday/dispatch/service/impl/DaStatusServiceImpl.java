@@ -74,7 +74,7 @@ class DaStatusServiceImpl implements DaStatusService {
         }
         daStatusRepository.save(row);
 
-        DaLiveStatus live = new DaLiveStatus(daId, row.getLastGpsLat(), row.getLastGpsLon(),
+        DaLiveStatus live = new DaLiveStatus(daId, cityId, row.getLastGpsLat(), row.getLastGpsLon(),
                 row.getLastHeartbeat(), row.getStatus());
         liveStatus.put(daId, live);
         queues.put(daId, new DaQueue(daId, cronAssignment));
@@ -150,8 +150,21 @@ class DaStatusServiceImpl implements DaStatusService {
     }
 
     @Override
+    public Set<UUID> loadedDaIds() {
+        return Set.copyOf(liveStatus.keySet());
+    }
+
+    @Override
+    public void clearAll() {
+        liveStatus.clear();
+        queues.clear();
+        locks.clear();
+        dirty.clear();
+    }
+
+    @Override
     @Transactional
-    @Scheduled(fixedDelayString = "${dispatch.gps.flush-interval-seconds}", timeUnit = TimeUnit.SECONDS)
+    @Scheduled(fixedDelayString = "${dispatch.gps.flush-interval-seconds:120}", timeUnit = TimeUnit.SECONDS)
     public void flushDirtyStatuses() {
         // Snapshot + drain: anything dirtied during the flush stays for the next run.
         List<UUID> batch = new ArrayList<>(dirty);

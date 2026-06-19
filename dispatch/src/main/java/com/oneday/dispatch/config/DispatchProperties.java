@@ -47,6 +47,10 @@ public class DispatchProperties {
     private Travel travel = new Travel();
     @NestedConfigurationProperty
     private Shift shift = new Shift();
+    @NestedConfigurationProperty
+    private Monitor monitor = new Monitor();
+    @NestedConfigurationProperty
+    private Events events = new Events();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -60,6 +64,10 @@ public class DispatchProperties {
     public void setTravel(Travel travel) { this.travel = travel; }
     public Shift getShift() { return shift; }
     public void setShift(Shift shift) { this.shift = shift; }
+    public Monitor getMonitor() { return monitor; }
+    public void setMonitor(Monitor monitor) { this.monitor = monitor; }
+    public Events getEvents() { return events; }
+    public void setEvents(Events events) { this.events = events; }
 
     /** Cron-meeting protection (the hard constraint). */
     public static class Cron {
@@ -127,7 +135,9 @@ public class DispatchProperties {
         private int loadOffsetMinutes = 15;
         /** Cron trigger for {@code ShiftLoadJob}; default = 15 min before 06:00 and 14:00. */
         private String loadCron = "0 45 5,13 * * *";
-        /** Time zone the shift cron is evaluated in. */
+        /** Cron trigger for {@code ShiftEndJob}; default = 5 min after 14:00 and 22:00. */
+        private String endCron = "0 5 14,22 * * *";
+        /** Time zone the shift crons are evaluated in. */
         private String zone = "Asia/Kolkata";
         /** City codes (as known to M3) whose rosters are loaded at shift start. */
         private List<String> cities = new ArrayList<>();
@@ -136,9 +146,34 @@ public class DispatchProperties {
         public void setLoadOffsetMinutes(int loadOffsetMinutes) { this.loadOffsetMinutes = loadOffsetMinutes; }
         public String getLoadCron() { return loadCron; }
         public void setLoadCron(String loadCron) { this.loadCron = loadCron; }
+        public String getEndCron() { return endCron; }
+        public void setEndCron(String endCron) { this.endCron = endCron; }
         public String getZone() { return zone; }
         public void setZone(String zone) { this.zone = zone; }
         public List<String> getCities() { return cities; }
         public void setCities(List<String> cities) { this.cities = cities; }
+    }
+
+    /** Cadence of the always-on monitor jobs (cron-lock + absent detection). */
+    public static class Monitor {
+        /** How often CronMonitorJob and AbsentDaDetectionJob run. Default: 5 minutes. */
+        private int intervalSeconds = 300;
+
+        public int getIntervalSeconds() { return intervalSeconds; }
+        public void setIntervalSeconds(int intervalSeconds) { this.intervalSeconds = intervalSeconds; }
+    }
+
+    /** Outbound-event gating. */
+    public static class Events {
+        /**
+         * When true, {@code DaEventProducer} publishes to {@code EventStreams.DA_EVENTS}. Default
+         * FALSE: until the M5→M6 contract is settled (plan addendum §7), M6's {@code DaFeedConsumer}
+         * {@code #}-binds that exchange and would mis-read every DA event as a collected parcel.
+         * Flip to true once M6 narrows its binding and the collect payload is finalised.
+         */
+        private boolean publishDaEvents = false;
+
+        public boolean isPublishDaEvents() { return publishDaEvents; }
+        public void setPublishDaEvents(boolean publishDaEvents) { this.publishDaEvents = publishDaEvents; }
     }
 }
