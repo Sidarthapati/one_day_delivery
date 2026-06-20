@@ -25,6 +25,7 @@ import java.util.List;
  *   travel:
  *     road-factor: 1.4
  *     avg-speed-kmph: 25
+ *     breaker-fallback-multiplier: 1.2   # extra margin when OSRM is down on a borderline check
  *   shift:
  *     load-offset-minutes: 15
  *     load-cron: "0 45 5,13 * * *"   # 15 min before the 06:00 / 14:00 IST shift starts
@@ -123,11 +124,21 @@ public class DispatchProperties {
         private double roadFactor = 1.4;
         /** Assumed average DA speed for the haversine ETA fallback. */
         private double avgSpeedKmph = 25;
+        /**
+         * Extra safety multiplier applied to {@code roadFactor} when OSRM is unavailable (circuit
+         * breaker open) on a borderline cron-feasibility check, so the haversine estimate errs
+         * conservative. Effective factor = {@code roadFactor × breakerFallbackMultiplier}.
+         */
+        private double breakerFallbackMultiplier = 1.2;
 
         public double getRoadFactor() { return roadFactor; }
         public void setRoadFactor(double roadFactor) { this.roadFactor = roadFactor; }
         public double getAvgSpeedKmph() { return avgSpeedKmph; }
         public void setAvgSpeedKmph(double avgSpeedKmph) { this.avgSpeedKmph = avgSpeedKmph; }
+        public double getBreakerFallbackMultiplier() { return breakerFallbackMultiplier; }
+        public void setBreakerFallbackMultiplier(double breakerFallbackMultiplier) {
+            this.breakerFallbackMultiplier = breakerFallbackMultiplier;
+        }
     }
 
     public static class Shift {
