@@ -91,6 +91,8 @@ public class ShiftLoadJob {
             recoverStaleEtas(daId, date);
             // shiftType is left null until an HR/ops shift-roster source exists (design §12.1).
             daStatusService.initShift(daId, cityId, date, null, cronByDa.get(daId));
+            // Register the DA's hexes so the assignment engine can find candidate DAs by tile.
+            daStatusService.setTerritory(daId, entry.getValue());
         }
 
         log.info("Shift load {} {}: {} DAs, {} with cron, {} hexes assigned",

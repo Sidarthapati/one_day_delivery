@@ -1,11 +1,13 @@
 package com.oneday.dispatch.config;
 
+import com.oneday.dispatch.service.AdjacentDaProvider;
 import com.oneday.dispatch.service.OsrmRoutingPort;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
 import java.util.OptionalLong;
 
 /**
@@ -26,5 +28,15 @@ public class DispatchConfig {
     @ConditionalOnMissingBean(OsrmRoutingPort.class)
     OsrmRoutingPort unavailableOsrmRoutingPort() {
         return waypoints -> OptionalLong.empty();
+    }
+
+    /**
+     * No-op cross-territory candidate source until M3 exposes tile adjacency. With no candidates the
+     * engine defers an infeasible pickup rather than spilling over — the sanctioned v1 behaviour.
+     */
+    @Bean
+    @ConditionalOnMissingBean(AdjacentDaProvider.class)
+    AdjacentDaProvider noAdjacentDaProvider() {
+        return (cityId, originTileId, date) -> List.of();
     }
 }

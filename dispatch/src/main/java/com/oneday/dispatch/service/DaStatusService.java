@@ -7,7 +7,9 @@ import com.oneday.dispatch.service.model.DaQueue;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * The hot-path authority for live DA state. Status, GPS and per-DA task queues live in memory
@@ -43,6 +45,21 @@ public interface DaStatusService {
 
     /** The in-memory task queue for a DA, or {@code null} if not loaded. */
     DaQueue getQueue(UUID daId);
+
+    /**
+     * Register (replacing any prior set) the tiles a DA serves today, maintaining the tile→DA
+     * reverse index the assignment engine uses to find candidate DAs for an incoming task's tile.
+     */
+    void setTerritory(UUID daId, List<UUID> tileIds);
+
+    /** Loaded DAs whose territory includes {@code tileId} (order unspecified); empty if none. */
+    List<UUID> dasForTile(UUID tileId);
+
+    /**
+     * Run {@code work} while holding the DA's exclusive lock, so cron-feasibility + queue insertion
+     * are atomic per DA. The lock is reentrant — code inside may call {@link #updateStatus}.
+     */
+    <T> T withDaLock(UUID daId, Supplier<T> work);
 
     /** Snapshot of every DA currently loaded in memory (the day's roster). */
     java.util.Set<UUID> loadedDaIds();

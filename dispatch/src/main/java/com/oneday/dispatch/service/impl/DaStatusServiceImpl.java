@@ -37,6 +37,10 @@ class DaStatusServiceImpl implements DaStatusService {
     private final ConcurrentHashMap<UUID, DaLiveStatus> liveStatus = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, DaQueue> queues = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
+    /** tile → DAs serving it today (reverse of the per-DA territory); drives candidate selection. */
+    private final ConcurrentHashMap<UUID, Set<UUID>> dasByTile = new ConcurrentHashMap<>();
+    /** da → tiles, kept so a re-register can withdraw a DA's old tile memberships. */
+    private final ConcurrentHashMap<UUID, Set<UUID>> tilesByDa = new ConcurrentHashMap<>();
     /** DAs whose live state has changed since the last flush. */
     private final Set<UUID> dirty = ConcurrentHashMap.newKeySet();
 
@@ -149,6 +153,43 @@ class DaStatusServiceImpl implements DaStatusService {
     }
 
     @Override
+    public synchronized void setTerritory(UUID daId, List<UUID> tileIds) {
+        // Withdraw the DA from any tiles it no longer serves, then (re)register the new set.
+        Set<UUID> previous = tilesByDa.getOrDefault(daId, Set.of());
+        for (UUID old : previous) {
+            Set<UUID> das = dasByTile.get(old);
+            if (das != null) {
+                das.remove(daId);
+                if (das.isEmpty()) {
+                    dasByTile.remove(old);
+                }
+            }
+        }
+        Set<UUID> tiles = Set.copyOf(tileIds);
+        tilesByDa.put(daId, tiles);
+        for (UUID tile : tiles) {
+            dasByTile.computeIfAbsent(tile, k -> ConcurrentHashMap.newKeySet()).add(daId);
+        }
+    }
+
+    @Override
+    public List<UUID> dasForTile(UUID tileId) {
+        Set<UUID> das = dasByTile.get(tileId);
+        return das == null ? List.of() : List.copyOf(das);
+    }
+
+    @Override
+    public <T> T withDaLock(UUID daId, java.util.function.Supplier<T> work) {
+        ReentrantLock lock = locks.computeIfAbsent(daId, k -> new ReentrantLock());
+        lock.lock();
+        try {
+            return work.get();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
     public Set<UUID> loadedDaIds() {
         return Set.copyOf(liveStatus.keySet());
     }
@@ -158,6 +199,8 @@ class DaStatusServiceImpl implements DaStatusService {
         liveStatus.clear();
         queues.clear();
         locks.clear();
+        dasByTile.clear();
+        tilesByDa.clear();
         dirty.clear();
     }
 

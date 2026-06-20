@@ -52,6 +52,10 @@ public class DispatchProperties {
     private Monitor monitor = new Monitor();
     @NestedConfigurationProperty
     private Events events = new Events();
+    @NestedConfigurationProperty
+    private Service service = new Service();
+    @NestedConfigurationProperty
+    private CrossTerritory crossTerritory = new CrossTerritory();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -69,6 +73,10 @@ public class DispatchProperties {
     public void setMonitor(Monitor monitor) { this.monitor = monitor; }
     public Events getEvents() { return events; }
     public void setEvents(Events events) { this.events = events; }
+    public Service getService() { return service; }
+    public void setService(Service service) { this.service = service; }
+    public CrossTerritory getCrossTerritory() { return crossTerritory; }
+    public void setCrossTerritory(CrossTerritory crossTerritory) { this.crossTerritory = crossTerritory; }
 
     /** Cron-meeting protection (the hard constraint). */
     public static class Cron {
@@ -172,6 +180,36 @@ public class DispatchProperties {
 
         public int getIntervalSeconds() { return intervalSeconds; }
         public void setIntervalSeconds(int intervalSeconds) { this.intervalSeconds = intervalSeconds; }
+    }
+
+    /** Per-stop service time used by cron feasibility until M3 per-tile service times are wired. */
+    public static class Service {
+        /** On-site service minutes per stop (design §9.3 default; M3 tile_demand_snapshot supersedes later). */
+        private int defaultMinutes = 12;
+
+        public int getDefaultMinutes() { return defaultMinutes; }
+        public void setDefaultMinutes(int defaultMinutes) { this.defaultMinutes = defaultMinutes; }
+    }
+
+    /**
+     * Cross-territory dispatch (design §10): when a tile is overloaded and a neighbouring DA is
+     * sparse, an infeasible pickup may be handed to that adjacent DA. Disabled by default in v1 —
+     * M3 exposes per-tile load scores but not tile adjacency yet, so {@code AdjacentDaProvider} has
+     * no real source and the engine simply defers (the plan's sanctioned v1 fallback).
+     */
+    public static class CrossTerritory {
+        private boolean enabled = false;
+        /** Origin tile must be at least this loaded (adjustedLoadScore) to spill over. */
+        private double overloadThreshold = 1.5;
+        /** A candidate adjacent tile must be below this load to receive the spillover. */
+        private double sparseThreshold = 0.8;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public double getOverloadThreshold() { return overloadThreshold; }
+        public void setOverloadThreshold(double overloadThreshold) { this.overloadThreshold = overloadThreshold; }
+        public double getSparseThreshold() { return sparseThreshold; }
+        public void setSparseThreshold(double sparseThreshold) { this.sparseThreshold = sparseThreshold; }
     }
 
     /** Outbound-event gating. */
