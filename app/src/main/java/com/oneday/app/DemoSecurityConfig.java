@@ -12,8 +12,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 /**
  * Local-dev / demo security override.
- * Opens /api/** and /internal/** (permitAll, no CSRF) so the demo website can call the backend
- * directly. Never active in prod (guarded by @Profile("!prod")).
+ * Opens /api/**, /internal/** and /routing/** (permitAll, no CSRF) so the demo website can call the
+ * backend directly. /routing/** carries the M6 plan-time + run-time endpoints the demo drives. Never
+ * active in prod (guarded by @Profile("!prod")).
  *
  * <p>The chain still runs {@link JwtAuthenticationFilter}, so a request that carries a real
  * {@code Authorization: Bearer <jwt>} is authenticated as its actual user/role (a customer can
@@ -35,11 +36,11 @@ class DemoSecurityConfig {
     SecurityFilterChain demoApiChain(HttpSecurity http,
                                      JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         return http
-                .securityMatcher("/api/**", "/internal/**")
+                .securityMatcher("/api/**", "/internal/**", "/routing/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies. Keep CSRF
                 // enabled but ignore the stateless API paths (equivalent here, no blanket disable).
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"))
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**", "/routing/**"))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
