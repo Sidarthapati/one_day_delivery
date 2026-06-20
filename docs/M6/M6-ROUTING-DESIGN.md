@@ -322,21 +322,21 @@ Deliveries are physically loaded **in reverse stop order** (last stop's parcels 
 The nightly plan is *forecast*; the day runs on *real* parcels. Binding is the bridge (`M6-D-015`, `-016`, `-017`).
 
 ### 12.1 Last-mile binding (deliver)
-On `parcel.sorted_for_delivery` from M7: resolve destination hex → DA → that DA's meeting vertex + van. Compute the parcel's **delivery deadline** (M4 SLA). Bind to the **earliest loop** whose `(van ETA to vertex) + (DA delivery time)` ≤ deadline **and** that has spare capacity. Append to that loop's outbound manifest. No feasible loop ⇒ overflow (§12.4).
+On `parcel.sorted_for_delivery` from M7: resolve destination hex → DA → that DA's meeting vertex + van. Bind to the **earliest loop with spare capacity** — the next van out — and append to its outbound manifest. The parcel's **delivery deadline** (M4 SLA) is recorded on the manifest item for M10 but is **advisory, not a gate** (see §12.3): a late or missing deadline still binds the soonest loop. Overflow (§12.4) only if **no loop has room**.
 
 ### 12.2 First-mile binding (collect)
-A DA accumulates PICKED_UP parcels through the day. Each carries a **hub-arrival deadline** derived from its committed flight cutoff (M9) minus the end-to-end tail: `cutoff − (sort + bag + shuttle)` (the Q2 budget). M6 marks the **latest loop** on which the parcel can be collected and still reach the hub in time. M5's cron-feasibility check (it already verifies the DA can reach the vertex) is combined with M6's loop-return-time check; the parcel must be handed off on a loop ≤ that latest loop. If the DA can't make any feasible loop ⇒ exception (M5 `CRON_MISSED` path + M10).
+A DA accumulates PICKED_UP parcels through the day. On each pickup, bind to the **earliest loop with spare capacity** — the next van back — so the parcel reaches the hub fastest. Its **hub-arrival deadline**, derived from the committed flight cutoff (M9) minus the end-to-end tail `cutoff − (sort + bag + shuttle)` (the Q2 budget), is recorded on the item for M9/M10 but, like deliver, is **advisory**: if M9 gives no cutoff it falls back to the window end, and a missed cutoff still binds the soonest loop (the parcel rides to the hub and waits for the next flight). Overflow only if no loop has room.
 
 ### 12.3 The combined binding rule (`M6-D-016`)
-> **SLA-first, capacity-bounded.** Order candidate parcels by deadline; assign each to the earliest feasible loop with capacity. This is *deadline-first*, not *next-loop-with-room* — a tight parcel never waits behind a slack one.
+> **v1 (shipped) = fastest-greedy, deadline-advisory.** Both directions bind the **earliest loop with live capacity** (deliver: next van out; collect: next van back), in arrival order. The SLA deadline / flight cutoff is **stored on the item, never used to gate** — M9 is unbuilt and the deliver SLA accuracy is unproven, so an untrusted number must not block physical movement. A late, or absent, deadline still binds; **overflow fires only on capacity exhaustion** (§12.4). M10/M11 own the SLA-breach reaction, reading the deadline already on the item — M6 invents no breach event.
 
-> **v1 (shipped) = FCFS.** v1 binds greedily — each parcel takes its earliest (deliver) / latest (collect) feasible loop with live capacity, in arrival order; if full ⇒ overflow (§12.4). Capacity is configured high in v1, so loops don't fill and the SLA-first *reactive bump* never needs to fire. The deadline-first reordering above is the **post-v1** target, switched on by lowering `city_fleet_config.capacity_packets` to real van capacity — the seams (`LoopSlot`, deadline-feasible loop sets, the per-loop capacity guard) are already in place, so it's an additive change with no rewrite. Deliver and collect are symmetric in v1 (both greedy + overflow).
+> **Post-v1 (deferred): SLA-first reordering + reactive bump.** When `city_fleet_config.capacity_packets` is lowered to real van capacity and loops actually fill, the target is deadline-first ordering (a tight parcel never waits behind a slack one) plus bumping the slackest already-bound parcel to make room. Capacity is configured high in v1 so this never needs to fire; the seams (`LoopSlot`, per-loop capacity guard, `bindEarliest` core) are in place for an additive change with no rewrite.
 
 ### 12.4 Runtime overflow / back-pressure (`M6-D-017`)
-Capacity per loop is fixed by the locked plan. If actual demand on a loop exceeds capacity:
-1. **Bump** the latest-deadline parcels to the next feasible loop. *(Post-v1; deferred — see §12.3. v1 skips straight to step 2.)*
-2. If a parcel has **no feasible loop with room** ⇒ raise `LOOP_OVERFLOW` → station manager + M10; recommend an ad-hoc extra van (intraday van add needs approval, NFR-3) or a direct hub run.
-3. Never silently drop SLA (mirrors M7 hub overload, PRD §9.5).
+Capacity per loop is fixed by the locked plan. Overflow means exactly one thing in v1 — **no loop has room** (a missed/absent deadline never causes it):
+1. **Bump** the slackest already-bound parcel to a later loop to make room. *(Post-v1; deferred — see §12.3. v1 skips straight to step 2.)*
+2. If a parcel has **no loop with room** ⇒ raise `LOOP_OVERFLOW` → station manager + M10; recommend an ad-hoc extra van (intraday van add needs approval, NFR-3) or a direct hub run.
+3. Never silently drop a parcel — overflow escalates, it does not discard (mirrors M7 hub overload, PRD §9.5).
 
 ### 12.5 Why this can't be planned away
 Forecast (70/30) sizes loops well on average, but a demand spike, a flight pulled earlier, or DA pickups clustering late in the day all create real-time pressure the nightly plan can't see. §12.4 is the safety valve; §13 handles the physical failures.

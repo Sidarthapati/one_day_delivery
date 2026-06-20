@@ -4,10 +4,29 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:oneday}
     password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # SELF-HEAL after laptop sleep / network drop severs the pooled TCP connections to the remote DB:
+      # fail a DEAD connection FAST on borrow (isValid check capped below) so Hikari discards it and
+      # opens a fresh one instead of wedging the pool on the OS TCP timeout. socketTimeout (the
+      # driver-level backstop) is a JDBC URL param in .env — it can't be set here (data-source-properties
+      # is a Map; Spring lowercases the key and applies it after the pool is sealed).
+      validation-timeout: 3000          # cap on-borrow isValid() (must be < connection-timeout)
   jpa:
     hibernate:
       ddl-auto: validate
     show-sql: false
+    properties:
+      hibernate:
+        # MUST live here, not in .env: spring.jpa.properties is a Map, and an env var binds the key
+        # with every _ → . ("hibernate.jdbc.batch.size"), which Hibernate ignores — it needs the
+        # literal "hibernate.jdbc.batch_size". YAML preserves the underscore so batching engages;
+        # with reWriteBatchedInserts (JDBC URL) seeding tens of thousands of grid rows over the WAN
+        # becomes a handful of multi-row round-trips instead of one INSERT per row.
+        jdbc:
+          batch_size: 2000
+        order_inserts: true
+        order_updates: true
+        batch_versioned_data: true
   flyway:
     enabled: true
     # Single recursive location catches auth/ and orders/ subfolders AND grid's V3_x +
@@ -37,6 +56,39 @@ spring:
 grid:
   h3:
     resolution: 8
+  cities:
+    delhi: f47ac10b-58cc-4372-a567-0e02b2c3d479
+    mumbai: 550e8400-e29b-41d4-a716-446655440000
+    bangalore: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+    hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+    chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+
+# M6 routing config. Same shadowing rule as grid above: the assembled app loads ITS OWN
+# application.yml, so RoutingProperties binds here (the routing module's yaml is shadowed and would
+# otherwise leave osrm.base-url at its localhost default). The M6 solver hard-depends on OSRM /table
+# (no geometric fallback), so base-url must point at the real engine. Override with ROUTING_OSRM_BASEURL.
+routing:
+  osrm:
+    base-url: ${ROUTING_OSRM_BASEURL:http://46.225.155.64:5000}
+  # Small node sets (≤ a few dozen meeting vertices) solve in <1s; a short limit keeps the interactive
+  # "set vans → generate routes" loop responsive (recommendVanCount runs several solves back-to-back).
+  solver:
+    time-limit-seconds: 8
+    drop-infeasible-vertices: true   # M6 drop-and-flag; false = relax cycle to the window, serve all
+  cycle:
+    min-minutes: 120
+    max-minutes: 180
+  shuttle:
+    cadence-minutes: 30
+  window:
+    start-hour: 7
+    end-hour: 20
+  dwell-minutes: 10
+  max-da-to-vertex-minutes: 12
+  late-threshold-minutes: 10
+  cost-per-km: 15.0
+  congestion-factor: 1.6       # scale OSRM free-flow times → realistic urban speed (Q5)
+  hub-turnaround-minutes: 15   # unload + reload at the hub on each loop return
   cities:
     delhi: f47ac10b-58cc-4372-a567-0e02b2c3d479
     mumbai: 550e8400-e29b-41d4-a716-446655440000
