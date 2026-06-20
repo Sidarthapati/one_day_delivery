@@ -101,23 +101,30 @@ class VanManifestServiceImpl implements VanManifestService {
         return bindDeliverToCron(ctx, cityId, date, parcelId, cron, slaDeadline, -1);
     }
 
-    // Greedy earliest-feasible deliver loop with live capacity (FCFS, §12.3); loops ≤ afterLoopExclusive
-    // are skipped so a carried/no-show parcel lands strictly after its failed loop (§13.2).
+    // Deliver: ride the soonest loop with room (FCFS, §12.3). loops ≤ afterLoopExclusive are skipped so
+    // a carried/no-show parcel lands strictly after its failed loop (§13.2). slaDeadline is stored, not
+    // gated — a late/null deadline still binds (the box is here and must go out).
     private BindOutcome bindDeliverToCron(PlanCtx ctx, UUID cityId, LocalDate date, UUID parcelId,
                                           DaCronSchedule cron, Instant slaDeadline, int afterLoopExclusive) {
-        UUID van = cron.getVanId();
-        Duration daDelivery = Duration.ofMinutes(properties.getBinding().getDaDeliveryMinutes());
-        List<LoopSlot> feasible = LoopBinder.feasibleDeliverLoopsAsc(
-                ctx.deliverSlots(van, cron.getHexVertexId()), slaDeadline, daDelivery);
-        for (LoopSlot slot : feasible) {
+        return bindEarliest(ctx, cityId, date, parcelId, cron.getVanId(),
+                ctx.deliverSlots(cron.getVanId(), cron.getHexVertexId()),
+                HandoffDirection.DELIVER, cron.getDaId(), slaDeadline, afterLoopExclusive);
+    }
+
+    // Shared fastest-greedy core (both directions): bind the earliest loop with live capacity, else
+    // overflow only when every loop is full. The deadline rides onto the item for M9/M10 but never gates.
+    private BindOutcome bindEarliest(PlanCtx ctx, UUID cityId, LocalDate date, UUID parcelId, UUID van,
+                                     List<LoopSlot> slots, HandoffDirection direction, UUID counterpartyDaId,
+                                     Instant deadline, int afterLoopExclusive) {
+        for (LoopSlot slot : LoopBinder.loopsEarliestFirst(slots)) {
             if (slot.loopIndex() <= afterLoopExclusive) continue;
             VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), date);
-            if (itemRepository.countByManifestIdAndDirection(manifest.getId(), HandoffDirection.DELIVER) < ctx.capacity) {
-                VanManifestItem item = appendItem(manifest, HandoffDirection.DELIVER, parcelId, slot, cron.getDaId(), slaDeadline);
+            if (itemRepository.countByManifestIdAndDirection(manifest.getId(), direction) < ctx.capacity) {
+                VanManifestItem item = appendItem(manifest, direction, parcelId, slot, counterpartyDaId, deadline);
                 return BindOutcome.bound(parcelId, slot.loopIndex(), van, item.getId(), List.of());
             }
         }
-        return overflow(cityId, van, parcelId, slaDeadline);
+        return overflow(cityId, van, parcelId, deadline);
     }
 
     @Override
@@ -157,21 +164,14 @@ class VanManifestServiceImpl implements VanManifestService {
             return BindOutcome.unresolved(parcelId);
         }
         UUID van = cron.getVanId();
+        // Flight cutoff (− hub tail) is recorded on the item for M9/M10; missing cutoff → window end.
+        // Advisory only: v1 binds the soonest loop back regardless, same as deliver. See §12.
         Instant deadline = flightCutoffPort.outboundFlightCutoff(cityId, date)
                 .map(c -> c.minus(Duration.ofMinutes(properties.getBinding().getHubTailMinutes())))
                 .orElse(ctx.windowEnd);
-        List<LoopSlot> feasible = LoopBinder.feasibleCollectLoopsDesc(ctx.collectSlots(van, cron.getHexVertexId()), deadline);
-
-        // v1: greedy latest-feasible loop with live capacity, else overflow (FCFS). Same shape as
-        // bindDelivery — no reactive bump in v1. See docs/M6/M6-ROUTING-DESIGN.md §12.
-        for (LoopSlot slot : feasible) {
-            VanManifest manifest = lockOrCreate(ctx, van, slot.loopIndex(), date);
-            if (itemRepository.countByManifestIdAndDirection(manifest.getId(), HandoffDirection.COLLECT) < ctx.capacity) {
-                VanManifestItem item = appendItem(manifest, HandoffDirection.COLLECT, parcelId, slot, daId, deadline);
-                return BindOutcome.bound(parcelId, slot.loopIndex(), van, item.getId(), List.of());
-            }
-        }
-        return overflow(cityId, van, parcelId, deadline);
+        return bindEarliest(ctx, cityId, date, parcelId, van,
+                ctx.collectSlots(van, cron.getHexVertexId()),
+                HandoffDirection.COLLECT, daId, deadline, -1);
     }
 
     @Override
