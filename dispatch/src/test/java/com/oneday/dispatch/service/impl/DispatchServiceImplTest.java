@@ -13,6 +13,7 @@ import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
+import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.service.AdjacentDaProvider;
 import com.oneday.dispatch.service.AssignmentOutcome;
 import com.oneday.dispatch.service.AssignmentResult;
@@ -85,8 +86,9 @@ class DispatchServiceImplTest {
         grid = mock(GridService.class);
         adjacent = mock(AdjacentDaProvider.class);
         when(adjacent.candidates(any(), any(), any())).thenReturn(List.of());
+        DaEventProducer daEventProducer = new DaEventProducer(mock(com.oneday.common.kafka.EventPublisher.class), props);
         service = new DispatchServiceImpl(queueRepo, deferredRepo, auditRepo, cronRepo,
-                daStatus, feasibility, loadScore, adjacent, grid, props);
+                daStatus, feasibility, loadScore, adjacent, grid, daEventProducer, props);
     }
 
     private UUID readyDa(int existingQueued) {

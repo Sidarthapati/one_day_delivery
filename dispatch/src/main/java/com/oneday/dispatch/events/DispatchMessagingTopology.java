@@ -21,6 +21,9 @@ public class DispatchMessagingTopology {
     /** M5's queue for the full shipment lifecycle stream. */
     public static final String SHIPMENTS_QUEUE = "m5.shipments";
 
+    /** M5's queue on M6's cron stream (M5 acts only on DA_CRON_SCHEDULED; the rest are ignored). */
+    public static final String CRON_QUEUE = "m5.cron";
+
     /** Exchange M5 publishes DA lifecycle events to (gated — see DaEventProducer). */
     @Bean
     Declarables daEventsExchange() {
@@ -31,5 +34,11 @@ public class DispatchMessagingTopology {
     @Bean
     Declarables shipmentsBinding() {
         return RabbitStreamSupport.consumer(SHIPMENTS_QUEUE, EventStreams.SHIPMENTS_EVENTS);
+    }
+
+    /** All cron events on one queue; the consumer acts only on DA_CRON_SCHEDULED. */
+    @Bean
+    Declarables cronBinding() {
+        return RabbitStreamSupport.consumer(CRON_QUEUE, EventStreams.CRON_EVENTS);
     }
 }

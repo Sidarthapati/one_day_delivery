@@ -11,6 +11,7 @@ import com.oneday.dispatch.domain.DeferredDispatch;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
+import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.repository.DaAssignmentAuditRepository;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
@@ -66,6 +67,7 @@ class DispatchServiceImpl implements DispatchService {
     private final IntradayLoadScoreService loadScoreService;
     private final AdjacentDaProvider adjacentDaProvider;
     private final GridService gridService;
+    private final DaEventProducer daEventProducer;
     private final DispatchProperties props;
 
     DispatchServiceImpl(DispatchQueueRepository queueRepository,
@@ -77,6 +79,7 @@ class DispatchServiceImpl implements DispatchService {
                         IntradayLoadScoreService loadScoreService,
                         AdjacentDaProvider adjacentDaProvider,
                         GridService gridService,
+                        DaEventProducer daEventProducer,
                         DispatchProperties props) {
         this.queueRepository = queueRepository;
         this.deferredRepository = deferredRepository;
@@ -87,6 +90,7 @@ class DispatchServiceImpl implements DispatchService {
         this.loadScoreService = loadScoreService;
         this.adjacentDaProvider = adjacentDaProvider;
         this.gridService = gridService;
+        this.daEventProducer = daEventProducer;
         this.props = props;
     }
 
@@ -120,6 +124,7 @@ class DispatchServiceImpl implements DispatchService {
             return;   // already terminal
         }
         UUID daId = row.getDaId();
+        UUID cityId = row.getCityId();
         LocalDate date = row.getOperatingDate();
         daStatusService.withDaLock(daId, () -> {
             row.setStatus(TaskStatus.CANCELLED);
@@ -128,6 +133,8 @@ class DispatchServiceImpl implements DispatchService {
             rebuildMemQueue(daId, date);
             return null;
         });
+        // Queue order changed → notify downstream (gated; no-op until the producer flag is on).
+        daEventProducer.emitQueueReordered(daId, cityId);
     }
 
     @Override

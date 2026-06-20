@@ -5,9 +5,13 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -45,6 +49,14 @@ public class DaCronAssignment extends MutableBaseEntity {
 
     @Column(name = "scheduled_meeting_time", nullable = false)
     private Instant scheduledMeetingTime;
+
+    /**
+     * The full day's meeting times (M6-D-008) as ISO LocalTime strings, e.g. {@code ["06:00","10:00"]}.
+     * {@link #scheduledMeetingTime} holds the primary (earliest) for the current feasibility path.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "meeting_times", nullable = false, columnDefinition = "jsonb")
+    private List<String> meetingTimes = new ArrayList<>();
 
     @Column(name = "van_id")
     private UUID vanId;

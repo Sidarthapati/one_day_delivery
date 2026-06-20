@@ -44,6 +44,11 @@ public class DaEventProducer {
         emit(DaEventType.TASK_DEFERRED_SHIFT_ENDED, daId, cityId, shipmentId, null, "SHIFT_ENDED");
     }
 
+    /** A DA's queue order changed (a task was cancelled/removed and the rest resequenced). → ops/UI. */
+    public void emitQueueReordered(UUID daId, UUID cityId) {
+        emit(DaEventType.QUEUE_REORDERED, daId, cityId, null, null, null);
+    }
+
     private void emit(DaEventType type, UUID daId, UUID cityId, UUID shipmentId,
                       String shipmentRef, String reasonCode) {
         DaLifecycleEvent event = new DaLifecycleEvent(

@@ -2,12 +2,16 @@ package com.oneday.dispatch.events;
 
 import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.PickupType;
+import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.kafka.enums.ShipmentEventType;
+import com.oneday.common.kafka.events.ShipmentCancelledEvent;
 import com.oneday.common.kafka.events.ShipmentCreatedEvent;
+import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.DispatchService;
+import com.oneday.dispatch.service.TaskInProgressException;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.service.GridService;
@@ -17,9 +21,11 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -108,16 +114,48 @@ class ShipmentEventsConsumerTest {
     }
 
     @Test
-    void stateChangedAndCancelledAreNotHandledYet() {
-        ShipmentCreatedEvent stateChanged = created(UUID.randomUUID(), PickupType.DA_PICKUP, 12.97, 77.61, tileId, null);
-        stateChanged.setEventType(ShipmentEventType.STATE_CHANGED);
-        ShipmentCreatedEvent cancelled = created(UUID.randomUUID(), PickupType.DA_PICKUP, 12.97, 77.61, tileId, null);
-        cancelled.setEventType(ShipmentEventType.CANCELLED);
+    void cancelledInPickupPhaseCancelsPickupTask() {
+        UUID shipment = UUID.randomUUID();
+        consumer.onShipmentEvent(cancelled(shipment, ShipmentState.PICKUP_ASSIGNED));
+        verify(dispatchService).cancelTask(shipment, TaskType.PICKUP);
+    }
 
-        consumer.onShipmentEvent(stateChanged);
-        consumer.onShipmentEvent(cancelled);
+    @Test
+    void cancelledInDeliveryPhaseCancelsDeliveryTask() {
+        UUID shipment = UUID.randomUUID();
+        consumer.onShipmentEvent(cancelled(shipment, ShipmentState.DROP_ASSIGNED));
+        verify(dispatchService).cancelTask(shipment, TaskType.DELIVERY);
+    }
 
-        verifyNoInteractions(dispatchService);
+    @Test
+    void cancelOfInProgressTaskIsSwallowed() {
+        UUID shipment = UUID.randomUUID();
+        doThrow(new TaskInProgressException(shipment, TaskType.PICKUP))
+                .when(dispatchService).cancelTask(shipment, TaskType.PICKUP);
+
+        assertThatCode(() -> consumer.onShipmentEvent(cancelled(shipment, ShipmentState.PICKED_UP)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void handedToDropVanDoesNotAssignDeliveryYet() {
+        // Delivery assignment is blocked on the M4 contract (no dest coords) — must not be attempted.
+        ShipmentStateChangedEvent e = new ShipmentStateChangedEvent();
+        e.setEventType(ShipmentEventType.STATE_CHANGED);
+        e.setShipmentId(UUID.randomUUID());
+        e.setToState(ShipmentState.HANDED_TO_DROP_VAN);
+
+        consumer.onShipmentEvent(e);
+
+        verify(dispatchService, never()).assignDelivery(any(), any(), anyDouble(), anyDouble(), any());
+    }
+
+    private ShipmentCancelledEvent cancelled(UUID shipmentId, ShipmentState at) {
+        ShipmentCancelledEvent e = new ShipmentCancelledEvent();
+        e.setEventType(ShipmentEventType.CANCELLED);
+        e.setShipmentId(shipmentId);
+        e.setCancelledAtState(at);
+        return e;
     }
 
     private ShipmentCreatedEvent created(UUID shipmentId, PickupType pickupType, Double lat, Double lon,
