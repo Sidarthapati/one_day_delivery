@@ -125,15 +125,45 @@ class VanManifestServiceImplTest {
     }
 
     @Test
-    void greedyEarliestFeasibleLoop_thenOverflow_neverDrops() {
-        // v1 FCFS: capacity 1/loop, both parcels feasible only for loop 0 → first binds, second overflows.
-        UUID first = bind(LocalTime.of(8, 15)).parcelId();
-        UUID second = UUID.randomUUID();
-        BindOutcome out2 = service.bindDelivery(CITY, DATE, second, HEX, instant(LocalTime.of(8, 15)));
+    void bindsEarliestLoopWithRoom_overflowsOnlyWhenAllLoopsFull() {
+        // capacity 1/loop, 2 loops. p1 fills loop 0, p2 rides the next loop out (1), p3 overflows.
+        UUID p1 = bind(LocalTime.of(8, 15)).parcelId();
+        UUID p2 = bind(LocalTime.of(8, 15)).parcelId();
+        UUID p3 = UUID.randomUUID();
+        BindOutcome out3 = service.bindDelivery(CITY, DATE, p3, HEX, instant(LocalTime.of(8, 15)));
 
-        assertThat(out2.outcome()).isEqualTo(BindOutcome.Outcome.OVERFLOW);
-        verify(cronEventProducer, times(1)).emitLoopOverflow(eq(CITY), eq(VAN), eq(second), eq(-1), any());
-        assertThat(loopOfParcel(first)).isEqualTo(0); // first one still bound, not displaced
+        assertThat(loopOfParcel(p1)).isEqualTo(0);
+        assertThat(loopOfParcel(p2)).isEqualTo(1); // earliest loop WITH ROOM — deadline no longer blocks loop 1
+        assertThat(out3.outcome()).isEqualTo(BindOutcome.Outcome.OVERFLOW);
+        verify(cronEventProducer, times(1)).emitLoopOverflow(eq(CITY), eq(VAN), eq(p3), eq(-1), any());
+    }
+
+    @Test
+    void pastDeadline_stillBindsEarliest_noOverflow() {
+        // Deadline already in the past (06:00). Old behaviour overflowed; now it rides the next loop out.
+        BindOutcome out = service.bindDelivery(CITY, DATE, UUID.randomUUID(), HEX, instant(LocalTime.of(6, 0)));
+
+        assertThat(out.outcome()).isEqualTo(BindOutcome.Outcome.BOUND);
+        assertThat(out.loopIndex()).isZero();
+        verify(cronEventProducer, never()).emitLoopOverflow(any(), any(), any(), anyInt(), any());
+    }
+
+    @Test
+    void nullDeadline_bindsEarliest_noNpe() {
+        BindOutcome out = service.bindDelivery(CITY, DATE, UUID.randomUUID(), HEX, null);
+
+        assertThat(out.outcome()).isEqualTo(BindOutcome.Outcome.BOUND);
+        assertThat(out.loopIndex()).isZero();
+    }
+
+    @Test
+    void collect_bindsEarliestLoop_evenWithNoFlightCutoff() {
+        when(flightCutoffPort.outboundFlightCutoff(CITY, DATE)).thenReturn(Optional.empty());
+
+        BindOutcome out = service.bindCollect(CITY, DATE, UUID.randomUUID(), DA);
+
+        assertThat(out.outcome()).isEqualTo(BindOutcome.Outcome.BOUND);
+        assertThat(out.loopIndex()).isZero(); // earliest loop back, not the latest
     }
 
     @Test
