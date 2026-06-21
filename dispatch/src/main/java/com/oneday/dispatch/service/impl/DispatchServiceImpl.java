@@ -371,17 +371,7 @@ class DispatchServiceImpl implements DispatchService {
 
     /** Mirror the DA's persisted active queue into the in-memory {@code DaQueue} (station view / depth). */
     private void rebuildMemQueue(UUID daId, LocalDate date) {
-        var mem = daStatusService.getQueue(daId);
-        if (mem == null) {
-            return;
-        }
-        List<DispatchQueue> active = sortedActive(daId, date);
-        mem.getTasks().clear();
-        for (DispatchQueue r : active) {
-            mem.getTasks().add(new com.oneday.dispatch.service.model.DispatchTask(
-                    daId, r.getShipmentId(), r.getTaskType(), r.getTaskLat(), r.getTaskLon(),
-                    r.getQueuePosition(), r.getStatus(), r.getExpectedEta()));
-        }
+        QueueMirror.rebuild(daStatusService, queueRepository, daId, date);
     }
 
     private List<DispatchQueue> sortedActive(UUID daId, LocalDate date) {

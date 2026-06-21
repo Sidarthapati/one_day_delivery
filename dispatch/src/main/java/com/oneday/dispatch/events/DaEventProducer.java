@@ -49,6 +49,36 @@ public class DaEventProducer {
         emit(DaEventType.QUEUE_REORDERED, daId, cityId, null, null, null);
     }
 
+    /** DA handed the picked-up parcel to the cron van. → M4 (HANDED_TO_PICKUP_VAN), M10. */
+    public void emitVanHandoffCompleted(UUID daId, UUID cityId, UUID shipmentId) {
+        emit(DaEventType.VAN_HANDOFF_COMPLETED, daId, cityId, shipmentId, null, null);
+    }
+
+    /** A pickup could not be completed by the DA. → M4 (PICKUP_FAILED), M11. */
+    public void emitPickupFailed(UUID daId, UUID cityId, UUID shipmentId, String reason) {
+        emit(DaEventType.PICKUP_FAILED, daId, cityId, shipmentId, null, reason);
+    }
+
+    /** A delivery could not be completed by the DA. → M4 (DELIVERY_FAILED), M11. */
+    public void emitDropFailed(UUID daId, UUID cityId, UUID shipmentId, String reason) {
+        emit(DaEventType.DROP_FAILED, daId, cityId, shipmentId, null, reason);
+    }
+
+    /** DA collected the parcel from the cron van for last-mile delivery. → M4 (DROP_COLLECTED). */
+    public void emitDropCollected(UUID daId, UUID cityId, UUID shipmentId) {
+        emit(DaEventType.DROP_COLLECTED, daId, cityId, shipmentId, null, null);
+    }
+
+    /** DA delivered the parcel to the receiver. → M4 (DROPPED), M10. */
+    public void emitDropCompleted(UUID daId, UUID cityId, UUID shipmentId) {
+        emit(DaEventType.DROP_COMPLETED, daId, cityId, shipmentId, null, null);
+    }
+
+    /** COD cash collected at delivery; emitted alongside DROP_COMPLETED. → finance / M10. */
+    public void emitCodCollected(UUID daId, UUID cityId, UUID shipmentId) {
+        emit(DaEventType.COD_COLLECTED, daId, cityId, shipmentId, null, null);
+    }
+
     private void emit(DaEventType type, UUID daId, UUID cityId, UUID shipmentId,
                       String shipmentRef, String reasonCode) {
         DaLifecycleEvent event = new DaLifecycleEvent(
