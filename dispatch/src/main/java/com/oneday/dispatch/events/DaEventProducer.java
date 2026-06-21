@@ -49,6 +49,11 @@ public class DaEventProducer {
         emit(DaEventType.QUEUE_REORDERED, daId, cityId, null, null, null);
     }
 
+    /** Pickup OTP verified and the shipment moved to PICKED_UP. → M10 (SLA leg start). */
+    public void emitPickupCompleted(UUID daId, UUID cityId, UUID shipmentId) {
+        emit(DaEventType.PICKUP_COMPLETED, daId, cityId, shipmentId, null, null);
+    }
+
     /** DA handed the picked-up parcel to the cron van. → M4 (HANDED_TO_PICKUP_VAN), M10. */
     public void emitVanHandoffCompleted(UUID daId, UUID cityId, UUID shipmentId) {
         emit(DaEventType.VAN_HANDOFF_COMPLETED, daId, cityId, shipmentId, null, null);

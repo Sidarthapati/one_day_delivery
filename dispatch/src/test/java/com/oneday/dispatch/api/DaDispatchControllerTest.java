@@ -2,9 +2,11 @@ package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.dispatch.dto.request.GpsPingRequest;
+import com.oneday.dispatch.dto.request.OtpVerifyRequest;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
+import com.oneday.dispatch.service.OtpVerificationService;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +31,7 @@ class DaDispatchControllerTest {
 
     private DaStatusService daStatusService;
     private DaTaskService daTaskService;
+    private OtpVerificationService otpVerificationService;
     private DaDispatchController controller;
 
     private final UUID da = UUID.randomUUID();
@@ -38,7 +41,8 @@ class DaDispatchControllerTest {
     void setUp() {
         daStatusService = mock(DaStatusService.class);
         daTaskService = mock(DaTaskService.class);
-        controller = new DaDispatchController(daStatusService, daTaskService);
+        otpVerificationService = mock(OtpVerificationService.class);
+        controller = new DaDispatchController(daStatusService, daTaskService, otpVerificationService);
         when(daTaskService.markEnRoute(any(), any())).thenReturn(sampleView());
     }
 
@@ -75,6 +79,20 @@ class DaDispatchControllerTest {
     void adminMayActForAnyDa() {
         controller.enRoute(da, taskId, principal(UUID.randomUUID(), "ADMIN"));
         verify(daTaskService).markEnRoute(da, taskId);
+    }
+
+    @Test
+    void verifyOtpDelegatesAndReturns204() {
+        var resp = controller.verifyOtp(da, taskId, principal(da, "DELIVERY_ASSOCIATE"), new OtpVerifyRequest("4821"));
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(otpVerificationService).verifyOtp(da, taskId, "4821");
+    }
+
+    @Test
+    void resendOtpDelegatesAndReturns204() {
+        var resp = controller.resendOtp(da, taskId, principal(da, "DELIVERY_ASSOCIATE"));
+        assertThat(resp.getStatusCode().value()).isEqualTo(204);
+        verify(otpVerificationService).resendOtp(da, taskId);
     }
 
     private AuthUserDetails principal(UUID userId, String role) {
