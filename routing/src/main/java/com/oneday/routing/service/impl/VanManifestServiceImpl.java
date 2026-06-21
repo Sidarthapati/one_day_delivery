@@ -249,13 +249,16 @@ class VanManifestServiceImpl implements VanManifestService {
     }
 
     private PlanCtx context(UUID cityId, LocalDate date) {
-        return contextCache.computeIfAbsent(cityId + "|" + date, k -> buildContext(cityId, date));
-    }
-
-    private PlanCtx buildContext(UUID cityId, LocalDate date) {
+        // Resolve the live APPROVED plan first (cheap, indexed) and key the cache by its id — a
+        // re-approval/replan produces a new plan id, so we miss the cache and rebuild rather than
+        // binding against a superseded plan's stale stops + territory map.
         RoutePlan plan = planRepository.findByCityIdAndValidForDateAndStatus(cityId, date, RoutePlanStatus.APPROVED)
                 .stream().max(Comparator.comparingInt(RoutePlan::getRevision))
                 .orElseThrow(() -> new IllegalStateException("No APPROVED route plan for city=" + cityId + " date=" + date));
+        return contextCache.computeIfAbsent(plan.getId().toString(), k -> buildContext(plan, cityId, date));
+    }
+
+    private PlanCtx buildContext(RoutePlan plan, UUID cityId, LocalDate date) {
         int capacity = fleetConfigRepository.findByCityId(cityId)
                 .orElseThrow(() -> new IllegalStateException("No fleet config for city=" + cityId))
                 .getCapacityPackets();

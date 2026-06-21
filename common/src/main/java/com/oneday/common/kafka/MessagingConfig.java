@@ -26,17 +26,20 @@ public class MessagingConfig {
     @Bean
     public MessageConverter jsonMessageConverter(ObjectMapper objectMapper) {
         Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter(objectMapper);
-        // In-house monolith: every producer is our own code. Trust our own event packages so the
-        // __TypeId__ header deserializes to the concrete payload class. Tighten the list if an
-        // external producer ever writes to a stream we consume.
+        // In-house monolith: every producer is our own code, so trust all packages for __TypeId__
+        // deserialization. NOTE: DefaultClassMapper does NOT do prefix/wildcard matching — a literal
+        // "com.oneday.*" matches no package (it only honours the exact "*" = trust-all token or exact
+        // package names), so it silently rejected every com.oneday event and broke ALL @RabbitListener
+        // consumers against a real broker. Use the trust-all token. Tighten to exact package names if
+        // an external/untrusted producer ever writes to a stream we consume.
         DefaultClassMapper classMapper = new DefaultClassMapper();
-        classMapper.setTrustedPackages("com.oneday.*");
+        classMapper.setTrustedPackages("*");
         converter.setClassMapper(classMapper);
         return converter;
     }
 
     /** Convenience for tests/aliases that still reference a List of trusted packages. */
     static List<String> trustedPackages() {
-        return List.of("com.oneday.*");
+        return List.of("*");
     }
 }
