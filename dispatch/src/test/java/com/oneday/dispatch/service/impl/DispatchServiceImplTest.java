@@ -26,6 +26,7 @@ import com.oneday.grid.dto.response.TileLoadScoreResponse;
 import com.oneday.grid.service.GridService;
 import com.oneday.grid.service.IntradayLoadScoreService;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -55,6 +56,7 @@ import static org.mockito.Mockito.when;
  * resequencing / audit rows, with the feasibility engine, grid and load-score collaborators mocked
  * and a real in-memory {@link DaStatusServiceImpl}.
  */
+@Tag("e2e")
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class DispatchServiceImplTest {

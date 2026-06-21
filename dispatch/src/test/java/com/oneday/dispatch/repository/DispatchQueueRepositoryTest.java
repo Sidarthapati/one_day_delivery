@@ -3,6 +3,7 @@ package com.oneday.dispatch.repository;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Real-Postgres @DataJpaTest (local DB; Flyway builds the V5_* schema). The headline check is the
  * PARTIAL unique index — the one thing H2 could not faithfully reproduce.
  */
+@Tag("e2e")
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class DispatchQueueRepositoryTest {

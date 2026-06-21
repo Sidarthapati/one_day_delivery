@@ -2,6 +2,8 @@ package com.oneday.dispatch.config;
 
 import com.oneday.dispatch.service.AdjacentDaProvider;
 import com.oneday.dispatch.service.OsrmRoutingPort;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -38,5 +40,16 @@ public class DispatchConfig {
     @ConditionalOnMissingBean(AdjacentDaProvider.class)
     AdjacentDaProvider noAdjacentDaProvider() {
         return (cityId, originTileId, date) -> List.of();
+    }
+
+    /**
+     * A plain in-process {@link MeterRegistry} for {@code DispatchMetrics} when the app has no metrics
+     * auto-configuration (we no longer pull the actuator starter). If the app does provide one (e.g. a
+     * composite registry), that bean wins and this backs off.
+     */
+    @Bean
+    @ConditionalOnMissingBean(MeterRegistry.class)
+    MeterRegistry simpleMeterRegistry() {
+        return new SimpleMeterRegistry();
     }
 }

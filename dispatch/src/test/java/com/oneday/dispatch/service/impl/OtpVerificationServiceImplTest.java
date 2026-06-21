@@ -11,6 +11,7 @@ import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -32,6 +33,7 @@ import static org.mockito.Mockito.verify;
  * Real-Postgres test of the OTP service: it looks up the task (real repo) and drives the mocked M4
  * in-process services (PickupOtpService, ShipmentStateMachine), mapping their failures to HTTP codes.
  */
+@Tag("e2e")
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class OtpVerificationServiceImplTest {

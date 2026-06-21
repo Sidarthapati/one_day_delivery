@@ -45,10 +45,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
-        <!-- Micrometer metrics + HealthIndicator (M5 observability). -->
+        <!-- Micrometer metrics (M5 observability). micrometer-core only — NOT the actuator starter,
+             which pulls a CVE-flagged spring-boot-actuator-autoconfigure at the BOM-managed version. -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>

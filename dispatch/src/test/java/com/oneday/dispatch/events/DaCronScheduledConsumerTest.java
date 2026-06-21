@@ -6,6 +6,7 @@ import com.oneday.dispatch.domain.CronAssignmentStatus;
 import com.oneday.dispatch.domain.DaCronAssignment;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Real-Postgres test of the cron-schedule upsert: it must persist the full meeting-times list (sorted),
  * set the earliest as the primary {@code scheduled_meeting_time}, and be idempotent per (da, date).
  */
+@Tag("e2e")
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class DaCronScheduledConsumerTest {
