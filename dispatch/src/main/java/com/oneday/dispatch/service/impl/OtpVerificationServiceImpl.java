@@ -4,6 +4,7 @@ import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
+import com.oneday.dispatch.metrics.DispatchMetrics;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.OtpVerificationService;
 import com.oneday.orders.service.PickupOtpService;
@@ -33,15 +34,18 @@ class OtpVerificationServiceImpl implements OtpVerificationService {
     private final PickupOtpService pickupOtpService;
     private final ShipmentStateMachine stateMachine;
     private final DaEventProducer daEventProducer;
+    private final DispatchMetrics metrics;
 
     OtpVerificationServiceImpl(DispatchQueueRepository queueRepository,
                                PickupOtpService pickupOtpService,
                                ShipmentStateMachine stateMachine,
-                               DaEventProducer daEventProducer) {
+                               DaEventProducer daEventProducer,
+                               DispatchMetrics metrics) {
         this.queueRepository = queueRepository;
         this.pickupOtpService = pickupOtpService;
         this.stateMachine = stateMachine;
         this.daEventProducer = daEventProducer;
+        this.metrics = metrics;
     }
 
     @Override
@@ -52,15 +56,18 @@ class OtpVerificationServiceImpl implements OtpVerificationService {
         try {
             pickupOtpService.verify(shipmentId, otp);
         } catch (PickupOtpService.OtpVerificationException e) {
+            metrics.otpVerify("INVALID");
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
         }
         try {
             stateMachine.transition(shipmentId, ShipmentState.PICKED_UP,
                     TransitionContext.fromApi(daId.toString(), shipmentId.toString()));
         } catch (IllegalStateTransitionException e) {
+            metrics.otpVerify("ERROR");
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
         }
         daEventProducer.emitPickupCompleted(daId, task.getCityId(), shipmentId);
+        metrics.otpVerify("SUCCESS");
         log.debug("Pickup OTP verified for shipment {} (task {})", shipmentId, taskId);
     }
 

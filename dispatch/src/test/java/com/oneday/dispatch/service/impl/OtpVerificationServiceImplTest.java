@@ -52,7 +52,9 @@ class OtpVerificationServiceImplTest {
         pickupOtpService = mock(PickupOtpService.class);
         stateMachine = mock(ShipmentStateMachine.class);
         events = mock(DaEventProducer.class);
-        service = new OtpVerificationServiceImpl(queueRepo, pickupOtpService, stateMachine, events);
+        com.oneday.dispatch.metrics.DispatchMetrics metrics =
+                new com.oneday.dispatch.metrics.DispatchMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        service = new OtpVerificationServiceImpl(queueRepo, pickupOtpService, stateMachine, events, metrics);
     }
 
     @Test

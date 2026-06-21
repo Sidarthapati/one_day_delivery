@@ -58,6 +58,8 @@ public class DispatchProperties {
     private CrossTerritory crossTerritory = new CrossTerritory();
     @NestedConfigurationProperty
     private Deferred deferred = new Deferred();
+    @NestedConfigurationProperty
+    private Dlq dlq = new Dlq();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -81,6 +83,8 @@ public class DispatchProperties {
     public void setCrossTerritory(CrossTerritory crossTerritory) { this.crossTerritory = crossTerritory; }
     public Deferred getDeferred() { return deferred; }
     public void setDeferred(Deferred deferred) { this.deferred = deferred; }
+    public Dlq getDlq() { return dlq; }
+    public void setDlq(Dlq dlq) { this.dlq = dlq; }
 
     /** Cron-meeting protection (the hard constraint). */
     public static class Cron {
@@ -229,6 +233,15 @@ public class DispatchProperties {
         public void setRetryIntervalMinutes(int retryIntervalMinutes) {
             this.retryIntervalMinutes = retryIntervalMinutes;
         }
+    }
+
+    /** Dead-letter re-drive bounds. */
+    public static class Dlq {
+        /** Max messages drained from a DLQ per replay call (safety bound). */
+        private int replayBatchLimit = 500;
+
+        public int getReplayBatchLimit() { return replayBatchLimit; }
+        public void setReplayBatchLimit(int replayBatchLimit) { this.replayBatchLimit = replayBatchLimit; }
     }
 
     /** Outbound-event gating. */

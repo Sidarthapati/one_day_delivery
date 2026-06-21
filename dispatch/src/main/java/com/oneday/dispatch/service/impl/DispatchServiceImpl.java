@@ -12,6 +12,7 @@ import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
+import com.oneday.dispatch.metrics.DispatchMetrics;
 import com.oneday.dispatch.repository.DaAssignmentAuditRepository;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
@@ -32,6 +33,7 @@ import com.oneday.grid.service.GridService;
 import com.oneday.grid.service.IntradayLoadScoreService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,6 +70,7 @@ class DispatchServiceImpl implements DispatchService {
     private final AdjacentDaProvider adjacentDaProvider;
     private final GridService gridService;
     private final DaEventProducer daEventProducer;
+    private final DispatchMetrics metrics;
     private final DispatchProperties props;
 
     DispatchServiceImpl(DispatchQueueRepository queueRepository,
@@ -80,6 +83,7 @@ class DispatchServiceImpl implements DispatchService {
                         AdjacentDaProvider adjacentDaProvider,
                         GridService gridService,
                         DaEventProducer daEventProducer,
+                        DispatchMetrics metrics,
                         DispatchProperties props) {
         this.queueRepository = queueRepository;
         this.deferredRepository = deferredRepository;
@@ -91,6 +95,7 @@ class DispatchServiceImpl implements DispatchService {
         this.adjacentDaProvider = adjacentDaProvider;
         this.gridService = gridService;
         this.daEventProducer = daEventProducer;
+        this.metrics = metrics;
         this.props = props;
     }
 
@@ -98,13 +103,29 @@ class DispatchServiceImpl implements DispatchService {
     @Transactional
     public AssignmentResult assignPickup(UUID shipmentId, UUID cityId, double lat, double lon,
                                          UUID originTileId, String paymentMode) {
-        return assign(new Request(shipmentId, cityId, TaskType.PICKUP, lat, lon, originTileId, paymentMode), true);
+        return tracked(shipmentId, cityId,
+                () -> assign(new Request(shipmentId, cityId, TaskType.PICKUP, lat, lon, originTileId, paymentMode), true));
     }
 
     @Override
     @Transactional
     public AssignmentResult assignDelivery(UUID shipmentId, UUID cityId, double lat, double lon, UUID destTileId) {
-        return assign(new Request(shipmentId, cityId, TaskType.DELIVERY, lat, lon, destTileId, null), true);
+        return tracked(shipmentId, cityId,
+                () -> assign(new Request(shipmentId, cityId, TaskType.DELIVERY, lat, lon, destTileId, null), true));
+    }
+
+    /** Wrap an assignment in MDC (shipment/city correlation) + record its outcome metric. */
+    private AssignmentResult tracked(UUID shipmentId, UUID cityId, java.util.function.Supplier<AssignmentResult> work) {
+        MDC.put("shipment_id", String.valueOf(shipmentId));
+        MDC.put("city_id", String.valueOf(cityId));
+        try {
+            AssignmentResult result = work.get();
+            metrics.assignment(result.outcome(), cityId);
+            return result;
+        } finally {
+            MDC.remove("shipment_id");
+            MDC.remove("city_id");
+        }
     }
 
     @Override
@@ -154,6 +175,7 @@ class DispatchServiceImpl implements DispatchService {
             deferred.setAssignedAt(Instant.now());
             deferredRepository.save(deferred);
         }
+        metrics.assignment(result.outcome(), deferred.getCityId());
         return result;
     }
 
@@ -251,21 +273,28 @@ class DispatchServiceImpl implements DispatchService {
         if (!cfg.isEnabled()) {
             return Optional.empty();
         }
-        if (loadScore(originTileId, date) < cfg.getOverloadThreshold()) {
-            return Optional.empty();   // origin not overloaded enough to spill
-        }
-        for (AdjacentDaProvider.Candidate cand : adjacentDaProvider.candidates(req.cityId(), originTileId, date)) {
-            if (cand.daId().equals(primaryDa) || !isAssignable(cand.daId())) {
-                continue;
+        // Cross-territory leans on M3 load scores (+ an adjacency source). Treat any failure there as
+        // a degraded-but-safe signal: skip the spill-over and let the caller defer normally.
+        try {
+            if (loadScore(originTileId, date) < cfg.getOverloadThreshold()) {
+                return Optional.empty();   // origin not overloaded enough to spill
             }
-            if (loadScore(cand.tileId(), date) >= cfg.getSparseThreshold()) {
-                continue;   // neighbour not sparse enough to receive
+            for (AdjacentDaProvider.Candidate cand : adjacentDaProvider.candidates(req.cityId(), originTileId, date)) {
+                if (cand.daId().equals(primaryDa) || !isAssignable(cand.daId())) {
+                    continue;
+                }
+                if (loadScore(cand.tileId(), date) >= cfg.getSparseThreshold()) {
+                    continue;   // neighbour not sparse enough to receive
+                }
+                Optional<AssignmentResult> r = daStatusService.withDaLock(cand.daId(),
+                        () -> attemptOnDa(cand.daId(), req, originTileId, date, true));
+                if (r.isPresent()) {
+                    return r;
+                }
             }
-            Optional<AssignmentResult> r = daStatusService.withDaLock(cand.daId(),
-                    () -> attemptOnDa(cand.daId(), req, originTileId, date, true));
-            if (r.isPresent()) {
-                return r;
-            }
+        } catch (RuntimeException e) {
+            log.warn("Cross-territory check failed for shipment {} — skipping spill-over: {}",
+                    req.shipmentId(), e.getMessage());
         }
         return Optional.empty();
     }

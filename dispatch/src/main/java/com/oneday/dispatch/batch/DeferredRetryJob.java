@@ -3,6 +3,7 @@ package com.oneday.dispatch.batch;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DeferredDispatch;
 import com.oneday.dispatch.events.DaEventProducer;
+import com.oneday.dispatch.metrics.DispatchMetrics;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
 import com.oneday.dispatch.service.AssignmentOutcome;
 import com.oneday.dispatch.service.AssignmentResult;
@@ -38,17 +39,20 @@ public class DeferredRetryJob {
     private final DeferredDispatchRepository deferredRepository;
     private final DaStatusService daStatusService;
     private final DaEventProducer daEventProducer;
+    private final DispatchMetrics metrics;
     private final DispatchProperties props;
 
     public DeferredRetryJob(DispatchService dispatchService,
                             DeferredDispatchRepository deferredRepository,
                             DaStatusService daStatusService,
                             DaEventProducer daEventProducer,
+                            DispatchMetrics metrics,
                             DispatchProperties props) {
         this.dispatchService = dispatchService;
         this.deferredRepository = deferredRepository;
         this.daStatusService = daStatusService;
         this.daEventProducer = daEventProducer;
+        this.metrics = metrics;
         this.props = props;
     }
 
@@ -76,6 +80,7 @@ public class DeferredRetryJob {
             deferred.setEscalatedAt(now);
             deferredRepository.save(deferred);
             daEventProducer.emitTaskDeferredShiftEnded(null, deferred.getCityId(), deferred.getShipmentId());
+            metrics.deferredEscalated(deferred.getCityId());
             log.info("Deferred dispatch {} escalated to M11 after {} retries",
                     deferred.getId(), deferred.getRetryCount());
         } else {

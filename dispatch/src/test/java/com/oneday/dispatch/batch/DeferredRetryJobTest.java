@@ -46,7 +46,9 @@ class DeferredRetryJobTest {
         daStatusService = mock(DaStatusService.class);
         events = mock(DaEventProducer.class);
         props = new DispatchProperties();
-        job = new DeferredRetryJob(dispatchService, deferredRepo, daStatusService, events, props);
+        com.oneday.dispatch.metrics.DispatchMetrics metrics =
+                new com.oneday.dispatch.metrics.DispatchMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        job = new DeferredRetryJob(dispatchService, deferredRepo, daStatusService, events, metrics, props);
     }
 
     private void shiftLoaded() {

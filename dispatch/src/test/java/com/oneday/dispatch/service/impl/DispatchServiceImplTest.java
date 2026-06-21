@@ -87,8 +87,10 @@ class DispatchServiceImplTest {
         adjacent = mock(AdjacentDaProvider.class);
         when(adjacent.candidates(any(), any(), any())).thenReturn(List.of());
         DaEventProducer daEventProducer = new DaEventProducer(mock(com.oneday.common.kafka.EventPublisher.class), props);
+        com.oneday.dispatch.metrics.DispatchMetrics metrics =
+                new com.oneday.dispatch.metrics.DispatchMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         service = new DispatchServiceImpl(queueRepo, deferredRepo, auditRepo, cronRepo,
-                daStatus, feasibility, loadScore, adjacent, grid, daEventProducer, props);
+                daStatus, feasibility, loadScore, adjacent, grid, daEventProducer, metrics, props);
     }
 
     private UUID readyDa(int existingQueued) {
@@ -265,6 +267,20 @@ class DispatchServiceImplTest {
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.CROSS_TERRITORY_ASSIGNED);
         assertThat(r.daId()).isEqualTo(neighbourDa);
         assertThat(r.crossTerritory()).isTrue();
+    }
+
+    @Test
+    void crossTerritoryDefersGracefullyWhenLoadScoreFails() {
+        props.getCrossTerritory().setEnabled(true);
+        UUID da = readyDa(0);
+        persistCron(da, CronAssignmentStatus.SCHEDULED, Instant.now().plus(30, ChronoUnit.MINUTES));
+        when(feasibility.checkFeasibility(any())).thenReturn(new FeasibilityResult(false, 0, -1, 1, false));
+        when(loadScore.getLoadScore(any(), any())).thenThrow(new RuntimeException("M3 down"));
+
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+
+        assertThat(r.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);   // skipped spill-over, didn't blow up
+        assertThat(r.deferReason()).isEqualTo(com.oneday.dispatch.domain.DeferReason.CRON_INFEASIBLE);
     }
 
     @Test
