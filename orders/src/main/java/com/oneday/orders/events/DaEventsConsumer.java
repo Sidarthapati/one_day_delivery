@@ -49,6 +49,10 @@ public class DaEventsConsumer {
             case DROP_FAILED           -> ShipmentState.DELIVERY_FAILED;
             // Not consumed by M4 — PICKED_UP is driven exclusively by the OTP verify endpoint.
             case PICKUP_COMPLETED      -> null;
+            // M5-internal events (QUEUE_REORDERED, DA_ABSENT, CRON_MISSED, COD_COLLECTED,
+            // TASK_DEFERRED_SHIFT_ENDED) drive no M4 transition — ignore them. A default keeps M4
+            // compiling as M5 grows DaEventType (the enum is owned by M5/dispatch).
+            default                    -> null;
         };
         if (target == null) {
             log.debug("DA event {} ignored for shipment {}", event.eventType(), event.shipmentId());

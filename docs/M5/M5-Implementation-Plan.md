@@ -20,7 +20,132 @@ Work top-to-bottom within each phase. Do not start a phase until the previous on
 
 ---
 
-## Phase 0 — Shared Kafka Contracts (PR #1)
+## ⚠️ Current-reality addendum (read before any phase)
+
+This plan was written against an earlier codebase. Several things have since changed in `main`.
+These global corrections **override** the per-phase text wherever they conflict:
+
+1. **Messaging is RabbitMQ, not Kafka.** `KafkaTopics.java` → **`EventStreams.java`** (constants =
+   RabbitMQ **topic exchanges**). Everywhere this plan says:
+   - *"Kafka topic / KafkaTopics"* → an `EventStreams` constant (a RabbitMQ exchange).
+   - *"producer / KafkaTemplate"* → inject **`common.kafka.EventPublisher`** and call
+     `publish(EventStreams.X, event)`; the event is a record implementing **`DomainEvent`** whose
+     `eventTypeName()` (the enum value) becomes the **routing key**.
+   - *"`@KafkaListener` / consumer group"* → **`@RabbitListener(queues=…)`** plus a
+     `DispatchMessagingTopology` `@Configuration` declaring the queue + binding (copy the pattern in
+     `grid.events.GridMessagingTopology` using `RabbitStreamSupport.consumer(queue, exchange)`).
+   - *"`@EmbeddedKafka`"* → Testcontainers **RabbitMQ** (or topology/unit tests).
+   - *"partition key"* → routing key (the `DomainEvent.partitionKey()` hook still exists for stream
+     ordering; it is not a Kafka partition).
+   See `docs/EVENT-BUS-ARCHITECTURE.md`.
+
+2. **The M6 cron contract is implemented — Q-M6-1 is RESOLVED.** M6 publishes
+   **`common.kafka.events.cron.DaCronScheduledEvent`** `(cityId UUID, validDate, daId, cronVertexId,
+   meetingLat, meetingLon, meetingTimes List<LocalTime>, vanId, routePlanId)` on
+   `EventStreams.CRON_EVENTS` (routing key `DA_CRON_SCHEDULED`), persists the `da_cron_schedule`
+   table, **and** serves `GET /routing/cron/da/{daId}?date=` + `/next?at=`. `ShiftLoadJob` (PR #4)
+   can read whichever it prefers. **Note `meetingTimes` is a `List`** — M5 must store the list and
+   pick the next meeting, not a single `scheduledMeetingTime` (M6-D-008).
+
+3. **`DaEventType` and `DaEvent` already exist in `common`** — do not re-create them in PR #1. The
+   enum already holds the 8 M4-consumed values; PR #1's job is only to **add the 5 internal values**.
+   M4's minimal consumer record is `common.kafka.events.DaEvent(shipmentId, eventType)`; M5's
+   producer may use a richer record (M4 ignores unknown fields). The abstract `DaEventBase` in PR #1
+   is **superseded** — define M5's producer payload as a `DomainEvent` record instead.
+
+4. **M3's `TileQueueDepthConsumer` is already built — Q-M3-4 is RESOLVED.** It `@RabbitListener`s on
+   `EventStreams.TILE_QUEUE_DEPTH = "orders.tile_queue_depth"` and reads
+   `TileQueueDepthEvent(cityId, tileId, unservedOrders, bookedOrders, date)`. **Open item:** the code
+   attributes the *producer* to M4, while this plan assumes M5 (PR #13). Cleanest path: M5 publishes
+   that same `TileQueueDepthEvent` to the existing `TILE_QUEUE_DEPTH` exchange (do **not** add a new
+   `dispatch.*` constant) — but **confirm M4-vs-M5 producer ownership** with the M3/M4 owners first.
+
+5. **M3 REST paths are `/api/grid/{cityCode}/…`**, not `/grid/…`:
+   `GET /api/grid/{cityCode}/assignments?date=`, `/tiles/{hexId}/load-score`, `/serviceability`,
+   `/tile-at`, plus top-level `GET /api/grid/serviceable-at?lat=&lon=`. **Better in-process:** M3
+   implements `common.port.ServiceabilityPort` — prefer it over HTTP for tile resolution.
+   (M3 is hexes/H3; "tile" in this plan ≡ "hex" in M3. Active solver is `BalancedBfsAssignmentServiceImpl`.)
+
+6. **The one genuinely-unmet dependency:** `OsrmRoutingPort` (point-to-point road duration) still
+   **does not exist** in `com.oneday.grid.service` — only `OsrmMatrixService` (adjacency matrix) and
+   an internal `grid.service.osrm.OsrmClient`. PR #6 still needs M3 to expose a public routing port,
+   or M5 must call OSRM `/route` over HTTP itself. This is the real Phase-3 blocker.
+
+7. **🚨 M6 now CONSUMES our DA feed — the M5→M6 contract is UNRESOLVED (new top blocker).**
+   `main` landed M6 run-time (Custody/Handoff/Manifest/Recovery). M6's
+   `routing.events.DaFeedConsumer` binds queue **`routing.da`** to **`EventStreams.DA_EVENTS`** and
+   deserializes every message as
+   **`DaParcelPickedUpEvent(parcelId, cityId, daId, validDate, pickedUpAt)`**, then records an
+   `InboundParcel(COLLECT)` and calls `VanManifestService.bindCollect(...)` — i.e. it binds the
+   *collected* (fly-out) parcel to its van loop. Two hard mismatches vs our PR #1 `DaLifecycleEvent`:
+   - **Granularity/shape:** M6 wants **parcel-level** (`parcelId`, `validDate`, `pickedUpAt`); our
+     event is **shipment-level** (`shipmentId`, `occurredAt`, no `validDate`). Under
+     `@JsonIgnoreProperties(ignoreUnknown=true)` this fails *silently* — `parcelId`/`validDate`/
+     `pickedUpAt` deserialize **null** and corrupt M6's inbound table.
+   - **Catch-all binding:** the bind is **`.with("#")`** (see `RabbitStreamSupport.consumer`), so
+     *every* DA event M5 ever publishes (`PICKUP_ASSIGNED`, `DA_ABSENT`, `DROP_*`, …) is delivered to
+     `routing.da` and mis-bound as a collected parcel.
+
+   **Decisions required with the M6 (and M8) owner BEFORE any M5 producer is wired (Phase 4/7):**
+   (a) parcel vs shipment id — is it 1:1 in v1, or must M5 emit the M8 `parcelId`? (b) routing-key
+   discipline — M6 narrows its `#` binding to the single collect routing key, **or** M5 emits the
+   collect event on a dedicated key/exchange; (c) trigger — M6's "first-mile accumulation / bind
+   immediately" implies **`PICKUP_COMPLETED`**, not van-handoff — confirm. **Until resolved, M5 must
+   not publish to `DA_EVENTS`.** `DaParcelPickedUpEvent` is marked *PROVISIONAL — finalize with M5
+   owner* on the M6 side. **Reconciliation itself stays M6's `HandoffService`; M5 only feeds the
+   DA-side pickup/custody events.**
+
+---
+
+## 🏃 2-Day Sprint Plan
+
+A compressed schedule to build M5 end-to-end in two focused days. **Assumes:** solo dev, ~8 focused
+hours/day; "PR" = a self-reviewed commit unit (not a team review cycle); the three open dependencies
+are **stubbed**, not blocked-on. Phase order is the strict dependency chain (see graph at the bottom).
+
+### Pre-flight (≈30 min, before Day 1) — lock the 3 blockers
+- **OSRM** (`OsrmRoutingPort` absent) → M5 calls OSRM `/route` over HTTP directly. *(Addendum §6.)*
+- **OD-8 delivery verify** → choose **QR** (no extra M4 call; simpler than OTP). Decide, move on.
+- **tile_queue_depth ownership** → publish to the existing `EventStreams.TILE_QUEUE_DEPTH` exchange
+  (M3's consumer is already built). *(Addendum §4.)*
+
+### Day 1 — Foundation + the algorithmic core (Phases 0–3a)
+
+| Block | PRs | Work | KT read first |
+|-------|-----|------|---------------|
+| 0.5h | PR1 | `DaEventType` +5 values; M5 producer payload `DomainEvent` record | [§1b Messaging](M3-M6-KT-AND-HANDS-ON.md#kt-messaging) |
+| 2.0h | PR2–3 | Flyway migrations + JPA entities + repos + `@DataJpaTest` | [§1 H3](M3-M6-KT-AND-HANDS-ON.md#kt-h3), [§3.5 cron](M3-M6-KT-AND-HANDS-ON.md#kt-m6-events) |
+| 2.5h | PR4–5 | `DispatchProperties`, `DaStatusService` (in-memory maps), `ShiftLoadJob`, Cron/Absent/ShiftEnd jobs | [§2.6 M3 APIs](M3-M6-KT-AND-HANDS-ON.md#kt-m3-apis), [§2.2 demand](M3-M6-KT-AND-HANDS-ON.md#kt-demand), [§3.5 events](M3-M6-KT-AND-HANDS-ON.md#kt-m6-events) |
+| 2.5h | PR6 | **`CronFeasibilityService` + exhaustive unit tests** (cheapest-insertion; the `×3600` fix) | [§3.1 plan-time](M3-M6-KT-AND-HANDS-ON.md#kt-m6-plan), [§3.5 events](M3-M6-KT-AND-HANDS-ON.md#kt-m6-events) |
+
+**EOD1 = data layer + shift infra + feasibility engine, all unit-green.** This is the risky day —
+protect the PR6 block.
+
+### Day 2 — Wiring, API, jobs, hardening (Phases 3b–8)
+
+| Block | PRs | Work | KT read first |
+|-------|-----|------|---------------|
+| 2.0h | PR7 | `DispatchServiceImpl` + per-DA lock + cross-territory + deferred retry + tests | [§7.2 needs-from-M6](M3-M6-KT-AND-HANDS-ON.md#kt-needs-m6) |
+| 2.0h | PR8–9 | RabbitMQ consumers + `DispatchMessagingTopology` + Testcontainers tests | [§1b](M3-M6-KT-AND-HANDS-ON.md#kt-messaging), [§2.6](M3-M6-KT-AND-HANDS-ON.md#kt-m3-apis) |
+| 2.0h | PR10–11 | `DaDispatchController` + OTP/QR service | [§3.2 M6 run-time](M3-M6-KT-AND-HANDS-ON.md#kt-m6-runtime) |
+| 1.0h | PR12–13 | Station view + `TileQueueDepthPublisher` + `DeferredRetryJob` | [§7.1](M3-M6-KT-AND-HANDS-ON.md#kt-needs-m3), [§7.3](M3-M6-KT-AND-HANDS-ON.md#kt-gives) |
+| 1.0h | PR14–15 | **Essentials only**: OSRM + M3 circuit breakers, key metrics, health indicator | — |
+
+**EOD2 = bootable M5: shift load → assign → cron-gate → handoff → events out.**
+
+### Risk & cut-list
+- **Phase 3 (PR6/PR7) is the slip point** — it's the core; expect it to run long.
+- **If behind, cut in this order:** ① Phase 8 polish (→ minimal breakers + 2-3 metrics) → ② Phase 6
+  station view (read-only, safe to defer) → ③ cross-territory dispatch in PR7 (plain
+  defer-on-infeasible is fine for v1).
+- **Non-negotiable:** Phases 1–4 — without data + feasibility + consumers there is no demoable M5.
+
+---
+
+## Phase 0 — Shared Event Contracts (RabbitMQ) (PR #1)
+
+> 📎 **Prior context (M3/M6):** the event bus is RabbitMQ, not Kafka — read
+> [KT §1b · Messaging](M3-M6-KT-AND-HANDS-ON.md#kt-messaging) first, then ↩ back here.
 
 **Module:** `common`
 
@@ -39,43 +164,43 @@ Work top-to-bottom within each phase. Do not start a phase until the previous on
 
 ### What to build
 
-1. In `common/src/main/java/com/oneday/common/kafka/events/`, create abstract class `DaEventBase`:
-   ```java
-   @JsonIgnoreProperties(ignoreUnknown = true)
-   public abstract class DaEventBase {
-       UUID    eventId;
-       String  eventType;        // DaEventType.name()
-       String  schemaVersion = "1.0";
-       Instant occurredAt;
-       UUID    shipmentId;       // null for DA-scoped events
-       String  shipmentRef;
-       UUID    daId;
-       String  cityId;           // short code: "BLR", "DEL" — NOT the DB UUID
-   }
-   ```
+> See the addendum: `DaEventType`, `DaEvent`, and `EventStreams` already exist. PR #1 is now small.
 
-2. In `common/src/main/java/com/oneday/common/kafka/enums/DaEventType`, add 5 values:
+1. **DA event payload — do NOT create `DaEventBase`** (superseded). M4 already consumes the minimal
+   `common.kafka.events.DaEvent(shipmentId, eventType)`. Define M5's *producer-side* payload as a
+   record implementing **`DomainEvent`** (exposing `eventTypeName()` → routing key and
+   `partitionKey()`); add the fields M5 needs (`daId`, location, timestamps, `cityId` as a UUID per
+   the existing events). M4 ignores unknown fields, so producer additions never break it.
+
+2. In `common/src/main/java/com/oneday/common/kafka/enums/DaEventType` (**it already exists** with
+   the 8 M4-consumed values), **add the 5 internal values**:
    - `QUEUE_REORDERED`
    - `DA_ABSENT`
    - `CRON_MISSED`
    - `COD_COLLECTED`
    - `TASK_DEFERRED_SHIFT_ENDED`
 
-3. In `KafkaTopics.java`, add:
-   ```java
-   public static final String DISPATCH_TILE_QUEUE_DEPTH = "oneday.dispatch.tile_queue_depth";
-   ```
+3. **Tile queue-depth — do NOT add a new `dispatch.*` constant.** M3 already consumes
+   `EventStreams.TILE_QUEUE_DEPTH` (`"orders.tile_queue_depth"`). Plan to publish the existing
+   `TileQueueDepthEvent` shape to that exchange (PR #13) — **pending the M4-vs-M5 ownership
+   confirmation in the addendum.** No `EventStreams` change in PR #1 if ownership lands on the
+   existing exchange.
 
 ### Verify
 
 ```bash
 mvn clean install -pl common
 ```
-Compile-only — no business logic to test. Confirm `@JsonIgnoreProperties` is present on `DaEventBase`.
+Compile-only — no business logic to test. Confirm the new `DaEventType` values compile and M5's
+producer payload implements `DomainEvent`.
 
 ---
 
 ## Phase 1 — Database & Domain Layer (PRs #2–3)
+
+> 📎 **Prior context (M3/M6):** "tile" in M5 ≡ "hex" in M3 —
+> [KT §1 · H3](M3-M6-KT-AND-HANDS-ON.md#kt-h3); and `da_cron_assignment` is fed by M6's cron event —
+> [KT §3.5 · M6 events](M3-M6-KT-AND-HANDS-ON.md#kt-m6-events). ↩ back here after.
 
 **Module:** `dispatch`
 
@@ -182,6 +307,11 @@ mvn spring-boot:run -pl app
 
 ## Phase 2 — Shift Infrastructure (PRs #4–5)
 
+> 📎 **Prior context (M3/M6) — `ShiftLoadJob` consumes all three:** the DA→hex territory map
+> ([KT §2.6 · M3 APIs](M3-M6-KT-AND-HANDS-ON.md#kt-m3-apis)), per-hex `service_time_min`
+> ([KT §2.2 · demand-in-minutes](M3-M6-KT-AND-HANDS-ON.md#kt-demand)), and the per-DA cron schedule
+> ([KT §3.5 · M6 events](M3-M6-KT-AND-HANDS-ON.md#kt-m6-events)). Read those, then ↩ back here.
+
 **Module:** `dispatch`
 
 ### Read first
@@ -195,9 +325,13 @@ mvn spring-boot:run -pl app
 **~20 minutes of reading.**
 
 **Preconditions — get answers to these before coding PR #4:**
-- Q-M3-1: Are M3 REST controllers live? (`ShiftLoadJob` calls M3)
-- Q-M3-5: How is `service_time_min` accessed — REST endpoint or shared repo?
-- Q-M6-1: What is the `cron.scheduled` event format? (`ShiftLoadJob` reads cron assignments from it)
+- Q-M3-1: ✅ **Resolved** — M3 controllers are live at `/api/grid/{cityCode}/…` (+ in-process
+  `ServiceabilityPort`). Use the real paths (see addendum §5).
+- Q-M3-5: How is `service_time_min` accessed — REST endpoint, public service method, or shared repo?
+  (still open — decide with M3 owner)
+- Q-M6-1: ✅ **Resolved** — `DaCronScheduledEvent` on `EventStreams.CRON_EVENTS` (+ `da_cron_schedule`
+  table + `GET /routing/cron/da/{daId}`). `ShiftLoadJob` reads any of these; remember `meetingTimes`
+  is a **list**.
 
 ---
 
@@ -240,9 +374,12 @@ mvn spring-boot:run -pl app
    - `getStatus(daId)` — reads in-memory only, never DB on the hot path
 
 3. **`ShiftLoadJob`** (`@Scheduled` at `shiftStartTime − loadOffsetMinutes`):
-   1. Call `GET /grid/assignments?city_id={}&date={}` → build `Map<UUID, List<UUID>>` (daId → tileIds)
-   2. Read `da_cron_assignment` for today from DB (populated by M6 `cron.scheduled` event)
-   3. Read `service_time_min` per tile (per Q-M3-5 answer)
+   1. Call `GET /api/grid/{cityCode}/assignments?date={}` (or the in-process grid service) → build
+      `Map<UUID, List<UUID>>` (daId → hexIds)
+   2. Get today's cron schedule from M6 — consume `DaCronScheduledEvent` into `da_cron_assignment`,
+      or read M6's `da_cron_schedule` table / `GET /routing/cron/da/{daId}`. Store the **list** of
+      `meetingTimes`.
+   3. Read `service_time_min` per hex (per Q-M3-5 answer)
    4. For each DA: call `initShift(...)`
    5. **Restart recovery:** for any `IN_PROGRESS` `DispatchQueue` row where `expected_eta < now()`, reset `expected_eta = now()` before loading into the in-memory queue
 
@@ -289,7 +426,13 @@ mvn clean install -pl dispatch
 
 ## Phase 3 — Core Assignment Engine (PRs #6–7)
 
-**The algorithmic heart of M5. Exhaustively unit-test before any Kafka wiring touches it.**
+> 📎 **Prior context (M3/M6) — cron-meeting feasibility depends on M6:** how the loop/meeting-time
+> model works ([KT §3.1 · M6 plan-time](M3-M6-KT-AND-HANDS-ON.md#kt-m6-plan)), the meeting-times
+> **list** contract ([KT §3.5 · M6 events](M3-M6-KT-AND-HANDS-ON.md#kt-m6-events)), `service_time_min`
+> ([KT §2.2](M3-M6-KT-AND-HANDS-ON.md#kt-demand)), and what M5 needs from M6
+> ([KT §7.2](M3-M6-KT-AND-HANDS-ON.md#kt-needs-m6)). ↩ back here after.
+
+**The algorithmic heart of M5. Exhaustively unit-test before any messaging wiring touches it.**
 
 ### Read first
 
@@ -303,7 +446,12 @@ mvn clean install -pl dispatch
 
 **~25 minutes of reading.**
 
-**Precondition:** M3 team must deliver `OsrmRoutingPort` as a public interface in `com.oneday.grid.service` before PR #6 can compile. Raise this with the M3 team alongside Q-M3-1 now — it's the longest-lead dependency in this phase.
+**Precondition (CONFIRMED still unmet — the one real blocker):** `OsrmRoutingPort` does **not** exist
+in `com.oneday.grid.service`. Grid only has `OsrmMatrixService` (adjacency matrix, not point-to-point)
+and an internal `grid.service.osrm.OsrmClient` (can't be imported cross-module). Either M3 exposes a
+public `OsrmRoutingPort.routeDurationSeconds(waypoints)` (thin wrap over `OsrmClient`), or M5 calls
+OSRM `/route` over HTTP directly (as the M6 demo UI does). Raise with the M3 team now — longest-lead
+item in this phase.
 
 ---
 
@@ -429,7 +577,16 @@ mvn clean install -pl dispatch
 
 ---
 
-## Phase 4 — Kafka Consumers (PRs #8–9)
+## Phase 4 — Event Consumers (RabbitMQ) (PRs #8–9)
+
+> Per the addendum: consumers are `@RabbitListener`s declared against queues bound in a
+> `DispatchMessagingTopology` (`RabbitStreamSupport.consumer(queue, exchange)`); "consumer group" →
+> a named queue; `oneday.shipments.dlq` → a RabbitMQ dead-letter queue; `@EmbeddedKafka` →
+> Testcontainers RabbitMQ.
+
+> 📎 **Prior context (M3/M6):** the RabbitMQ consumer/topology pattern
+> ([KT §1b · Messaging](M3-M6-KT-AND-HANDS-ON.md#kt-messaging)) and how to resolve a pickup coord →
+> hex ([KT §2.6 · M3 APIs](M3-M6-KT-AND-HANDS-ON.md#kt-m3-apis)). ↩ back here after.
 
 **Module:** `dispatch`
 
@@ -451,14 +608,14 @@ mvn clean install -pl dispatch
 
 ### What to build — PR #8 (ShipmentCreatedConsumer)
 
-- Consumer group: `m5-shipment-created-consumer`, topic: `oneday.shipments.events`
+- Queue `m5.shipment-created` bound to `EventStreams.SHIPMENTS_EVENTS` (`oneday.shipments.events`) in `DispatchMessagingTopology`
 - `eventType = CREATED AND pickupType = DA_PICKUP` → `DispatchService.assignPickup`
 - `pickupType = SELF_DROP` → ack immediately, no processing
 - **Idempotency guard:** before `assignPickup`, call `findActiveByShipmentIdAndTaskType(shipmentId, PICKUP)`. If an active row already exists, ack and skip. A FAILED row does not block re-assignment (partial unique index allows it).
-- `originTileId` null handling (depends on Q-M4-1 answer): if null, call `GET /grid/tile-at`; log ERROR + increment metric for the data gap
+- `originTileId` null handling (depends on Q-M4-1 answer): if null, resolve via `ServiceabilityPort` / `GET /api/grid/{cityCode}/tile-at`; log ERROR + increment metric for the data gap
 - Error handling: 3 retries with exponential backoff (2s → 4s → 8s); park on `oneday.shipments.dlq`
 
-**Tests (`@EmbeddedKafka`):** `DA_PICKUP` event → pickup assigned; `SELF_DROP` → acked, no DB row; duplicate event → idempotent; FAILED row exists → re-assignment proceeds.
+**Tests (Testcontainers RabbitMQ):** `DA_PICKUP` event → pickup assigned; `SELF_DROP` → acked, no DB row; duplicate event → idempotent; FAILED row exists → re-assignment proceeds.
 
 ---
 
@@ -480,14 +637,30 @@ mvn clean install -pl dispatch
    - `PICKUP_RESCHEDULED` → `assignPickup` with rescheduled coords
    - `DELIVERY_RESCHEDULED` → `assignDelivery` with rescheduled coords
 
-4. **`DaEventProducer`** (finalise partition key here — undefined in the original design):
+4. **`DaEventProducer`** — publishes via `EventPublisher.publish(EventStreams.DA_EVENTS, event)`.
+   Implement `DomainEvent.partitionKey()` on M5's event record (the stream-ordering key, not a Kafka
+   partition):
    ```java
    String partitionKey = isShipmentScopedEvent(eventType)
        ? shipmentId.toString()
        : daId.toString();   // QUEUE_REORDERED, DA_ABSENT, CRON_MISSED → keyed by daId
    ```
+   > 🚨 **BLOCKED on the M5→M6 contract (addendum §7).** M6's `DaFeedConsumer` `#`-binds
+   > `routing.da` to this exchange and reads every message as parcel-level
+   > `DaParcelPickedUpEvent(parcelId, cityId, daId, validDate, pickedUpAt)`. Before this producer
+   > goes live: (a) settle parcel-vs-shipment id + add `validDate`/`pickedUpAt` for the collect
+   > event, (b) get M6 to narrow its `#` binding (or emit collect on a dedicated key) so internal
+   > events (`DA_ABSENT`, `QUEUE_REORDERED`, …) don't poison `routing.da`, (c) confirm the bind
+   > trigger is `PICKUP_COMPLETED`. **Do not publish to `DA_EVENTS` until these are resolved.**
 
-**Tests (`@EmbeddedKafka`):** delivery assignment; QUEUED vs IN_PROGRESS cancellation; reschedule re-runs assignment; `QUEUE_REORDERED` uses `daId` partition key.
+5. **`DaCronScheduledConsumer`** (feeds PR #4's `ShiftLoadJob`) — queue `m5.cron-scheduled` bound to
+   `EventStreams.CRON_EVENTS`; on `DaCronScheduledEvent` (now a real payload in
+   `common.kafka.events.cron`) **upsert `da_cron_assignment`** for `(daId, operatingDate)`. Carries
+   the **`meetingTimes` `List<LocalTime>`** (M6-D-008) → add migration **`V5_6`** to store the list
+   (e.g. `meeting_times JSONB`); `ShiftLoadJob`/`CronMonitorJob` pick the next meeting from it instead
+   of the single `scheduled_meeting_time` flattened in PR #3.
+
+**Tests (Testcontainers RabbitMQ):** delivery assignment; QUEUED vs IN_PROGRESS cancellation; reschedule re-runs assignment; `QUEUE_REORDERED` uses `daId` as its `partitionKey()`; `DaCronScheduledEvent` upserts `da_cron_assignment` with the full meeting-times list.
 
 ### Verify
 
@@ -498,6 +671,12 @@ mvn clean install -pl dispatch
 ---
 
 ## Phase 5 — DA-Facing API (PRs #10–11)
+
+> 📎 **Prior context (M3/M6):** the van-handoff endpoint sits on M6's custody chain (deliver/collect
+> at the meeting vertex) — read [KT §3.2 · M6 run-time](M3-M6-KT-AND-HANDS-ON.md#kt-m6-runtime).
+> **Now BUILT on `main`:** M6's `CustodyService` (4-state ledger), `HandoffService` (DA↔van
+> reconciliation), `VanManifestService`, `RecoveryService`. M5 does **not** reconcile — it feeds the
+> DA-side pickup/custody events into M6's `DaFeedConsumer` (see addendum §7 for the open contract). ↩ back here after.
 
 **Module:** `dispatch`
 
@@ -524,7 +703,7 @@ All DA endpoints use `@PreAuthorize` with DA identity check (the original design
 @PreAuthorize("hasRole('{DA_ROLE}') and authentication.name == #daId.toString()")
 ```
 
-| Method + Path | Action | Kafka event emitted |
+| Method + Path | Action | Event emitted |
 |---------------|--------|---------------------|
 | `POST /dispatch/da/{da_id}/gps` | `DaStatusService.updateGps`; 204 | — |
 | `POST /dispatch/da/{da_id}/tasks/{task_id}/en-route` | Mark `IN_PROGRESS`; return task + ETA | — |
@@ -584,6 +763,9 @@ mvn clean install -pl dispatch
 
 ## Phase 6 — Station Manager View (PR #12)
 
+> 📎 **Prior context (M3/M6):** the load-score the view surfaces is M3's overload signal — see what
+> M5 needs from M3 ([KT §7.1](M3-M6-KT-AND-HANDS-ON.md#kt-needs-m3)). ↩ back here after.
+
 **Module:** `dispatch`
 
 ### Read first
@@ -624,7 +806,11 @@ mvn clean install -pl dispatch
 
 ---
 
-## Phase 7 — Scheduled Jobs & Kafka Publisher (PR #13)
+## Phase 7 — Scheduled Jobs & Event Publisher (PR #13)
+
+> 📎 **Prior context (M3/M6):** the queue-depth feed M5 publishes (and the M4-vs-M5 ownership
+> question) — read what M5 gives the system
+> ([KT §7.3](M3-M6-KT-AND-HANDS-ON.md#kt-gives)). ↩ back here after.
 
 **Module:** `dispatch`
 
@@ -646,7 +832,10 @@ mvn clean install -pl dispatch
 1. **`TileQueueDepthPublisher`** (`@Scheduled` every 5 minutes):
    - Guard: no-op if outside shift hours
    - Aggregate `unservedOrders` (QUEUED tasks) and `inProgressOrders` (IN_PROGRESS tasks) per tile from in-memory maps
-   - Publish to `DISPATCH_TILE_QUEUE_DEPTH` topic (constant from PR #1)
+   - Publish a `TileQueueDepthEvent(cityId, tileId, unservedOrders, bookedOrders, date)` via
+     `EventPublisher.publish(EventStreams.TILE_QUEUE_DEPTH, …)` so M3's existing `TileQueueDepthConsumer`
+     picks it up — **pending the M4-vs-M5 producer-ownership confirmation** (addendum §4). Match the
+     payload shape M3 already reads.
 
 2. **`DeferredRetryJob`** (`@Scheduled` every 5 minutes):
    - Guard: no-op if outside shift hours
@@ -761,6 +950,9 @@ mvn clean install -pl dispatch
 
 | Item | Needed before | Action |
 |------|--------------|--------|
-| M3 team delivers `OsrmRoutingPort` public interface in `com.oneday.grid.service` | Phase 3 (PR #6) | Raise with M3 team now alongside Q-M3-1 |
-| Q-M6-1 — `cron.scheduled` event format and topic | Phase 2 (PR #4) | Raise with M6 team now |
+| **🚨 M5→M6 DA-feed contract** — M6's `DaFeedConsumer` expects parcel-level `DaParcelPickedUpEvent` on a `#`-bound `routing.da`; our `DaLifecycleEvent` is shipment-level (addendum §7) | **Phase 4/7 (any DA_EVENTS producer)** | Settle parcel-vs-shipment id (with M8), routing-key narrowing, and the bind trigger with the M6 owner. **Do not publish to `DA_EVENTS` until resolved.** |
+| **`OsrmRoutingPort`** public interface in `com.oneday.grid.service` — **still absent (the real blocker)** | Phase 3 (PR #6) | Raise with M3 team now; or fall back to calling OSRM `/route` over HTTP (addendum §6) |
+| **Tile queue-depth producer ownership** — M4 vs M5 (M3's consumer reads `orders.tile_queue_depth`, attributed to M4) | Phase 7 (PR #13) | Confirm with M3/M4 owners; if M5, publish to existing `EventStreams.TILE_QUEUE_DEPTH` (addendum §4) |
 | Q-M4-5 — OD-8 delivery verification (OTP vs QR) | Phase 5 (PR #10) | Raise with M4 team urgently — shapes the `drop-completed` endpoint |
+| ~~Q-M6-1 — cron event format~~ | — | ✅ **RESOLVED** — `DaCronScheduledEvent` on `CRON_EVENTS` (addendum §2) |
+| ~~Q-M3-1 / Q-M3-4 — M3 controllers / `TileQueueDepthConsumer`~~ | — | ✅ **RESOLVED** — both live (addendum §4, §5) |
