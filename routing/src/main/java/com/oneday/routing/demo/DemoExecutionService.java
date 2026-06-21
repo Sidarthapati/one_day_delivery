@@ -280,15 +280,22 @@ public class DemoExecutionService {
         return published;
     }
 
-    /** Poll the plan's manifests until the bound item count stops growing (consumers caught up) or timeout. */
+    /**
+     * Poll the plan's manifests until the bound item count settles (consumers caught up) or all expected
+     * are bound. Binding is async over the broker and lags publishing — for large volumes it can take far
+     * longer than the old fixed 8s window, so the real exit is "count stopped growing for ~1s"; the cap
+     * (scaled to volume) is just a safety net. Driving snapshots manifests, so we must not cut off early.
+     */
     private int waitForBinds(UUID planId, int expected) {
         int stable = 0, last = -1;
-        for (int i = 0; i < 40 && !cancel; i++) {       // up to ~8s
+        int maxPolls = 100 + expected;                  // generous ceiling; stabilization exits well before
+        for (int i = 0; i < maxPolls && !cancel; i++) {
             int bound = countItems(planId);
             if (bound == last) {
-                if (++stable >= 3 && bound > 0) return bound;
+                if (++stable >= 5 && bound > 0) return bound;   // ~1s with no new binds → settled
             } else {
                 stable = 0;
+                if (i % 10 == 0) setPhase("WAITING", status.published(), bound, status.delivered(), status.collected(), 0);
             }
             last = bound;
             if (bound >= expected) return bound;
