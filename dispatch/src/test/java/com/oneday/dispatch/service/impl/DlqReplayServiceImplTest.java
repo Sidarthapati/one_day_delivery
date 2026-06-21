@@ -7,8 +7,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -49,6 +51,14 @@ class DlqReplayServiceImplTest {
         assertThat(replayed).isZero();
         verify(rabbitTemplate).receive(DLQ);
         verifyNoMoreInteractions(rabbitTemplate);
+    }
+
+    @Test
+    void rejectsNonReplayableStream() {
+        assertThatThrownBy(() -> service.replay("oneday.evil.exchange"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("400");
+        verifyNoMoreInteractions(rabbitTemplate);   // never touched the broker
     }
 
     private Message message(String routingKey) {
