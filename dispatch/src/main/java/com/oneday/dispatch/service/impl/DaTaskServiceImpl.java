@@ -68,7 +68,7 @@ class DaTaskServiceImpl implements DaTaskService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "At least one parcel scan is required");
         }
         return daStatusService.withDaLock(daId, () -> {
-            DispatchQueue task = ownedTask(daId, taskId);
+            DispatchQueue task = ownedTask(daId, taskId); 
             requireType(task, TaskType.PICKUP);
             requireStatus(task, TaskStatus.IN_PROGRESS);
             task.setStatus(TaskStatus.COMPLETED);
