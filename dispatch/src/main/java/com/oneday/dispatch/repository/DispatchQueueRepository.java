@@ -22,6 +22,9 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
     List<DispatchQueue> findByDaIdAndOperatingDateAndStatusIn(
             UUID daId, LocalDate operatingDate, Collection<TaskStatus> statuses);
 
+    /** All tasks routed to a tile on a date — station view DA discovery + city resolution. */
+    List<DispatchQueue> findByTileIdAndOperatingDate(UUID tileId, LocalDate operatingDate);
+
     /**
      * The single ACTIVE task for a shipment+type, mirroring the partial unique index
      * (FAILED/CANCELLED excluded). Used as the idempotency guard before assignment.

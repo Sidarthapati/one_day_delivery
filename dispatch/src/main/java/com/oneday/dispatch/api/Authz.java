@@ -14,8 +14,31 @@ final class Authz {
 
     static final String ADMIN = "ADMIN";
     static final String DELIVERY_ASSOCIATE = "DELIVERY_ASSOCIATE";
+    static final String STATION_MANAGER = "STATION_MANAGER";
 
     private Authz() {}
+
+    /** The caller's role name, or 401 if unauthenticated. */
+    static String requireRole(AuthUserDetails principal, String... allowedRoles) {
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        String role = principal.getUser().getRole().getName();
+        if (ADMIN.equals(role)) {
+            return role;
+        }
+        for (String allowed : allowedRoles) {
+            if (allowed.equals(role)) {
+                return role;
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Role " + role + " is not permitted to perform this action");
+    }
+
+    static boolean isAdmin(AuthUserDetails principal) {
+        return principal != null && ADMIN.equals(principal.getUser().getRole().getName());
+    }
 
     /** The caller's user id, or 401 if unauthenticated. */
     static UUID requireUserId(AuthUserDetails principal) {

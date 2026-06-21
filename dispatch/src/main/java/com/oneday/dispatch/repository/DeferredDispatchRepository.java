@@ -6,10 +6,14 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
 public interface DeferredDispatchRepository extends JpaRepository<DeferredDispatch, UUID> {
+
+    /** Count of deferrals in a given state for a tile on a date (station view's deferred_count). */
+    int countByTileIdAndOperatingDateAndStatus(UUID tileId, LocalDate operatingDate, String status);
 
     /**
      * PENDING deferrals for a city that are due for retry (retry_after null or already past).
