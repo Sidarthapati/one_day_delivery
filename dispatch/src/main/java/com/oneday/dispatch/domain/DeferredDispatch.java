@@ -59,6 +59,10 @@ public class DeferredDispatch extends MutableBaseEntity {
     @Column(name = "escalated_at")
     private Instant escalatedAt;
 
+    /** How many times DeferredRetryJob has re-attempted this; escalates past the configured cap. */
+    @Column(name = "retry_count", nullable = false)
+    private int retryCount;
+
     @Column(name = "operating_date", nullable = false, updatable = false)
     private LocalDate operatingDate;
 

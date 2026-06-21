@@ -56,6 +56,8 @@ public class DispatchProperties {
     private Service service = new Service();
     @NestedConfigurationProperty
     private CrossTerritory crossTerritory = new CrossTerritory();
+    @NestedConfigurationProperty
+    private Deferred deferred = new Deferred();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -77,6 +79,8 @@ public class DispatchProperties {
     public void setService(Service service) { this.service = service; }
     public CrossTerritory getCrossTerritory() { return crossTerritory; }
     public void setCrossTerritory(CrossTerritory crossTerritory) { this.crossTerritory = crossTerritory; }
+    public Deferred getDeferred() { return deferred; }
+    public void setDeferred(Deferred deferred) { this.deferred = deferred; }
 
     /** Cron-meeting protection (the hard constraint). */
     public static class Cron {
@@ -212,6 +216,21 @@ public class DispatchProperties {
         public void setSparseThreshold(double sparseThreshold) { this.sparseThreshold = sparseThreshold; }
     }
 
+    /** Deferred-dispatch retry policy (DeferredRetryJob). */
+    public static class Deferred {
+        /** Escalate to M11 after this many failed retries. */
+        private int maxRetries = 3;
+        /** A failed retry pushes the next attempt out by this many minutes. */
+        private int retryIntervalMinutes = 5;
+
+        public int getMaxRetries() { return maxRetries; }
+        public void setMaxRetries(int maxRetries) { this.maxRetries = maxRetries; }
+        public int getRetryIntervalMinutes() { return retryIntervalMinutes; }
+        public void setRetryIntervalMinutes(int retryIntervalMinutes) {
+            this.retryIntervalMinutes = retryIntervalMinutes;
+        }
+    }
+
     /** Outbound-event gating. */
     public static class Events {
         /**
@@ -222,7 +241,19 @@ public class DispatchProperties {
          */
         private boolean publishDaEvents = false;
 
+        /**
+         * When true, {@code TileQueueDepthPublisher} publishes to {@code EventStreams.TILE_QUEUE_DEPTH}.
+         * Default TRUE: M5 is the confirmed sole producer of this feed — M3 needs dispatch reality
+         * (parcels queued per tile from {@code dispatch_queue} + live DA territory), which only M5 has;
+         * M4 must NOT also publish it.
+         */
+        private boolean publishTileQueueDepth = true;
+
         public boolean isPublishDaEvents() { return publishDaEvents; }
         public void setPublishDaEvents(boolean publishDaEvents) { this.publishDaEvents = publishDaEvents; }
+        public boolean isPublishTileQueueDepth() { return publishTileQueueDepth; }
+        public void setPublishTileQueueDepth(boolean publishTileQueueDepth) {
+            this.publishTileQueueDepth = publishTileQueueDepth;
+        }
     }
 }
