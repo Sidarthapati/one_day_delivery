@@ -1,6 +1,7 @@
 package com.oneday.routing.demo;
 
 import com.oneday.common.kafka.EventStreams;
+import com.oneday.common.port.DaPickupQueuePort;
 import com.oneday.routing.config.RoutingProperties;
 import com.oneday.routing.domain.CityLogisticsNode;
 import com.oneday.routing.domain.HandoffDirection;
@@ -34,6 +35,7 @@ import com.oneday.routing.service.port.ScanLedgerPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
@@ -96,6 +98,9 @@ public class DemoExecutionService {
     private final CustodyService custodyService;
     private final RoutingProperties properties;
     private final Clock clock;
+    // M5's live pickup queue. Optional: present only when the dispatch demo bean is on the context
+    // (routing depends on common, not dispatch), so the bridge is absent in routing's own tests.
+    private final ObjectProvider<DaPickupQueuePort> pickupQueue;
 
     private final DemoLog feed = new DemoLog();
     private final ExecutorService runner = Executors.newSingleThreadExecutor(r -> {
@@ -113,7 +118,8 @@ public class DemoExecutionService {
                          VanManifestRepository manifestRepository, VanManifestItemRepository itemRepository,
                          HandoffReconciliationRepository handoffRepository, VanLiveStatusRepository liveStatusRepository,
                          VanTrackingService trackingService, CustodyService custodyService,
-                         RoutingProperties properties, Clock clock) {
+                         RoutingProperties properties, Clock clock,
+                         ObjectProvider<DaPickupQueuePort> pickupQueue) {
         this.rabbitTemplate = rabbitTemplate;
         this.gridDataAdapter = gridDataAdapter;
         this.nodeRepository = nodeRepository;
@@ -128,6 +134,7 @@ public class DemoExecutionService {
         this.custodyService = custodyService;
         this.properties = properties;
         this.clock = clock;
+        this.pickupQueue = pickupQueue;
     }
 
     // ── public surface (controller) ──────────────────────────────────────────────────────────────
@@ -254,27 +261,64 @@ public class DemoExecutionService {
         Random rng = new Random();
         int published = 0;
         Instant now = clock.instant();
+        DaPickupQueuePort queue = pickupQueue.getIfAvailable();
 
-        for (int i = 0; i < deliveries; i++) {
-            UUID da = bindableDas.get(rng.nextInt(bindableDas.size()));
-            List<UUID> hexes = hexByDa.get(da);
-            if (hexes.isEmpty()) continue;
-            UUID hex = hexes.get(rng.nextInt(hexes.size()));
-            UUID parcel = UUID.randomUUID();
-            rabbitTemplate.convertAndSend(EventStreams.HUB_EVENTS, "ParcelSortedForDelivery",
-                    new ParcelSortedForDeliveryEvent(parcel, cityId, hex, date, now, now.plus(Duration.ofHours(6))));
-            feed.add("FEED", "HUB_EVENTS ▸ %s sorted for delivery → DA %s".formatted(shortId(parcel), shortId(da)));
-            published++;
-            settle(25);
+        // Deliveries: prefer M5's real DELIVERY queue (one ParcelSortedForDelivery per task, to its dest
+        // hex) so the map's drops equal what M5 dispatched. Fall back to synthetic ▼N when M5 has none.
+        List<DaPickupQueuePort.QueuedPickup> m5Deliveries = queue == null ? List.of()
+                : queue.queuedDeliveries(cityId, date).stream()
+                        .filter(p -> bindableDas.contains(p.daId())).toList();
+        if (!m5Deliveries.isEmpty()) {
+            for (DaPickupQueuePort.QueuedPickup p : m5Deliveries) {
+                rabbitTemplate.convertAndSend(EventStreams.HUB_EVENTS, "ParcelSortedForDelivery",
+                        new ParcelSortedForDeliveryEvent(p.shipmentId(), cityId, p.tileId(), date, now, now.plus(Duration.ofHours(6))));
+                feed.add("FEED", "HUB_EVENTS ▸ %s sorted for delivery → DA %s (M5 queue)"
+                        .formatted(shortId(p.shipmentId()), shortId(p.daId())));
+                published++;
+                settle(25);
+            }
+            feed.add("INFO", "Sourced %d delivery(ies) from M5's live queue.".formatted(m5Deliveries.size()));
+        } else {
+            for (int i = 0; i < deliveries; i++) {
+                UUID da = bindableDas.get(rng.nextInt(bindableDas.size()));
+                List<UUID> hexes = hexByDa.get(da);
+                if (hexes.isEmpty()) continue;
+                UUID hex = hexes.get(rng.nextInt(hexes.size()));
+                UUID parcel = UUID.randomUUID();
+                rabbitTemplate.convertAndSend(EventStreams.HUB_EVENTS, "ParcelSortedForDelivery",
+                        new ParcelSortedForDeliveryEvent(parcel, cityId, hex, date, now, now.plus(Duration.ofHours(6))));
+                feed.add("FEED", "HUB_EVENTS ▸ %s sorted for delivery → DA %s (synthetic)".formatted(shortId(parcel), shortId(da)));
+                published++;
+                settle(25);
+            }
         }
-        for (int i = 0; i < collects; i++) {
-            UUID da = bindableDas.get(rng.nextInt(bindableDas.size()));
-            UUID parcel = UUID.randomUUID();
-            rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, "DaParcelPickedUp",
-                    new DaParcelPickedUpEvent(parcel, cityId, da, date, now));
-            feed.add("FEED", "DA_EVENTS ▸ %s picked up by DA %s".formatted(shortId(parcel), shortId(da)));
-            published++;
-            settle(25);
+        // Collects: prefer M5's real pickup queue so "collected N" at each cron meeting equals exactly
+        // what M5 dispatched to that DA (each queued pickup → a DaParcelPickedUp the van comes to
+        // collect). Only DAs bindable in this plan can be collected, so filter to those. Fall back to
+        // synthetic parcels when M5 hasn't run a shift for this city/day (queue empty or bridge absent).
+        List<DaPickupQueuePort.QueuedPickup> m5Pickups = queue == null ? List.of()
+                : queue.queuedPickups(cityId, date).stream()
+                        .filter(p -> bindableDas.contains(p.daId())).toList();
+        if (!m5Pickups.isEmpty()) {
+            for (DaPickupQueuePort.QueuedPickup p : m5Pickups) {
+                rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, "DaParcelPickedUp",
+                        new DaParcelPickedUpEvent(p.shipmentId(), cityId, p.daId(), date, now));
+                feed.add("FEED", "DA_EVENTS ▸ %s picked up by DA %s (M5 queue)"
+                        .formatted(shortId(p.shipmentId()), shortId(p.daId())));
+                published++;
+                settle(25);
+            }
+            feed.add("INFO", "Sourced %d collect(s) from M5's live pickup queue.".formatted(m5Pickups.size()));
+        } else {
+            for (int i = 0; i < collects; i++) {
+                UUID da = bindableDas.get(rng.nextInt(bindableDas.size()));
+                UUID parcel = UUID.randomUUID();
+                rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, "DaParcelPickedUp",
+                        new DaParcelPickedUpEvent(parcel, cityId, da, date, now));
+                feed.add("FEED", "DA_EVENTS ▸ %s picked up by DA %s (synthetic)".formatted(shortId(parcel), shortId(da)));
+                published++;
+                settle(25);
+            }
         }
         feed.add("INFO", "Published %d parcels to RabbitMQ (CloudAMQP).".formatted(published));
         return published;

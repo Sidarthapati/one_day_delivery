@@ -25,6 +25,9 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
     /** All tasks routed to a tile on a date — station view DA discovery + city resolution. */
     List<DispatchQueue> findByTileIdAndOperatingDate(UUID tileId, LocalDate operatingDate);
 
+    /** All tasks for a city on a date (demo state + reset). */
+    List<DispatchQueue> findByCityIdAndOperatingDate(UUID cityId, LocalDate operatingDate);
+
     /** Active-task counts per (city, tile, status) for a date — feeds the tile-queue-depth publisher. */
     @Query("""
             select new com.oneday.dispatch.repository.TileDepthCount(d.cityId, d.tileId, d.status, count(d))

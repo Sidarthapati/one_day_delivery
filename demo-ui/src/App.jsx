@@ -9,6 +9,8 @@ import HexPanel from './components/HexPanel.jsx'
 import ProposalPanel from './components/ProposalPanel.jsx'
 import RoutesPanel from './components/RoutesPanel.jsx'
 import ExecutionView from './components/ExecutionView.jsx'
+import DispatchView from './components/DispatchView.jsx'
+import BookingConsole from './components/BookingConsole.jsx'
 import { hashDaColor } from './utils/daColors.js'
 import { buildRoutes } from './utils/buildRoutes.js'
 import { CITIES, PLAN_DATE } from './cities.js'
@@ -20,6 +22,7 @@ import {
 } from './api/routingApi.js'
 
 export default function App() {
+  const [world, setWorld] = useState('logistics') // booking (M1·M2·M4) | logistics (M3·M5·M6)
   const [cityCode, setCityCode] = useState('delhi')
   const [view, setView] = useState('planning') // planning | execution
   const [mode, setMode] = useState('demand') // demand | territories | routes
@@ -212,15 +215,32 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Top-level world switch — one dashboard across M1–M6 */}
+      <div className="flex items-center gap-3 px-4 py-1.5 bg-gray-900 text-white z-20">
+        <div className="font-bold tracking-tight">1DD · OneDay</div>
+        <div className="flex gap-1 ml-2">
+          {[['booking', 'Booking & Ops', 'M1·M2·M4'], ['logistics', 'Logistics', 'M3·M5·M6']].map(([k, label, sub]) => (
+            <button key={k} onClick={() => setWorld(k)}
+              className={`text-sm px-3 py-1 rounded transition-colors ${
+                world === k ? 'bg-white text-gray-900' : 'bg-gray-700 hover:bg-gray-600 text-gray-100'}`}>
+              {label} <span className="opacity-60 text-xs">{sub}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {world === 'booking' && <BookingConsole />}
+
+      {world === 'logistics' && (<>
       {/* Toolbar */}
       <div className="flex items-center gap-4 px-4 py-2 bg-white border-b border-gray-200 shadow-sm z-10">
-        <div className="font-bold text-gray-800">OneDay — M6 {view === 'execution' ? 'Execution' : 'Route Planning'}</div>
+        <div className="font-bold text-gray-800">OneDay — {view === 'dispatch' ? 'M5 Dispatch' : `M6 ${view === 'execution' ? 'Execution' : 'Route Planning'}`}</div>
         <select value={cityCode} onChange={e => handleCityChange(e.target.value)}
           className="text-sm border border-gray-300 rounded px-2 py-1 text-gray-700 bg-white">
           {Object.entries(CITIES).map(([code, c]) => <option key={code} value={code}>{c.label}</option>)}
         </select>
         <div className="flex gap-1 ml-1">
-          {[['planning', 'Planning'], ['execution', 'Execution']].map(([k, label]) => (
+          {[['planning', 'Planning'], ['execution', 'Execution'], ['dispatch', 'Dispatch']].map(([k, label]) => (
             <button key={k} onClick={() => setView(k)}
               className={`text-sm px-3 py-1 border rounded transition-colors ${
                 view === k ? 'bg-gray-800 text-white border-gray-800' : 'border-gray-300 hover:bg-gray-50'}`}>
@@ -247,6 +267,7 @@ export default function App() {
       {view === 'execution' && (
         <ExecutionView cityCode={cityCode} cityId={cityId} center={city.center} nodes={nodes} />
       )}
+      {view === 'dispatch' && <DispatchView cityId={cityId} cityCode={cityCode} />}
       {view === 'planning' && (
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative">
@@ -303,6 +324,7 @@ export default function App() {
         </div>
       </div>
       )}
+      </>)}
     </div>
   )
 }

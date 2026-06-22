@@ -7,6 +7,7 @@ import {
   m6Replan, m6Approve, getAllStops, getLive, getFleet, putFleet,
   runDay, runStop, runStatus, runEvents,
 } from '../api/routingApi.js'
+import { getDispatchState } from '../api/dispatchApi.js'
 
 // Execution runs the whole chain for TODAY (telemetry resolves manifests by today's date), distinct
 // from the planning tab's "tomorrow". One date for seed → M3 → M6 → run.
@@ -42,18 +43,24 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   const [running, setRunning] = useState(false)
   const [stat, setStat] = useState(null)
   const [vans, setVans] = useState([])
+  const [das, setDas] = useState([])   // M5 DAs at their cron vertices (handoff overlay)
+  const [daTs, setDaTs] = useState({}) // per-DA progress 0→1 (collect → wait at vertex for van → return)
+  const runStartRef = useRef(0)
+  const metRef = useRef({})            // daId → ms when its van first reached the DA's vertex
   const [events, setEvents] = useState([])
   const lastSeq = useRef(0)
   const logRef = useRef(null)
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
+  const vansRef = useRef([]); vansRef.current = vans
+  const dasRef = useRef([]); dasRef.current = das
 
   // On city change: reset run state, prefill fleet inputs, and auto-restore an already-approved
   // plan for today (so the map + Run come back after a tab switch, and an existing plan is reused
   // without re-preparing).
   useEffect(() => {
     setPrepared(false); setRoutes([]); setPlanInfo(null); setError(null)
-    setRunning(false); setStat(null); setVans([]); setEvents([]); lastSeq.current = 0
+    setRunning(false); setStat(null); setVans([]); setDas([]); setEvents([]); lastSeq.current = 0
     let alive = true
     ;(async () => {
       try {
@@ -64,6 +71,9 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
           if (f.cycleTimeMaxMinutes != null) setCycleMax(f.cycleTimeMaxMinutes)
         }
       } catch { /* no fleet config yet — keep defaults */ }
+      // M5's DAs are independent of the M6 route geometry — load them first so the map reflects the
+      // current shift even if buildRoutes (OSRM) is slow or there's no approved plan yet.
+      if (alive) fetchDas()
       try {
         const stops = await getAllStops(cityId, TODAY)
         if (alive && stops && stops.length) {
@@ -77,6 +87,36 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     })()
     return () => { alive = false }
   }, [cityCode, cityId])
+
+  // Keep the DA overlay in sync with M5 while idle (a shift loaded / pickups assigned in the Dispatch
+  // tab shows up here within a few seconds). During a run, das is a fixed snapshot the animation drives.
+  useEffect(() => {
+    if (running) return
+    const id = setInterval(() => fetchDas(), 4000)
+    return () => clearInterval(id)
+  }, [running, cityId])
+
+  // M5 DA cron points (vertex coords + queue depth + the van each meets). Static during a run, so we
+  // fetch on prepare / run-start rather than polling.
+  async function fetchDas() {
+    try {
+      const s = await getDispatchState(cityId, TODAY)
+      setDas((s.das || []).filter(d => d.cronVertexLat != null).map(d => {
+        const vertex = [d.cronVertexLat, d.cronVertexLon]
+        const home = d.lat != null ? [d.lat, d.lon] : vertex
+        const pTasks = (d.queue || []).filter(t => t.taskType === 'PICKUP' && t.taskLat != null)
+        const dTasks = (d.queue || []).filter(t => t.taskType === 'DELIVERY' && t.taskLat != null)
+        return {
+          daId: d.daId, vanId: d.vanId, home, vertex,
+          pickups: pTasks.map(t => [t.taskLat, t.taskLon]),
+          deliveries: dTasks.map(t => [t.taskLat, t.taskLon]),
+          pickupIds: pTasks.map(t => t.shipmentId),      // DA → van (collected, fly out)
+          deliveryIds: dTasks.map(t => t.shipmentId),    // van → DA (inbound, to deliver)
+          queueDepth: (d.queue || []).length, cronTime: d.cronMeetingTime, distanceKm: d.distanceToCronKm,
+        }
+      }))
+    } catch { setDas([]) }
+  }
 
   async function prepare() {
     setPreparing(true); setError(null)
@@ -98,6 +138,7 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
       setRoutes(await buildRoutes(stops, nodes))
       setPlanInfo({ vansUsed: p.vansUsed, planId: p.planId })
       setPrepared(true)
+      fetchDas()
     } catch (e) {
       setError(e.message)
     } finally {
@@ -108,6 +149,8 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   async function run() {
     setError(null); setEvents([]); setVans([]); lastSeq.current = 0
     try {
+      await fetchDas()   // refresh queue depths (what M5 will hand to the vans)
+      runStartRef.current = Date.now(); metRef.current = {}; setDaTs({})   // DAs start in their territory
       const s = await runDay(cityId, { deliveries, collects, speed })
       setStat(s); setRunning(true)
     } catch (e) {
@@ -146,6 +189,38 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     return () => { alive = false; clearInterval(id) }
   }, [running, cityId])
 
+  // Drive each DA's travel *by its van*: collect to the vertex (~18 s), then WAIT at the vertex until its
+  // van actually arrives there, then return to territory (~14 s). This keeps the DA next to its van at the
+  // handoff instead of finishing on a fixed clock while the van is elsewhere. (t bands match daState:
+  // 0–0.4 collect, 0.4–0.55 at vertex, 0.55–1 return.)
+  useEffect(() => {
+    if (!running) return
+    const OUT_MS = 18000, RETURN_MS = 14000, MAX_WAIT_MS = 45000
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1])
+    const id = setInterval(() => {
+      const now = Date.now()
+      const elapsed = now - runStartRef.current
+      const next = {}
+      for (const d of dasRef.current) {
+        // Has this DA's van reached its vertex yet? Record the first time it does.
+        if (!metRef.current[d.daId] && d.vertex) {
+          const v = vansRef.current.find(v => v.vanId === d.vanId && v.lastLat != null)
+          if (v && dist([v.lastLat, v.lastLon], d.vertex) < 0.013) metRef.current[d.daId] = now
+        }
+        if (elapsed < OUT_MS) {
+          next[d.daId] = (elapsed / OUT_MS) * 0.4                 // travelling home → pickups → vertex
+        } else {
+          // Reached the vertex; wait there until the van arrives (or a max-wait fallback), then return.
+          let met = metRef.current[d.daId]
+          if (!met && elapsed - OUT_MS > MAX_WAIT_MS) met = runStartRef.current + OUT_MS + MAX_WAIT_MS
+          next[d.daId] = met == null ? 0.47 : Math.min(1, 0.55 + ((now - met) / RETURN_MS) * 0.45)
+        }
+      }
+      setDaTs(next)
+    }, 150)
+    return () => clearInterval(id)
+  }, [running])
+
   // Auto-scroll the feed.
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
@@ -156,7 +231,7 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   return (
     <div className="flex flex-1 overflow-hidden">
       <div className="flex-1 relative">
-        <ExecutionMap center={center} routes={routes} nodes={nodes} vans={vans} vanColor={hashDaColor} />
+        <ExecutionMap center={center} routes={routes} nodes={nodes} vans={vans} das={das} daTs={daTs} vanColor={hashDaColor} />
         {!prepared && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/60 z-[500]">
             <div className="text-center text-gray-600">
@@ -200,14 +275,24 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
           </button>
           {planInfo && <div className="text-xs text-emerald-700">
             {planInfo.restored ? 'Existing plan loaded' : 'Plan approved'} · {planInfo.vansUsed} vans · {routes.length} loops</div>}
+          {das.length > 0 && (() => {
+            const m5P = das.reduce((a, d) => a + (d.pickups?.length || 0), 0)
+            const m5D = das.reduce((a, d) => a + (d.deliveries?.length || 0), 0)
+            return <div className="text-xs text-emerald-700">👤 {das.length} DAs ·
+              {' '}M5 drives the run: <b>{m5P} pickups</b>, <b>{m5D} drops</b>
+              {(m5P + m5D) === 0 && <span className="text-gray-400"> (assign in Dispatch to populate)</span>}</div>
+          })()}
 
-          {/* Run config */}
-          <div className="flex items-center gap-2 text-xs text-gray-600 pt-1">
-            <label className="flex items-center gap-1">▼<input type="number" value={deliveries} min={0}
-              onChange={e => setDeliveries(+e.target.value)} className="w-14 border rounded px-1 py-0.5"
+          {/* Run config — ▼ deliveries (hub→DA) · ▲ pickups (DA→van). Used only as a fallback when no M5
+              shift is loaded; otherwise the counts above (from M5's queue) drive the run. */}
+          <div className="flex items-center gap-3 text-xs text-gray-600 pt-1">
+            <label className="flex items-center gap-1" title="deliveries (fallback if no M5 shift)">▼ drops
+              <input type="number" value={deliveries} min={0}
+              onChange={e => setDeliveries(+e.target.value)} className="w-12 border rounded px-1 py-0.5"
               disabled={running} /></label>
-            <label className="flex items-center gap-1">▲<input type="number" value={collects} min={0}
-              onChange={e => setCollects(+e.target.value)} className="w-14 border rounded px-1 py-0.5"
+            <label className="flex items-center gap-1" title="pickups (fallback if no M5 shift)">▲ pickups
+              <input type="number" value={collects} min={0}
+              onChange={e => setCollects(+e.target.value)} className="w-12 border rounded px-1 py-0.5"
               disabled={running} /></label>
             <label className="flex items-center gap-1">speed<input type="number" value={speed} min={1}
               onChange={e => setSpeed(+e.target.value)} className="w-14 border rounded px-1 py-0.5"

@@ -73,6 +73,12 @@ dispatch:
       - bangalore
       - hyderabad
       - chennai
+  # Demo only: real DAs ping GPS continuously, but the demo seats them once at Load shift and never
+  # pings again — so the 15-min absent watchdog would flip every DA to ABSENT mid-demo (then all
+  # assignments defer NO_DA_AVAILABLE). Push the threshold past a demo session; the ABSENT scenario
+  # is still shown on demand via the per-DA "absent" button.
+  da:
+    absent-threshold-minutes: 1440
 
 # M6 routing config. Same shadowing rule as grid above: the assembled app loads ITS OWN
 # application.yml, so RoutingProperties binds here (the routing module's yaml is shadowed and would
