@@ -19,6 +19,7 @@ import com.oneday.routing.service.GridDataAdapter;
 import com.oneday.routing.service.RoutePlanLifecycleService;
 import com.oneday.routing.service.RoutePlanningService;
 import com.oneday.routing.service.ShuttleScheduleService;
+import com.oneday.routing.service.VanManifestService;
 import com.oneday.routing.service.model.DaTerritory;
 import com.oneday.routing.service.model.MeetingVertex;
 import org.slf4j.Logger;
@@ -59,6 +60,7 @@ class RoutePlanLifecycleServiceImpl implements RoutePlanLifecycleService {
     private final ShuttleScheduleService shuttleScheduleService;
     private final CronEventProducer cronEventProducer;
     private final GridDataAdapter gridDataAdapter;
+    private final VanManifestService vanManifestService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -70,6 +72,7 @@ class RoutePlanLifecycleServiceImpl implements RoutePlanLifecycleService {
                                   ShuttleScheduleService shuttleScheduleService,
                                   CronEventProducer cronEventProducer,
                                   GridDataAdapter gridDataAdapter,
+                                  VanManifestService vanManifestService,
                                   ObjectMapper objectMapper,
                                   Clock clock) {
         this.routePlanRepository = routePlanRepository;
@@ -80,6 +83,7 @@ class RoutePlanLifecycleServiceImpl implements RoutePlanLifecycleService {
         this.shuttleScheduleService = shuttleScheduleService;
         this.cronEventProducer = cronEventProducer;
         this.gridDataAdapter = gridDataAdapter;
+        this.vanManifestService = vanManifestService;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -106,6 +110,10 @@ class RoutePlanLifecycleServiceImpl implements RoutePlanLifecycleService {
         plan.setApprovedBy(actorId);
         plan.setApprovedAt(Instant.now(clock));
         routePlanRepository.save(plan);
+
+        // Re-approving a day that has already started binding: re-point any orphaned manifests at this
+        // plan and re-route their not-yet-loaded items (§10.x). No-op for the usual one-plan-a-day case.
+        vanManifestService.reconcileToLivePlan(plan.getCityId(), plan.getValidForDate());
 
         auditRepository.save(audit(plan.getId(), actorId, "APPROVE", null, plan, "Approved"));
         publishCronSchedules(plan);
@@ -189,6 +197,10 @@ class RoutePlanLifecycleServiceImpl implements RoutePlanLifecycleService {
         routePlanRepository.save(revision);
         if (!clonedStops.isEmpty()) routePlanStopRepository.saveAll(clonedStops);
         if (!clonedCrons.isEmpty()) daCronScheduleRepository.saveAll(clonedCrons);
+
+        // Move the in-flight day onto the new revision: re-point manifests, re-route not-yet-loaded
+        // items, keep/escalate loaded ones (§10.x). No-op before binding starts (the usual case).
+        vanManifestService.reconcileToLivePlan(revision.getCityId(), revision.getValidForDate());
 
         auditRepository.save(audit(revisionId, request.actorId(), "OVERRIDE", source, revision, request.reason()));
 

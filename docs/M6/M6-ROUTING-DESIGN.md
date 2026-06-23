@@ -270,6 +270,32 @@ Mirrors M3's `NightlyReplanJob` (NFR-2/3, PRD §8.3):
 - **Override** — admin / station manager edits stop order or reassigns a vertex ⇒ new append-only `route_plan` revision, `source=MANUAL_OVERRIDE`, actor + reason; emits `ROUTE_CHANGED` (M5, M10, notify).
 - **Append-only** — `route_plan` rows never mutate; revisions supersede (as M3's `assignment_proposal`).
 
+### 10.1 Re-plan reconciliation — what happens to already-bound parcels (`M6-D-022`)
+
+A `van_manifest` is keyed by the **physical** `(van_id, loop_index, valid_date)` — there is exactly one
+manifest per van/loop/day no matter how many plan revisions exist. The manifest is **not** re-keyed by
+plan (that would orphan in-custody parcels onto a dead manifest while the new plan's manifests sit
+empty). Instead, when a new plan becomes the live APPROVED plan for the day (re-approve or override),
+`VanManifestService.reconcileToLivePlan` runs **inside the same transaction** as approve/override and:
+
+1. **Re-points** every manifest still on a superseded plan to the live plan id (`route_plan_id` is the
+   only mutable field on the otherwise-immutable row). `lockOrCreate` also re-points lazily, as a
+   backstop for a bind that races the override.
+2. **Re-routes** each **PLANNED** (not-yet-loaded) item against the new plan via its counterparty DA —
+   it is freely movable, so it binds the correct new loop, or escalates `LOOP_OVERFLOW` if that DA has
+   no cron slot under the new plan.
+3. **Keeps** a **loaded / in-custody** item (`LOADED`/`ONBOARD`) whose stop still exists on its van —
+   it is physically on the vehicle and is never moved by software.
+4. **Escalates** (`LOOP_OVERFLOW`, frozen) a loaded item whose stop **vanished** from the new plan —
+   software cannot teleport a physical parcel, so this becomes an ops/M11 recovery, not a silent rebind.
+
+**Scope (`M6-D-022`):** plans are normally finalized **before the day starts** (the 01:00–07:00 window,
+before any parcel flows ⇒ before any manifest exists), so reconciliation is a **no-op on the common
+path** and exists as a **safety net** for the rare intraday re-plan. The deferred piece is **full
+stop-by-stop re-route of loaded vans** (moving physical custody between vans on a structural re-plan) —
+v1 freezes-and-escalates instead. The seams (mutable `route_plan_id`, `reconcileToLivePlan`, the
+PLANNED-rebind path) are in place, so that engine is an additive change with no rewrite.
+
 ---
 
 # Part II — Execution

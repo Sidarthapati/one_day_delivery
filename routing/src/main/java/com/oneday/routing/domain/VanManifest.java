@@ -28,7 +28,9 @@ public class VanManifest {
     @Column(updatable = false, nullable = false)
     private UUID id;
 
-    @Column(name = "route_plan_id", nullable = false, updatable = false)
+    // Mutable: the manifest is the physical "one van, one loop, one day" row; an intraday re-plan
+    // re-points it at the new revision rather than orphaning it (Option B, §10.x reconciliation).
+    @Column(name = "route_plan_id", nullable = false)
     private UUID routePlanId;
 
     @Column(name = "van_id", nullable = false, updatable = false)

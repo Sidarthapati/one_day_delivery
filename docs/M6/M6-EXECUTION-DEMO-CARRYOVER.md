@@ -18,11 +18,11 @@ Symptom in the demo: prepare → run works; **Re-prepare → run gives `bound=0`
   - **Fix applied:** resolve the live APPROVED plan first (cheap, indexed `findByCityIdAndValidForDateAndStatus(... APPROVED).max(revision)`) and key the cache by **`plan.getId()`** — a new plan ⇒ new key ⇒ cache miss ⇒ rebuild. `buildContext` now takes the resolved `RoutePlan`. (`gridDataAdapter.hexToDa` is itself uncached, so the rebuild is fresh.)
   - **Why CARRY OVER:** production-path correctness bug for the intraday override flow (M6-D, station-manager re-approve).
 - **(b) `van_manifest` is keyed by `(van_id, loop_index, valid_date)` — no plan.** `V6_14 uq_van_manifest_van_loop_date` + `lockByVanLoopDate`/`findByVanIdAndLoopIndexAndValidDate` (used in 10+ places: telemetry, custody, handoff, recovery, driver app) all assume **one plan per van per day**. On a re-plan, van ids + loop indices repeat, so `lockOrCreate` **reuses the prior plan's manifest row** (whose `route_plan_id` points at the now-superseded plan). Binds pile onto it; the live plan's manifests stay empty.
-  - **Decision:** the `(van,loop,date)` key is *intentional* for the nightly one-plan-a-day model and pervasive — making manifests plan-scoped would touch the whole run-time surface. **Not changed in production code.** For the override path the real system must decide: migrate in-flight manifests to the new revision, or scope manifests by plan. **Open design question — `docs/M6` TODO.**
-  - **Demo-only mitigation:** `DemoExecutionService.resetDay(cityId,date)` wipes the day's manifests/items/handoffs/live-status (across all plan revisions) at the start of every `run-day`, so each run binds fresh against the current plan. (Real custody is append-only — this is demo glue, not a production fix.)
-- **Verified:** Run1 `bound=45`; Re-prepare→Run2 `bound=45`, **all 45 items on the new APPROVED plan, 0 on superseded**.
-- [ ] (a) cache-by-plan-id ported to `f-m6-design`
-- [ ] (b) intraday-override manifest ownership design decided + implemented
+  - **Decision (RESOLVED 2026-06-23 — Option B + PLANNED reconciliation, `M6-D-022`):** keep the `(van,loop,date)` key (it is the *physical* "one van/loop/day" identity; re-keying by plan would orphan in-custody parcels). Instead `route_plan_id` is made **mutable** and `VanManifestService.reconcileToLivePlan(cityId,date)` runs inside `approve`/`override`: re-points the day's manifests to the live plan, re-routes **PLANNED** items against the new plan, **keeps** loaded items whose stop survives, **escalates** (`LOOP_OVERFLOW`, frozen) loaded items whose stop vanished. `lockOrCreate` also re-points lazily as a race backstop. No-op on the common path (plans finalized before binding starts). Full stop-by-stop re-route of *loaded* vans is deferred (freeze-and-escalate in v1). See `docs/M6/M6-ROUTING-DESIGN.md §10.1`.
+  - **Demo-only mitigation (still on demo branch):** `DemoExecutionService.resetDay(cityId,date)` wipes the day's manifests/items/handoffs/live-status at the start of every `run-day`. (Now redundant with the real reconciliation, but harmless for the compressed-time demo where the same date is replayed many times.)
+- **Verified:** Run1 `bound=45`; Re-prepare→Run2 `bound=45`, **all 45 items on the new APPROVED plan, 0 on superseded**. Production reconciliation covered by `VanManifestServiceImplTest.reconcileToLivePlan_*` (repoint + reroute PLANNED + keep/escalate loaded).
+- [x] (a) cache-by-plan-id ported to `f-m6-design` (2026-06-22)
+- [x] (b) intraday-override manifest ownership **decided + implemented** (2026-06-23, Option B + PLANNED reconciliation, `M6-D-022`)
 
 ### 0b. Demo feeder drew DAs from all cron rows, incl. drop-and-flag-deferred vertices
 - **File:** `routing/.../demo/DemoExecutionService.feedParcels` (demo-only).
@@ -34,7 +34,7 @@ Symptom in the demo: prepare → run works; **Re-prepare → run gives `bound=0`
 - **Fix applied:** `setTrustedPackages("*")` (trust-all — the documented escape hatch for an in-house monolith; the `trustedPackages()` helper updated to match). After the fix, M6 binding worked (bound=30) and cron consumers stopped DLQ-ing.
 - **Why CARRY OVER:** this is a `common`-module bug that disables RabbitMQ consumption across the whole platform on any real broker — not demo-specific.
 - **Follow-up:** if package-scoped trust is wanted later, either enumerate exact package names, or switch to the converter's `DefaultJackson2JavaTypeMapper` (which supports `com.oneday.*` patterns) instead of `DefaultClassMapper`.
-- [ ] ported to `f-m6-design`
+- [x] ported to `f-m6-design` (2026-06-22)
 - [ ] real-broker integration test (publish→consume one event per stream) added
 
 ### 2. `grid` `HexDemandSnapshotRepository.countByHexIdInAndSnapshotDate`
