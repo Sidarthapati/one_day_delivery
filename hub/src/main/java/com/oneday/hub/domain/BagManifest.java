@@ -29,10 +29,20 @@ public class BagManifest {
     @Column(updatable = false, nullable = false)
     private UUID id;
 
+    // References either flight_bag(id) (OUTBOUND) or delivery_bag(id) (INBOUND) — direction says which.
     @Column(name = "bag_id", nullable = false, updatable = false)
     private UUID bagId;
 
-    @Column(name = "flight_no", nullable = false, length = 20, updatable = false)
+    @Enumerated(EnumType.STRING)
+    @Column(name = "direction", nullable = false, length = 10, updatable = false)
+    private SortDirection direction;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "manifest_kind", nullable = false, length = 16, updatable = false)
+    private ManifestKind manifestKind;
+
+    // Null for an INBOUND load-list (no flight); set for an OUTBOUND flight manifest.
+    @Column(name = "flight_no", length = 20, updatable = false)
     private String flightNo;
 
     @Column(name = "parcel_count", nullable = false, updatable = false)

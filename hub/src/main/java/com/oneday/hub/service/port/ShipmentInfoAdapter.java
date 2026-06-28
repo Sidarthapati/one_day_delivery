@@ -32,6 +32,7 @@ class ShipmentInfoAdapter implements ShipmentInfoPort {
                 s.originCity(),
                 s.destCity(),
                 s.destPincode(),
+                s.destTileId(),
                 s.slaDeadline());
     }
 }

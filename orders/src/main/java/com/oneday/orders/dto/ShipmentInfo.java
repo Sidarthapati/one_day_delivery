@@ -25,5 +25,6 @@ public record ShipmentInfo(
         String originCity,
         String destCity,
         String destPincode,
+        UUID destTileId,
         Instant slaDeadline) {
 }

@@ -45,6 +45,16 @@ public class DeliveryBagItem {
     @Column(name = "stand_id")
     private UUID standId;
 
+    // The delivery bag this parcel was staged into (PR #2, M7-D-012) + the ladder outputs that picked it.
+    @Column(name = "delivery_bag_id")
+    private UUID deliveryBagId;
+
+    @Column(name = "da_territory_id")
+    private UUID daTerritoryId;
+
+    @Column(name = "route_plan_id")
+    private UUID routePlanId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "drop_type", nullable = false, length = 16, updatable = false)
     private com.oneday.common.domain.enums.DropType dropType;

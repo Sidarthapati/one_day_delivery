@@ -5,11 +5,14 @@ import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.events.hub.*;
 import com.oneday.hub.domain.ArrivalMode;
 import com.oneday.hub.domain.BagManifest;
+import com.oneday.hub.domain.DeliveryBag;
 import com.oneday.hub.domain.DiscrepancyType;
 import com.oneday.hub.domain.FlightBag;
 import com.oneday.hub.domain.SortDirection;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -54,6 +57,41 @@ public class HubEventProducer {
                                    ArrivalMode arrivalMode, DiscrepancyType discrepancyType) {
         publish(new HubDiscrepancyEvent(shipmentId, cityId, hubId,
                 arrivalMode.name(), discrepancyType.name()));
+    }
+
+    /** BAG_CREATED (INBOUND): a delivery bag was opened lazily for a route/territory on a stand (§8.1). */
+    public void emitDeliveryBagCreated(DeliveryBag bag, String standNo) {
+        publish(new DeliveryBagCreatedEvent(bag.getId(), bag.getCityId(), bag.getHubId(),
+                bag.getBagKind().name(), bag.getRoutePlanId(), bag.getLoopId(), bag.getDaTerritoryId(),
+                bag.getBagDate(), standNo));
+    }
+
+    /** BAG_SEALED (INBOUND): a delivery bag's load list is frozen (§8.1). */
+    public void emitDeliveryBagSealed(DeliveryBag bag, String standNo) {
+        publish(new BagSealedEvent(bag.getId(), null, null, standNo,
+                bag.getParcelCount(), bag.getWeightGrams()));
+    }
+
+    /**
+     * PARCEL_SORTED_FOR_DELIVERY → M6 binds the parcel to a loop (M7-D-002). The first six args are
+     * the M6-binder shape; the rest are additive (M6 ignores them). Emitted per DA_DELIVERY parcel.
+     */
+    public void emitParcelSortedForDelivery(UUID parcelId, UUID cityId, UUID destinationHexId,
+                                            LocalDate validDate, Instant sortedAt, Instant slaDeadline,
+                                            UUID daTerritoryId, UUID routePlanId, UUID loopId,
+                                            UUID deliveryBagId, String standNo) {
+        publish(new ParcelSortedForDeliveryEvent(parcelId, cityId, destinationHexId, validDate,
+                sortedAt, slaDeadline, daTerritoryId, routePlanId, loopId, deliveryBagId, standNo));
+    }
+
+    /** DEST_SORT_COMPLETE → M10: the parcel is staged on its delivery stand (§8.2). */
+    public void emitDestSortComplete(UUID parcelId, UUID cityId, UUID hubId, LocalDate wave, Instant completedAt) {
+        publish(new DestSortCompleteEvent(parcelId, cityId, hubId, wave, completedAt));
+    }
+
+    /** SAMECITY_OUTBOUND → M4/M10: an intra-city parcel skips the flight path (§12). */
+    public void emitSameCityOutbound(UUID shipmentId, UUID cityId, UUID hubId) {
+        publish(new SameCityOutboundEvent(shipmentId, cityId, hubId));
     }
 
     private void publish(HubEventPayload event) {

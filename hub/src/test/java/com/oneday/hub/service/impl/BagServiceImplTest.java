@@ -61,7 +61,7 @@ class BagServiceImplTest {
 
     private ShipmentInfoPort.ParcelInfo parcel(int weight) {
         return new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1", ShipmentState.ORIGIN_HUB_PROCESSING,
-                weight, DropType.DA_DELIVERY, DeliveryType.INTERCITY, "DELHI", "MUMBAI", "400001", null);
+                weight, DropType.DA_DELIVERY, DeliveryType.INTERCITY, "DELHI", "MUMBAI", "400001", null, null);
     }
 
     private BagService.OpenBagCommand openCmd() {
@@ -78,7 +78,7 @@ class BagServiceImplTest {
     void openBag_lazyCreate_allocatesFreeStand_andEmitsBagCreated() {
         when(flightBagRepository.findByFlightNoAndFlightDateAndDestHubAndStatus(
                 "ODMUMBAI18", LocalDate.of(2026, 6, 27), "MUMBAI", BagStatus.OPEN)).thenReturn(Optional.empty());
-        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, BagStatus.OPEN))
+        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, "AIRPORT_DOCK"))
                 .thenReturn(List.of(freeStand()));
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -93,7 +93,7 @@ class BagServiceImplTest {
     void openBag_noFreeStand_escalates() {
         when(flightBagRepository.findByFlightNoAndFlightDateAndDestHubAndStatus(any(), any(), any(), any()))
                 .thenReturn(Optional.empty());
-        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, BagStatus.OPEN))
+        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, "AIRPORT_DOCK"))
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> service().openBag(openCmd()))

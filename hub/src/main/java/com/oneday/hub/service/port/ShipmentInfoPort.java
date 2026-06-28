@@ -29,6 +29,7 @@ public interface ShipmentInfoPort {
             String originCity,
             String destCity,
             String destPincode,
+            UUID destTileId,
             Instant slaDeadline) {
     }
 }
