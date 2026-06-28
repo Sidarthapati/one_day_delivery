@@ -71,14 +71,14 @@ class BagServiceImplTest {
 
     private Stand freeStand() {
         return Stand.builder().id(standId).cityId(hubId).hubId(hubId).standNo("A-2")
-                .kind(StandKind.FLIGHT_BAG).capacity(200).status(StandStatus.OPEN).build();
+                .capacity(200).status(StandStatus.OPEN).build();
     }
 
     @Test
     void openBag_lazyCreate_allocatesFreeStand_andEmitsBagCreated() {
         when(flightBagRepository.findByFlightNoAndFlightDateAndDestHubAndStatus(
                 "ODMUMBAI18", LocalDate.of(2026, 6, 27), "MUMBAI", BagStatus.OPEN)).thenReturn(Optional.empty());
-        when(standRepository.findFreeStands(hubId, StandKind.FLIGHT_BAG, StandStatus.OPEN, BagStatus.OPEN))
+        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, BagStatus.OPEN))
                 .thenReturn(List.of(freeStand()));
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -93,7 +93,7 @@ class BagServiceImplTest {
     void openBag_noFreeStand_escalates() {
         when(flightBagRepository.findByFlightNoAndFlightDateAndDestHubAndStatus(any(), any(), any(), any()))
                 .thenReturn(Optional.empty());
-        when(standRepository.findFreeStands(hubId, StandKind.FLIGHT_BAG, StandStatus.OPEN, BagStatus.OPEN))
+        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, BagStatus.OPEN))
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> service().openBag(openCmd()))
@@ -110,7 +110,7 @@ class BagServiceImplTest {
         FlightBag bag = service().openBag(openCmd());
 
         assertThat(bag).isSameAs(existing);
-        verify(standRepository, never()).findFreeStands(any(), any(), any(), any());
+        verify(standRepository, never()).findFreeStands(any(), any(), any());
         verify(flightBagRepository, never()).save(any());
         verify(eventProducer, never()).emitBagCreated(any(), any());
     }
@@ -150,7 +150,7 @@ class BagServiceImplTest {
         when(flightBagRepository.findById(bagId)).thenReturn(Optional.of(bag));
         when(standRepository.findById(newStandId)).thenReturn(Optional.of(
                 Stand.builder().id(newStandId).cityId(hubId).hubId(hubId).standNo("A-3")
-                        .kind(StandKind.FLIGHT_BAG).capacity(200).status(StandStatus.OPEN).build()));
+                        .capacity(200).status(StandStatus.OPEN).build()));
         when(barcodePort.buildBagLabel("ODMUMBAI18", "A-3")).thenReturn("ODMUMBAI18|A-3");
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -181,7 +181,7 @@ class BagServiceImplTest {
         });
         when(standRepository.findById(standId)).thenReturn(Optional.of(
                 Stand.builder().id(standId).cityId(hubId).hubId(hubId).standNo("A-2")
-                        .kind(StandKind.FLIGHT_BAG).capacity(200).status(StandStatus.OPEN).build()));
+                        .capacity(200).status(StandStatus.OPEN).build()));
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         BagService.SealResult result = service().seal(bagId);

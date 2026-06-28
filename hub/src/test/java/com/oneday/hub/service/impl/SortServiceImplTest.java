@@ -49,7 +49,7 @@ class SortServiceImplTest {
         UUID bagId = UUID.randomUUID();
         UUID standId = UUID.randomUUID();
         Stand stand = Stand.builder().id(standId).cityId(hubId).hubId(hubId).standNo("A-3")
-                .kind(StandKind.FLIGHT_BAG).capacity(200).status(StandStatus.OPEN).build();
+                .capacity(200).status(StandStatus.OPEN).build();
         FlightBag bag = FlightBag.builder().id(bagId).cityId(hubId).hubId(hubId).flightNo("ODCHENNAI12")
                 .flightDate(LocalDate.of(2026, 6, 28)).originHub("DELHI").destHub("CHENNAI")
                 .currentStandId(standId).status(BagStatus.OPEN).parcelCount(0).weightGrams(0).build();

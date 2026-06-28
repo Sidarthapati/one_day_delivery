@@ -26,7 +26,7 @@ public class HubReceivingController {
     @PostMapping("/receive")
     public ResponseEntity<ReceiveResponse> receive(@PathVariable UUID hubId,
                                                    @RequestBody @Valid ReceiveRequest request) {
-        var result = receivingService.receive(hubId, request.shipmentRef(), request.mode());
+        var result = receivingService.receive(hubId, request.shipmentRef());
         return ResponseEntity.status(HttpStatus.CREATED).body(ReceiveResponse.from(result));
     }
 
@@ -34,7 +34,7 @@ public class HubReceivingController {
     public ResponseEntity<List<ReceiveResponse>> receiveBatch(@PathVariable UUID hubId,
                                                               @RequestBody @Valid BatchReceiveRequest request) {
         List<ReceiveResponse> out = request.shipmentRefs().stream()
-                .map(ref -> ReceiveResponse.from(receivingService.receive(hubId, ref, request.mode())))
+                .map(ref -> ReceiveResponse.from(receivingService.receive(hubId, ref)))
                 .toList();
         return ResponseEntity.status(HttpStatus.CREATED).body(out);
     }

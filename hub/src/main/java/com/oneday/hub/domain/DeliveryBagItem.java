@@ -11,15 +11,16 @@ import org.hibernate.annotations.UuidGenerator;
 import java.time.Instant;
 import java.util.UUID;
 
-// The destination-hub handoff buffer (§8.2). Populated in PR #2. Status-mutable.
+// The destination mirror of bag_item: "parcel X is in delivery bag Y, on stand Z" (§8.2). The
+// delivery_bag unit + delivery_bag_id FK land in PR #2. Status-mutable.
 @Entity
-@Table(name = "delivery_staging")
+@Table(name = "delivery_bag_item")
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class DeliveryStaging {
+public class DeliveryBagItem {
 
     @Id
     @UuidGenerator
@@ -53,7 +54,7 @@ public class DeliveryStaging {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
-    private StagingStatus status;
+    private DeliveryBagItemStatus status;
 
     @Column(name = "staged_at", nullable = false, updatable = false)
     private Instant stagedAt;

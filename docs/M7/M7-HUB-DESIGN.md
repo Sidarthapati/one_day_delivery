@@ -238,7 +238,7 @@ A hub is a **cross-dock**: goods arrive, are re-sorted by outbound destination, 
 
 ### Engine & model
 
-**M7-D-001 — One symmetric, direction-parametrised sort engine with *dynamic* stand assignment.** Origin (outbound, consolidate to flight bag) and destination (inbound, de-consolidate to delivery/route bag) run the same engine, differing only in the sort key (`dest_hub + flight` vs the `dest_hex → DA territory → delivery route` ladder, `M7-D-012`) and the consolidation unit (flight bag vs delivery/route bag). A parcel's stand is **not** read from a pre-seeded `destination → stand` directory. The stand is the stand of the **open consolidation unit** for that key — the flight bag (resp. delivery/route bag) — which is allocated a **free stand from the hub's physical pool when it is first opened**, and freed on dispatch/load. The open `flight_bag` / `delivery_bag` row *is* the live directory ("which stand is the Chennai bag on right now?" = "find the open Chennai bag → its `current_stand_id`"). Only the physical stand pool is seeded (real shelves), never the mapping. One `stand` pool, two mirrored consolidation tables (origin `flight_bag` + `bag_item`; destination `delivery_bag` + `delivery_staging`), one manifest model — the same dynamic pattern both directions. Resolves PRD §4.4 symmetry. *(Rationale: for a low-volume manual hub, dynamic allocation avoids a stale pre-mapped directory and buys nothing less — the operator scans every box and reads the stand off the screen regardless. A static directory is the high-volume automated-sorter pattern, deliberately not adopted here.)*
+**M7-D-001 — One symmetric, direction-parametrised sort engine with *dynamic* stand assignment.** Origin (outbound, consolidate to flight bag) and destination (inbound, de-consolidate to delivery/route bag) run the same engine, differing only in the sort key (`dest_hub + flight` vs the `dest_hex → DA territory → delivery route` ladder, `M7-D-012`) and the consolidation unit (flight bag vs delivery/route bag). A parcel's stand is **not** read from a pre-seeded `destination → stand` directory. The stand is the stand of the **open consolidation unit** for that key — the flight bag (resp. delivery/route bag) — which is allocated a **free stand from the hub's physical pool when it is first opened**, and freed on dispatch/load. The open `flight_bag` / `delivery_bag` row *is* the live directory ("which stand is the Chennai bag on right now?" = "find the open Chennai bag → its `current_stand_id`"). Only the physical stand pool is seeded (real shelves), never the mapping. One `stand` pool (stands have **no flight/delivery `kind`** — a stand is a bare physical spot whose role is whatever bag currently sits on it), two mirrored consolidation tables (origin `flight_bag` + `bag_item`; destination `delivery_bag` + `delivery_bag_item`), one manifest model — the same dynamic pattern both directions. Resolves PRD §4.4 symmetry. *(Rationale: for a low-volume manual hub, dynamic allocation avoids a stale pre-mapped directory and buys nothing less — the operator scans every box and reads the stand off the screen regardless. A static directory is the high-volume automated-sorter pattern, deliberately not adopted here.)*
 
 **M7-D-002 — M7 is the real backing for M6's `HubSortPort`.** The deliver-side feed M6 currently reads from its buffer stub is produced by M7: on destination-sort completion per parcel, M7 emits a per-parcel `PARCEL_SORTED_FOR_DELIVERY` hub event carrying `(parcelId, cityId, destinationHexId, validDate, sortedAt, slaDeadline)` — the exact shape of the provisional `ParcelSortedForDeliveryEvent` M6 already consumes. Building M7 swaps the stub for the real feed with **no change to M6's binder**.
 
@@ -259,7 +259,7 @@ A hub is a **cross-dock**: goods arrive, are re-sorted by outbound destination, 
 
 **M7-D-004 — In the M6 model, M7 does NOT hand parcels to the drop van; it stages them. M6 loads.** The legacy M5 design (v1.1) has M7 emit `DROP_VAN_HANDOFF` to drive `HANDED_TO_DROP_VAN`. The newer M6 design makes the van a mini-hub that owns its own load: M6 binds the parcel to a loop and the hub operator records the `VAN_LOAD` scan (`M6-D-014`). **This doc adopts the M6 model.** M7's job ends at "sorted for delivery, staged on the delivery stand"; `HANDED_TO_DROP_VAN` is driven by M6's `VAN_LOAD` scan, not an M7 event. `HubEventType.DROP_VAN_HANDOFF` is therefore **deprecated** (kept in the enum for back-compat; not emitted by M7 v1). *To confirm with M5 + M6 owners (Q5).*
 
-**M7-D-005 — The van-unload scan IS the hub in-scan; M7 does not double-scan.** M6 originates `VAN_UNLOAD` for first-mile collections arriving at the dock (`M6-D-014`), which already drives `HANDED_TO_PICKUP_VAN → AT_ORIGIN_HUB`. M8's `HUB_ORIGIN_IN` describes the *same* physical transition. **One scan, not two:** for van arrivals M7 begins sortation off the `AT_ORIGIN_HUB` state (consumed from M4 / the scan ledger), and reserves `HUB_ORIGIN_IN`/`SELF_DROP_ACCEPTED` for **non-van** arrivals (self-drop). This avoids a duplicate ledger entry for the most common path. *Confirm the single-scan rule with M8 (Q6).*
+**M7-D-005 — The van-unload scan IS the hub in-scan; M7 does not double-scan.** M6 originates `VAN_UNLOAD` for first-mile collections arriving at the dock (`M6-D-014`), which already drives `HANDED_TO_PICKUP_VAN → AT_ORIGIN_HUB`. M8's `HUB_ORIGIN_IN` describes the *same* physical transition. **One scan, not two:** for van arrivals M7 begins sortation off the `AT_ORIGIN_HUB` state (consumed from M4 / the scan ledger), and reserves `HUB_ORIGIN_IN`/`SELF_DROP_ACCEPTED` for **non-van** arrivals (self-drop). This avoids a duplicate ledger entry for the most common path. *Confirm the single-scan rule with M8 (Q6).* **Corollary — the arrival mode is derived, not input:** since the dock already reads the parcel's M4 state, M7 *derives* VAN / SELF_DROP / AIRPORT from that state (`HANDED_TO_PICKUP_VAN`/`AT_ORIGIN_HUB` → VAN, `AWAITING_SELF_DROP` → SELF_DROP, `LANDED`/`DISPATCHED_TO_HUB`/`AT_DEST_HUB` → AIRPORT) rather than reading it off the barcode or asking the operator. The `receive` API carries no `mode` field.
 
 ### Bags, manifests, reschedule
 
@@ -315,7 +315,9 @@ M7 drives the **processing** transitions (`*_HUB_PROCESSING`, `IN_TAKEOFF_BAG`, 
 
 A parcel enters the hub by one of three routes. M7's dock reconciles each against an expectation and takes custody.
 
-| Mode | Source | Scan / signal | M4 result | M7 action |
+> **The arrival mode is derived, never declared (`M7-D-005`).** The barcode is dumb — it carries the parcel ID + routing data, *not* how it arrived. The operator doesn't pick a mode either. M7 **derives** the mode from the parcel's current M4 state (the leg it just finished), which it already looks up for weight: `HANDED_TO_PICKUP_VAN` (or `AT_ORIGIN_HUB`, if M6 already in-scanned it) → **VAN**; `AWAITING_SELF_DROP` → **SELF_DROP**; `LANDED` / `DISPATCHED_TO_HUB` / `AT_DEST_HUB` → **AIRPORT**. These prior states are mutually exclusive, so the derivation is unambiguous; the scan *station* (van dock vs counter vs break-bag bench) is at most a corroborating hint for reconciliation.
+
+| Mode (derived) | Source | Scan / signal | M4 result | M7 action |
 |------|--------|---------------|-----------|-----------|
 | **Van unload** (first-mile) | M6 drop at dock | `VAN_UNLOAD` (M6-originated, `M7-D-005`) | `→ AT_ORIGIN_HUB` | reconcile vs van manifest; begin **outbound** sort |
 | **Self-drop** (first-mile) | customer brings to hub | `SELF_DROP_ACCEPTED` (M8) | `AWAITING_SELF_DROP → AT_ORIGIN_HUB` | begin **outbound** sort |
@@ -334,7 +336,7 @@ The origin-hub path: consolidate a first-mile parcel toward its flight.
 **7.1 Resolve flight + stand.** On `AT_ORIGIN_HUB`:
 1. Read the barcode sort key (`dest_hub`, `sort_key`) — self-describing (`M7-D-003`).
 2. Resolve the **assigned flight** via `FlightAssignmentPort` (M9; stub `M7-D-009`) — the earliest flight to `dest_hub` satisfying the parcel's SLA and the bag cutoff.
-3. **Open (or find) the flight bag** for `(flight, date, dest_hub)`. On first open the bag is allocated a **free stand from the hub's `FLIGHT_BAG` pool** (dynamic assignment, `M7-D-001`); subsequent parcels for the same flight reuse that bag and its stand. The bag's stand is the parcel's stand. Emit `STAND_ASSIGNED` (→ operator console, M8 if relabel needed). Transition `→ ORIGIN_HUB_PROCESSING`.
+3. **Open (or find) the flight bag** for `(flight, date, dest_hub)`. On first open the bag is allocated a **free stand from the hub's shared stand pool** (dynamic assignment, `M7-D-001`; the pool has no flight/delivery kind — `zone` is a soft preference so flight bags fill the airport-dock shelves first); subsequent parcels for the same flight reuse that bag and its stand. The bag's stand is the parcel's stand. Emit `STAND_ASSIGNED` (→ operator console, M8 if relabel needed). Transition `→ ORIGIN_HUB_PROCESSING`.
 
 **7.2 Build the flight bag.** Parcels for the same `(flight_no, flight_date, dest_hub)` accumulate into one **flight bag** sited on the resolved stand:
 - Bag created lazily on first parcel for that flight → `BAG_CREATED` (carries `bag_id`, flight, stand). Lifecycle `OPEN → SEALED → DISPATCHED → HANDED_OVER`.
@@ -360,7 +362,7 @@ The destination-hub path: break a landed parcel down toward last-mile (mirror of
    - `dest_hex` ← label `sort_key` (M3 serviceability fallback, off the hot path / cached).
    - `dest_hex → DA territory` ← `TerritoryPort` (M3) — always resolvable.
    - `DA territory → delivery route (loop)` ← `DeliveryRoutePort` (M6's published nightly plan) — empty if no van runs that city/day.
-3. **Open (or find) the delivery bag** for the resolved key and stage the parcel into it — a free **`DELIVERY_STAGING`** stand is allocated from the pool on first open (dynamic, `M7-D-001`):
+3. **Open (or find) the delivery bag** for the resolved key and stage the parcel into it — a free stand is allocated from the same shared pool on first open (dynamic, `M7-D-001`; `zone` preference fills the delivery-dock shelves first):
    - **Route present → `ROUTE` bag**, keyed `(route_plan/loop, date)`. ~One stand per loop; a van loads the whole bag. **Preferred.**
    - **No route → `DA_TERRITORY` bag**, keyed `(da_territory, date)`. The DA hub-collects their bag. If active territories exceed the delivery-stand pool, adjacent territories are grouped into a **zone bag** (M3 zone) to fit; if still short → overload (§11). Never per-hex.
 
@@ -525,10 +527,11 @@ City-scoped auth (M1): hub operator (own hub), station manager (own city), admin
 ```
 -- No sort_plan / sort_plan_entry: stand assignment is dynamic (M7-D-001). The physical stand pool
 -- is the only seeded config. Origin uses flight_bag + bag_item; destination uses delivery_bag +
--- delivery_staging — same dynamic pattern, mirrored. The open flight_bag / delivery_bag row is the
+-- delivery_bag_item — same dynamic pattern, mirrored. The open flight_bag / delivery_bag row is the
 -- live directory for its direction.
-stand                  id, city_id, hub_id, stand_no, zone, kind(FLIGHT_BAG|DELIVERY_STAGING),
-                       capacity, status(OPEN|FULL|CLOSED)
+stand                  id, city_id, hub_id, stand_no, zone, capacity, status(OPEN|OCCUPIED|CLOSED)
+                       -- NO kind: a stand is a bare physical spot; its role = whatever bag sits on it
+                       -- (M7-D-001). zone is a soft floor-area hint (AIRPORT_DOCK | DELIVERY_DOCK).
 -- ── origin (outbound) ──
 flight_bag             id, city_id, hub_id, flight_no, flight_date, origin_hub, dest_hub,
                        current_stand_id, status(OPEN|SEALED|DISPATCHED|HANDED_OVER),
@@ -539,9 +542,9 @@ delivery_bag           id, city_id, hub_id, bag_kind(ROUTE|DA_TERRITORY|ZONE), b
                        route_plan_id, loop_id, da_territory_id, zone_id, current_stand_id,
                        status(OPEN|SEALED|LOADED|HANDED_OVER), parcel_count, weight_grams,
                        manifest_id, sealed_at, loaded_at                                    [status-mutable; contents append-only]
-delivery_staging       id, parcel_id, city_id, hub_id, dest_hex_id, da_territory_id, route_plan_id,
+delivery_bag_item      id, parcel_id, city_id, hub_id, dest_hex_id, da_territory_id, route_plan_id,
                        delivery_bag_id, stand_id, drop_type, staged_at,
-                       status(STAGED|LOADED|ON_SHELF|COLLECTED)                              [append-only membership of a delivery_bag]
+                       status(STAGED|LOADED|ON_SHELF|COLLECTED)                              [membership of a delivery_bag — mirror of bag_item]
 -- ── shared ──
 bag_manifest           id, bag_id, direction, manifest_kind, generated_at, parcels(jsonb), supersedes_id  [append-only, M7-D-008; flight manifest or route load-list]
 stand_reassignment_audit id, bag_id, old_stand_id, new_stand_id, actor_id, reason, created_at [append-only]

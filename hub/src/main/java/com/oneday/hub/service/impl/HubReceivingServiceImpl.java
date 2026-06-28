@@ -42,13 +42,16 @@ class HubReceivingServiceImpl implements HubReceivingService {
 
     @Override
     @Transactional
-    public ReceiveResult receive(UUID hubId, String shipmentRef, ArrivalMode mode) {
+    public ReceiveResult receive(UUID hubId, String shipmentRef) {
+        ShipmentInfoPort.ParcelInfo parcel = shipmentInfoPort.lookup(shipmentRef)
+                .orElseThrow(() -> new ParcelNotFoundException(shipmentRef));
+
+        // The barcode never carries the arrival mode — we derive it from the leg the parcel just
+        // finished (its M4 state). VAN vs SELF_DROP vs AIRPORT map 1:1 to mutually-exclusive states.
+        ArrivalMode mode = ArrivalMode.fromState(parcel.state());
         if (mode == ArrivalMode.AIRPORT) {
             throw new UnsupportedArrivalModeException(mode);   // destination hub is PR #2
         }
-
-        ShipmentInfoPort.ParcelInfo parcel = shipmentInfoPort.lookup(shipmentRef)
-                .orElseThrow(() -> new ParcelNotFoundException(shipmentRef));
 
         Instant now = clock.instant();
         InboundReceipt receipt = inboundReceiptRepository.save(InboundReceipt.builder()

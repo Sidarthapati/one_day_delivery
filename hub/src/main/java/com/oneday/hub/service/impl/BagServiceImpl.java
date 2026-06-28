@@ -65,10 +65,10 @@ class BagServiceImpl implements BagService {
     }
 
     private FlightBag createBag(OpenBagCommand cmd) {
-        // Dynamic stand assignment: grab the next free shelf from the hub's flight-bag pool. The
+        // Dynamic stand assignment: grab the next free shelf from the hub's shared stand pool. The
         // stand becomes "this flight's bag" only now — nothing is pre-mapped. Freed again on dispatch.
         Stand stand = standRepository
-                .findFreeStands(cmd.hubId(), StandKind.FLIGHT_BAG, StandStatus.OPEN, BagStatus.OPEN)
+                .findFreeStands(cmd.hubId(), StandStatus.OPEN, BagStatus.OPEN)
                 .stream().findFirst()
                 .orElseThrow(() -> new NoFreeStandException(cmd.hubId()));
 

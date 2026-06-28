@@ -50,6 +50,11 @@ class HubReceivingServiceImplTest {
                 1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY, "DELHI", "MUMBAI", "400001", null);
     }
 
+    private ShipmentInfoPort.ParcelInfo landedParcel() {
+        return new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1", ShipmentState.LANDED,
+                1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY, "DELHI", "MUMBAI", "400001", null);
+    }
+
     @Test
     void receive_van_recordsReceipt_andSorts() {
         ShipmentInfoPort.ParcelInfo parcel = parcel();
@@ -65,7 +70,7 @@ class HubReceivingServiceImplTest {
                 Instant.parse("2026-06-27T12:00:00Z"), Instant.parse("2026-06-27T14:00:00Z"));
         when(sortService.resolveOutbound(eq(hubId), eq(parcel), any())).thenReturn(sort);
 
-        HubReceivingService.ReceiveResult result = service().receive(hubId, "BLR-1", ArrivalMode.VAN);
+        HubReceivingService.ReceiveResult result = service().receive(hubId, "BLR-1");
 
         assertThat(result.reconciled()).isTrue();
         assertThat(result.sort().standNo()).isEqualTo("A-2");
@@ -77,7 +82,9 @@ class HubReceivingServiceImplTest {
 
     @Test
     void receive_airport_isUnsupportedInPr1() {
-        assertThatThrownBy(() -> service().receive(hubId, "BLR-1", ArrivalMode.AIRPORT))
+        // A landed parcel derives mode=AIRPORT (destination hub), which PR #1 doesn't handle yet.
+        when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(landedParcel()));
+        assertThatThrownBy(() -> service().receive(hubId, "BLR-1"))
                 .isInstanceOf(UnsupportedArrivalModeException.class);
         verifyNoInteractions(sortService);
     }
@@ -85,7 +92,7 @@ class HubReceivingServiceImplTest {
     @Test
     void receive_unknownParcel_throws() {
         when(shipmentInfoPort.lookup("NOPE")).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service().receive(hubId, "NOPE", ArrivalMode.SELF_DROP))
+        assertThatThrownBy(() -> service().receive(hubId, "NOPE"))
                 .isInstanceOf(ParcelNotFoundException.class);
     }
 }

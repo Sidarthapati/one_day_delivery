@@ -25,6 +25,11 @@ class HubGlobalExceptionHandler {
         return problem(HttpStatus.BAD_REQUEST, "Unsupported request", ex);
     }
 
+    @ExceptionHandler(UndeterminedArrivalException.class)
+    ProblemDetail handleUndeterminedArrival(UndeterminedArrivalException ex) {
+        return problem(HttpStatus.CONFLICT, "Conflict", ex);
+    }
+
     private ProblemDetail problem(HttpStatus status, String title, RuntimeException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(status);
         pd.setTitle(title);

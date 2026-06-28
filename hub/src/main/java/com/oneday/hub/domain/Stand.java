@@ -11,7 +11,9 @@ import org.hibernate.annotations.UuidGenerator;
 import java.time.Instant;
 import java.util.UUID;
 
-// A numbered physical spot on the hub floor (§14.3). Status-mutable.
+// A numbered physical spot on the hub floor (§14.3). Pure physical entity — NO flight/delivery
+// "kind"; its role is whatever bag currently sits on it (M7-D-001). `zone` is a soft floor-area hint.
+// Status-mutable.
 @Entity
 @Table(name = "stand")
 @Getter
@@ -37,10 +39,6 @@ public class Stand {
 
     @Column(name = "zone", length = 32)
     private String zone;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "kind", nullable = false, length = 20, updatable = false)
-    private StandKind kind;
 
     @Column(name = "capacity", nullable = false)
     private int capacity;
