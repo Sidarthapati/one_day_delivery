@@ -20,7 +20,11 @@ public sealed interface HubEventPayload extends DomainEvent permits
         BagCreatedEvent,
         BagSealedEvent,
         ManifestGeneratedEvent,
-        HubDiscrepancyEvent {
+        HubDiscrepancyEvent,
+        ParcelSortedForDeliveryEvent,
+        DeliveryBagCreatedEvent,
+        DestSortCompleteEvent,
+        SameCityOutboundEvent {
 
     // Serialized into the JSON body (not just the routing key) so the tolerant
     // com.oneday.common.kafka.events.HubEvent reader can recover the discriminator. The concrete

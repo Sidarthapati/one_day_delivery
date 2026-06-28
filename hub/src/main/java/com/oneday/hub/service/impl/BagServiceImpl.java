@@ -68,7 +68,7 @@ class BagServiceImpl implements BagService {
         // Dynamic stand assignment: grab the next free shelf from the hub's shared stand pool. The
         // stand becomes "this flight's bag" only now — nothing is pre-mapped. Freed again on dispatch.
         Stand stand = standRepository
-                .findFreeStands(cmd.hubId(), StandStatus.OPEN, BagStatus.OPEN)
+                .findFreeStands(cmd.hubId(), StandStatus.OPEN, "AIRPORT_DOCK")
                 .stream().findFirst()
                 .orElseThrow(() -> new NoFreeStandException(cmd.hubId()));
 
@@ -152,6 +152,8 @@ class BagServiceImpl implements BagService {
 
         BagManifest manifest = bagManifestRepository.save(BagManifest.builder()
                 .bagId(bagId)
+                .direction(SortDirection.OUTBOUND)
+                .manifestKind(ManifestKind.FLIGHT)
                 .flightNo(bag.getFlightNo())
                 .parcelCount(items.size())
                 .weightGrams(items.stream().mapToInt(BagItem::getWeightGrams).sum())
