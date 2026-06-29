@@ -569,7 +569,7 @@
     const sumEl = document.getElementById(kind + '-booking-summary');
     if (status >= 200 && status < 300 && data && data.shipment_ref) {
       recentBookings.unshift({
-        ref: data.shipment_ref, state: data.state_label || data.state,
+        ref: data.shipment_ref, state: data.state_label || data.state, rawState: data.state,
         // Use the server's real customer type (B2C/C2C/B2B). The form 'kind' is only a fallback —
         // it would mislabel a C2C booking (which reuses the b2c form) as B2C.
         type: (data.customer_type || kind).toUpperCase(),
@@ -601,6 +601,7 @@
         recentBookings = data.map(s => ({
           ref: s.shipment_ref,
           state: s.state_label || s.state,
+          rawState: s.state,
           type: (s.customer_type || '').toUpperCase(),
           total: s.total_price_paise != null ? s.total_price_paise : null,
           by: currentUser.email,
@@ -610,24 +611,119 @@
     renderRecent();
   }
 
+  let bookingFilter = 'active';   // default: hide cancelled clutter
+  function setBookingFilter(v) { bookingFilter = v; renderRecent(); }
+
   function renderRecent() {
     const c = document.getElementById('recent-bookings');
     if (!recentBookings.length) { c.innerHTML = '<div class="empty-state">No bookings yet</div>'; return; }
-    c.innerHTML = `<table class="data-table">
+    const states = [...new Set(recentBookings.map(b => b.state))].sort();
+    const filtered = recentBookings.filter(b =>
+      bookingFilter === 'all' ? true
+        : bookingFilter === 'active' ? (b.rawState || b.state) !== 'CANCELLED'
+        : b.state === bookingFilter);
+    const filterCtl = `<div style="margin-bottom:.6rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+      <label class="muted" style="font-size:.85em">Filter by state</label>
+      <select onchange="setBookingFilter(this.value)" style="padding:.3rem .5rem;border:1px solid #cbd5e1;border-radius:.4rem;font-size:.85em">
+        <option value="active"${bookingFilter === 'active' ? ' selected' : ''}>Active (hide cancelled)</option>
+        <option value="all"${bookingFilter === 'all' ? ' selected' : ''}>All states (${recentBookings.length})</option>
+        ${states.map(s => `<option value="${esc(s)}"${bookingFilter === s ? ' selected' : ''}>${esc(s)}</option>`).join('')}
+      </select>
+      <span class="muted" style="font-size:.85em">showing ${filtered.length} of ${recentBookings.length}</span>
+    </div>`;
+    if (!filtered.length) { c.innerHTML = filterCtl + '<div class="empty-state">No bookings in this filter</div>'; return; }
+    c.innerHTML = filterCtl + `<table class="data-table">
       <thead><tr><th>Reference</th><th>Type</th><th>State</th><th>Total</th><th>Booked by</th><th></th></tr></thead>
-      <tbody>${recentBookings.map(b => {
-        const cancelled = b.state === 'CANCELLED';
+      <tbody>${filtered.map(b => {
+        const cancelled = (b.rawState || b.state) === 'CANCELLED';
+        // Status shortcut for shipments still awaiting/at pickup (BOOKED / PICKUP_ASSIGNED).
+        const pickupBtn = (b.state === 'BOOKED' || b.state === 'PICKUP_ASSIGNED')
+          ? `<button class="btn btn-sm btn-ghost" onclick="startPickup('${esc(b.ref)}')">Track</button> `
+          : '';
         const action = cancelled
           ? '<span class="muted">cancelled</span>'
-          : `<button class="btn btn-sm btn-danger" onclick="cancelMyBooking('${esc(b.ref)}','${esc(b.type)}',this)">Cancel</button>`;
+          : `${pickupBtn}<button class="btn btn-sm btn-danger" onclick="cancelMyBooking('${esc(b.ref)}','${esc(b.type)}',this)">Cancel</button>`;
+        const safeId = b.ref.replace(/[^A-Za-z0-9]/g, '_');
         return `<tr>
-        <td><strong>${esc(b.ref)}</strong></td>
+        <td><strong><a href="#" onclick="toggleBookingDetail('${esc(b.ref)}','${safeId}');return false"
+              style="color:#1d4ed8;text-decoration:none" title="View the DB record">▸ ${esc(b.ref)}</a></strong></td>
         <td><span class="badge badge-blue">${esc(b.type)}</span></td>
-        <td>${esc(b.state)}</td>
+        <td>${esc(b.state)}${b.da ? `<br><span class="muted" style="font-size:.85em">🚚 DA ${esc(b.da)}${b.otp ? ' · OTP ' + esc(b.otp) : ''}</span>` : ''}</td>
         <td>${b.total != null ? inr(b.total) : '—'}</td>
         <td class="muted">${esc(b.by)}</td>
         <td>${action}</td>
+      </tr>
+      <tr class="booking-detail-row" id="bk-detail-${safeId}" style="display:none">
+        <td colspan="6" style="background:#f8fafc;padding:0"></td>
       </tr>`; }).join('')}</tbody></table>`;
+  }
+
+  // Click a booking reference → fetch + reveal its full DB record (GET /api/v1/shipments/mine/{ref}).
+  async function toggleBookingDetail(ref, safeId) {
+    const row = document.getElementById('bk-detail-' + safeId);
+    if (!row) return;
+    const cell = row.firstElementChild;
+    if (row.style.display !== 'none') { row.style.display = 'none'; return; }   // collapse on second click
+    row.style.display = '';
+    cell.innerHTML = '<div class="muted" style="padding:.75rem 1rem">Loading record…</div>';
+    try {
+      const { status, data } = await orderApi('GET', `/api/v1/shipments/mine/${encodeURIComponent(ref)}`);
+      if (status < 200 || status >= 300 || !data) {
+        cell.innerHTML = `<div class="response error" style="margin:.5rem 1rem">Could not load ${esc(ref)} (HTTP ${status}).</div>`;
+        return;
+      }
+      cell.innerHTML = renderBookingDetail(data);
+    } catch (e) {
+      cell.innerHTML = `<div class="response error" style="margin:.5rem 1rem">${esc(String(e))}</div>`;
+    }
+  }
+
+  function renderBookingDetail(d) {
+    const v = x => (x == null || x === '') ? '<span class="muted">—</span>' : esc(String(x));
+    const money = x => x == null ? '<span class="muted">—</span>' : inr(x);
+    const kg = g => g == null ? '<span class="muted">—</span>' : (g / 1000).toFixed(2) + ' kg';
+    const dt = s => s ? new Date(s).toLocaleString('en-IN') : '<span class="muted">—</span>';
+    const geo = (la, lo) => (la != null && lo != null) ? `${(+la).toFixed(5)}, ${(+lo).toFixed(5)}` : '<span class="muted">—</span>';
+    const cell = (label, val) =>
+      `<div style="display:flex;flex-direction:column;gap:.1rem">
+         <span class="muted" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em">${label}</span>
+         <span style="font-size:.85rem">${val}</span>
+       </div>`;
+    const section = (title, body) =>
+      `<div style="margin-bottom:.7rem">
+         <div style="font-weight:600;font-size:.76rem;color:#334155;margin-bottom:.35rem;border-bottom:1px solid #e2e8f0;padding-bottom:.18rem">${title}</div>
+         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.45rem .9rem">${body}</div>
+       </div>`;
+    return `<div style="padding:.85rem 1.1rem;border-left:3px solid #1d4ed8">
+      <div style="font-size:.68rem;color:#64748b;margin-bottom:.55rem">📄 shipments record · <code>GET /api/v1/shipments/mine/${esc(d.shipment_ref)}</code></div>
+      ${section('Shipment', [
+        cell('Reference', `<strong>${v(d.shipment_ref)}</strong>`),
+        cell('Customer type', v(d.customer_type)),
+        cell('State', `${v(d.state)} <span class="muted">(${v(d.state_label)})</span>`),
+        cell('Delivery type', v(d.delivery_type)),
+        cell('Pickup / Drop', `${v(d.pickup_type)} / ${v(d.drop_type)}`),
+        cell('Payment mode', v(d.payment_mode)),
+      ].join(''))}
+      ${section('Sender · origin', [
+        cell('Name', v(d.sender_name)), cell('Phone', v(d.sender_phone)), cell('Email', v(d.sender_email)),
+        cell('Address', v(d.origin_line1)), cell('City / pincode', `${v(d.origin_city)} · ${v(d.origin_pincode)}`),
+        cell('Lat, Lon', geo(d.origin_lat, d.origin_lon)), cell('Origin tile', v(d.origin_tile_id)),
+      ].join(''))}
+      ${section('Receiver · destination', [
+        cell('Name', v(d.receiver_name)), cell('Phone', v(d.receiver_phone)), cell('Email', v(d.receiver_email)),
+        cell('Address', v(d.dest_line1)), cell('City / pincode', `${v(d.dest_city)} · ${v(d.dest_pincode)}`),
+        cell('Lat, Lon', geo(d.dest_lat, d.dest_lon)), cell('Dest tile', v(d.dest_tile_id)),
+      ].join(''))}
+      ${section('Parcel & pricing', [
+        cell('Actual weight', kg(d.weight_grams)), cell('Volumetric', kg(d.volumetric_weight_grams)),
+        cell('Chargeable', kg(d.chargeable_weight_grams)), cell('Declared value', money(d.declared_value_paise)),
+        cell('Quoted', money(d.quoted_price_paise)), cell('Tax (GST)', money(d.tax_paise)),
+        cell('Total', `<strong>${money(d.total_price_paise)}</strong>`),
+      ].join(''))}
+      ${section('Lifecycle', [
+        cell('Created', dt(d.created_at)), cell('Cancelled', dt(d.cancelled_at)),
+      ].join(''))}
+    </div>`;
   }
 
   // Customer cancels one of their own (session) bookings. Lane comes from the booking type
@@ -640,7 +736,7 @@
       const { status, data } = await orderApi('DELETE', `/api/v1/${lane}/shipments/${encodeURIComponent(ref)}`);
       if (status >= 200 && status < 300) {
         const row = recentBookings.find(b => b.ref === ref);
-        if (row) row.state = 'CANCELLED';
+        if (row) { row.state = 'Cancelled'; row.rawState = 'CANCELLED'; }
         renderRecent();
       } else {
         alert('Cancel failed: ' + (data && (data.detail || data.title) || ('HTTP ' + status)));
@@ -652,6 +748,49 @@
     }
   }
 
+  // The customer never assigns a DA — M5 does that automatically off the CREATED event. This only POLLS
+  // the pickup status and reveals which DA M5 picked + the one-time pickup code (OTP). Safe to click
+  // repeatedly: the backend caches the OTP so the code stays stable.
+  async function refreshPickupStatus() {
+    const ref = val('otp-ref');
+    if (!ref) { alert('Enter a shipment ref (book one first, or click "Track" on a booking)'); return; }
+    const btn = document.querySelector('[onclick="refreshPickupStatus()"]');
+    setLoading(btn, true);
+    try {
+      const { status, data } = await orderApi('POST', `/api/demo/da/refresh-status?ref=${encodeURIComponent(ref)}`, null);
+      if (status !== 200 || !data) { showResponse('otp-response', { body: data }, true); return; }
+      const row = recentBookings.find(b => b.ref === ref);
+      // DA_ASSIGNED is the only pre-pickup "a DA is coming, here's your OTP" reveal. A PICKED_UP (or
+      // later) shipment also returns assigned=true + a cached OTP, so we must key off the stage — not
+      // assigned/otp — otherwise a picked-up parcel falls back into the "DA is coming" branch and the
+      // row freezes at PICKUP_ASSIGNED.
+      if (data.stage === 'DA_ASSIGNED') {
+        const lines = [
+          `🚚 ${data.stage_label}: DA ${data.da_short} is coming for your ${data.leg}.`,
+          `🔑 Your pickup OTP: ${data.otp} — give it to the DA when they arrive.`,
+        ];
+        if (data.van_short) lines.push(`🚐 Van ${data.van_short}${data.meeting_time ? ' · meets hub cron ' + data.meeting_time : ''}`);
+        showResponse('otp-response', lines.join('\n'), false);
+        if (row) { row.state = data.stage_label; row.rawState = 'PICKUP_ASSIGNED'; row.da = data.da_short; row.otp = data.otp; row.van = data.van_short; renderRecent(); }
+      } else if (data.stage === 'FINDING_DA') {
+        showResponse('otp-response', '🔎 ' + (data.message || 'Finding a delivery associate…'), false);
+      } else {
+        // already past pickup — show the journey stage
+        showResponse('otp-response', '📦 ' + (data.stage_label || data.state), false);
+        if (row) { row.state = data.stage_label || data.state; row.rawState = data.state; renderRecent(); }
+      }
+    } catch (e) {
+      showResponse('otp-response', { body: { detail: 'Network error — is the backend up?' } }, true);
+    } finally { setLoading(btn, false); }
+  }
+
+  // Recent-bookings row shortcut: load the ref into the card and check its status in one click.
+  async function startPickup(ref) {
+    document.getElementById('otp-ref').value = ref;
+    document.getElementById('card-pickup-otp').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await refreshPickupStatus();
+  }
+
   async function otpVerify() {
     const ref = val('otp-ref'), otp = val('otp-code');
     if (!ref || !otp) { alert('Enter shipment ref and OTP'); return; }
@@ -659,8 +798,11 @@
     setLoading(btn, true);
     try {
       const { status, data } = await orderApi('POST', `/internal/v1/shipments/${encodeURIComponent(ref)}/pickup-otp/verify`, { otp });
-      if (status === 204) showResponse('otp-response', '✅ OTP verified — shipment transitioned PICKUP_ASSIGNED → PICKED_UP', false);
-      else showResponse('otp-response', { body: data }, true);
+      if (status === 204) {
+        showResponse('otp-response', '✅ OTP verified — shipment transitioned PICKUP_ASSIGNED → PICKED_UP', false);
+        const row = recentBookings.find(b => b.ref === ref);
+        if (row) { row.state = 'PICKED_UP'; row.rawState = 'PICKED_UP'; renderRecent(); }
+      } else showResponse('otp-response', { body: data }, true);
     } catch (e) {
       showResponse('otp-response', { body: { detail: 'Network error — is the backend up?' } }, true);
     } finally { setLoading(btn, false); }

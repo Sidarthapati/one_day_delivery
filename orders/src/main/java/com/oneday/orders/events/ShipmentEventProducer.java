@@ -76,9 +76,20 @@ public class ShipmentEventProducer {
         event.setOriginCity(s.getOriginCity());
         event.setOriginPincode(s.getOriginPincode());
         event.setOriginTileId(s.getOriginTileId());
+        // Pickup coordinates — M5 resolves the city + pickup hex from these (without them it cannot
+        // assign a pickup). Sourced from the stored origin address (lat/lon are persisted on booking).
+        if (s.getOriginAddress() != null) {
+            event.setOriginLat(s.getOriginAddress().getLatitude());
+            event.setOriginLon(s.getOriginAddress().getLongitude());
+        }
         event.setDestCity(s.getDestCity());
         event.setDestPincode(s.getDestPincode());
         event.setDestTileId(s.getDestTileId());
+        // Drop coordinates — M5 uses these for last-mile delivery assignment (Q-M4-2 dest data).
+        if (s.getDestAddress() != null) {
+            event.setDestLat(s.getDestAddress().getLatitude());
+            event.setDestLon(s.getDestAddress().getLongitude());
+        }
         event.setChargeableWeightGrams(s.getChargeableWeightGrams());
         event.setSlaCommitmentMinutes(s.getSlaCommitmentMinutes() != null
                 ? s.getSlaCommitmentMinutes().intValue() : null);

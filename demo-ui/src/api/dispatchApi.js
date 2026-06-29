@@ -45,3 +45,39 @@ export const getDispatchState = (cityId, date) =>
 
 export const resetDispatch = (cityId, date) =>
   req(`/api/demo/dispatch/reset?${qs(cityId, date)}`, { method: 'POST' })
+
+// Simulate every DA's door OTP handshake → assigned pickups become PICKED_UP + ready-for-van, so the
+// run carries only OTP-verified parcels. Synthetic (no-booking) pickups are skipped.
+export const autoVerifyPickups = (cityId, date) =>
+  req(`/api/demo/da/auto-verify?${qs(cityId, date)}`, { method: 'POST' })
+
+// Last-mile drops: fast-forward booked DA_DELIVERY shipments destined for `city` to out-for-delivery
+// (mints each delivery OTP) and publish real ParcelSortedForDelivery so M6 binds them to drop loops.
+export const dispatchDrops = (cityId, city, date) =>
+  req(`/api/demo/da/drops/dispatch?cityId=${cityId}&city=${encodeURIComponent(city)}&date=${date}`,
+    { method: 'POST' })
+
+// Simulate every recipient's door OTP → DROP_COLLECTED parcels become DROPPED (Delivered).
+export const autoVerifyDeliveries = (city, date) =>
+  req(`/api/demo/da/drops/auto-verify?city=${encodeURIComponent(city)}&date=${date}`, { method: 'POST' })
+
+// Close the first mile: PICKED_UP shipments (origin = city) → HANDED_TO_PICKUP_VAN → AT_ORIGIN_HUB
+// (the van carried them to the origin hub). Run after "Run the day".
+export const pickupsToHub = (city, date) =>
+  req(`/api/demo/da/pickups/to-hub?city=${encodeURIComponent(city)}&date=${date}`, { method: 'POST' })
+
+// Live RabbitMQ tap: real PUBLISH/CONSUME observations newer than `after`, plus the current head seq
+// (fast-forward the cursor to head at run start so the feed shows only this run's bus traffic).
+export const getAmqpTap = (after = 0) =>
+  req(`/api/demo/amqp-tap?after=${after}`)
+
+// Demo reset: wipe every shipment booked by `email` (default the demo customer) + all child rows
+// (otps, payments, history, M5 dispatch tasks) so the demo starts from a clean slate.
+export const clearBookings = (email = 'b2c@demo.in') =>
+  req(`/api/demo/da/bookings/clear?email=${encodeURIComponent(email)}`, { method: 'POST' })
+
+// Spread seed: book `count` real shipments whose spread end lands in a DIFFERENT DA territory each, so
+// the demo involves many DAs. kind=PICKUP (spread origins, M5 assigns across DAs) or DROP (spread dests).
+export const seedSpread = (cityId, city, kind, count, date) =>
+  req(`/api/demo/da/seed/spread?cityId=${cityId}&city=${encodeURIComponent(city)}&kind=${kind}&count=${count}&date=${date}`,
+    { method: 'POST' })

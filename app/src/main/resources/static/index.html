@@ -257,8 +257,30 @@
 
       <!-- Recent bookings -->
       <div class="card" id="card-recent-bookings">
-        <h2><span class="icon">🧾</span> Your Bookings <span class="muted" style="font-weight:400">all of your shipments</span></h2>
+        <h2 style="display:flex;align-items:center;gap:.5rem">
+          <span class="icon">🧾</span> Your Bookings <span class="muted" style="font-weight:400">all of your shipments</span>
+          <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="loadMyBookings()" title="Reload from the server">⟳ Refresh</button>
+        </h2>
         <div id="recent-bookings"><div class="empty-state">No bookings yet</div></div>
+      </div>
+
+      <!-- Pickup status — customer-facing OTP + "your DA is coming" -->
+      <div class="card" id="card-pickup-otp">
+        <h2><span class="icon">📦</span> Pickup status <span class="muted" style="font-weight:400">your parcel &amp; pickup code</span></h2>
+        <p class="muted" style="margin-bottom:.75rem">
+          Once you book, our system <strong>automatically assigns a Delivery Associate</strong> to your pickup —
+          you don't pick one. Hit <strong>Refresh status</strong> to see who's coming and your one-time
+          <strong>pickup code (OTP)</strong>. Share the code with the DA when they arrive; they enter it in
+          their app to confirm the handover.
+        </p>
+        <div class="form-row" style="align-items:flex-end;gap:.75rem;flex-wrap:wrap">
+          <div class="field" style="flex:1;min-width:160px;margin:0">
+            <label>Shipment ref</label>
+            <input id="otp-ref" placeholder="1DD-XXXXXX" />
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="refreshPickupStatus()">Refresh status</button>
+        </div>
+        <div id="otp-response" style="margin-top:.75rem"></div>
       </div>
 
       <!-- Admin: read-only orders database (admin cannot book) -->

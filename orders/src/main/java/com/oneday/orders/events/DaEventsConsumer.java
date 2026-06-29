@@ -1,7 +1,7 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.events.DaEvent;
+import com.oneday.common.kafka.events.DaLifecycleEvent;
 import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
@@ -38,7 +38,7 @@ public class DaEventsConsumer {
     }
 
     @RabbitListener(queues = OrdersMessagingTopology.DA_QUEUE)
-    public void onDaEvent(DaEvent event) {
+    public void onDaEvent(DaLifecycleEvent event) {
         ShipmentState target = switch (event.eventType()) {
             case PICKUP_ASSIGNED       -> ShipmentState.PICKUP_ASSIGNED;
             case PICKUP_FAILED         -> ShipmentState.PICKUP_FAILED;
@@ -67,7 +67,7 @@ public class DaEventsConsumer {
     }
 
     /** Mint a pickup OTP for the sender. Best-effort: a failure here never undoes the transition. */
-    private void generatePickupOtp(DaEvent event) {
+    private void generatePickupOtp(DaLifecycleEvent event) {
         try {
             String otp = pickupOtpService.generate(event.shipmentId());
             // TODO: dispatch to sender via the notification service (oneday.notifications.events).

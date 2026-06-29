@@ -32,17 +32,23 @@ class DaPickupQueuePortAdapter implements DaPickupQueuePort {
 
     @Override
     public List<QueuedPickup> queuedPickups(UUID cityId, LocalDate date) {
-        return active(cityId, date, TaskType.PICKUP);
+        return byStatus(cityId, date, TaskType.PICKUP, ACTIVE);
+    }
+
+    @Override
+    public List<QueuedPickup> pickedUpPickups(UUID cityId, LocalDate date) {
+        // IN_PROGRESS = the DA has collected it (OTP-verified at the door) and is carrying it to the van.
+        return byStatus(cityId, date, TaskType.PICKUP, Set.of(TaskStatus.IN_PROGRESS));
     }
 
     @Override
     public List<QueuedPickup> queuedDeliveries(UUID cityId, LocalDate date) {
-        return active(cityId, date, TaskType.DELIVERY);
+        return byStatus(cityId, date, TaskType.DELIVERY, ACTIVE);
     }
 
-    private List<QueuedPickup> active(UUID cityId, LocalDate date, TaskType type) {
+    private List<QueuedPickup> byStatus(UUID cityId, LocalDate date, TaskType type, Set<TaskStatus> statuses) {
         return queueRepository.findByCityIdAndOperatingDate(cityId, date).stream()
-                .filter(q -> q.getTaskType() == type && ACTIVE.contains(q.getStatus()))
+                .filter(q -> q.getTaskType() == type && statuses.contains(q.getStatus()))
                 .map(q -> new QueuedPickup(q.getDaId(), q.getShipmentId(), q.getTileId()))
                 .toList();
     }

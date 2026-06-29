@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Polyline, Marker, Tooltip, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, Tooltip, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { hashDaColor } from '../utils/daColors.js'
@@ -148,6 +148,48 @@ function idList(ids, n = 4) {
   return ids.length > n ? `${head} +${ids.length - n}` : head
 }
 
+// Per-parcel M4 journey stage → short label + colour, shown next to each ref so the card reflects live
+// progress (updates on poll / refresh as OTP actions + dispatch advance the shipment state).
+const M4_BADGE = {
+  BOOKED: ['booked', '#6b7280'],
+  PICKUP_ASSIGNED: ['assigned', '#1d4ed8'],
+  PICKED_UP: ['picked up', '#0d9488'],
+  HANDED_TO_PICKUP_VAN: ['on van', '#0d9488'],
+  AT_ORIGIN_HUB: ['at hub', '#7c3aed'],
+  HANDED_TO_DROP_VAN: ['on van', '#6d28d9'],
+  DROP_ASSIGNED: ['assigned', '#1d4ed8'],
+  DROP_COLLECTED: ['out for delivery', '#0d9488'],
+  DROPPED: ['delivered', '#059669'],
+  CANCELLED: ['cancelled', '#dc2626'],
+}
+function stateBadge(state) {
+  const [label, color] = M4_BADGE[state] || [state ? state.toLowerCase() : '—', '#9ca3af']
+  return <span style={{ fontSize: 10.5, color, background: color + '1a', borderRadius: 4, padding: '0 5px', whiteSpace: 'nowrap' }}>{label}</span>
+}
+
+// Refs (the human-readable 1DD-… ids) + each parcel's live M4 stage, scrollable.
+function RefList({ refs, empty }) {
+  if (!refs || refs.length === 0) {
+    return <div style={{ color: '#9ca3af', paddingLeft: 8 }}>{empty}</div>
+  }
+  return (
+    <div style={{
+      maxHeight: 120, overflowY: 'auto', fontSize: 12.5,
+      paddingLeft: 8, margin: '1px 0 3px', borderLeft: '2px solid #e5e7eb',
+    }}>
+      {refs.map((r, i) => {
+        const ref = typeof r === 'string' ? r : r.ref
+        const state = typeof r === 'string' ? null : r.state
+        return (
+          <div key={ref + i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontFamily: 'monospace' }}>{ref}</span>{stateBadge(state)}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function FitOnce({ routes, nodes }) {
   const map = useMap()
   useEffect(() => {
@@ -166,7 +208,7 @@ function MapApi({ mapRef }) {
   return null
 }
 
-export default function ExecutionMap({ center, routes = [], nodes = [], vans = [], das = [], daTs = {}, vanColor = hashDaColor }) {
+export default function ExecutionMap({ center, routes = [], nodes = [], vans = [], das = [], daTs = {}, vanColor = hashDaColor, onRefresh }) {
   const mapRef = useRef(null)
   const flyTo = (pt, zoom = 14) => { if (pt && mapRef.current) mapRef.current.flyTo(pt, zoom, { duration: 0.8 }) }
   const fitAll = () => {
@@ -250,21 +292,42 @@ export default function ExecutionMap({ center, routes = [], nodes = [], vans = [
             <Marker key={`da-${d.daId}`} position={s.pos}
               icon={daIcon(vanColor(d.daId), inHand, meeting)} zIndexOffset={800}
               eventHandlers={{ click: () => flyTo(s.pos, 14) }}>
+              {/* Quick hover glance. */}
               <Tooltip>
-                <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                <div style={{ fontSize: 13, lineHeight: 1.45 }}>
                   <strong>DA {d.daId.slice(0, 8)}</strong> · {s.P} pickups / {s.D} drops<br />
-                  {d.vanId ? `meets van ${d.vanId.slice(0, 8)}` : 'no van scheduled'}
-                  {d.cronTime ? ` · cron ${clock(d.cronTime)}` : ''}<br />
-                  {s.phase === 'collecting' && <>📥 collecting pickups <b>{s.collected}/{s.P}</b> · carrying <b>{s.collected}</b> to van · {s.D} drops await van</>}
-                  {s.phase === 'handoff' && <span style={{ color: '#0d9488' }}>● handoff: <b>{s.P}</b> pickups → van · <b>{s.D}</b> drops → DA</span>}
-                  {s.phase === 'delivering' && <>📦 pickups handed ✓ · delivering <b>{s.delivered}/{s.D}</b> · <b>{s.D - s.delivered}</b> drops left · returning to territory</>}
-                  {s.phase === 'done' && <span style={{ color: '#6b7280' }}>back in territory · {s.P} picked up, {s.D} delivered</span>}
-                  {s.phase === 'idle' && <span style={{ color: '#6b7280' }}>{s.P} pickups + {s.D} drops queued · run the day to dispatch</span>}
-                  <br /><span style={{ color: '#1d4ed8' }}>↑ to van ({s.P}):</span> {idList(d.pickupIds)} {swapped ? '✓ handed' : ''}
-                  <br /><span style={{ color: '#6d28d9' }}>↓ from van ({s.D}):</span> {idList(d.deliveryIds)} {swapped ? '✓ received' : ''}
-                  <br /><span style={{ color: '#9ca3af' }}>click to zoom in</span>
+                  <span style={{ color: '#9ca3af' }}>click to pin details + zoom</span>
                 </div>
               </Tooltip>
+              {/* Persistent card — click the DA to pin it; stays open and live-updates as parcels change. */}
+              <Popup maxWidth={340} autoPan={false} keepInView>
+                <div style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 700 }}>DA {d.daId.slice(0, 8)}</span>
+                    {onRefresh && (
+                      <button onClick={(e) => { e.stopPropagation(); onRefresh() }}
+                        title="Refresh parcel states now (poll pauses during a run; DA-app OTP actions land here on refresh)"
+                        style={{ fontSize: 11, border: '1px solid #cbd5e1', borderRadius: 5, padding: '1px 7px', background: '#fff', cursor: 'pointer', color: '#475569' }}>
+                        ⟳ refresh
+                      </button>
+                    )}
+                  </div>
+                  <div>{s.P} pickups / {s.D} drops · {d.vanId ? `van ${d.vanId.slice(0, 8)}` : 'no van scheduled'}
+                    {d.cronTime ? ` · cron ${clock(d.cronTime)}` : ''}</div>
+                  <div style={{ margin: '4px 0' }}>
+                    {s.phase === 'collecting' && <>📥 collecting pickups <b>{s.collected}/{s.P}</b> · carrying <b>{s.collected}</b> to van · {s.D} drops await van</>}
+                    {s.phase === 'handoff' && <span style={{ color: '#0d9488' }}>● handoff: <b>{s.P}</b> pickups → van · <b>{s.D}</b> drops → DA</span>}
+                    {s.phase === 'delivering' && <>📦 pickups handed ✓ · delivering <b>{s.delivered}/{s.D}</b> · <b>{s.D - s.delivered}</b> drops left · returning to territory</>}
+                    {s.phase === 'done' && <span style={{ color: '#6b7280' }}>back in territory · {s.P} picked up, {s.D} delivered</span>}
+                    {s.phase === 'idle' && <span style={{ color: '#6b7280' }}>{s.P} pickups + {s.D} drops queued · run the day to dispatch</span>}
+                  </div>
+                  <div style={{ color: '#1d4ed8', marginTop: 2 }}>↑ to van ({s.P}) {swapped ? '✓ handed' : ''}</div>
+                  <RefList refs={d.pickupRefs} empty="no pickups" />
+                  <div style={{ color: '#6d28d9', marginTop: 2 }}>↓ from van ({s.D}) {swapped ? '✓ received' : ''}</div>
+                  <RefList refs={d.deliveryRefs} empty="no drops" />
+                  <div style={{ color: '#9ca3af', marginTop: 3 }}>📌 pinned · click the map to close</div>
+                </div>
+              </Popup>
             </Marker>
           )
         })}

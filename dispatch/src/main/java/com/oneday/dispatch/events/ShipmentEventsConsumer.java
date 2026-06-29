@@ -10,7 +10,6 @@ import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.DispatchService;
-import com.oneday.dispatch.service.TaskInProgressException;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.service.GridService;
 import org.slf4j.Logger;
@@ -146,11 +145,8 @@ public class ShipmentEventsConsumer {
     private void handleCancelled(ShipmentCancelledEvent event) {
         TaskType taskType = DELIVERY_PHASE.contains(event.getCancelledAtState())
                 ? TaskType.DELIVERY : TaskType.PICKUP;
-        try {
-            dispatchService.cancelTask(event.getShipmentId(), taskType);
-        } catch (TaskInProgressException e) {
-            log.warn("Shipment {} cancelled but its {} task is IN_PROGRESS — left for ops/M11: {}",
-                    event.getShipmentId(), taskType, e.getMessage());
-        }
+        // cancelTask removes the task from the DA's active load whether it was QUEUED or IN_PROGRESS
+        // (an in-progress cancellation becomes an RTO — see DispatchServiceImpl#cancelTask).
+        dispatchService.cancelTask(event.getShipmentId(), taskType);
     }
 }

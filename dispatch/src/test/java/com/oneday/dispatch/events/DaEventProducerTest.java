@@ -22,7 +22,9 @@ class DaEventProducerTest {
     @Test
     void suppressesPublishWhenFlagOff() {
         EventPublisher publisher = mock(EventPublisher.class);
-        DaEventProducer producer = new DaEventProducer(publisher, new DispatchProperties());   // default false
+        DispatchProperties props = new DispatchProperties();
+        props.getEvents().setPublishDaEvents(false);   // kill-switch off (default is now true)
+        DaEventProducer producer = new DaEventProducer(publisher, props);
 
         producer.emitDaAbsent(UUID.randomUUID(), UUID.randomUUID());
 

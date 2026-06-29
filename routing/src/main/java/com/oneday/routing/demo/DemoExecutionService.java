@@ -1,6 +1,8 @@
 package com.oneday.routing.demo;
 
 import com.oneday.common.kafka.EventStreams;
+import com.oneday.common.kafka.enums.DaEventType;
+import com.oneday.common.kafka.events.DaLifecycleEvent;
 import com.oneday.common.port.DaPickupQueuePort;
 import com.oneday.routing.config.RoutingProperties;
 import com.oneday.routing.domain.CityLogisticsNode;
@@ -15,8 +17,7 @@ import com.oneday.routing.domain.VanManifest;
 import com.oneday.routing.domain.VanManifestItem;
 import com.oneday.routing.dto.TelemetryType;
 import com.oneday.routing.dto.VanTelemetryRequest;
-import com.oneday.routing.events.payload.DaParcelPickedUpEvent;
-import com.oneday.routing.events.payload.ParcelSortedForDeliveryEvent;
+import com.oneday.common.kafka.events.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.CityLogisticsNodeRepository;
 import com.oneday.routing.repository.DaCronScheduleRepository;
 import com.oneday.routing.repository.HandoffReconciliationRepository;
@@ -292,17 +293,18 @@ public class DemoExecutionService {
                 settle(25);
             }
         }
-        // Collects: prefer M5's real pickup queue so "collected N" at each cron meeting equals exactly
-        // what M5 dispatched to that DA (each queued pickup → a DaParcelPickedUp the van comes to
-        // collect). Only DAs bindable in this plan can be collected, so filter to those. Fall back to
-        // synthetic parcels when M5 hasn't run a shift for this city/day (queue empty or bridge absent).
+        // Collects: only carry pickups the DA has actually COLLECTED (OTP-verified at the door →
+        // task IN_PROGRESS). A parcel with no customer OTP has not been picked up, so the van must not
+        // take it — un-verified pickups are left behind (next loop / deferred). Use the demo's
+        // "Auto-verify pickups" to flip assigned pickups to collected before the run. Only DAs bindable
+        // in this plan can be collected. Fall back to synthetic parcels when there are none collected.
         List<DaPickupQueuePort.QueuedPickup> m5Pickups = queue == null ? List.of()
-                : queue.queuedPickups(cityId, date).stream()
+                : queue.pickedUpPickups(cityId, date).stream()
                         .filter(p -> bindableDas.contains(p.daId())).toList();
         if (!m5Pickups.isEmpty()) {
             for (DaPickupQueuePort.QueuedPickup p : m5Pickups) {
-                rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, "DaParcelPickedUp",
-                        new DaParcelPickedUpEvent(p.shipmentId(), cityId, p.daId(), date, now));
+                rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, DaEventType.PICKUP_COMPLETED.name(),
+                        daPickedUp(p.shipmentId(), cityId, p.daId(), date, now));
                 feed.add("FEED", "DA_EVENTS ▸ %s picked up by DA %s (M5 queue)"
                         .formatted(shortId(p.shipmentId()), shortId(p.daId())));
                 published++;
@@ -313,8 +315,8 @@ public class DemoExecutionService {
             for (int i = 0; i < collects; i++) {
                 UUID da = bindableDas.get(rng.nextInt(bindableDas.size()));
                 UUID parcel = UUID.randomUUID();
-                rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, "DaParcelPickedUp",
-                        new DaParcelPickedUpEvent(parcel, cityId, da, date, now));
+                rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, DaEventType.PICKUP_COMPLETED.name(),
+                        daPickedUp(parcel, cityId, da, date, now));
                 feed.add("FEED", "DA_EVENTS ▸ %s picked up by DA %s (synthetic)".formatted(shortId(parcel), shortId(da)));
                 published++;
                 settle(25);
@@ -322,6 +324,13 @@ public class DemoExecutionService {
         }
         feed.add("INFO", "Published %d parcels to RabbitMQ (CloudAMQP).".formatted(published));
         return published;
+    }
+
+    /** A PICKUP_COMPLETED {@link DaLifecycleEvent} — the exact shape real M5 emits (parcelId == shipmentId in v1). */
+    private static DaLifecycleEvent daPickedUp(UUID shipmentId, UUID cityId, UUID daId, LocalDate date, Instant at) {
+        return new DaLifecycleEvent(UUID.randomUUID(), DaEventType.PICKUP_COMPLETED,
+                DaLifecycleEvent.SCHEMA_VERSION, at, shipmentId, null, daId, cityId,
+                null, null, null, shipmentId, date);
     }
 
     /**

@@ -23,6 +23,14 @@ const DEFER_STYLE = {
   CRON_LOCKED: 'text-amber-700', DA_ABSENT: 'text-red-600', SHIFT_ENDED: 'text-gray-500',
 }
 
+const DEFER_EXPLAIN = {
+  NO_DA_AVAILABLE: 'No DA serves this hex on shift — load a shift, or this territory has no assignable DA.',
+  CRON_INFEASIBLE: 'No assignable DA can fit this task and still reach the hub cron before the flight cutoff.',
+  CRON_LOCKED: 'The serving DA is locked at its cron meeting — retries open after the meeting window.',
+  DA_ABSENT: 'The serving DA is marked absent (heartbeat lapsed).',
+  SHIFT_ENDED: 'Shift ended — deferred to the next operating window.',
+}
+
 function slackColor(min) {
   if (min == null) return 'text-gray-400'
   if (min < 30) return 'text-red-600 font-semibold'
@@ -69,6 +77,7 @@ export default function DispatchView({ cityId, cityCode }) {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState(null)
   const [lastAssign, setLastAssign] = useState(null)
+  const [selDef, setSelDef] = useState(null)   // deferred parcel selected for the detail panel
 
   async function run(label, fn, keepAssign = false) {
     setBusy(label); setErr(null)
@@ -89,6 +98,20 @@ export default function DispatchView({ cityId, cityCode }) {
   const deferred = state?.deferred ?? []
   const qP = das.reduce((a, d) => a + (d.queue || []).filter(t => t.taskType === 'PICKUP').length, 0)
   const qD = das.reduce((a, d) => a + (d.queue || []).filter(t => t.taskType === 'DELIVERY').length, 0)
+  const vanCount = new Set(das.map(d => d.vanId).filter(Boolean)).size
+  const noVan = das.filter(d => !d.vanId).length
+
+  // Group DAs by the van they meet at their cron (M6 rendezvous). No-van DAs (no approved M6 plan) sort last.
+  const vanGroups = (() => {
+    const m = new Map()
+    for (const d of das) {
+      const k = d.vanId || '__novan__'
+      if (!m.has(k)) m.set(k, [])
+      m.get(k).push(d)
+    }
+    return [...m.entries()].sort(([a], [b]) =>
+      a === '__novan__' ? 1 : b === '__novan__' ? -1 : a.localeCompare(b))
+  })()
 
   async function doAssign(kind) {
     setBusy(kind); setErr(null)
@@ -100,25 +123,53 @@ export default function DispatchView({ cityId, cityCode }) {
     } catch (e) { setErr(e.message) } finally { setBusy('') }
   }
 
+  // Manual board refresh — pull the latest M5 state on demand (e.g. after seeding/assigning in Execution).
+  async function refresh() {
+    setBusy('refresh'); setErr(null)
+    try { setState(await getDispatchState(cityId, TODAY)) }
+    catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* ── left: controls + summary + deferred ── */}
       <div className="w-80 bg-white border-r border-gray-200 flex flex-col overflow-y-auto p-4 gap-4">
         <div>
-          <div className="text-xs uppercase tracking-wide text-gray-400 mb-2">M5 · Dispatch</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs uppercase tracking-wide text-gray-400">M5 · Dispatch</div>
+            <button disabled={!!busy} onClick={refresh}
+              className="text-[11px] px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              title="Refresh the board now (pickups/drops assigned on the fly from Execution)">
+              {busy === 'refresh' ? '⟳…' : '⟳ Refresh'}
+            </button>
+          </div>
           <p className="text-xs text-gray-500 leading-relaxed">
             Run the Execution tab first (seed → territories → routes) so DAs + cron meetings exist for
-            today. Then load the shift and assign pickups — each is placed on the least-loaded DA that
-            can still make its <strong>cron van meeting</strong> (the hard constraint), else deferred.
+            today, then <strong>Load shift</strong>. Each task is placed on the least-loaded DA that can
+            still make its <strong>cron van meeting</strong> (the hard constraint), else deferred.
+          </p>
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1.5 mt-2 leading-relaxed">
+            ⚠️ The two <strong>Synthetic</strong> buttons below inject <strong>fake test parcels</strong>
+            (random hexes, no real booking) to stress the M5 engine. <strong>Real customer bookings
+            assign themselves automatically</strong> via M5's event consumer — you don't need these for
+            the real flow.
           </p>
         </div>
 
         <div className="flex flex-col gap-2">
           <button disabled={!!busy} onClick={() => run('load', () => loadShift(cityId, TODAY))}
-            className="px-3 py-2 text-sm rounded bg-gray-800 text-white disabled:opacity-50">
+            className="px-3 py-2 text-sm rounded bg-gray-800 text-white disabled:opacity-50"
+            title="Clock today's planned DAs onto the shift, each seated on its cron van meeting. Queues start empty.">
             {busy === 'load' ? 'Loading…' : '1 · Load shift'}
           </button>
+          <p className="text-[11px] text-gray-500 leading-snug">
+            Clocks today's <strong>planned DAs onto the shift</strong> (the roster M3 carved into
+            territories), each seated on its <strong>cron van meeting</strong>. This is <em>not</em>
+            parcel assignment — every queue starts empty (P 0 · D 0). Parcels land on a DA only later:
+            a real booking (M5 auto-assigns) or the Synthetic buttons below.
+          </p>
 
+          <div className="text-[11px] uppercase tracking-wide text-gray-400 mt-1">Synthetic test load (engine stress)</div>
           <div className="flex items-center gap-2">
             <input type="range" min="1" max="80" value={count}
               onChange={(e) => setCount(+e.target.value)} className="flex-1" />
@@ -126,13 +177,14 @@ export default function DispatchView({ cityId, cityCode }) {
           </div>
           <div className="flex gap-2">
             <button disabled={!!busy} onClick={() => doAssign('pickup')}
-              className="flex-1 px-3 py-2 text-sm rounded bg-blue-600 text-white disabled:opacity-50">
-              {busy === 'pickup' ? '…' : `2 · Assign ${count} pickups`}
+              className="flex-1 px-3 py-2 text-sm rounded bg-blue-600 text-white disabled:opacity-50"
+              title="Inject fake pickup parcels (no real booking) to stress the M5 assignment engine">
+              {busy === 'pickup' ? '…' : `Synthetic: ${count} pickups`}
             </button>
             <button disabled={!!busy} onClick={() => doAssign('deliver')}
               className="flex-1 px-3 py-2 text-sm rounded bg-indigo-600 text-white disabled:opacity-50"
-              title="The delivery side of M5 — inbound parcels routed to DAs">
-              {busy === 'deliver' ? '…' : `Assign ${count} deliveries`}
+              title="Inject fake delivery parcels (no real booking) to stress the M5 delivery engine">
+              {busy === 'deliver' ? '…' : `Synthetic: ${count} deliveries`}
             </button>
           </div>
 
@@ -165,6 +217,8 @@ export default function DispatchView({ cityId, cityCode }) {
         {s && (
           <div className="grid grid-cols-2 gap-2 text-center">
             <Stat label="DAs" value={s.das} />
+            <Stat label="Vans" value={vanCount} sub={noVan > 0 ? `${noVan} w/o van` : undefined}
+              cls="text-teal-700" />
             <Stat label="Queued tasks" value={s.assigned} sub={`P ${qP} · D ${qD}`} />
             <Stat label="Deferred" value={s.deferred} cls="text-red-600" />
             <Stat label="Cron-locked" value={s.cronLocked} cls="text-amber-700" />
@@ -187,25 +241,44 @@ export default function DispatchView({ cityId, cityCode }) {
           <div className="flex flex-col gap-1">
             {deferred.length === 0 && <div className="text-xs text-gray-400">none</div>}
             {deferred.map((d) => (
-              <div key={d.shipmentId} className="text-xs flex justify-between border-b border-gray-100 py-1">
-                <span className="font-mono text-gray-500">{short(d.shipmentId)}</span>
-                <span className={DEFER_STYLE[d.reason] || 'text-gray-600'}>{d.reason}</span>
-              </div>
+              <button key={d.shipmentId} onClick={() => setSelDef(d)}
+                title="Click for details"
+                className={`text-xs flex justify-between items-center gap-2 border-b border-gray-100 py-1 text-left hover:bg-gray-50 ${selDef?.shipmentId === d.shipmentId ? 'bg-blue-50' : ''}`}>
+                <span className="font-mono text-gray-600 truncate">{d.ref || short(d.shipmentId)}</span>
+                <span className={`${DEFER_STYLE[d.reason] || 'text-gray-600'} shrink-0`}>{d.reason}</span>
+              </button>
             ))}
           </div>
         </div>
       </div>
 
-      {/* ── main: per-DA queue cards ── */}
+      {/* ── main: deferred detail (if selected) + per-DA queue cards ── */}
       <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
+        {selDef && <DeferredDetail d={selDef} onClose={() => setSelDef(null)} />}
         {das.length === 0 ? (
           <div className="h-full flex items-center justify-center text-gray-400 text-sm">
             No DAs loaded — click <b className="mx-1">Load shift</b> (after running the Execution tab).
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {das.map((da) => (
-              <div key={da.daId} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+          <div className="flex flex-col gap-5">
+            {vanGroups.map(([vanId, members]) => {
+              const real = vanId !== '__novan__'
+              const groupTasks = members.reduce((a, d) => a + (d.queue || []).length, 0)
+              const meet = members.find(d => d.cronMeetingTime)?.cronMeetingTime
+              return (
+              <div key={vanId}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="inline-block w-3 h-3 rounded-sm"
+                    style={{ background: real ? hashDaColor(vanId) : '#cbd5e1' }} />
+                  <span className="text-sm font-semibold text-gray-700">
+                    {real ? <>🚐 Van <span className="font-mono">{short(vanId)}</span></> : '🚐 No van assigned'}</span>
+                  <span className="text-xs text-gray-400">{members.length} DA{members.length === 1 ? '' : 's'}</span>
+                  {real && meet && <span className="text-xs text-gray-400">· meets {clock(meet)}</span>}
+                  <span className="text-xs text-gray-400">· {groupTasks} task{groupTasks === 1 ? '' : 's'}</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {members.map((da) => (
+                    <div key={da.daId} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100"
                   style={{ borderLeft: `4px solid ${hashDaColor(da.daId)}` }}>
                   <span className="font-mono text-xs text-gray-700" title={`Delivery Associate id: ${da.daId}`}>
@@ -310,8 +383,12 @@ export default function DispatchView({ cityId, cityCode }) {
                     </ol>
                   )}
                 </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -325,6 +402,43 @@ function Stat({ label, value, cls = 'text-gray-800', sub }) {
       <div className={`text-lg font-bold ${cls}`}>{value}</div>
       <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
       {sub && <div className="text-[10px] text-gray-500">{sub}</div>}
+    </div>
+  )
+}
+
+function DefField({ label, value }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="text-gray-800">{value}</div>
+    </div>
+  )
+}
+
+// Detail panel for a clicked deferred parcel — why it couldn't be assigned + everything M5 knows about it.
+function DeferredDetail({ d, onClose }) {
+  return (
+    <div className="mb-4 bg-white rounded-lg border border-red-200 shadow-sm">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-red-50 rounded-t-lg">
+        <div>
+          <span className="font-mono text-sm font-semibold text-gray-800">{d.ref || short(d.shipmentId)}</span>
+          <span className="ml-2 text-[11px] text-gray-500">deferred · {d.taskType}</span>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-sm" title="Close">✕</button>
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-x-6 gap-y-3">
+        <DefField label="Defer reason" value={<span className={DEFER_STYLE[d.reason] || ''}>{d.reason}</span>} />
+        <DefField label="Shipment state (M4)" value={d.m4State || '—'} />
+        <DefField label="Hex" value={short(d.tileId)} />
+        <DefField label="Location" value={`${coord(d.lat)}, ${coord(d.lon)}`} />
+        <DefField label="Deferred at" value={clock(d.deferredAt)} />
+        <DefField label="Retry after" value={clock(d.retryAfter)} />
+        <DefField label="Retries" value={String(d.retryCount ?? 0)} />
+        <DefField label="Status" value={d.status} />
+      </div>
+      <div className="px-4 pb-3 text-xs text-gray-500">
+        {DEFER_EXPLAIN[d.reason] || 'Deferred — awaiting reassignment.'} Use <b>Retry deferred</b> to re-attempt now.
+      </div>
     </div>
   )
 }

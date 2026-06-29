@@ -20,11 +20,14 @@ import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DispatchService;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.common.port.DaCronSchedulePort;
+import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.DaTerritoryResponse;
 import com.oneday.grid.dto.response.TerritoryHexResponse;
 import com.oneday.grid.dto.response.TileDetailResponse;
 import com.oneday.grid.service.GridService;
+import com.oneday.orders.domain.Shipment;
+import com.oneday.orders.repository.ShipmentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -42,6 +45,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
@@ -59,7 +63,11 @@ import java.util.stream.Collectors;
 public class DispatchDemoService {
 
     private static final Logger log = LoggerFactory.getLogger(DispatchDemoService.class);
-    private static final long CRON_MEETING_MINUTES_AHEAD = 90;
+    // Demo cron horizon: how far ahead the synthesized/nudged van-meeting sits. Generous enough that a
+    // single pickup across a large city grid (e.g. Delhi NCR, ~15 km to the cron vertex) stays
+    // cron-feasible — otherwise every assignment defers CRON_INFEASIBLE. The hard constraint still bites
+    // once a DA's queue fills up.
+    private static final long CRON_MEETING_MINUTES_AHEAD = 240;
 
     private final GridService gridService;
     private final DispatchService dispatchService;
@@ -72,6 +80,8 @@ public class DispatchDemoService {
     private final DaEventProducer daEventProducer;
     /** Optional M6 bridge — when routing is on the classpath (demo profile), DAs seat on the real cron. */
     private final ObjectProvider<DaCronSchedulePort> cronSchedulePort;
+    /** M4 lookup so the demo state can hide tasks for shipments cancelled after the DA picked them up. */
+    private final ShipmentRepository shipmentRepository;
     private final DispatchProperties props;
 
     public DispatchDemoService(GridService gridService, DispatchService dispatchService,
@@ -81,7 +91,8 @@ public class DispatchDemoService {
                               DaCronAssignmentRepository cronRepository,
                               DaStatusRepository daStatusRepository,
                               DaEventProducer daEventProducer,
-                              ObjectProvider<DaCronSchedulePort> cronSchedulePort, DispatchProperties props) {
+                              ObjectProvider<DaCronSchedulePort> cronSchedulePort,
+                              ShipmentRepository shipmentRepository, DispatchProperties props) {
         this.gridService = gridService;
         this.dispatchService = dispatchService;
         this.daTaskService = daTaskService;
@@ -92,12 +103,13 @@ public class DispatchDemoService {
         this.daStatusRepository = daStatusRepository;
         this.daEventProducer = daEventProducer;
         this.cronSchedulePort = cronSchedulePort;
+        this.shipmentRepository = shipmentRepository;
         this.props = props;
     }
 
     // ── view model ────────────────────────────────────────────────────────────────────────────────
 
-    public record TaskView(UUID shipmentId, UUID tileId, int position, String status,
+    public record TaskView(UUID shipmentId, String ref, String m4State, UUID tileId, int position, String status,
                            String taskType, double taskLat, double taskLon,
                            boolean cronSafe, boolean crossTerritory, Instant expectedEta) {}
 
@@ -108,8 +120,9 @@ public class DispatchDemoService {
                          Double distanceToCronKm, Long lastPingSecondsAgo,
                          int completedToday, int codParcels, List<TaskView> queue) {}
 
-    public record DeferredView(UUID shipmentId, UUID tileId, double lat, double lon,
-                               String reason, String status) {}
+    public record DeferredView(UUID shipmentId, String ref, String taskType, UUID tileId,
+                               double lat, double lon, String reason, String status,
+                               String deferredAt, String retryAfter, int retryCount, String m4State) {}
 
     public record DispatchState(UUID cityId, LocalDate date, List<DaView> das,
                                 List<DeferredView> deferred, Summary summary) {}
@@ -335,6 +348,29 @@ public class DispatchDemoService {
         Instant now = Instant.now();
         Map<UUID, List<UUID>> hexesByDa = territoriesByDa(cityId, gridDate);
 
+        // Batch the per-DA reads into 2 queries up front (was N×3 — ~80 round-trips for 25 DAs against
+        // the remote DB, which caused thread starvation). Group/filter in memory in the loop below.
+        Map<UUID, DaCronAssignment> cronByDa = cronRepository.findByOperatingDateAndCityId(date, cityId).stream()
+                .collect(Collectors.toMap(DaCronAssignment::getDaId, c -> c, (a, b) -> a));
+        Map<UUID, List<DispatchQueue>> tasksByDa = queueRepository.findByCityIdAndOperatingDate(cityId, date).stream()
+                .collect(Collectors.groupingBy(DispatchQueue::getDaId));
+        // Hide tasks whose M4 shipment was cancelled after the DA picked it up — M5 leaves an IN_PROGRESS
+        // task on cancel ("for ops/M11"), but a cancelled parcel must not still count as a live pickup/drop
+        // in the roster counts, ops map or dispatch board (all of which read this state).
+        Set<UUID> taskShipmentIds = tasksByDa.values().stream().flatMap(List::stream)
+                .map(DispatchQueue::getShipmentId).collect(Collectors.toSet());
+        // One shipment lookup → drives both the cancelled filter and the shipmentId → ref map (so the
+        // ops-map popup + roster can show human refs, not raw ids). Synthetic tasks have no shipment row.
+        List<Shipment> taskShipments = taskShipmentIds.isEmpty() ? List.of()
+                : shipmentRepository.findAllById(taskShipmentIds);
+        Set<UUID> cancelledShipmentIds = taskShipments.stream()
+                .filter(s -> s.getState() == ShipmentState.CANCELLED)
+                .map(Shipment::getId).collect(Collectors.toSet());
+        Map<UUID, String> refById = taskShipments.stream()
+                .collect(Collectors.toMap(Shipment::getId, Shipment::getShipmentRef, (a, b) -> a));
+        Map<UUID, String> stateById = taskShipments.stream()
+                .collect(Collectors.toMap(Shipment::getId, s -> s.getState().name(), (a, b) -> a));
+
         List<DaView> das = new ArrayList<>();
         int cronLocked = 0;
         int crossCount = 0;
@@ -347,20 +383,23 @@ public class DispatchDemoService {
             if (st == DaStatusEnum.CRON_LOCKED || st == DaStatusEnum.AT_CRON) {
                 cronLocked++;
             }
-            Optional<DaCronAssignment> cron = cronRepository.findByDaIdAndOperatingDate(daId, date);
+            Optional<DaCronAssignment> cron = Optional.ofNullable(cronByDa.get(daId));
             String meetingTime = cron.map(c -> c.getScheduledMeetingTime().toString()).orElse(null);
             Long slack = cron.map(c -> Duration.between(now, c.getScheduledMeetingTime()).toMinutes()).orElse(null);
 
-            // All of the day's tasks (every status) — for the completed/COD aggregates the active queue can't show.
-            List<DispatchQueue> allTasks = queueRepository.findByDaIdAndOperatingDateOrderByQueuePosition(daId, date);
+            // All of the day's tasks (every status) — for the completed/COD aggregates the active queue can't
+            // show. Cancelled-after-pickup shipments are excluded so they don't linger as live pickups/drops.
+            List<DispatchQueue> allTasks = tasksByDa.getOrDefault(daId, List.of()).stream()
+                    .filter(q -> !cancelledShipmentIds.contains(q.getShipmentId())).toList();
             int completedToday = (int) allTasks.stream().filter(q -> q.getStatus() == TaskStatus.COMPLETED).count();
             int codParcels = (int) allTasks.stream().filter(q -> "COD".equalsIgnoreCase(q.getPaymentMode())).count();
 
-            List<TaskView> queue = queueRepository
-                    .findByDaIdAndOperatingDateAndStatusIn(daId, date,
-                            List.of(TaskStatus.QUEUED, TaskStatus.IN_PROGRESS)).stream()
+            List<TaskView> queue = allTasks.stream()
+                    .filter(q -> q.getStatus() == TaskStatus.QUEUED || q.getStatus() == TaskStatus.IN_PROGRESS)
                     .sorted(Comparator.comparingInt(DispatchQueue::getQueuePosition))
-                    .map(q -> new TaskView(q.getShipmentId(), q.getTileId(), q.getQueuePosition(),
+                    .map(q -> new TaskView(q.getShipmentId(), refById.get(q.getShipmentId()),
+                            stateById.get(q.getShipmentId()),
+                            q.getTileId(), q.getQueuePosition(),
                             q.getStatus().name(), q.getTaskType().name(), q.getTaskLat(), q.getTaskLon(),
                             q.isCronSafe(), q.isCrossTerritory(), q.getExpectedEta()))
                     .toList();
@@ -386,15 +425,98 @@ public class DispatchDemoService {
         }
         das.sort(Comparator.comparing(d -> d.daId().toString()));
 
-        List<DeferredView> deferred = deferredRepository.findByCityIdAndOperatingDate(cityId, date).stream()
-                .filter(d -> "PENDING".equals(d.getStatus()))
-                .map(d -> new DeferredView(d.getShipmentId(), d.getTileId(), d.getTaskLat(), d.getTaskLon(),
-                        d.getDeferReason().name(), d.getStatus()))
+        List<DeferredDispatch> pendingDeferred = deferredRepository.findByCityIdAndOperatingDate(cityId, date)
+                .stream().filter(d -> "PENDING".equals(d.getStatus())).toList();
+        // One lookup for the deferred shipments' ref + M4 state (they have no DA task, so they're not in refById).
+        Set<UUID> defIds = pendingDeferred.stream().map(DeferredDispatch::getShipmentId).collect(Collectors.toSet());
+        Map<UUID, Shipment> defShipments = defIds.isEmpty() ? Map.of()
+                : shipmentRepository.findAllById(defIds).stream()
+                        .collect(Collectors.toMap(Shipment::getId, s -> s, (a, b) -> a));
+        List<DeferredView> deferred = pendingDeferred.stream()
+                .map(d -> {
+                    Shipment s = defShipments.get(d.getShipmentId());
+                    return new DeferredView(d.getShipmentId(),
+                            s != null ? s.getShipmentRef() : null,
+                            d.getTaskType().name(), d.getTileId(), d.getTaskLat(), d.getTaskLon(),
+                            d.getDeferReason().name(), d.getStatus(),
+                            d.getDeferredAt() != null ? d.getDeferredAt().toString() : null,
+                            d.getRetryAfter() != null ? d.getRetryAfter().toString() : null,
+                            d.getRetryCount(),
+                            s != null ? s.getState().name() : null);
+                })
                 .toList();
 
         int assignedTasks = das.stream().mapToInt(d -> d.queue().size()).sum();
         Summary summary = new Summary(das.size(), assignedTasks, deferred.size(), cronLocked, crossCount);
         return new DispatchState(cityId, date, das, deferred, summary);
+    }
+
+    /**
+     * Targeted lookup for the customer status screen: the DA (+ its cron/van) carrying this shipment's
+     * PICKUP, via 2 queries instead of building the whole-city {@link #state}. Empty if not (yet) assigned.
+     * Only the cron fields of {@link DaView} are populated — that's all the status reveal needs.
+     */
+    @Transactional(readOnly = true)
+    public Optional<DaView> daForPickup(UUID shipmentId) {
+        LocalDate date = today();
+        return queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.PICKUP)
+                .map(q -> {
+                    UUID daId = q.getDaId();
+                    Optional<DaCronAssignment> cron = cronRepository.findByDaIdAndOperatingDate(daId, date);
+                    return new DaView(daId, null, null, null, List.of(),
+                            cron.map(c -> c.getScheduledMeetingTime().toString()).orElse(null), null,
+                            cron.map(DaCronAssignment::getMeetingLat).orElse(null),
+                            cron.map(DaCronAssignment::getMeetingLon).orElse(null),
+                            cron.map(DaCronAssignment::getVanId).orElse(null),
+                            cron.map(DaCronAssignment::getMeetingTimes).orElse(List.of()),
+                            null, null, null, null, 0, 0, List.of());
+                });
+    }
+
+    /**
+     * Mark a shipment's PICKUP as collected by the DA (QUEUED → IN_PROGRESS) — the M5-side effect of a
+     * successful door OTP. After this the parcel is "ready for the van" (pickedUpPickups), so the demo
+     * run will carry it. No-op if the task isn't found or isn't QUEUED. Returns true if it advanced.
+     */
+    @Transactional
+    public boolean markPickedUp(UUID shipmentId) {
+        return queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.PICKUP)
+                .filter(q -> q.getStatus() == TaskStatus.QUEUED)
+                .map(q -> { daTaskService.markEnRoute(q.getDaId(), q.getId()); return true; })
+                .orElse(false);
+    }
+
+    /** Complete the DA's PICKUP task when the parcel has been handed to the van / reached the origin hub,
+     *  so it leaves the DA's active queue. Direct status set (no event) — demo-only, mirrors markDelivering. */
+    @Transactional
+    public boolean markPickupCompleted(UUID shipmentId) {
+        return queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.PICKUP)
+                .filter(q -> q.getStatus() == TaskStatus.IN_PROGRESS)
+                .map(q -> {
+                    q.setStatus(TaskStatus.COMPLETED);
+                    q.setCompletedAt(java.time.Instant.now());
+                    queueRepository.save(q);
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    /** Move the DA's DELIVERY task QUEUED → IN_PROGRESS when the drop goes out for delivery, so the
+     *  board/map/DA-app show it in-progress in sync with the M4 DROP_COLLECTED state. Sets the status
+     *  directly (not via {@code daTaskService}) on purpose: {@code markEnRoute} is PICKUP-only, and
+     *  {@code markDropCollected} would re-emit a DROP_COLLECTED DA event for a shipment M4 has already
+     *  transitioned (→ a redundant event that orders would reject). This is a demo-only in-place update. */
+    @Transactional
+    public boolean markDelivering(UUID shipmentId) {
+        return queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.DELIVERY)
+                .filter(q -> q.getStatus() == TaskStatus.QUEUED)
+                .map(q -> {
+                    q.setStatus(TaskStatus.IN_PROGRESS);
+                    q.setStartedAt(java.time.Instant.now());
+                    queueRepository.save(q);
+                    return true;
+                })
+                .orElse(false);
     }
 
     /** Wipe the demo's M5 state for the city so it can be re-run. */

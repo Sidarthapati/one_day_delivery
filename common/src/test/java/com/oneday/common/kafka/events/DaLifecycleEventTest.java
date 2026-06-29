@@ -48,12 +48,14 @@ class DaLifecycleEventTest {
         assertEquals(DaEventType.PICKUP_FAILED, consumed.eventType());
     }
 
-    // occurredAt left null so this pure-unit test needs no jackson-jsr310 module on the test classpath.
+    // occurredAt + validDate left null so this pure-unit test needs no jackson-jsr310 module on the
+    // test classpath. parcelId == shipmentId (v1 contract).
     private DaLifecycleEvent base(DaEventType type, UUID shipmentId, UUID daId) {
         return new DaLifecycleEvent(
                 UUID.randomUUID(), type, DaLifecycleEvent.SCHEMA_VERSION, null,
                 shipmentId, "1DD-REF", daId, UUID.randomUUID(),
                 12.97, 77.61,
-                type == DaEventType.PICKUP_FAILED ? "OTP_EXPIRED" : null);
+                type == DaEventType.PICKUP_FAILED ? "OTP_EXPIRED" : null,
+                shipmentId, null);
     }
 }

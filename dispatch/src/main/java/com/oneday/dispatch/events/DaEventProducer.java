@@ -10,16 +10,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.UUID;
 
 /**
  * The single place M5 emits {@link DaLifecycleEvent}s on {@code oneday.da.events}.
  *
- * <p><b>Gated by {@code dispatch.events.publish-da-events} (default false).</b> M6's
- * {@code DaFeedConsumer} catch-all-binds this exchange and would mis-read every DA event as a
- * collected parcel (plan addendum §7). Until that contract is settled the producer logs the event
- * instead of publishing, so the job logic (ABSENT detection, shift-end deferral) is fully exercised
- * without poisoning M6. Flip the flag on once M6 narrows its binding.</p>
+ * <p><b>Gated by {@code dispatch.events.publish-da-events} (default true).</b> The M5↔M6 contract is
+ * settled: {@link DaLifecycleEvent} is the single rich type on {@code DA_EVENTS}, and both consumers
+ * (M4 {@code DaEventsConsumer}, M6 {@code DaFeedConsumer}) take it and dispatch by {@code eventType}
+ * (M6 acts only on {@code PICKUP_COMPLETED}). The catch-all binding is therefore safe. The flag
+ * remains as a kill-switch; set it false to suppress publishing (the event is logged instead, so the
+ * job logic — ABSENT detection, shift-end deferral — is still exercised).</p>
  */
 @Component
 public class DaEventProducer {
@@ -86,9 +89,14 @@ public class DaEventProducer {
 
     private void emit(DaEventType type, UUID daId, UUID cityId, UUID shipmentId,
                       String shipmentRef, String reasonCode) {
+        // v1: parcel id == shipment id (no M8 barcode yet); validDate = operating date in the shift zone.
+        // M6's collect-bind reads parcelId + validDate; both are null-safe for DA-scoped events.
+        UUID parcelId = shipmentId;
+        LocalDate validDate = shipmentId != null
+                ? LocalDate.now(ZoneId.of(props.getShift().getZone())) : null;
         DaLifecycleEvent event = new DaLifecycleEvent(
                 UUID.randomUUID(), type, DaLifecycleEvent.SCHEMA_VERSION, Instant.now(),
-                shipmentId, shipmentRef, daId, cityId, null, null, reasonCode);
+                shipmentId, shipmentRef, daId, cityId, null, null, reasonCode, parcelId, validDate);
 
         if (!props.getEvents().isPublishDaEvents()) {
             log.debug("DA event {} for da {} suppressed (dispatch.events.publish-da-events=false)", type, daId);

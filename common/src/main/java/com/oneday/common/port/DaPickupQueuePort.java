@@ -19,6 +19,14 @@ public interface DaPickupQueuePort {
     /** Active (QUEUED or in-progress) <b>pickups</b> for the city/day, one entry per parcel. */
     List<QueuedPickup> queuedPickups(UUID cityId, LocalDate date);
 
+    /**
+     * Pickups the DA has actually <b>collected</b> (OTP-verified at the door → task IN_PROGRESS), i.e.
+     * ready for the van to take. The van must only carry these — a parcel with no customer OTP has not
+     * been picked up. M6's run uses this (not {@link #queuedPickups}) so the on-map handoff never collects
+     * an un-verified parcel; un-collected pickups are simply left behind (next loop / deferred).
+     */
+    List<QueuedPickup> pickedUpPickups(UUID cityId, LocalDate date);
+
     /** Active (QUEUED or in-progress) <b>deliveries</b> for the city/day, one entry per parcel. */
     List<QueuedPickup> queuedDeliveries(UUID cityId, LocalDate date);
 }

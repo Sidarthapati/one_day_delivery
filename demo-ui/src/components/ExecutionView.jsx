@@ -4,21 +4,33 @@ import { hashDaColor } from '../utils/daColors.js'
 import { buildRoutes } from '../utils/buildRoutes.js'
 import { demandCount, seedDemand, replan, approveProposal } from '../api/gridApi.js'
 import {
-  m6Replan, m6Approve, getAllStops, getLive, getFleet, putFleet,
+  m6Replan, m6Approve, getAllStops, getLive, getFleet, putFleet, getPlan,
   runDay, runStop, runStatus, runEvents,
 } from '../api/routingApi.js'
-import { getDispatchState } from '../api/dispatchApi.js'
+import { getDispatchState, autoVerifyPickups, dispatchDrops, autoVerifyDeliveries, seedSpread, loadShift, resetDispatch, pickupsToHub, clearBookings, getAmqpTap } from '../api/dispatchApi.js'
+import { CITIES } from '../cities.js'
 
 // Execution runs the whole chain for TODAY (telemetry resolves manifests by today's date), distinct
 // from the planning tab's "tomorrow". One date for seed → M3 → M6 → run.
 const _n = new Date()
 const TODAY = `${_n.getFullYear()}-${String(_n.getMonth() + 1).padStart(2, '0')}-${String(_n.getDate()).padStart(2, '0')}`
 
-const KIND_STYLE = {
-  FEED: 'text-violet-700', BIND: 'text-blue-700', LOAD: 'text-slate-700',
-  ARRIVE: 'text-emerald-700', LATE: 'text-red-600 font-semibold', SCAN: 'text-teal-700',
-  RETURN: 'text-indigo-700', INFO: 'text-gray-500', ERROR: 'text-red-700 font-semibold',
+// Per-event-kind styling for the live RabbitMQ feed: an emoji + a coloured badge chip + a matching
+// message colour, so different events are visually distinct and the feed reads at a glance.
+const KIND_BADGE = {
+  PUBLISH:{ icon: '📤', badge: 'bg-fuchsia-100 text-fuchsia-700', text: 'text-fuchsia-800' },
+  CONSUME:{ icon: '📥', badge: 'bg-cyan-100 text-cyan-700',       text: 'text-cyan-800' },
+  FEED:   { icon: '📡', badge: 'bg-violet-100 text-violet-700',   text: 'text-violet-800' },
+  BIND:   { icon: '🔗', badge: 'bg-blue-100 text-blue-700',       text: 'text-blue-800' },
+  LOAD:   { icon: '📦', badge: 'bg-amber-100 text-amber-700',     text: 'text-amber-800' },
+  ARRIVE: { icon: '📍', badge: 'bg-emerald-100 text-emerald-700', text: 'text-emerald-800' },
+  LATE:   { icon: '⏰', badge: 'bg-red-100 text-red-700',         text: 'text-red-700 font-semibold' },
+  SCAN:   { icon: '✅', badge: 'bg-teal-100 text-teal-700',       text: 'text-teal-800' },
+  RETURN: { icon: '↩️', badge: 'bg-indigo-100 text-indigo-700',   text: 'text-indigo-800' },
+  INFO:   { icon: '·',  badge: 'bg-gray-100 text-gray-500',       text: 'text-gray-500' },
+  ERROR:  { icon: '✕',  badge: 'bg-red-200 text-red-800',         text: 'text-red-700 font-semibold' },
 }
+const DEFAULT_BADGE = { icon: '•', badge: 'bg-gray-100 text-gray-500', text: 'text-gray-600' }
 
 export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) {
   // Prepare inputs (seed → M3 territories → M6 fleet). Fleet inputs prefill from getFleet on mount.
@@ -35,11 +47,25 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   const [speed, setSpeed] = useState(60)
 
   const [preparing, setPreparing] = useState(false)
+  const [approving, setApproving] = useState(false)
   const [prepared, setPrepared] = useState(false)
   const [routes, setRoutes] = useState([])
   const [planInfo, setPlanInfo] = useState(null)
   const [error, setError] = useState(null)
 
+  const [verifying, setVerifying] = useState(false)
+  const [verifyMsg, setVerifyMsg] = useState(null)
+  const [toHubBusy, setToHubBusy] = useState(false)
+  const [droppingDrops, setDroppingDrops] = useState(false)
+  const [verifyingDrops, setVerifyingDrops] = useState(false)
+  const [dropMsg, setDropMsg] = useState(null)
+  const [spreadCount, setSpreadCount] = useState(12)
+  const [seeding, setSeeding] = useState(false)
+  const [seedMsg, setSeedMsg] = useState(null)
+  const [shiftBusy, setShiftBusy] = useState(null)   // 'load' | 'reset' | null
+  const [shiftMsg, setShiftMsg] = useState(null)
+  const [clearing, setClearing] = useState(false)
+  const [clearMsg, setClearMsg] = useState(null)
   const [running, setRunning] = useState(false)
   const [stat, setStat] = useState(null)
   const [vans, setVans] = useState([])
@@ -49,6 +75,7 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   const metRef = useRef({})            // daId → ms when its van first reached the DA's vertex
   const [events, setEvents] = useState([])
   const lastSeq = useRef(0)
+  const tapSeq = useRef(0)        // cursor into the real RabbitMQ publish/consume tap
   const logRef = useRef(null)
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
@@ -90,15 +117,22 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
 
   // Keep the DA overlay in sync with M5 while idle (a shift loaded / pickups assigned in the Dispatch
   // tab shows up here within a few seconds). During a run, das is a fixed snapshot the animation drives.
+  // Poll at 10s and skip while the tab is hidden — the state() read hits the remote DB per DA, so we
+  // keep the Render chatter (and its timeout risk) down without losing liveness when you're looking.
   useEffect(() => {
     if (running) return
-    const id = setInterval(() => fetchDas(), 4000)
+    const id = setInterval(() => { if (!document.hidden) fetchDas() }, 10000)
     return () => clearInterval(id)
   }, [running, cityId])
 
   // M5 DA cron points (vertex coords + queue depth + the van each meets). Static during a run, so we
   // fetch on prepare / run-start rather than polling.
+  // In-flight guard: the state() read can be slow against the remote DB; without this, a poll tick
+  // fires a new request before the previous returns and they pile up (the "too many requests" flood).
+  const dasBusy = useRef(false)
   async function fetchDas() {
+    if (dasBusy.current) return
+    dasBusy.current = true
     try {
       const s = await getDispatchState(cityId, TODAY)
       setDas((s.das || []).filter(d => d.cronVertexLat != null).map(d => {
@@ -110,12 +144,17 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
           daId: d.daId, vanId: d.vanId, home, vertex,
           pickups: pTasks.map(t => [t.taskLat, t.taskLon]),
           deliveries: dTasks.map(t => [t.taskLat, t.taskLon]),
+          // Only OTP-verified (IN_PROGRESS) pickups are actually collected by the van; QUEUED ones are
+          // assigned but un-verified and the run leaves them behind unless Auto-verify flips them.
+          pickupsVerified: pTasks.filter(t => t.status === 'IN_PROGRESS').length,
           pickupIds: pTasks.map(t => t.shipmentId),      // DA → van (collected, fly out)
           deliveryIds: dTasks.map(t => t.shipmentId),    // van → DA (inbound, to deliver)
+          pickupRefs: pTasks.map(t => ({ ref: t.ref || ('#' + String(t.shipmentId).slice(0, 4)), state: t.m4State })),
+          deliveryRefs: dTasks.map(t => ({ ref: t.ref || ('#' + String(t.shipmentId).slice(0, 4)), state: t.m4State })),
           queueDepth: (d.queue || []).length, cronTime: d.cronMeetingTime, distanceKm: d.distanceToCronKm,
         }
       }))
-    } catch { setDas([]) }
+    } catch { setDas([]) } finally { dasBusy.current = false }
   }
 
   async function prepare() {
@@ -146,10 +185,152 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     }
   }
 
+  // Approve today's PROPOSED plan without re-solving (Prepare auto-approves; this is the resilience
+  // path if a plan was left PROPOSED, or to re-confirm before Run). run-day needs an APPROVED plan.
+  async function approvePlan() {
+    setApproving(true); setError(null)
+    try {
+      const plan = await getPlan(cityId, TODAY)
+      if (!plan || !plan.planId) {
+        setError('No plan for today — click "Prepare today\'s plan" first (it builds + auto-approves).')
+        return
+      }
+      if (plan.status !== 'APPROVED') await m6Approve(plan.planId)
+      const stops = await getAllStops(cityId, TODAY)
+      setRoutes(await buildRoutes(stops, nodes))
+      setPlanInfo({ vansUsed: plan.vansUsed, planId: plan.planId, restored: true })
+      setPrepared(true)
+      fetchDas()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  // Simulate every DA's door OTP handshake so the van carries only OTP-verified pickups.
+  async function autoVerify() {
+    setVerifying(true); setVerifyMsg(null)
+    try {
+      const r = await autoVerifyPickups(cityId, TODAY)
+      setVerifyMsg('✅ ' + (r.message || (r.verified + ' verified')))
+      await fetchDas()
+    } catch (e) {
+      setVerifyMsg('✕ ' + e.message)
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  // Close the first mile: picked-up parcels → origin hub (AT_ORIGIN_HUB), the pickup-side mirror of
+  // "Dispatch drops". Run after "Run the day". Refreshes the DA overlay (completed pickups leave the queue).
+  async function pickupsToHubHandler() {
+    setToHubBusy(true); setVerifyMsg(null)
+    try {
+      const r = await pickupsToHub(CITIES[cityCode]?.label || cityCode, TODAY)
+      setVerifyMsg('🏭 ' + (r.message || (r.advanced + ' reached the hub')))
+      await fetchDas()
+    } catch (e) {
+      setVerifyMsg('✕ ' + e.message)
+    } finally {
+      setToHubBusy(false)
+    }
+  }
+
+  // M5 shift controls, brought into Execution so the whole demo path lives in one tab (no Dispatch
+  // hop). Load shift = clock today's planned DAs onto their cron meetings (queues start empty). Reset =
+  // clear the in-memory roster + tasks (start over). The detailed ops board stays on the Dispatch tab.
+  async function loadShiftHandler() {
+    setShiftBusy('load'); setShiftMsg(null)
+    try {
+      const r = await loadShift(cityId, TODAY)
+      setShiftMsg('👷 ' + (r?.message || `shift loaded — ${(r?.das?.length ?? r?.loaded ?? '')} DAs on duty`))
+      await fetchDas()
+    } catch (e) {
+      setShiftMsg('✕ ' + e.message)
+    } finally {
+      setShiftBusy(null)
+    }
+  }
+
+  async function resetHandler() {
+    if (!window.confirm('Reset the shift? Clears the in-memory DA roster + all queued tasks for today.')) return
+    setShiftBusy('reset'); setShiftMsg(null)
+    try {
+      await resetDispatch(cityId, TODAY)
+      setShiftMsg('♻️ shift reset — roster + queues cleared')
+      setDas([])
+    } catch (e) {
+      setShiftMsg('✕ ' + e.message)
+    } finally {
+      setShiftBusy(null)
+    }
+  }
+
+  // Wipe the demo customer's entire booking history (+ child rows) so a demo starts from scratch.
+  // Destructive but scoped to b2c@demo.in only. Follow with Reset to drop the in-memory M5 roster.
+  async function clearBookingsHandler() {
+    if (!window.confirm('Delete ALL b2c@demo.in bookings and their tasks/OTPs/payments? This cannot be undone.')) return
+    setClearing(true); setClearMsg(null)
+    try {
+      const r = await clearBookings()
+      setClearMsg('🧹 ' + (r?.message || `${r?.shipments ?? 0} shipments cleared`))
+      await resetDispatch(cityId, TODAY).catch(() => {})   // also drop the in-memory roster/queues
+      setDas([])
+    } catch (e) {
+      setClearMsg('✕ ' + e.message)
+    } finally {
+      setClearing(false)
+    }
+  }
+
+  // Spread seed: book `count` real shipments across many DA territories (one per DA) so the demo
+  // involves multiple DAs, not one hex. Refreshes the DA overlay so the spread is visible.
+  async function seedSpreadHandler(kind) {
+    setSeeding(true); setSeedMsg(null)
+    try {
+      const r = await seedSpread(cityId, CITIES[cityCode]?.label || cityCode, kind, spreadCount, TODAY)
+      setSeedMsg('🌐 ' + (r.message || (r.booked + ' booked')))
+      await fetchDas()
+    } catch (e) {
+      setSeedMsg('✕ ' + e.message)
+    } finally {
+      setSeeding(false)
+    }
+  }
+
+  // Last-mile: push booked drop shipments (e.g. uploaded drop20) into out-for-delivery + bind to loops,
+  // then (after Run carries them hub→van→DA) simulate every recipient's door OTP → Delivered.
+  async function dispatchDropsHandler() {
+    setDroppingDrops(true); setDropMsg(null)
+    try {
+      const r = await dispatchDrops(cityId, CITIES[cityCode]?.label || cityCode, TODAY)
+      setDropMsg('📦 ' + (r.message || (r.dispatched + ' dispatched')))
+    } catch (e) {
+      setDropMsg('✕ ' + e.message)
+    } finally {
+      setDroppingDrops(false)
+    }
+  }
+
+  async function autoVerifyDeliveriesHandler() {
+    setVerifyingDrops(true); setDropMsg(null)
+    try {
+      const r = await autoVerifyDeliveries(CITIES[cityCode]?.label || cityCode, TODAY)
+      setDropMsg('🏠 ' + (r.message || (r.delivered + ' delivered')))
+    } catch (e) {
+      setDropMsg('✕ ' + e.message)
+    } finally {
+      setVerifyingDrops(false)
+    }
+  }
+
   async function run() {
     setError(null); setEvents([]); setVans([]); lastSeq.current = 0
     try {
       await fetchDas()   // refresh queue depths (what M5 will hand to the vans)
+      // Fast-forward the bus tap to "now" so the feed shows only THIS run's real publish/consume traffic.
+      try { tapSeq.current = (await getAmqpTap(0)).head } catch { tapSeq.current = 0 }
       runStartRef.current = Date.now(); metRef.current = {}; setDaTs({})   // DAs start in their territory
       const s = await runDay(cityId, { deliveries, collects, speed })
       setStat(s); setRunning(true)
@@ -168,14 +349,26 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     let alive = true
     const tick = async () => {
       try {
-        const [live, evs, st] = await Promise.all([
+        const [live, evs, st, tap] = await Promise.all([
           getLive(cityId), runEvents(lastSeq.current), runStatus(),
+          getAmqpTap(tapSeq.current).catch(() => null),
         ])
         if (!alive) return
         setVans(live)
-        if (evs.length) {
-          lastSeq.current = evs[evs.length - 1].seq
-          setEvents(prev => [...prev, ...evs].slice(-300))
+        // Real RabbitMQ publish/consume observations → feed lines (distinct keys from run narration).
+        const tapEvs = tap?.entries?.length
+          ? tap.entries.map(e => ({
+              seq: `tap-${e.seq}`, kind: e.dir,
+              message: e.dir === 'PUBLISH'
+                ? `${e.exchange} ▸ ${e.type}${e.routingKey && e.routingKey !== '#' ? ` (${e.routingKey})` : ''}`
+                : `${e.queue} ◂ ${e.type}`,
+            }))
+          : []
+        if (tap?.head != null) tapSeq.current = tap.head
+        const merged = [...evs, ...tapEvs]
+        if (merged.length) {
+          if (evs.length) lastSeq.current = evs[evs.length - 1].seq
+          setEvents(prev => [...prev, ...merged].slice(-300))
         }
         setStat(st)
         if (['DONE', 'ERROR', 'STOPPED'].includes(st.phase)) {
@@ -231,7 +424,7 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   return (
     <div className="flex flex-1 overflow-hidden">
       <div className="flex-1 relative">
-        <ExecutionMap center={center} routes={routes} nodes={nodes} vans={vans} das={das} daTs={daTs} vanColor={hashDaColor} />
+        <ExecutionMap center={center} routes={routes} nodes={nodes} vans={vans} das={das} daTs={daTs} vanColor={hashDaColor} onRefresh={fetchDas} />
         {!prepared && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/60 z-[500]">
             <div className="text-center text-gray-600">
@@ -269,35 +462,152 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
               <input type="number" value={cycleMax} min={1} onChange={e => setCycleMax(+e.target.value)}
                 className="border rounded px-1 py-0.5" disabled={preparing || running} /></label>
           </div>
-          <button onClick={prepare} disabled={preparing || running}
+          <button onClick={prepare} disabled={preparing || approving || running}
             className="w-full text-sm px-3 py-1 rounded bg-slate-700 text-white disabled:opacity-50">
             {preparing ? 'Preparing…' : prepared ? 'Re-prepare today\'s plan' : 'Prepare today\'s plan'}
           </button>
+          <button onClick={approvePlan} disabled={preparing || approving || running}
+            className="w-full text-xs px-3 py-1 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            title="Approve today's route plan (Prepare already auto-approves; use this only if a plan is left PROPOSED). run-day needs an APPROVED plan.">
+            {approving ? 'Approving…' : '✓ Approve today\'s plan'}
+          </button>
           {planInfo && <div className="text-xs text-emerald-700">
             {planInfo.restored ? 'Existing plan loaded' : 'Plan approved'} · {planInfo.vansUsed} vans · {routes.length} loops</div>}
-          {das.length > 0 && (() => {
-            const m5P = das.reduce((a, d) => a + (d.pickups?.length || 0), 0)
+
+          {/* M5 shift controls (moved here from Dispatch so the demo path is one tab). Step 2 after Prepare:
+              clock the planned DAs onto their cron meetings; Reset to start over. */}
+          <div className="flex gap-2">
+            <button onClick={loadShiftHandler} disabled={shiftBusy != null || running}
+              className="flex-1 text-sm px-3 py-1.5 rounded border border-slate-400 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              title="Clock today's planned DAs onto the shift, each seated on its cron van meeting. Queues start empty.">
+              {shiftBusy === 'load' ? 'Loading…' : '👷 Load shift'}
+            </button>
+            <button onClick={resetHandler} disabled={shiftBusy != null || running}
+              className="text-sm px-3 py-1.5 rounded border border-rose-300 text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+              title="Clear the in-memory DA roster + all queued tasks for today (start over).">
+              {shiftBusy === 'reset' ? 'Resetting…' : '♻️ Reset'}
+            </button>
+          </div>
+          {/* Hard demo reset: delete the demo customer's bookings from the DB so 'Your Bookings'
+              (:8080, logged in as b2c@demo.in) starts empty. Scoped to b2c@demo.in only. */}
+          <button onClick={clearBookingsHandler} disabled={clearing || running || shiftBusy != null}
+            className="w-full text-xs px-3 py-1.5 rounded border border-rose-300 text-rose-700 bg-rose-50/40 hover:bg-rose-100 disabled:opacity-50"
+            title="Delete every b2c@demo.in shipment + its tasks/OTPs/payments from the DB — clean slate for a fresh demo. Then Prepare again.">
+            {clearing ? 'Clearing…' : '🧹 Clear all b2c@demo.in bookings (DB wipe)'}
+          </button>
+          {clearMsg && <div className="text-[11px] text-rose-700">{clearMsg}</div>}
+          {shiftMsg && <div className="text-[11px] text-slate-600">{shiftMsg}</div>}
+          {/* Live source readout — per lane, what the vans will ACTUALLY carry. The run sources collects
+              from M5 ONLY for OTP-verified (IN_PROGRESS) pickups; assigned-but-unverified are left behind
+              and the lane falls back to synthetic. Drops come from M5 only if it has real deliveries. */}
+          {(() => {
+            const pAssigned = das.reduce((a, d) => a + (d.pickups?.length || 0), 0)
+            const pVerified = das.reduce((a, d) => a + (d.pickupsVerified || 0), 0)
+            const pUnverified = pAssigned - pVerified
             const m5D = das.reduce((a, d) => a + (d.deliveries?.length || 0), 0)
-            return <div className="text-xs text-emerald-700">👤 {das.length} DAs ·
-              {' '}M5 drives the run: <b>{m5P} pickups</b>, <b>{m5D} drops</b>
-              {(m5P + m5D) === 0 && <span className="text-gray-400"> (assign in Dispatch to populate)</span>}</div>
+            const pickupsReal = pVerified > 0
+            const dropsReal = m5D > 0
+            const anyReal = pickupsReal || dropsReal
+            return (
+              <div className={`text-xs rounded px-2 py-1.5 border leading-relaxed ${anyReal
+                ? 'text-emerald-800 bg-emerald-50 border-emerald-100'
+                : 'text-amber-800 bg-amber-50 border-amber-100'}`}>
+                <div>▶ <b>Run source</b> — what the vans will actually carry:</div>
+                <div className="mt-0.5">
+                  ▲ pickups:{' '}
+                  {pickupsReal
+                    ? <b className="text-emerald-700">{pVerified} verified (M5 real)</b>
+                    : <b className="text-amber-700">synthetic ×{collects}</b>}
+                  {pUnverified > 0 && (
+                    <span className="text-amber-700"> · {pUnverified} assigned but un-verified — press
+                    Auto-verify to include them (else left behind)</span>
+                  )}
+                </div>
+                <div>
+                  ▼ drops:{' '}
+                  {dropsReal
+                    ? <b className="text-emerald-700">{m5D} (M5 real)</b>
+                    : <b className="text-amber-700">synthetic ×{deliveries}</b>}
+                  {!dropsReal && <span className="text-gray-500"> (M5 assigns no last-mile yet — Q-M4-2)</span>}
+                </div>
+                {das.length > 0 && <div className="text-gray-400">{das.length} DAs on shift.</div>}
+              </div>
+            )
           })()}
 
-          {/* Run config — ▼ deliveries (hub→DA) · ▲ pickups (DA→van). Used only as a fallback when no M5
-              shift is loaded; otherwise the counts above (from M5's queue) drive the run. */}
+          {/* Synthetic fallback config — drops (hub→DA) / pickups (DA→van) injected ONLY when M5's real
+              queue is empty (see source line above). speed is animation pacing only (always applies). */}
           <div className="flex items-center gap-3 text-xs text-gray-600 pt-1">
-            <label className="flex items-center gap-1" title="deliveries (fallback if no M5 shift)">▼ drops
+            <span className="text-[11px] uppercase tracking-wide text-gray-400" title="used only when M5 queue is empty">fallback:</span>
+            <label className="flex items-center gap-1" title="deliveries injected only if M5 queue empty">▼ drops
               <input type="number" value={deliveries} min={0}
               onChange={e => setDeliveries(+e.target.value)} className="w-12 border rounded px-1 py-0.5"
               disabled={running} /></label>
-            <label className="flex items-center gap-1" title="pickups (fallback if no M5 shift)">▲ pickups
+            <label className="flex items-center gap-1" title="pickups injected only if M5 queue empty">▲ pickups
               <input type="number" value={collects} min={0}
               onChange={e => setCollects(+e.target.value)} className="w-12 border rounded px-1 py-0.5"
               disabled={running} /></label>
-            <label className="flex items-center gap-1">speed<input type="number" value={speed} min={1}
+            <span className="text-gray-300">|</span>
+            <label className="flex items-center gap-1" title="animation pacing only">speed<input type="number" value={speed} min={1}
               onChange={e => setSpeed(+e.target.value)} className="w-14 border rounded px-1 py-0.5"
               disabled={running} /></label>
           </div>
+          <button onClick={autoVerify} disabled={verifying || running}
+            className="w-full text-sm px-3 py-1.5 rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+            title="Simulate each DA's door OTP handshake so the van carries ONLY verified pickups (un-verified are left behind)">
+            {verifying ? 'Verifying…' : '🔑 Auto-verify pickups (simulate door OTP)'}
+          </button>
+          <button onClick={pickupsToHubHandler} disabled={toHubBusy || running}
+            className="w-full text-sm px-3 py-1.5 rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title="Close the first mile: picked-up parcels → van → origin hub (AT_ORIGIN_HUB). Run after 'Run the day'. Stands in for M8's HUB_ORIGIN_IN scan / M7 receiving (not built).">
+            {toHubBusy ? 'Moving to hub…' : '🏭 Complete first-mile (van → origin hub)'}
+          </button>
+          {verifyMsg && <div className="text-[11px] text-emerald-700">{verifyMsg}</div>}
+
+          {/* Last-mile drops (hub→van→DA→customer). Step 1 pushes booked drop shipments (e.g. the
+              uploaded drop20) out for delivery + binds them to loops — do it before Run. Step 2, after
+              Run carries them to the DA, simulates each recipient's door OTP → Delivered. */}
+          {/* Spread seed — book real shipments across MANY DA territories (one per DA), so the demo isn't
+              concentrated on one hex. Pickups: M5 auto-assigns each to a different DA. Drops: spread dests,
+              then use Dispatch drops below. Requires Prepare (territories) first. */}
+          <div className="border-t border-gray-100 pt-2 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] uppercase tracking-wide text-gray-400">spread seed (multi-DA, real shipments)</span>
+              <label className="flex items-center gap-1 text-xs text-gray-600" title="one shipment per DA territory, up to this count">count
+                <input type="number" value={spreadCount} min={1} max={60}
+                  onChange={e => setSpreadCount(+e.target.value)} className="w-12 border rounded px-1 py-0.5"
+                  disabled={seeding || running} /></label>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => seedSpreadHandler('PICKUP')} disabled={seeding || running}
+                className="flex-1 text-sm px-2 py-1.5 rounded border border-sky-300 text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                title="Book real first-mile DA pickups spread across DA territories — M5 auto-assigns each to a different DA (real pickup leg, OTP at the door).">
+                {seeding ? '…' : '🌐 Spread pickups'}
+              </button>
+              <button onClick={() => seedSpreadHandler('DROP')} disabled={seeding || running}
+                className="flex-1 text-sm px-2 py-1.5 rounded border border-sky-300 text-sky-700 hover:bg-sky-50 disabled:opacity-50"
+                title="Book real last-mile drops spread across DA territories AND assign each to its DA (shows on hover). First-mile is SELF_DROP (sender drops at the origin hub) — no origin pickup, so no phantom origin-city deferrals. Then use 'Dispatch drops' below.">
+                {seeding ? '…' : '🌐 Spread drops'}
+              </button>
+            </div>
+            {seedMsg && <div className="text-[11px] text-sky-700">{seedMsg}</div>}
+          </div>
+
+          <div className="border-t border-gray-100 pt-2 space-y-1.5">
+            <div className="text-[11px] uppercase tracking-wide text-gray-400">last-mile drops (hub→van→DA→customer)</div>
+            <button onClick={dispatchDropsHandler} disabled={droppingDrops || running}
+              className="w-full text-sm px-3 py-1.5 rounded border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+              title="Fast-forward booked DA_DELIVERY shipments for this city to out-for-delivery, mint each delivery OTP, and bind them to drop-van loops. Do this before Run.">
+              {droppingDrops ? 'Dispatching…' : '📦 Dispatch drops out for delivery'}
+            </button>
+            <button onClick={autoVerifyDeliveriesHandler} disabled={verifyingDrops || running}
+              className="w-full text-sm px-3 py-1.5 rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              title="Simulate every recipient's door OTP handshake → out-for-delivery parcels become Delivered (DROPPED). Run first so the van reaches the DA.">
+              {verifyingDrops ? 'Delivering…' : '🏠 Auto-verify deliveries (recipient OTP → Delivered)'}
+            </button>
+            {dropMsg && <div className="text-[11px] text-indigo-700">{dropMsg}</div>}
+          </div>
+
           <div className="flex gap-2">
             <button onClick={run} disabled={!prepared || running}
               className="flex-1 text-sm px-3 py-1.5 rounded bg-blue-600 text-white disabled:opacity-50">
@@ -333,11 +643,17 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
         <div className="px-3 py-1 text-xs font-semibold text-gray-500 border-b border-gray-100">RabbitMQ feed ▸ live</div>
         <div ref={logRef} className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed">
           {events.length === 0 && <div className="text-gray-400">No events yet — run the day to see parcels flow.</div>}
-          {events.map(e => (
-            <div key={e.seq} className={KIND_STYLE[e.kind] || 'text-gray-600'}>
-              <span className="text-gray-300">{e.kind.padEnd(6)}</span> {e.message}
-            </div>
-          ))}
+          {events.map(e => {
+            const s = KIND_BADGE[e.kind] || DEFAULT_BADGE
+            return (
+              <div key={e.seq} className="flex items-start gap-1.5 py-0.5 hover:bg-gray-50 rounded">
+                <span className={`inline-flex items-center gap-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 ${s.badge}`}>
+                  {s.icon} {e.kind}
+                </span>
+                <span className={s.text}>{e.message}</span>
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>

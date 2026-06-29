@@ -25,7 +25,6 @@ import com.oneday.dispatch.service.DispatchService;
 import com.oneday.dispatch.service.FeasibilityRequest;
 import com.oneday.dispatch.service.FeasibilityResult;
 import com.oneday.dispatch.service.FeasibilityStop;
-import com.oneday.dispatch.service.TaskInProgressException;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.dispatch.service.model.LatLon;
 import com.oneday.grid.dto.response.TileLoadScoreResponse;
@@ -136,13 +135,18 @@ class DispatchServiceImpl implements DispatchService {
             return;   // nothing to cancel (idempotent)
         }
         DispatchQueue row = active.get();
-        if (row.getStatus() == TaskStatus.IN_PROGRESS) {
-            log.warn("Cancel requested for IN_PROGRESS {} of shipment {} (DA {}) — needs ops handling",
-                    taskType, shipmentId, row.getDaId());
-            throw new TaskInProgressException(shipmentId, taskType);
+        if (row.getStatus() != TaskStatus.QUEUED && row.getStatus() != TaskStatus.IN_PROGRESS) {
+            return;   // already terminal (COMPLETED/FAILED/CANCELLED/DEFERRED) — idempotent
         }
-        if (row.getStatus() != TaskStatus.QUEUED) {
-            return;   // already terminal
+        // An IN_PROGRESS task means the DA has physically taken custody (parcel picked up / en route).
+        // The shipment is now cancelled, so this is no longer a hub-bound pickup — it must leave the DA's
+        // active load and cron budget (otherwise it starves feasibility for real parcels). The physical
+        // parcel becomes a return (RTO); M11 owns that lane. We terminate the dispatch task either way and
+        // log the custody hand-back so it's auditable.
+        if (row.getStatus() == TaskStatus.IN_PROGRESS) {
+            log.warn("Shipment {} cancelled while its {} task was IN_PROGRESS (DA {} holds the parcel) — "
+                    + "removing from DA load; physical return is an RTO for M11",
+                    shipmentId, taskType, row.getDaId());
         }
         UUID daId = row.getDaId();
         UUID cityId = row.getCityId();

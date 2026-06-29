@@ -11,7 +11,6 @@ import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.DispatchService;
-import com.oneday.dispatch.service.TaskInProgressException;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.service.GridService;
@@ -21,11 +20,9 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -128,13 +125,12 @@ class ShipmentEventsConsumerTest {
     }
 
     @Test
-    void cancelOfInProgressTaskIsSwallowed() {
+    void cancelAfterPickupStillCancelsPickupTask() {
+        // PICKED_UP is first-mile (not a delivery-phase state) → the pickup task is cancelled. cancelTask
+        // now removes an IN_PROGRESS task from the DA's load too (RTO), so the consumer just delegates.
         UUID shipment = UUID.randomUUID();
-        doThrow(new TaskInProgressException(shipment, TaskType.PICKUP))
-                .when(dispatchService).cancelTask(shipment, TaskType.PICKUP);
-
-        assertThatCode(() -> consumer.onShipmentEvent(cancelled(shipment, ShipmentState.PICKED_UP)))
-                .doesNotThrowAnyException();
+        consumer.onShipmentEvent(cancelled(shipment, ShipmentState.PICKED_UP));
+        verify(dispatchService).cancelTask(shipment, TaskType.PICKUP);
     }
 
     @Test
