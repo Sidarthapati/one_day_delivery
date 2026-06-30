@@ -41,9 +41,11 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   const [capacity, setCapacity] = useState(120)
   const [cycleMax, setCycleMax] = useState(180)
 
-  // Run inputs.
-  const [deliveries, setDeliveries] = useState(40)
-  const [collects, setCollects] = useState(20)
+  // Run inputs. Synthetic fallback defaults to 0/0 — the run carries ONLY real M5 parcels unless you
+  // deliberately raise these (they inject fake parcels only when M5's queue is empty). Keeping them 0
+  // prevents the feed/stats from being inflated by synthetic drops/collects.
+  const [deliveries, setDeliveries] = useState(0)
+  const [collects, setCollects] = useState(0)
   const [speed, setSpeed] = useState(60)
 
   const [preparing, setPreparing] = useState(false)
@@ -326,11 +328,11 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   }
 
   async function run() {
-    setError(null); setEvents([]); setVans([]); lastSeq.current = 0
+    // The bus feed is always-live (see the tap poller below) — don't clear it; Run just adds its own
+    // narration on top of whatever publish/consume traffic is already streaming.
+    setError(null); setVans([]); lastSeq.current = 0
     try {
       await fetchDas()   // refresh queue depths (what M5 will hand to the vans)
-      // Fast-forward the bus tap to "now" so the feed shows only THIS run's real publish/consume traffic.
-      try { tapSeq.current = (await getAmqpTap(0)).head } catch { tapSeq.current = 0 }
       runStartRef.current = Date.now(); metRef.current = {}; setDaTs({})   // DAs start in their territory
       const s = await runDay(cityId, { deliveries, collects, speed })
       setStat(s); setRunning(true)
@@ -349,26 +351,15 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     let alive = true
     const tick = async () => {
       try {
-        const [live, evs, st, tap] = await Promise.all([
+        const [live, evs, st] = await Promise.all([
           getLive(cityId), runEvents(lastSeq.current), runStatus(),
-          getAmqpTap(tapSeq.current).catch(() => null),
         ])
         if (!alive) return
         setVans(live)
-        // Real RabbitMQ publish/consume observations → feed lines (distinct keys from run narration).
-        const tapEvs = tap?.entries?.length
-          ? tap.entries.map(e => ({
-              seq: `tap-${e.seq}`, kind: e.dir,
-              message: e.dir === 'PUBLISH'
-                ? `${e.exchange} ▸ ${e.type}${e.routingKey && e.routingKey !== '#' ? ` (${e.routingKey})` : ''}`
-                : `${e.queue} ◂ ${e.type}`,
-            }))
-          : []
-        if (tap?.head != null) tapSeq.current = tap.head
-        const merged = [...evs, ...tapEvs]
-        if (merged.length) {
-          if (evs.length) lastSeq.current = evs[evs.length - 1].seq
-          setEvents(prev => [...prev, ...merged].slice(-300))
+        // Run narration only — the publish/consume tap is streamed by the always-live poller below.
+        if (evs.length) {
+          lastSeq.current = evs[evs.length - 1].seq
+          setEvents(prev => [...prev, ...evs].slice(-300))
         }
         setStat(st)
         if (['DONE', 'ERROR', 'STOPPED'].includes(st.phase)) {
@@ -414,6 +405,34 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     return () => clearInterval(id)
   }, [running])
 
+  // Always-live RabbitMQ tap: stream real PUBLISH/CONSUME from mount (not just during a run) so EVERY
+  // action's bus traffic — spread, auto-verify, dispatch drops, prepare, and the run itself — shows in
+  // the left feed. Starts at the current head so it streams from "now" (no historical-ring dump).
+  useEffect(() => {
+    let alive = true
+    let synced = false
+    const poll = async () => {
+      try {
+        if (!synced) { tapSeq.current = (await getAmqpTap(0)).head; synced = true; return }
+        const tap = await getAmqpTap(tapSeq.current)
+        if (!alive) return
+        if (tap?.entries?.length) {
+          const tapEvs = tap.entries.map(e => ({
+            seq: `tap-${e.seq}`, kind: e.dir,
+            message: e.dir === 'PUBLISH'
+              ? `${e.exchange} ▸ ${e.type}${e.routingKey && e.routingKey !== '#' ? ` (${e.routingKey})` : ''}`
+              : `${e.queue} ◂ ${e.type}`,
+          }))
+          setEvents(prev => [...prev, ...tapEvs].slice(-300))
+        }
+        if (tap?.head != null) tapSeq.current = tap.head
+      } catch { /* transient — keep polling */ }
+    }
+    poll()
+    const id = setInterval(poll, 1500)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+
   // Auto-scroll the feed.
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
@@ -423,6 +442,28 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
 
   return (
     <div className="flex flex-1 overflow-hidden">
+      {/* RabbitMQ feed — left rail */}
+      <div className="w-80 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
+        <div className="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-100 flex items-center justify-between">
+          <span>RabbitMQ feed ▸ live</span>
+          {events.length > 0 && <span className="text-gray-400 font-normal">{events.length}</span>}
+        </div>
+        <div ref={logRef} className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed">
+          {events.length === 0 && <div className="text-gray-400">Live — any action that hits the bus (spread, auto-verify, dispatch, run) appears here.</div>}
+          {events.map(e => {
+            const s = KIND_BADGE[e.kind] || DEFAULT_BADGE
+            return (
+              <div key={e.seq} className="flex items-start gap-1.5 py-0.5 hover:bg-gray-50 rounded">
+                <span className={`inline-flex items-center gap-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 ${s.badge}`}>
+                  {s.icon} {e.kind}
+                </span>
+                <span className={s.text}>{e.message}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
       <div className="flex-1 relative">
         <ExecutionMap center={center} routes={routes} nodes={nodes} vans={vans} das={das} daTs={daTs} vanColor={hashDaColor} onRefresh={fetchDas} />
         {!prepared && (
@@ -639,22 +680,6 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
           </div>
         )}
 
-        {/* RabbitMQ feed */}
-        <div className="px-3 py-1 text-xs font-semibold text-gray-500 border-b border-gray-100">RabbitMQ feed ▸ live</div>
-        <div ref={logRef} className="flex-1 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed">
-          {events.length === 0 && <div className="text-gray-400">No events yet — run the day to see parcels flow.</div>}
-          {events.map(e => {
-            const s = KIND_BADGE[e.kind] || DEFAULT_BADGE
-            return (
-              <div key={e.seq} className="flex items-start gap-1.5 py-0.5 hover:bg-gray-50 rounded">
-                <span className={`inline-flex items-center gap-0.5 px-1.5 rounded text-[10px] font-semibold shrink-0 ${s.badge}`}>
-                  {s.icon} {e.kind}
-                </span>
-                <span className={s.text}>{e.message}</span>
-              </div>
-            )
-          })}
-        </div>
       </div>
     </div>
   )
