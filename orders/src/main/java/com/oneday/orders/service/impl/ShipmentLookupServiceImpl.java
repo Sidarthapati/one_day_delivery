@@ -36,6 +36,7 @@ class ShipmentLookupServiceImpl implements ShipmentLookupService {
                 s.getOriginCity(),
                 s.getDestCity(),
                 s.getDestPincode(),
+                s.getDestTileId(),
                 null); // slaDeadline wired when M10's commitment timestamp lands
     }
 }

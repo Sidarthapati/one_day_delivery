@@ -1,7 +1,7 @@
 package com.oneday.hub.api;
 
 import com.oneday.hub.dto.*;
-import com.oneday.hub.service.BagService;
+import com.oneday.hub.service.FlightBagService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,16 +14,16 @@ import java.util.UUID;
 @RequestMapping("/hub/{hubId}/bags")
 public class HubBagController {
 
-    private final BagService bagService;
+    private final FlightBagService flightBagService;
 
-    HubBagController(BagService bagService) {
-        this.bagService = bagService;
+    HubBagController(FlightBagService flightBagService) {
+        this.flightBagService = flightBagService;
     }
 
     @PostMapping
     public ResponseEntity<BagResponse> openBag(@PathVariable UUID hubId,
                                                @RequestBody @Valid OpenBagRequest request) {
-        var bag = bagService.openBag(new BagService.OpenBagCommand(
+        var bag = flightBagService.openBag(new FlightBagService.OpenBagCommand(
                 hubId, hubId, request.flightNo(), request.flightDate(), request.originHub(),
                 request.destHub(), request.bagCutoff()));
         return ResponseEntity.status(HttpStatus.CREATED).body(BagResponse.from(bag));
@@ -32,29 +32,29 @@ public class HubBagController {
     @PostMapping("/{bagId}/add")
     public BagResponse addParcel(@PathVariable UUID hubId, @PathVariable UUID bagId,
                                  @RequestBody @Valid AddParcelRequest request) {
-        bagService.addParcel(bagId, request.shipmentRef());
-        return BagResponse.from(bagService.bag(bagId));
+        flightBagService.addParcel(bagId, request.shipmentRef());
+        return BagResponse.from(flightBagService.bag(bagId));
     }
 
     @PostMapping("/{bagId}/reassign-stand")
     public BagResponse reassignStand(@PathVariable UUID hubId, @PathVariable UUID bagId,
                                      @RequestBody @Valid ReassignStandRequest request) {
-        return BagResponse.from(bagService.reassignStand(
+        return BagResponse.from(flightBagService.reassignStand(
                 bagId, request.newStandId(), request.actorId(), request.reason()));
     }
 
     @PostMapping("/{bagId}/seal")
     public SealResponse seal(@PathVariable UUID hubId, @PathVariable UUID bagId) {
-        return SealResponse.from(bagService.seal(bagId));
+        return SealResponse.from(flightBagService.seal(bagId));
     }
 
     @PostMapping("/{bagId}/dispatch")
     public BagResponse dispatch(@PathVariable UUID hubId, @PathVariable UUID bagId) {
-        return BagResponse.from(bagService.dispatch(bagId));
+        return BagResponse.from(flightBagService.dispatch(bagId));
     }
 
     @GetMapping("/{bagId}/manifest")
     public ManifestResponse manifest(@PathVariable UUID hubId, @PathVariable UUID bagId) {
-        return ManifestResponse.from(bagService.currentManifest(bagId));
+        return ManifestResponse.from(flightBagService.currentManifest(bagId));
     }
 }

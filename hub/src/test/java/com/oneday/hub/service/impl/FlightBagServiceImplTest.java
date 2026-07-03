@@ -7,7 +7,7 @@ import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.hub.domain.*;
 import com.oneday.hub.events.HubEventProducer;
 import com.oneday.hub.repository.*;
-import com.oneday.hub.service.BagService;
+import com.oneday.hub.service.FlightBagService;
 import com.oneday.hub.service.exception.IllegalBagStateException;
 import com.oneday.hub.service.port.BarcodePort;
 import com.oneday.hub.service.port.ShipmentInfoPort;
@@ -31,10 +31,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class BagServiceImplTest {
+class FlightBagServiceImplTest {
 
     @Mock FlightBagRepository flightBagRepository;
-    @Mock BagItemRepository bagItemRepository;
+    @Mock FlightBagItemRepository flightBagItemRepository;
     @Mock BagManifestRepository bagManifestRepository;
     @Mock StandRepository standRepository;
     @Mock StandReassignmentAuditRepository reassignmentAuditRepository;
@@ -44,8 +44,8 @@ class BagServiceImplTest {
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-27T10:00:00Z"), ZoneOffset.UTC);
 
-    private BagServiceImpl service() {
-        return new BagServiceImpl(flightBagRepository, bagItemRepository, bagManifestRepository,
+    private FlightBagServiceImpl service() {
+        return new FlightBagServiceImpl(flightBagRepository, flightBagItemRepository, bagManifestRepository,
                 standRepository, reassignmentAuditRepository, shipmentInfoPort, barcodePort,
                 eventProducer, new ObjectMapper(), clock);
     }
@@ -56,16 +56,16 @@ class BagServiceImplTest {
     private FlightBag openBag(UUID id) {
         return FlightBag.builder().id(id).cityId(hubId).hubId(hubId).flightNo("ODMUMBAI18")
                 .flightDate(LocalDate.of(2026, 6, 27)).originHub("DELHI").destHub("MUMBAI")
-                .currentStandId(standId).status(BagStatus.OPEN).parcelCount(0).weightGrams(0).build();
+                .currentStandId(standId).status(FlightBagStatus.OPEN).parcelCount(0).weightGrams(0).build();
     }
 
     private ShipmentInfoPort.ParcelInfo parcel(int weight) {
         return new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1", ShipmentState.ORIGIN_HUB_PROCESSING,
-                weight, DropType.DA_DELIVERY, DeliveryType.INTERCITY, "DELHI", "MUMBAI", "400001", null);
+                weight, DropType.DA_DELIVERY, DeliveryType.INTERCITY, "DELHI", "MUMBAI", "400001", null, null);
     }
 
-    private BagService.OpenBagCommand openCmd() {
-        return new BagService.OpenBagCommand(hubId, hubId, "ODMUMBAI18",
+    private FlightBagService.OpenBagCommand openCmd() {
+        return new FlightBagService.OpenBagCommand(hubId, hubId, "ODMUMBAI18",
                 LocalDate.of(2026, 6, 27), "DELHI", "MUMBAI", null);
     }
 
@@ -77,14 +77,14 @@ class BagServiceImplTest {
     @Test
     void openBag_lazyCreate_allocatesFreeStand_andEmitsBagCreated() {
         when(flightBagRepository.findByFlightNoAndFlightDateAndDestHubAndStatus(
-                "ODMUMBAI18", LocalDate.of(2026, 6, 27), "MUMBAI", BagStatus.OPEN)).thenReturn(Optional.empty());
-        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, BagStatus.OPEN))
+                "ODMUMBAI18", LocalDate.of(2026, 6, 27), "MUMBAI", FlightBagStatus.OPEN)).thenReturn(Optional.empty());
+        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, "AIRPORT_DOCK"))
                 .thenReturn(List.of(freeStand()));
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         FlightBag bag = service().openBag(openCmd());
 
-        assertThat(bag.getStatus()).isEqualTo(BagStatus.OPEN);
+        assertThat(bag.getStatus()).isEqualTo(FlightBagStatus.OPEN);
         assertThat(bag.getCurrentStandId()).isEqualTo(standId);
         verify(eventProducer).emitBagCreated(any(FlightBag.class), eq("A-2"));
     }
@@ -93,7 +93,7 @@ class BagServiceImplTest {
     void openBag_noFreeStand_escalates() {
         when(flightBagRepository.findByFlightNoAndFlightDateAndDestHubAndStatus(any(), any(), any(), any()))
                 .thenReturn(Optional.empty());
-        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, BagStatus.OPEN))
+        when(standRepository.findFreeStands(hubId, StandStatus.OPEN, "AIRPORT_DOCK"))
                 .thenReturn(List.of());
 
         assertThatThrownBy(() -> service().openBag(openCmd()))
@@ -121,8 +121,8 @@ class BagServiceImplTest {
         FlightBag bag = openBag(bagId);
         when(flightBagRepository.findById(bagId)).thenReturn(Optional.of(bag));
         when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel(1500)));
-        when(bagItemRepository.existsByParcelIdAndStatus(any(), eq(BagItemStatus.IN_BAG))).thenReturn(false);
-        when(bagItemRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(flightBagItemRepository.existsByParcelIdAndStatus(any(), eq(FlightBagItemStatus.IN_BAG))).thenReturn(false);
+        when(flightBagItemRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         service().addParcel(bagId, "BLR-1");
 
@@ -135,7 +135,7 @@ class BagServiceImplTest {
     void addParcel_toSealedBag_isRejected() {
         UUID bagId = UUID.randomUUID();
         FlightBag bag = openBag(bagId);
-        bag.setStatus(BagStatus.SEALED);
+        bag.setStatus(FlightBagStatus.SEALED);
         when(flightBagRepository.findById(bagId)).thenReturn(Optional.of(bag));
 
         assertThatThrownBy(() -> service().addParcel(bagId, "BLR-1"))
@@ -171,9 +171,9 @@ class BagServiceImplTest {
         bag.setParcelCount(2);
         bag.setWeightGrams(3000);
         when(flightBagRepository.findById(bagId)).thenReturn(Optional.of(bag));
-        when(bagItemRepository.findByBagIdAndStatus(bagId, BagItemStatus.IN_BAG)).thenReturn(List.of(
-                BagItem.builder().bagId(bagId).parcelId(UUID.randomUUID()).shipmentRef("BLR-1").weightGrams(1000).status(BagItemStatus.IN_BAG).build(),
-                BagItem.builder().bagId(bagId).parcelId(UUID.randomUUID()).shipmentRef("BLR-2").weightGrams(2000).status(BagItemStatus.IN_BAG).build()));
+        when(flightBagItemRepository.findByBagIdAndStatus(bagId, FlightBagItemStatus.IN_BAG)).thenReturn(List.of(
+                FlightBagItem.builder().bagId(bagId).parcelId(UUID.randomUUID()).shipmentRef("BLR-1").weightGrams(1000).status(FlightBagItemStatus.IN_BAG).build(),
+                FlightBagItem.builder().bagId(bagId).parcelId(UUID.randomUUID()).shipmentRef("BLR-2").weightGrams(2000).status(FlightBagItemStatus.IN_BAG).build()));
         when(bagManifestRepository.save(any())).thenAnswer(i -> {
             BagManifest m = i.getArgument(0);
             m.setId(UUID.randomUUID());
@@ -184,9 +184,9 @@ class BagServiceImplTest {
                         .capacity(200).status(StandStatus.OPEN).build()));
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        BagService.SealResult result = service().seal(bagId);
+        FlightBagService.SealResult result = service().seal(bagId);
 
-        assertThat(result.bag().getStatus()).isEqualTo(BagStatus.SEALED);
+        assertThat(result.bag().getStatus()).isEqualTo(FlightBagStatus.SEALED);
         assertThat(result.bag().getSealedAt()).isEqualTo(clock.instant());
         assertThat(result.manifest().getParcelCount()).isEqualTo(2);
         assertThat(result.manifest().getWeightGrams()).isEqualTo(3000);
@@ -208,13 +208,13 @@ class BagServiceImplTest {
     void dispatch_sealedBag_marksDispatched() {
         UUID bagId = UUID.randomUUID();
         FlightBag bag = openBag(bagId);
-        bag.setStatus(BagStatus.SEALED);
+        bag.setStatus(FlightBagStatus.SEALED);
         when(flightBagRepository.findById(bagId)).thenReturn(Optional.of(bag));
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         FlightBag dispatched = service().dispatch(bagId);
 
-        assertThat(dispatched.getStatus()).isEqualTo(BagStatus.DISPATCHED);
+        assertThat(dispatched.getStatus()).isEqualTo(FlightBagStatus.DISPATCHED);
         assertThat(dispatched.getDispatchedAt()).isEqualTo(clock.instant());
     }
 }

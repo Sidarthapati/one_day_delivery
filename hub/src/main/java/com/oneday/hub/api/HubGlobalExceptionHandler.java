@@ -30,6 +30,11 @@ class HubGlobalExceptionHandler {
         return problem(HttpStatus.CONFLICT, "Conflict", ex);
     }
 
+    @ExceptionHandler(UnresolvedDestinationException.class)
+    ProblemDetail handleUnresolvedDestination(UnresolvedDestinationException ex) {
+        return problem(HttpStatus.UNPROCESSABLE_ENTITY, "Unresolved destination", ex);
+    }
+
     private ProblemDetail problem(HttpStatus status, String title, RuntimeException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(status);
         pd.setTitle(title);

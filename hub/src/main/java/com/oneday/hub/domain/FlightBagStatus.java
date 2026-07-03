@@ -1,7 +1,7 @@
 package com.oneday.hub.domain;
 
 /** Flight-bag lifecycle (§7.2). */
-public enum BagStatus {
+public enum FlightBagStatus {
     OPEN,         // accumulating parcels
     SEALED,       // frozen at cutoff, manifest generated
     DISPATCHED,   // on the airport shuttle

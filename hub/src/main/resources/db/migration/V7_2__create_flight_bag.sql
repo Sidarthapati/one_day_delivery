@@ -1,5 +1,5 @@
 -- M7 §14.3, §7.2 — the consolidation unit: one bag per (flight_no, flight_date, dest_hub), sited on
--- a stand. Status-mutable (OPEN→SEALED→DISPATCHED→HANDED_OVER); contents are append-only via bag_item.
+-- a stand. Status-mutable (OPEN→SEALED→DISPATCHED→HANDED_OVER); contents are append-only via flight_bag_item.
 CREATE TABLE flight_bag (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     city_id          UUID         NOT NULL,

@@ -14,13 +14,13 @@ import java.util.UUID;
 // One parcel placed in a flight bag, with the weight it contributed (§14.3). Append-only: never
 // deleted; a removal flips status to REMOVED and stamps removed_at.
 @Entity
-@Table(name = "bag_item")
+@Table(name = "flight_bag_item")
 @Getter
 @Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class BagItem {
+public class FlightBagItem {
 
     @Id
     @UuidGenerator
@@ -41,7 +41,7 @@ public class BagItem {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 10)
-    private BagItemStatus status;
+    private FlightBagItemStatus status;
 
     @Column(name = "added_at", nullable = false, updatable = false)
     private Instant addedAt;
