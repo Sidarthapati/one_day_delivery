@@ -8,6 +8,7 @@ import com.oneday.hub.domain.BagManifest;
 import com.oneday.hub.domain.DeliveryBag;
 import com.oneday.hub.domain.DiscrepancyType;
 import com.oneday.hub.domain.FlightBag;
+import com.oneday.hub.domain.HubLoadSnapshot;
 import com.oneday.hub.domain.SortDirection;
 import org.springframework.stereotype.Component;
 
@@ -92,6 +93,20 @@ public class HubEventProducer {
     /** SAMECITY_OUTBOUND → M4/M10: an intra-city parcel skips the flight path (§12). */
     public void emitSameCityOutbound(UUID shipmentId, UUID cityId, UUID hubId) {
         publish(new SameCityOutboundEvent(shipmentId, cityId, hubId));
+    }
+
+    /** BAG_RESCHEDULED → M10: M7 executed an M9-decided flight move (§9, M7-D-006). */
+    public void emitBagRescheduled(FlightBag targetBag, String fromFlightNo, String reason,
+                                   int movedCount, String standNo, UUID manifestId) {
+        publish(new BagRescheduledEvent(targetBag.getId(), fromFlightNo, targetBag.getFlightNo(),
+                targetBag.getFlightDate(), targetBag.getDestHub(), reason, movedCount, standNo, manifestId));
+    }
+
+    /** HUB_OVERLOAD_ALERT → M10 + station mgr (also M4's advisory throttle signal in v1) (§11). */
+    public void emitHubOverloadAlert(HubLoadSnapshot snapshot) {
+        publish(new HubOverloadAlertEvent(snapshot.getCityId(), snapshot.getHubId(), snapshot.getWaveKey(),
+                snapshot.getInboundCount(), snapshot.getAwaitingSort(), snapshot.getStandOccupancyPct(),
+                snapshot.getProjectedClearAt(), snapshot.getSnapshotAt()));
     }
 
     private void publish(HubEventPayload event) {

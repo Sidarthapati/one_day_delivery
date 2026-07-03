@@ -29,7 +29,12 @@ public class FlightEventsConsumer {
             case DEPARTED       -> ShipmentState.DEPARTED;
             case LANDED         -> ShipmentState.LANDED;
             case RTO_IN_TRANSIT -> ShipmentState.RTO_IN_TRANSIT;
+            // FLIGHT_REASSIGNED / FLIGHT_TIME_CHANGED are M7 (hub) concerns — no M4 state change.
+            case FLIGHT_REASSIGNED, FLIGHT_TIME_CHANGED -> null;
         };
+        if (target == null) {
+            return;
+        }
         stateMachine.transition(event.shipmentId(), target,
                 TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
     }

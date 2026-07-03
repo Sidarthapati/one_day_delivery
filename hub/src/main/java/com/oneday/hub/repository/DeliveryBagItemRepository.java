@@ -5,9 +5,13 @@ import com.oneday.hub.domain.DeliveryBagItemStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface DeliveryBagItemRepository extends JpaRepository<DeliveryBagItem, UUID> {
+
+    /** Parcel-locator console: where is this parcel staged on the dest side? */
+    Optional<DeliveryBagItem> findFirstByParcelId(UUID parcelId);
 
     List<DeliveryBagItem> findByCityIdAndLoopHint(UUID cityId, Integer loopHint);
 

@@ -9,4 +9,7 @@ import java.util.UUID;
 public interface InboundReceiptRepository extends JpaRepository<InboundReceipt, UUID> {
 
     List<InboundReceipt> findByParcelId(UUID parcelId);
+
+    /** Arrivals in the current wave window (§11 inbound rate). */
+    long countByHubIdAndReceivedAtAfter(UUID hubId, java.time.Instant since);
 }

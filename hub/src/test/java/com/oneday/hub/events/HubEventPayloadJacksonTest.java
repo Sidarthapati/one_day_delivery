@@ -2,15 +2,19 @@ package com.oneday.hub.events;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.oneday.common.kafka.enums.FlightReassignReason;
 import com.oneday.common.kafka.enums.HubEventType;
 import com.oneday.common.kafka.events.HubEvent;
+import com.oneday.common.kafka.events.flight.FlightReassignedEvent;
 import com.oneday.common.kafka.events.hub.BagCreatedEvent;
+import com.oneday.common.kafka.events.hub.BagRescheduledEvent;
 import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.common.kafka.events.hub.StandAssignedEvent;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,6 +51,29 @@ class HubEventPayloadJacksonTest {
 
         assertThat(tolerant.shipmentId()).isEqualTo(shipmentId);
         assertThat(tolerant.eventType()).isEqualTo(HubEventType.STAND_ASSIGNED);
+    }
+
+    @Test
+    void flightReassigned_roundTrips() throws Exception {
+        FlightReassignedEvent e = new FlightReassignedEvent(
+                "ODMUMBAI22", LocalDate.of(2026, 7, 3), "MUMBAI",
+                Instant.parse("2026-07-03T17:00:00Z"), "ODMUMBAI18",
+                List.of(UUID.randomUUID(), UUID.randomUUID()), FlightReassignReason.CANCELLATION);
+
+        String json = mapper.writeValueAsString(e);
+        assertThat(mapper.readValue(json, FlightReassignedEvent.class)).isEqualTo(e);
+        assertThat(e.eventTypeName()).isEqualTo("FLIGHT_REASSIGNED");
+    }
+
+    @Test
+    void bagRescheduled_roundTrips() throws Exception {
+        BagRescheduledEvent e = new BagRescheduledEvent(
+                UUID.randomUUID(), "ODMUMBAI18", "ODMUMBAI22", LocalDate.of(2026, 7, 3),
+                "MUMBAI", "CANCELLATION", 4, "A-5", UUID.randomUUID());
+
+        String json = mapper.writeValueAsString(e);
+        assertThat(mapper.readValue(json, BagRescheduledEvent.class)).isEqualTo(e);
+        assertThat(json).contains("\"eventType\":\"BAG_RESCHEDULED\"");
     }
 
     @Test

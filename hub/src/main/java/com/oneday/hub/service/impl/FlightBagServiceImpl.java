@@ -184,6 +184,19 @@ class FlightBagServiceImpl implements FlightBagService {
     }
 
     @Override
+    @Transactional
+    public java.util.Optional<FlightBag> updateBagCutoff(String flightNo, java.time.LocalDate flightDate,
+                                                         String destHub, Instant newCutoff) {
+        // Same-flight time change (§10) — shift the open bag's cutoff only; no parcels move.
+        return flightBagRepository
+                .findByFlightNoAndFlightDateAndDestHubAndStatus(flightNo, flightDate, destHub, FlightBagStatus.OPEN)
+                .map(bag -> {
+                    bag.setBagCutoff(newCutoff);
+                    return flightBagRepository.save(bag);
+                });
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public BagManifest currentManifest(UUID bagId) {
         return bagManifestRepository.findFirstByBagIdOrderByGeneratedAtDesc(bagId)
@@ -194,6 +207,12 @@ class FlightBagServiceImpl implements FlightBagService {
     @Transactional(readOnly = true)
     public FlightBag bag(UUID bagId) {
         return requireBag(bagId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<FlightBag> bagsForDate(UUID hubId, java.time.LocalDate date) {
+        return flightBagRepository.findByHubIdAndFlightDate(hubId, date);
     }
 
     private FlightBag requireBag(UUID bagId) {

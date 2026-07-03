@@ -1,23 +1,37 @@
 package com.oneday.hub.api;
 
 import com.oneday.hub.dto.*;
+import com.oneday.hub.service.BagReassignmentService;
 import com.oneday.hub.service.FlightBagService;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
-/** Operator console: flight bags — open/add/reassign-stand/seal/manifest (§14.2). */
+/** Operator console: flight bags — open/add/reassign-stand/seal/reassign-flight/manifest (§14.2). */
 @RestController
 @RequestMapping("/hub/{hubId}/bags")
 public class HubBagController {
 
     private final FlightBagService flightBagService;
+    private final BagReassignmentService bagReassignmentService;
 
-    HubBagController(FlightBagService flightBagService) {
+    HubBagController(FlightBagService flightBagService, BagReassignmentService bagReassignmentService) {
         this.flightBagService = flightBagService;
+        this.bagReassignmentService = bagReassignmentService;
+    }
+
+    /** The day's flight bags at this hub — the live origin directory (which stand holds which flight). */
+    @GetMapping
+    public List<BagResponse> bags(@PathVariable UUID hubId,
+                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now();
+        return flightBagService.bagsForDate(hubId, day).stream().map(BagResponse::from).toList();
     }
 
     @PostMapping
@@ -46,6 +60,16 @@ public class HubBagController {
     @PostMapping("/{bagId}/seal")
     public SealResponse seal(@PathVariable UUID hubId, @PathVariable UUID bagId) {
         return SealResponse.from(flightBagService.seal(bagId));
+    }
+
+    /** Execute an M9 flight reassignment (§9, M7-D-006) — the imperative form of FLIGHT_REASSIGNED. */
+    @PostMapping("/reassign-flight")
+    public ReassignResponse reassignFlight(@PathVariable UUID hubId,
+                                           @RequestBody @Valid ReassignFlightRequest request) {
+        return ReassignResponse.from(bagReassignmentService.reassign(
+                new BagReassignmentService.FlightReassignmentCommand(
+                        request.toFlightNo(), request.toFlightDate(), request.destHub(),
+                        request.newCutoff(), request.fromFlightNo(), request.parcelIds(), request.reason())));
     }
 
     @PostMapping("/{bagId}/dispatch")

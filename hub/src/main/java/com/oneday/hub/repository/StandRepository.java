@@ -29,4 +29,7 @@ public interface StandRepository extends JpaRepository<Stand, UUID> {
     List<Stand> findFreeStands(@Param("hubId") UUID hubId,
                                @Param("standStatus") StandStatus standStatus,
                                @Param("preferredZone") String preferredZone);
+
+    /** Total physical stands at a hub (the occupancy denominator, §11). */
+    long countByHubId(UUID hubId);
 }
