@@ -10,7 +10,7 @@ CREATE TABLE delivery_bag (
     bag_kind         VARCHAR(16)  NOT NULL,             -- ROUTE | DA_TERRITORY | ZONE
     bag_date         DATE         NOT NULL,
     route_plan_id    UUID,                              -- ROUTE: M6 nightly plan the loop belongs to
-    loop_id          UUID,                              -- ROUTE: the van loop (key); else NULL
+    van_id          UUID,                              -- ROUTE: the van loop (key); else NULL
     da_territory_id  UUID,                              -- DA_TERRITORY: the DA whose territory (key); else NULL
     zone_id          UUID,                              -- ZONE: the M3 zone (key); else NULL
     current_stand_id UUID         NOT NULL REFERENCES stand(id),
@@ -26,7 +26,7 @@ CREATE TABLE delivery_bag (
 
 -- One open bag per key, scoped by kind (the lazy-create lookup, mirror of uq_flight_bag_open).
 CREATE UNIQUE INDEX uq_delivery_bag_open_route
-    ON delivery_bag (loop_id, bag_date) WHERE status = 'OPEN' AND bag_kind = 'ROUTE';
+    ON delivery_bag (van_id, bag_date) WHERE status = 'OPEN' AND bag_kind = 'ROUTE';
 CREATE UNIQUE INDEX uq_delivery_bag_open_territory
     ON delivery_bag (da_territory_id, bag_date) WHERE status = 'OPEN' AND bag_kind = 'DA_TERRITORY';
 CREATE UNIQUE INDEX uq_delivery_bag_open_zone

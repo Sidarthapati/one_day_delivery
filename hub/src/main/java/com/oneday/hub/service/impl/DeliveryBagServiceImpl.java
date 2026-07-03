@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/** Implements the delivery-bag lifecycle (§8.1), the inbound mirror of {@link BagServiceImpl}. */
+/** Implements the delivery-bag lifecycle (§8.1), the inbound mirror of {@link FlightBagServiceImpl}. */
 @Service
 class DeliveryBagServiceImpl implements DeliveryBagService {
 
@@ -62,7 +62,7 @@ class DeliveryBagServiceImpl implements DeliveryBagService {
     private Optional<DeliveryBag> findOpenBag(OpenDeliveryBagCommand cmd) {
         return switch (cmd.bagKind()) {
             case ROUTE -> deliveryBagRepository
-                    .findByLoopIdAndBagDateAndStatus(cmd.loopId(), cmd.bagDate(), DeliveryBagStatus.OPEN);
+                    .findByVanIdAndBagDateAndStatus(cmd.vanId(), cmd.bagDate(), DeliveryBagStatus.OPEN);
             case DA_TERRITORY -> deliveryBagRepository
                     .findByDaTerritoryIdAndBagDateAndStatus(cmd.daTerritoryId(), cmd.bagDate(), DeliveryBagStatus.OPEN);
             case ZONE -> deliveryBagRepository
@@ -83,7 +83,7 @@ class DeliveryBagServiceImpl implements DeliveryBagService {
                 .bagKind(cmd.bagKind())
                 .bagDate(cmd.bagDate())
                 .routePlanId(cmd.routePlanId())
-                .loopId(cmd.loopId())
+                .vanId(cmd.vanId())
                 .daTerritoryId(cmd.daTerritoryId())
                 .zoneId(cmd.zoneId())
                 .currentStandId(stand.getId())

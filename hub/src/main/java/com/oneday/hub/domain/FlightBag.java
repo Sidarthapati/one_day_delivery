@@ -52,7 +52,7 @@ public class FlightBag {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
-    private BagStatus status;
+    private FlightBagStatus status;
 
     @Column(name = "parcel_count", nullable = false)
     private int parcelCount;

@@ -42,12 +42,12 @@ public class DeliveryBag {
     @Column(name = "bag_date", nullable = false, updatable = false)
     private LocalDate bagDate;
 
-    // Exactly one of loop_id / da_territory_id / zone_id is set, per bag_kind (the lazy-create key).
+    // Exactly one of van_id / da_territory_id / zone_id is set, per bag_kind (the lazy-create key).
     @Column(name = "route_plan_id", updatable = false)
     private UUID routePlanId;
 
-    @Column(name = "loop_id", updatable = false)
-    private UUID loopId;
+    @Column(name = "van_id", updatable = false)
+    private UUID vanId;
 
     @Column(name = "da_territory_id", updatable = false)
     private UUID daTerritoryId;

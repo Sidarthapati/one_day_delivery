@@ -17,9 +17,11 @@ public interface DeliveryRoutePort {
     Optional<DeliveryRoute> routeForTerritory(UUID cityId, UUID territoryId, LocalDate date);
 
     /**
-     * @param routePlanId the M6 nightly plan the loop belongs to.
-     * @param loopId      the van loop (in v1 = the van id from the DA's cron schedule).
+     * @param routePlanId the M6 nightly plan the route belongs to.
+     * @param vanId       the van that runs the territory (from the DA's cron schedule). In v1 a van
+     *                    is the loop identity M7 keys a ROUTE bag by; M6's finer (van, loopIndex)
+     *                    key is not exposed here yet.
      */
-    record DeliveryRoute(UUID routePlanId, UUID loopId) {
+    record DeliveryRoute(UUID routePlanId, UUID vanId) {
     }
 }

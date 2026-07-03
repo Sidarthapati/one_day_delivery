@@ -18,7 +18,7 @@ public record DeliveryBagCreatedEvent(
         UUID hubId,
         String bagKind,
         UUID routePlanId,
-        UUID loopId,
+        UUID vanId,
         UUID daTerritoryId,
         LocalDate bagDate,
         String standNo) implements HubEventPayload {

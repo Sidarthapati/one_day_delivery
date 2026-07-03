@@ -11,7 +11,7 @@ public record DeliveryBagResponse(
         String bagKind,
         LocalDate bagDate,
         UUID routePlanId,
-        UUID loopId,
+        UUID vanId,
         UUID daTerritoryId,
         UUID zoneId,
         UUID standId,
@@ -21,7 +21,7 @@ public record DeliveryBagResponse(
 
     public static DeliveryBagResponse from(DeliveryBag b) {
         return new DeliveryBagResponse(b.getId(), b.getBagKind().name(), b.getBagDate(),
-                b.getRoutePlanId(), b.getLoopId(), b.getDaTerritoryId(), b.getZoneId(),
+                b.getRoutePlanId(), b.getVanId(), b.getDaTerritoryId(), b.getZoneId(),
                 b.getCurrentStandId(), b.getStatus().name(), b.getParcelCount(), b.getWeightGrams());
     }
 }

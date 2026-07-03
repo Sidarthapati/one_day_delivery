@@ -8,7 +8,7 @@ import com.oneday.hub.domain.SortDirection;
 import com.oneday.hub.domain.Stand;
 import com.oneday.hub.events.HubEventProducer;
 import com.oneday.hub.repository.StandRepository;
-import com.oneday.hub.service.BagService;
+import com.oneday.hub.service.FlightBagService;
 import com.oneday.hub.service.DeliveryBagService;
 import com.oneday.hub.service.SortService;
 import com.oneday.hub.service.exception.StandNotFoundException;
@@ -36,7 +36,7 @@ import java.util.UUID;
 class SortServiceImpl implements SortService {
 
     private final FlightAssignmentPort flightAssignmentPort;
-    private final BagService bagService;
+    private final FlightBagService flightBagService;
     private final DeliveryBagService deliveryBagService;
     private final TerritoryPort territoryPort;
     private final DeliveryRoutePort deliveryRoutePort;
@@ -44,14 +44,14 @@ class SortServiceImpl implements SortService {
     private final HubEventProducer eventProducer;
 
     SortServiceImpl(FlightAssignmentPort flightAssignmentPort,
-                    BagService bagService,
+                    FlightBagService flightBagService,
                     DeliveryBagService deliveryBagService,
                     TerritoryPort territoryPort,
                     DeliveryRoutePort deliveryRoutePort,
                     StandRepository standRepository,
                     HubEventProducer eventProducer) {
         this.flightAssignmentPort = flightAssignmentPort;
-        this.bagService = bagService;
+        this.flightBagService = flightBagService;
         this.deliveryBagService = deliveryBagService;
         this.territoryPort = territoryPort;
         this.deliveryRoutePort = deliveryRoutePort;
@@ -67,7 +67,7 @@ class SortServiceImpl implements SortService {
         FlightAssignmentPort.FlightAssignment flight = flightAssignmentPort.assignFlight(destHub, readyAt);
 
         // Open (or find) the bag for this flight; first open allocates a free stand dynamically.
-        FlightBag bag = bagService.openBag(new BagService.OpenBagCommand(
+        FlightBag bag = flightBagService.openBag(new FlightBagService.OpenBagCommand(
                 hubId, hubId, flight.flightNo(), flight.flightDate(),
                 parcel.originCity(), destHub, flight.bagCutoff()));
 
@@ -103,12 +103,12 @@ class SortServiceImpl implements SortService {
 
         UUID daTerritoryId = territory.territoryId();
         UUID routePlanId = route.map(DeliveryRoutePort.DeliveryRoute::routePlanId).orElse(null);
-        UUID loopId = route.map(DeliveryRoutePort.DeliveryRoute::loopId).orElse(null);
+        UUID vanId = route.map(DeliveryRoutePort.DeliveryRoute::vanId).orElse(null);
         BagKind kind = route.isPresent() ? BagKind.ROUTE : BagKind.DA_TERRITORY;
 
         DeliveryBagService.OpenDeliveryBagCommand cmd = route.isPresent()
                 ? new DeliveryBagService.OpenDeliveryBagCommand(cityId, hubId, BagKind.ROUTE, validDate,
-                        routePlanId, loopId, null, null)
+                        routePlanId, vanId, null, null)
                 : new DeliveryBagService.OpenDeliveryBagCommand(cityId, hubId, BagKind.DA_TERRITORY, validDate,
                         null, null, daTerritoryId, territory.zoneId());
 
@@ -122,11 +122,11 @@ class SortServiceImpl implements SortService {
                 stand.getStandNo(), destHexId.toString(), SortDirection.INBOUND);
         // The M6 seam: per-parcel sorted-for-delivery feed (M6 binds to a loop) + the M10 leg signal.
         eventProducer.emitParcelSortedForDelivery(parcel.shipmentId(), cityId, destHexId, validDate,
-                sortedAt, parcel.slaDeadline(), daTerritoryId, routePlanId, loopId, bag.getId(), stand.getStandNo());
+                sortedAt, parcel.slaDeadline(), daTerritoryId, routePlanId, vanId, bag.getId(), stand.getStandNo());
         eventProducer.emitDestSortComplete(parcel.shipmentId(), cityId, hubId, validDate, sortedAt);
 
         return new InboundSortResult(parcel.shipmentId(), parcel.shipmentRef(), destHexId, kind,
-                bag.getId(), stand.getId(), stand.getStandNo(), daTerritoryId, routePlanId, loopId,
+                bag.getId(), stand.getId(), stand.getStandNo(), daTerritoryId, routePlanId, vanId,
                 parcel.dropType());
     }
 }

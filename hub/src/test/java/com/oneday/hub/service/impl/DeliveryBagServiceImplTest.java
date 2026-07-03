@@ -51,7 +51,7 @@ class DeliveryBagServiceImplTest {
 
     private final UUID hubId = UUID.randomUUID();
     private final UUID standId = UUID.randomUUID();
-    private final UUID loopId = UUID.randomUUID();
+    private final UUID vanId = UUID.randomUUID();
     private final LocalDate date = LocalDate.of(2026, 6, 27);
 
     private Stand freeStand() {
@@ -61,12 +61,12 @@ class DeliveryBagServiceImplTest {
 
     private DeliveryBagService.OpenDeliveryBagCommand routeCmd() {
         return new DeliveryBagService.OpenDeliveryBagCommand(hubId, hubId, BagKind.ROUTE, date,
-                UUID.randomUUID(), loopId, null, null);
+                UUID.randomUUID(), vanId, null, null);
     }
 
     @Test
     void openBag_lazyCreate_allocatesFreeDeliveryStand_andEmitsBagCreated() {
-        when(deliveryBagRepository.findByLoopIdAndBagDateAndStatus(loopId, date, DeliveryBagStatus.OPEN))
+        when(deliveryBagRepository.findByVanIdAndBagDateAndStatus(vanId, date, DeliveryBagStatus.OPEN))
                 .thenReturn(Optional.empty());
         when(standRepository.findFreeStands(hubId, StandStatus.OPEN, "DELIVERY_DOCK"))
                 .thenReturn(List.of(freeStand()));
@@ -83,8 +83,8 @@ class DeliveryBagServiceImplTest {
     @Test
     void openBag_reuseOpenBag_doesNotAllocateAnotherStand() {
         DeliveryBag existing = DeliveryBag.builder().id(UUID.randomUUID()).cityId(hubId).hubId(hubId)
-                .bagKind(BagKind.ROUTE).loopId(loopId).currentStandId(standId).status(DeliveryBagStatus.OPEN).build();
-        when(deliveryBagRepository.findByLoopIdAndBagDateAndStatus(loopId, date, DeliveryBagStatus.OPEN))
+                .bagKind(BagKind.ROUTE).vanId(vanId).currentStandId(standId).status(DeliveryBagStatus.OPEN).build();
+        when(deliveryBagRepository.findByVanIdAndBagDateAndStatus(vanId, date, DeliveryBagStatus.OPEN))
                 .thenReturn(Optional.of(existing));
 
         DeliveryBag bag = service().openBag(routeCmd());
@@ -96,7 +96,7 @@ class DeliveryBagServiceImplTest {
 
     @Test
     void openBag_noFreeStand_escalates() {
-        when(deliveryBagRepository.findByLoopIdAndBagDateAndStatus(loopId, date, DeliveryBagStatus.OPEN))
+        when(deliveryBagRepository.findByVanIdAndBagDateAndStatus(vanId, date, DeliveryBagStatus.OPEN))
                 .thenReturn(Optional.empty());
         when(standRepository.findFreeStands(hubId, StandStatus.OPEN, "DELIVERY_DOCK"))
                 .thenReturn(List.of());
@@ -108,7 +108,7 @@ class DeliveryBagServiceImplTest {
     @Test
     void addParcel_accumulatesWeightAndCount() {
         DeliveryBag bag = DeliveryBag.builder().id(UUID.randomUUID()).cityId(hubId).hubId(hubId)
-                .bagKind(BagKind.ROUTE).loopId(loopId).currentStandId(standId)
+                .bagKind(BagKind.ROUTE).vanId(vanId).currentStandId(standId)
                 .status(DeliveryBagStatus.OPEN).parcelCount(0).weightGrams(0).build();
         when(deliveryBagRepository.findById(bag.getId())).thenReturn(Optional.of(bag));
         when(deliveryBagItemRepository.existsByParcelIdAndStatusIn(any(), any())).thenReturn(false);

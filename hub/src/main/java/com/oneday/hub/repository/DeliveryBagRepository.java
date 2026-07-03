@@ -12,7 +12,7 @@ import java.util.UUID;
 public interface DeliveryBagRepository extends JpaRepository<DeliveryBag, UUID> {
 
     /** Lazy-create lookup for a ROUTE bag: the open bag for a (loop, date), if one exists. */
-    Optional<DeliveryBag> findByLoopIdAndBagDateAndStatus(UUID loopId, LocalDate bagDate, DeliveryBagStatus status);
+    Optional<DeliveryBag> findByVanIdAndBagDateAndStatus(UUID vanId, LocalDate bagDate, DeliveryBagStatus status);
 
     /** Lazy-create lookup for a DA_TERRITORY bag: the open bag for a (territory, date), if one exists. */
     Optional<DeliveryBag> findByDaTerritoryIdAndBagDateAndStatus(UUID daTerritoryId, LocalDate bagDate, DeliveryBagStatus status);

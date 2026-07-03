@@ -33,7 +33,7 @@ public record ReceiveResponse(
         UUID destHexId,
         UUID daTerritoryId,
         UUID routePlanId,
-        UUID loopId) {
+        UUID vanId) {
 
     public static ReceiveResponse from(HubReceivingService.ReceiveResult r) {
         if (r.sort() != null) {
@@ -52,7 +52,7 @@ public record ReceiveResponse(
                     s.deliveryBagId(), s.standId(), s.standNo(),
                     null, null, null, null,
                     s.bagKind() != null ? s.bagKind().name() : null,
-                    s.destHexId(), s.daTerritoryId(), s.routePlanId(), s.loopId());
+                    s.destHexId(), s.daTerritoryId(), s.routePlanId(), s.vanId());
         }
         // HUB_COLLECT shelf placement — no bag, no stand.
         return new ReceiveResponse(r.receiptId(), r.shipmentId(), r.shipmentRef(),

@@ -1,7 +1,7 @@
 -- M7 §14.3 seed — the physical stand POOL for each of the 5 launch hubs. Stands are real shelves on
 -- the floor; they exist whether or not a bag is on them. There is NO pre-mapped destination→stand
 -- directory: a stand becomes a destination's flight bag only when the first parcel for that flight
--- opens a bag (dynamic allocation, BagService). city_id == hub_id in v1. Deterministic md5(text)::uuid
+-- opens a bag (dynamic allocation, FlightBagService). city_id == hub_id in v1. Deterministic md5(text)::uuid
 -- ids so the seed is idempotent (ON CONFLICT (id) DO NOTHING).
 -- The stand_no labels (A-*, D-*) and `zone` only mark WHERE on the floor a shelf physically sits
 -- (near the airport dock vs the delivery dock). They do NOT pin a shelf to flight vs delivery use —

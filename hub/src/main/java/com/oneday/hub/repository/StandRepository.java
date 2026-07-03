@@ -22,7 +22,7 @@ public interface StandRepository extends JpaRepository<Stand, UUID> {
     @Query("""
             SELECT s FROM Stand s
             WHERE s.hubId = :hubId AND s.status = :standStatus
-              AND s.id NOT IN (SELECT b.currentStandId FROM FlightBag b WHERE b.status = com.oneday.hub.domain.BagStatus.OPEN)
+              AND s.id NOT IN (SELECT b.currentStandId FROM FlightBag b WHERE b.status = com.oneday.hub.domain.FlightBagStatus.OPEN)
               AND s.id NOT IN (SELECT d.currentStandId FROM DeliveryBag d WHERE d.status = com.oneday.hub.domain.DeliveryBagStatus.OPEN)
             ORDER BY CASE WHEN s.zone = :preferredZone THEN 0 ELSE 1 END, s.zone, s.standNo
             """)

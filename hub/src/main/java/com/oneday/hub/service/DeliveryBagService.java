@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Delivery-bag lifecycle (§8.1, M7-D-012) — the destination mirror of {@link BagService}. Lazy open
+ * Delivery-bag lifecycle (§8.1, M7-D-012) — the destination mirror of {@link FlightBagService}. Lazy open
  * per route/territory/zone key, stage parcels with weight accumulation, seal → append-only load-list
  * manifest. M6's {@code VAN_LOAD} scan later drives the bag {@code → LOADED} (M7 stages, M6 loads).
  */
@@ -46,7 +46,7 @@ public interface DeliveryBagService {
             BagKind bagKind,
             LocalDate bagDate,
             UUID routePlanId,
-            UUID loopId,
+            UUID vanId,
             UUID daTerritoryId,
             UUID zoneId) {
     }

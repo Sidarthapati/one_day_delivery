@@ -62,7 +62,7 @@ public class HubEventProducer {
     /** BAG_CREATED (INBOUND): a delivery bag was opened lazily for a route/territory on a stand (§8.1). */
     public void emitDeliveryBagCreated(DeliveryBag bag, String standNo) {
         publish(new DeliveryBagCreatedEvent(bag.getId(), bag.getCityId(), bag.getHubId(),
-                bag.getBagKind().name(), bag.getRoutePlanId(), bag.getLoopId(), bag.getDaTerritoryId(),
+                bag.getBagKind().name(), bag.getRoutePlanId(), bag.getVanId(), bag.getDaTerritoryId(),
                 bag.getBagDate(), standNo));
     }
 
@@ -78,15 +78,15 @@ public class HubEventProducer {
      */
     public void emitParcelSortedForDelivery(UUID parcelId, UUID cityId, UUID destinationHexId,
                                             LocalDate validDate, Instant sortedAt, Instant slaDeadline,
-                                            UUID daTerritoryId, UUID routePlanId, UUID loopId,
+                                            UUID daTerritoryId, UUID routePlanId, UUID vanId,
                                             UUID deliveryBagId, String standNo) {
         publish(new ParcelSortedForDeliveryEvent(parcelId, cityId, destinationHexId, validDate,
-                sortedAt, slaDeadline, daTerritoryId, routePlanId, loopId, deliveryBagId, standNo));
+                sortedAt, slaDeadline, daTerritoryId, routePlanId, vanId, deliveryBagId, standNo));
     }
 
     /** DEST_SORT_COMPLETE → M10: the parcel is staged on its delivery stand (§8.2). */
-    public void emitDestSortComplete(UUID parcelId, UUID cityId, UUID hubId, LocalDate wave, Instant completedAt) {
-        publish(new DestSortCompleteEvent(parcelId, cityId, hubId, wave, completedAt));
+    public void emitDestSortComplete(UUID parcelId, UUID cityId, UUID hubId, LocalDate validDate, Instant completedAt) {
+        publish(new DestSortCompleteEvent(parcelId, cityId, hubId, validDate, completedAt));
     }
 
     /** SAMECITY_OUTBOUND → M4/M10: an intra-city parcel skips the flight path (§12). */

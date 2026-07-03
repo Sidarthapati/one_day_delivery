@@ -1,6 +1,6 @@
 package com.oneday.hub.dto;
 
-import com.oneday.hub.domain.BagStatus;
+import com.oneday.hub.domain.FlightBagStatus;
 import com.oneday.hub.domain.FlightBag;
 
 import java.time.Instant;
@@ -17,7 +17,7 @@ public record BagResponse(
         String originHub,
         String destHub,
         UUID currentStandId,
-        BagStatus status,
+        FlightBagStatus status,
         int parcelCount,
         int weightGrams,
         Instant bagCutoff,

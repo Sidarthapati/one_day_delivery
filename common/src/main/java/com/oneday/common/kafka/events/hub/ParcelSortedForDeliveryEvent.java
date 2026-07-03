@@ -28,7 +28,7 @@ public record ParcelSortedForDeliveryEvent(
         // ── additive (M6-tolerant) ──
         UUID daTerritoryId,
         UUID routePlanId,
-        UUID loopId,
+        UUID vanId,
         UUID deliveryBagId,
         String standNo) implements HubEventPayload {
 

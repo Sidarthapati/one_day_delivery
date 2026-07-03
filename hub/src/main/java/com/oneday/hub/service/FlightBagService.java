@@ -1,6 +1,6 @@
 package com.oneday.hub.service;
 
-import com.oneday.hub.domain.BagItem;
+import com.oneday.hub.domain.FlightBagItem;
 import com.oneday.hub.domain.BagManifest;
 import com.oneday.hub.domain.FlightBag;
 
@@ -12,7 +12,7 @@ import java.util.UUID;
  * Flight-bag lifecycle (§7.2–7.3): lazy open per (flight, date, dest_hub), add parcels with weight
  * accumulation, stand-overflow reassign + relabel (M7-D-008), seal → append-only manifest, dispatch.
  */
-public interface BagService {
+public interface FlightBagService {
 
     /**
      * Idempotently open (or fetch) the open bag for a (flight, date, dest_hub). On first open the
@@ -22,7 +22,7 @@ public interface BagService {
     FlightBag openBag(OpenBagCommand command);
 
     /** Add a parcel to an open bag; accumulates weight + count (weight from M4 confirmed weight). */
-    BagItem addParcel(UUID bagId, String shipmentRef);
+    FlightBagItem addParcel(UUID bagId, String shipmentRef);
 
     /** Stand-full move: relabel via M8 + append a reassignment audit; the bag's stand pointer moves. */
     FlightBag reassignStand(UUID bagId, UUID newStandId, UUID actorId, String reason);
