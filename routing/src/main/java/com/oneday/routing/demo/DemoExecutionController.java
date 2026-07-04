@@ -51,6 +51,18 @@ public class DemoExecutionController {
         return ResponseEntity.noContent().build();
     }
 
+    /** Option 1: drive the vans from their last stop back to the origin hub (the first-mile return leg). */
+    @PostMapping("/run-return-to-hub")
+    public DemoExecutionService.RunStatus returnToHub(
+            @RequestParam UUID cityId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        try {
+            return service.returnToHub(cityId, date != null ? date : LocalDate.now());
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
+    }
+
     @GetMapping("/run-status")
     public DemoExecutionService.RunStatus status() {
         return service.status();

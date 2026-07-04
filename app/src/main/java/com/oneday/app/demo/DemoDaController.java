@@ -342,6 +342,7 @@ public class DemoDaController {
 
     private Stage stageFor(ShipmentState s) {
         return switch (s) {
+            case PICKUP_FAILED        -> new Stage("FINDING_DA", "Reassigning — finding a new delivery associate", "first-mile pickup");
             case PICKED_UP            -> new Stage("PICKED_UP", "Picked up — the DA has your parcel", "first-mile pickup");
             case HANDED_TO_PICKUP_VAN -> new Stage("AT_VAN", "Handed to the van — en route to the hub", "first-mile pickup");
             case DROP_ASSIGNED        -> new Stage("OUT_FOR_DELIVERY", "Out for delivery", "last-mile drop");
@@ -401,27 +402,82 @@ public class DemoDaController {
     public record FirstMileResponse(int advanced, int skipped, String message) {}
 
     /**
-     * Demo: close the first mile — for every {@code PICKED_UP} shipment whose origin is {@code city},
-     * advance {@code PICKED_UP → HANDED_TO_PICKUP_VAN → AT_ORIGIN_HUB} (the van carried it back to the
-     * origin hub) and complete its M5 pickup task. Run this after "Run the day". Stands in for M8's
+     * Demo: the van meets each DA at its cron vertex and takes the parcel — advance every {@code PICKED_UP}
+     * shipment whose origin is {@code city} to {@code HANDED_TO_PICKUP_VAN} and complete its M5 pickup task
+     * (the DA's job is done once the parcel is on the van). Called automatically at the END of "Run the day"
+     * (when the van and DA coincide on the map). The van→hub leg is the separate "Complete first-mile" step.
+     */
+    @PostMapping("/pickups/to-van")
+    public FirstMileResponse pickupsToVan(@RequestParam String city,
+                                          @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        int advanced = 0, skipped = 0;
+        for (Shipment sh : shipmentRepository.findByState(ShipmentState.PICKED_UP)) {
+            if (sh.getOriginCity() == null || !sh.getOriginCity().equalsIgnoreCase(city)) continue;
+            try {
+                stateMachine.transition(sh.getId(), ShipmentState.HANDED_TO_PICKUP_VAN,
+                        TransitionContext.fromApi("demo-firstmile-van", sh.getShipmentRef()));
+                dispatchDemoService.markPickupCompleted(sh.getId());   // DA handed off → M5 task done
+                advanced++;
+            } catch (RuntimeException e) {
+                skipped++;
+            }
+        }
+        return new FirstMileResponse(advanced, skipped,
+                advanced + " pickup(s) handed to the pickup van (→ HANDED_TO_PICKUP_VAN)"
+                        + (skipped > 0 ? ", " + skipped + " skipped" : ""));
+    }
+
+    /**
+     * Demo reconcile: when a DA is marked absent, M5 defers the pickup and removes it from the DA's queue —
+     * but M4 stays PICKUP_ASSIGNED, so the customer would see a stale "agent assigned". Move every such
+     * shipment (M4 = PICKUP_ASSIGNED, but M5 has no active DA for the pickup) to PICKUP_FAILED — a legal
+     * transition. Retry-deferred landing a new DA re-fires PICKUP_ASSIGNED (PICKUP_FAILED → PICKUP_ASSIGNED
+     * is legal), so the booking heals itself. Keeps the :8080 booking list honest. Called after mark-absent.
+     */
+    @PostMapping("/reconcile-m4")
+    public java.util.Map<String, Integer> reconcileM4(@RequestParam String city,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        int reassigning = 0;
+        for (Shipment sh : shipmentRepository.findByState(ShipmentState.PICKUP_ASSIGNED)) {
+            if (sh.getOriginCity() == null || !sh.getOriginCity().equalsIgnoreCase(city)) continue;
+            if (dispatchDemoService.daForPickup(sh.getId()).isPresent()) continue;   // still has a live DA
+            try {
+                stateMachine.transition(sh.getId(), ShipmentState.PICKUP_FAILED,
+                        TransitionContext.fromApi("demo-da-absent-reassign", sh.getShipmentRef()));
+                reassigning++;
+            } catch (RuntimeException ignore) { /* not transitionable right now — skip */ }
+        }
+        return java.util.Map.of("reassigning", reassigning);
+    }
+
+    /**
+     * Demo: close the first mile — the van carries the collected pickups back to the origin hub. For every
+     * {@code HANDED_TO_PICKUP_VAN} shipment whose origin is {@code city}, advance to {@code AT_ORIGIN_HUB}.
+     * Run this after "Run the day" (which already advanced them to HANDED_TO_PICKUP_VAN). Stands in for M8's
      * {@code HUB_ORIGIN_IN} scan / M7 origin-hub receiving, which aren't built — that's the real seam.
      */
     @PostMapping("/pickups/to-hub")
     public FirstMileResponse pickupsToHub(@RequestParam String city,
                                           @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         int advanced = 0, skipped = 0;
-        for (Shipment sh : shipmentRepository.findByState(ShipmentState.PICKED_UP)) {
-            if (sh.getOriginCity() == null || !sh.getOriginCity().equalsIgnoreCase(city)) continue;
-            try {
-                String ref = sh.getShipmentRef();
-                stateMachine.transition(sh.getId(), ShipmentState.HANDED_TO_PICKUP_VAN,
-                        TransitionContext.fromApi("demo-firstmile-hub", ref));
-                stateMachine.transition(sh.getId(), ShipmentState.AT_ORIGIN_HUB,
-                        TransitionContext.fromApi("demo-firstmile-hub", ref));
-                dispatchDemoService.markPickupCompleted(sh.getId());
-                advanced++;
-            } catch (RuntimeException e) {
-                skipped++;
+        // Accept both HANDED_TO_PICKUP_VAN (normal path) and PICKED_UP (if Run-the-day's to-van didn't fire),
+        // so Complete first-mile still closes the lane end-to-end.
+        for (ShipmentState from : new ShipmentState[]{ShipmentState.HANDED_TO_PICKUP_VAN, ShipmentState.PICKED_UP}) {
+            for (Shipment sh : shipmentRepository.findByState(from)) {
+                if (sh.getOriginCity() == null || !sh.getOriginCity().equalsIgnoreCase(city)) continue;
+                try {
+                    String ref = sh.getShipmentRef();
+                    if (sh.getState() == ShipmentState.PICKED_UP) {
+                        stateMachine.transition(sh.getId(), ShipmentState.HANDED_TO_PICKUP_VAN,
+                                TransitionContext.fromApi("demo-firstmile-hub", ref));
+                        dispatchDemoService.markPickupCompleted(sh.getId());
+                    }
+                    stateMachine.transition(sh.getId(), ShipmentState.AT_ORIGIN_HUB,
+                            TransitionContext.fromApi("demo-firstmile-hub", ref));
+                    advanced++;
+                } catch (RuntimeException e) {
+                    skipped++;
+                }
             }
         }
         return new FirstMileResponse(advanced, skipped,

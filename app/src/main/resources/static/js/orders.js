@@ -56,7 +56,11 @@
     renderRecent();
     // Bookings are persisted server-side and keyed to the logged-in user, so load the full
     // history (not just this session's bookings) on login and after every refresh.
-    if (canBook) loadMyBookings();
+    if (canBook) {
+      // No auto-refresh — it rebuilt the table and collapsed open details ("things not persisting").
+      // Refresh is manual: the ⟳ Refresh button (whole list) + a per-row ↻ (single booking). See renderRecent.
+      loadMyBookings();
+    }
     if (isOrdersViewer) loadAdminOrders();
     // Both the booking forms and the orders database live on the Orders tab.
     switchTab('orders');
@@ -636,19 +640,16 @@
       <thead><tr><th>Reference</th><th>Type</th><th>State</th><th>Total</th><th>Booked by</th><th></th></tr></thead>
       <tbody>${filtered.map(b => {
         const cancelled = (b.rawState || b.state) === 'CANCELLED';
-        // Status shortcut for shipments still awaiting/at pickup (BOOKED / PICKUP_ASSIGNED).
-        const pickupBtn = ((b.rawState || b.state) === 'BOOKED' || (b.rawState || b.state) === 'PICKUP_ASSIGNED')
-          ? `<button class="btn btn-sm btn-ghost" onclick="startPickup('${esc(b.ref)}')">Track</button> `
-          : '';
-        const action = cancelled
-          ? '<span class="muted">cancelled</span>'
-          : `${pickupBtn}<button class="btn btn-sm btn-danger" onclick="cancelMyBooking('${esc(b.ref)}','${esc(b.type)}',this)">Cancel</button>`;
         const safeId = b.ref.replace(/[^A-Za-z0-9]/g, '_');
+        const refreshBtn = `<button class="btn btn-sm btn-ghost" onclick="refreshOneBooking('${esc(b.ref)}','${safeId}',this)" title="Refresh just this booking (status + DA/OTP)">↻</button> `;
+        const action = refreshBtn + (cancelled
+          ? '<span class="muted">cancelled</span>'
+          : `<button class="btn btn-sm btn-danger" onclick="cancelMyBooking('${esc(b.ref)}','${esc(b.type)}',this)">Cancel</button>`);
         return `<tr>
         <td><strong><a href="#" onclick="toggleBookingDetail('${esc(b.ref)}','${safeId}');return false"
               style="color:#1d4ed8;text-decoration:none" title="View the DB record">▸ ${esc(b.ref)}</a></strong></td>
         <td><span class="badge badge-blue">${esc(b.type)}</span></td>
-        <td><code style="font-size:.85em">${esc(b.rawState || b.state)}</code>${b.rawState && b.state !== b.rawState ? `<br><span class="muted" style="font-size:.8em">${esc(b.state)}</span>` : ''}${b.da ? `<br><span class="muted" style="font-size:.85em">🚚 DA ${esc(b.da)}${b.otp ? ' · OTP ' + esc(b.otp) : ''}</span>` : ''}</td>
+        <td id="bk-state-${safeId}">${stateCellInner(b)}</td>
         <td>${b.total != null ? inr(b.total) : '—'}</td>
         <td class="muted">${esc(b.by)}</td>
         <td>${action}</td>
@@ -658,7 +659,88 @@
       </tr>`; }).join('')}</tbody></table>`;
   }
 
-  // Click a booking reference → fetch + reveal its full DB record (GET /api/v1/shipments/mine/{ref}).
+  // The State cell's inner markup — factored so a single-row refresh can re-render it identically.
+  // (DA + handover code live in the expanded detail now, not here.)
+  function stateCellInner(b) {
+    return `<code style="font-size:.85em">${esc(b.rawState || b.state)}</code>`
+      + (b.rawState && b.state !== b.rawState ? `<br><span class="muted" style="font-size:.8em">${esc(b.state)}</span>` : '');
+  }
+
+  // Refresh ONE booking in place — patches its State cell and re-renders its detail if open, without
+  // rebuilding the table (so nothing else collapses or loses scroll).
+  async function refreshOneBooking(ref, safeId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const { record, pk } = await fetchDetail(ref);
+      if (record) {
+        const b = recentBookings.find(x => x.ref === ref);
+        if (b) {
+          b.rawState = record.state; b.state = record.state_label || record.state;
+          const cell = document.getElementById('bk-state-' + safeId);
+          if (cell) cell.innerHTML = stateCellInner(b);
+        }
+        const row = document.getElementById('bk-detail-' + safeId);
+        if (row && row.style.display !== 'none') row.firstElementChild.innerHTML = renderBookingDetail(record, pk, safeId);
+      }
+    } catch (e) { /* keep the current row on a transient error */ }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '↻'; } }
+  }
+
+  // Fetch a booking's DB record + its live handover status (assigned DA + current pickup/delivery OTP).
+  async function fetchDetail(ref) {
+    const [rec, pkr] = await Promise.all([
+      orderApi('GET', `/api/v1/shipments/mine/${encodeURIComponent(ref)}`),
+      orderApi('POST', `/api/demo/da/refresh-status?ref=${encodeURIComponent(ref)}`, null).catch(() => null),
+    ]);
+    return {
+      record: (rec.status >= 200 && rec.status < 300) ? rec.data : null,
+      pk: (pkr && pkr.status === 200) ? pkr.data : null,
+    };
+  }
+
+  // Customer mints a fresh pickup code from inside the detail (old one expired). The DA never sees it —
+  // the customer reads the new code out. Re-renders the handover section with the new code.
+  async function regenerateInDetail(ref, safeId) {
+    try { await orderApi('POST', `/api/demo/da/regenerate-otp?ref=${encodeURIComponent(ref)}`, null); } catch (e) { /* ignore */ }
+    refreshOneBooking(ref, safeId);
+  }
+
+  // The handover-code section: shows the DA + one-time code for the CURRENT stage, and greys out once a
+  // stage is done. Pickup code (BOOKED/PICKUP_ASSIGNED) → grey once picked up → delivery code
+  // (DROP_COLLECTED) → grey once delivered.
+  function renderHandover(d, pk, safeId) {
+    const st = d.state;
+    const box = (bg, border, body) => `<div style="margin-bottom:.8rem;padding:.65rem .85rem;border-radius:.5rem;background:${bg};border:1px solid ${border}">${body}</div>`;
+    const grey = body => box('#f1f5f9', '#e2e8f0', `<span style="color:#94a3b8">${body}</span>`);
+    const codeBig = (label, code) => `<div style="font-size:.8rem;color:#334155">${label}</div>
+      <div style="font-family:ui-monospace,monospace;font-size:1.7rem;font-weight:700;letter-spacing:.18em;color:#0f172a;margin:.1rem 0">${esc(code)}</div>`;
+
+    if (st === 'BOOKED' || st === 'PICKUP_ASSIGNED' || st === 'PICKUP_FAILED') {
+      const da = pk && pk.da_short, otp = pk && pk.otp;
+      const daLine = st === 'PICKUP_FAILED'
+        ? `🔎 Your previous agent became unavailable — <b>reassigning</b> a new Delivery Associate…`
+        : da
+        ? `🚚 <b>DA ${esc(da)}</b> is on the way for your pickup${pk.van_short ? ' · van ' + esc(pk.van_short) : ''}${pk.meeting_time ? ' · hub cron ' + esc(pk.meeting_time) : ''}.`
+        : `🔎 Finding a Delivery Associate…`;
+      const codeLine = otp ? codeBig('🔑 Your one-time <b>pickup code</b> — share it with the DA when they arrive:', otp)
+        : `<span class="muted">Your code appears here once a DA is assigned.</span>`;
+      const regen = otp ? `<button class="btn btn-sm btn-ghost" style="margin-top:.35rem" onclick="regenerateInDetail('${esc(d.shipment_ref)}','${safeId}')" title="Mint a fresh code — read the new one to the DA">Regenerate code</button>` : '';
+      return box('#ecfdf5', '#a7f3d0', `<div style="font-weight:600;color:#065f46;margin-bottom:.35rem">🤝 Pickup handover</div>
+        <div style="margin-bottom:.35rem">${daLine}</div>${codeLine}${regen}`);
+    }
+    if (st === 'DROP_COLLECTED') {
+      const otp = pk && pk.otp;
+      const codeLine = otp ? codeBig('🔑 Your <b>delivery code</b> — give it to the agent at your door:', otp)
+        : `<span class="muted">Your delivery code will appear here.</span>`;
+      return box('#eff6ff', '#bfdbfe', `<div style="font-weight:600;color:#1e40af;margin-bottom:.35rem">🏠 Out for delivery</div>${codeLine}`);
+    }
+    if (st === 'DROPPED' || st === 'DELIVERED') return grey('✓ Delivered — parcel handed to the recipient. No code needed.');
+    if (st === 'CANCELLED') return grey('✕ Booking cancelled.');
+    // picked up but not yet out-for-delivery → pickup handover done
+    return grey('✓ Pickup handover complete — the DA has your parcel. Your pickup code is no longer needed.');
+  }
+
+  // Click a booking reference → reveal its DB record + live handover code (GET mine/{ref} + refresh-status).
   async function toggleBookingDetail(ref, safeId) {
     const row = document.getElementById('bk-detail-' + safeId);
     if (!row) return;
@@ -667,18 +749,18 @@
     row.style.display = '';
     cell.innerHTML = '<div class="muted" style="padding:.75rem 1rem">Loading record…</div>';
     try {
-      const { status, data } = await orderApi('GET', `/api/v1/shipments/mine/${encodeURIComponent(ref)}`);
-      if (status < 200 || status >= 300 || !data) {
-        cell.innerHTML = `<div class="response error" style="margin:.5rem 1rem">Could not load ${esc(ref)} (HTTP ${status}).</div>`;
+      const { record, pk } = await fetchDetail(ref);
+      if (!record) {
+        cell.innerHTML = `<div class="response error" style="margin:.5rem 1rem">Could not load ${esc(ref)}.</div>`;
         return;
       }
-      cell.innerHTML = renderBookingDetail(data);
+      cell.innerHTML = renderBookingDetail(record, pk, safeId);
     } catch (e) {
       cell.innerHTML = `<div class="response error" style="margin:.5rem 1rem">${esc(String(e))}</div>`;
     }
   }
 
-  function renderBookingDetail(d) {
+  function renderBookingDetail(d, pk, safeId) {
     const v = x => (x == null || x === '') ? '<span class="muted">—</span>' : esc(String(x));
     const money = x => x == null ? '<span class="muted">—</span>' : inr(x);
     const kg = g => g == null ? '<span class="muted">—</span>' : (g / 1000).toFixed(2) + ' kg';
@@ -695,6 +777,7 @@
          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.45rem .9rem">${body}</div>
        </div>`;
     return `<div style="padding:.85rem 1.1rem;border-left:3px solid #1d4ed8">
+      ${renderHandover(d, pk, safeId)}
       <div style="font-size:.68rem;color:#64748b;margin-bottom:.55rem">📄 shipments record · <code>GET /api/v1/shipments/mine/${esc(d.shipment_ref)}</code></div>
       ${section('Shipment', [
         cell('Reference', `<strong>${v(d.shipment_ref)}</strong>`),
@@ -751,11 +834,11 @@
   // The customer never assigns a DA — M5 does that automatically off the CREATED event. This only POLLS
   // the pickup status and reveals which DA M5 picked + the one-time pickup code (OTP). Safe to click
   // repeatedly: the backend caches the OTP so the code stays stable.
-  async function refreshPickupStatus() {
+  async function refreshPickupStatus(silent) {
     const ref = val('otp-ref');
-    if (!ref) { alert('Enter a shipment ref (book one first, or click "Track" on a booking)'); return; }
+    if (!ref) { if (!silent) alert('Enter a shipment ref (book one first, or click "Track" on a booking)'); return; }
     const btn = document.querySelector('[onclick="refreshPickupStatus()"]');
-    setLoading(btn, true);
+    if (!silent) setLoading(btn, true);
     try {
       const { status, data } = await orderApi('POST', `/api/demo/da/refresh-status?ref=${encodeURIComponent(ref)}`, null);
       if (status !== 200 || !data) { showResponse('otp-response', { body: data }, true); return; }
@@ -780,8 +863,8 @@
         if (row) { row.state = data.stage_label || data.state; row.rawState = data.state; renderRecent(); }
       }
     } catch (e) {
-      showResponse('otp-response', { body: { detail: 'Network error — is the backend up?' } }, true);
-    } finally { setLoading(btn, false); }
+      if (!silent) showResponse('otp-response', { body: { detail: 'Network error — is the backend up?' } }, true);
+    } finally { if (!silent) setLoading(btn, false); }
   }
 
   // Customer mints a fresh pickup code (old one expired). The DA never sees it — the customer reads

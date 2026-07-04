@@ -4,6 +4,12 @@ import 'leaflet/dist/leaflet.css'
 import { hashDaColor } from '../utils/daColors.js'
 import { useEffect, useRef } from 'react'
 
+// Distinct, well-separated route colours (one per van loop, by order) so each route reads apart from
+// its neighbours on the map — instead of hashing the van id (which clustered into similar purples).
+const ROUTE_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#9333ea',
+                      '#0891b2', '#db2777', '#65a30d', '#4f46e5', '#ea580c']
+const routeColor = (i) => ROUTE_COLORS[i % ROUTE_COLORS.length]
+
 // Van marker — colour by lateness (green on time, amber minor, red past threshold, blue = moving/no
 // arrival yet). Pulses so a live van reads as "moving" vs the static numbered route stops.
 function vanIcon(color, label) {
@@ -41,6 +47,23 @@ function daIcon(color, badge, meeting) {
 // True when two [lat,lon] points are within ~1.3 km (a van that has arrived sits exactly on the vertex).
 function near(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.013
+}
+
+// Snap a point to the nearest spot on a route polyline, so the van rides ALONG the road geometry
+// instead of the straight-line telemetry chord between stops.
+function snapToRoute(p, geom) {
+  if (!geom || geom.length < 2) return p
+  let best = p, bestD = Infinity
+  for (let i = 0; i < geom.length - 1; i++) {
+    const a = geom[i], b = geom[i + 1]
+    const dx = b[0] - a[0], dy = b[1] - a[1]
+    const len2 = dx * dx + dy * dy
+    const t = len2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2)) : 0
+    const q = [a[0] + t * dx, a[1] + t * dy]
+    const d = Math.hypot(p[0] - q[0], p[1] - q[1])
+    if (d < bestD) { bestD = d; best = q }
+  }
+  return best
 }
 
 function lerp(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t] }
@@ -245,6 +268,8 @@ export default function ExecutionMap({ center, routes = [], nodes = [], vans = [
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      {/* Wheel/touchpad zoom acts only when the cursor is over the map (Leaflet scopes it to its own
+          container) — the feed and sidebar scroll on their own hover. */}
       <MapContainer center={center} zoom={11} style={{ height: '100%', width: '100%' }}>
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -253,23 +278,28 @@ export default function ExecutionMap({ center, routes = [], nodes = [], vans = [
         <FitOnce routes={routes} nodes={nodes} />
         <MapApi mapRef={mapRef} />
 
-        {/* Static route polylines (the approved plan), faded under the live vans. */}
-        {routes.map(r => (
+        {/* Route polylines (the approved plan) — a white casing under a strong coloured line so each
+            van's loop reads clearly against the busy map tiles (during a run and at rest). */}
+        {routes.map((r, i) => (
+          <Polyline key={`${r.vanId}-case`} positions={r.geometry}
+            pathOptions={{ color: '#ffffff', weight: 8, opacity: 0.65, lineJoin: 'round', lineCap: 'round' }} />
+        ))}
+        {routes.map((r, i) => (
           <Polyline key={r.vanId} positions={r.geometry}
-            pathOptions={{ color: vanColor(r.vanId), weight: 4, opacity: 0.35, lineJoin: 'round' }} />
+            pathOptions={{ color: routeColor(i), weight: 4.5, opacity: 0.9, lineJoin: 'round', lineCap: 'round' }} />
         ))}
 
-        {/* One numbered dot per meeting vertex (the plan's stops). */}
-        {routes.map(r => (r.markers || []).map(m => (
+        {/* One numbered dot per meeting vertex (the plan's stops), matched to its route colour. */}
+        {routes.map((r, i) => (r.markers || []).map(m => (
           <Marker key={`${r.vanId}-${m.stopId}`} position={[m.lat, m.lon]}
             icon={L.divIcon({
               className: '',
-              html: `<div style="background:${vanColor(r.vanId)};color:#fff;width:18px;height:18px;border-radius:50%;
-                display:flex;align-items:center;justify-content:center;font:700 10px/1 sans-serif;
-                opacity:.85;border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.4)">${m.seq}</div>`,
-              iconSize: [18, 18], iconAnchor: [9, 9],
+              html: `<div style="background:${routeColor(i)};color:#fff;width:22px;height:22px;border-radius:50%;
+                display:flex;align-items:center;justify-content:center;font:700 12px/1 sans-serif;
+                border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)">${m.seq}</div>`,
+              iconSize: [22, 22], iconAnchor: [11, 11],
             })}>
-            <Tooltip>Stop {m.seq}</Tooltip>
+            <Tooltip>Van {r.vanId?.slice(0, 6)} · stop {m.seq}</Tooltip>
           </Marker>
         )))}
 
@@ -332,17 +362,19 @@ export default function ExecutionMap({ center, routes = [], nodes = [], vans = [
           )
         })}
 
-        {/* Live vans. */}
+        {/* Live vans — snapped onto their route polyline so they ride the road, not the straight chord. */}
         {vans.map(v => {
           if (v.lastLat == null) return null
           const myDas = adjDas.filter(x => x.vanId === v.vanId)
           const met = myDas.filter(x => ['handoff', 'delivering', 'done'].includes(st.get(x.daId)?.phase))
           const recv = met.flatMap(x => x.pickupIds || [])     // van received from DAs (fly out)
           const gave = met.flatMap(x => x.deliveryIds || [])   // van handed to DAs (inbound)
+          const myRoute = routes.find(r => r.vanId === v.vanId)
+          const vpos = myRoute ? snapToRoute([v.lastLat, v.lastLon], myRoute.geometry) : [v.lastLat, v.lastLon]
           return (
-            <Marker key={v.vanId} position={[v.lastLat, v.lastLon]}
+            <Marker key={v.vanId} position={vpos}
               icon={vanIcon(lateColor(v.minutesLate), v.vanId.slice(0, 4))} zIndexOffset={1000}
-              eventHandlers={{ click: () => flyTo([v.lastLat, v.lastLon], 14) }}>
+              eventHandlers={{ click: () => flyTo(vpos, 14) }}>
               <Tooltip>
                 <div style={{ fontSize: 12, lineHeight: 1.5 }}>
                   <strong>Van {v.vanId.slice(0, 8)}</strong> · meets {myDas.length} DA{myDas.length === 1 ? '' : 's'}<br />

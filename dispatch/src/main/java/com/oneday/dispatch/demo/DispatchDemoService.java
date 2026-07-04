@@ -195,102 +195,6 @@ public class DispatchDemoService {
         return state(cityId, gridDate);
     }
 
-    /** Synthesize {@code count} pickups at random active hexes and run them through the assignment engine. */
-    @Transactional
-    public AssignResult assign(UUID cityId, LocalDate gridDate, int count) {
-        List<TileDetailResponse> active = gridService.getTileDetails(cityId, gridDate).stream()
-                .filter(TileDetailResponse::active).toList();
-        if (active.isEmpty()) {
-            return new AssignResult(0, 0, 0, 0, List.of());
-        }
-        List<AssignOutcome> outcomes = new ArrayList<>();
-        int assigned = 0;
-        int deferred = 0;
-        int cross = 0;
-        for (int i = 0; i < count; i++) {
-            TileDetailResponse hex = active.get(ThreadLocalRandom.current().nextInt(active.size()));
-            UUID shipmentId = UUID.randomUUID();
-            String paymentMode = ThreadLocalRandom.current().nextBoolean() ? "PREPAID" : "COD";
-            AssignmentResult r = dispatchService.assignPickup(
-                    shipmentId, cityId, hex.centerLat(), hex.centerLon(), hex.id(), paymentMode);
-            switch (r.outcome()) {
-                case ASSIGNED -> assigned++;
-                case CROSS_TERRITORY_ASSIGNED -> { assigned++; cross++; }
-                case DEFERRED -> deferred++;
-            }
-            outcomes.add(new AssignOutcome(shipmentId, hex.id(), hex.centerLat(), hex.centerLon(),
-                    r.outcome().name(), r.daId(), r.queuePosition(),
-                    r.deferReason() != null ? r.deferReason().name() : null));
-        }
-        log.info("[m5-demo] assigned {} pickups: {} placed, {} deferred, {} cross-territory",
-                count, assigned, deferred, cross);
-        return new AssignResult(count, assigned, deferred, cross, outcomes);
-    }
-
-    /** Synthesize {@code count} deliveries at random active hexes → the delivery side of the engine. */
-    @Transactional
-    public AssignResult assignDeliveries(UUID cityId, LocalDate gridDate, int count) {
-        List<TileDetailResponse> active = gridService.getTileDetails(cityId, gridDate).stream()
-                .filter(TileDetailResponse::active).toList();
-        if (active.isEmpty()) {
-            return new AssignResult(0, 0, 0, 0, List.of());
-        }
-        List<AssignOutcome> outcomes = new ArrayList<>();
-        int assigned = 0;
-        int deferred = 0;
-        int cross = 0;
-        for (int i = 0; i < count; i++) {
-            TileDetailResponse hex = active.get(ThreadLocalRandom.current().nextInt(active.size()));
-            UUID shipmentId = UUID.randomUUID();
-            AssignmentResult r = dispatchService.assignDelivery(
-                    shipmentId, cityId, hex.centerLat(), hex.centerLon(), hex.id());
-            switch (r.outcome()) {
-                case ASSIGNED -> assigned++;
-                case CROSS_TERRITORY_ASSIGNED -> { assigned++; cross++; }
-                case DEFERRED -> deferred++;
-            }
-            outcomes.add(new AssignOutcome(shipmentId, hex.id(), hex.centerLat(), hex.centerLon(),
-                    r.outcome().name(), r.daId(), r.queuePosition(),
-                    r.deferReason() != null ? r.deferReason().name() : null));
-        }
-        log.info("[m5-demo] assigned {} deliveries: {} placed, {} deferred", count, assigned, deferred);
-        return new AssignResult(count, assigned, deferred, cross, outcomes);
-    }
-
-    /** Advance each DA's lead task one step (QUEUED→en-route, IN_PROGRESS→van-handoff) to drain queues. */
-    @Transactional
-    public DispatchState workNext(UUID cityId, LocalDate gridDate) {
-        LocalDate date = today();
-        for (UUID daId : new ArrayList<>(daStatusService.loadedDaIds())) {
-            List<DispatchQueue> active = queueRepository
-                    .findByDaIdAndOperatingDateAndStatusIn(daId, date,
-                            List.of(TaskStatus.QUEUED, TaskStatus.IN_PROGRESS)).stream()
-                    .sorted(Comparator.comparingInt(DispatchQueue::getQueuePosition)).toList();
-            if (active.isEmpty()) {
-                continue;
-            }
-            DispatchQueue lead = active.get(0);
-            try {
-                if (lead.getTaskType() == TaskType.PICKUP) {
-                    if (lead.getStatus() == TaskStatus.QUEUED) {
-                        daTaskService.markEnRoute(daId, lead.getId());
-                    } else if (lead.getStatus() == TaskStatus.IN_PROGRESS) {
-                        daTaskService.recordVanHandoff(daId, lead.getId(), List.of("DEMO-SCAN"), UUID.randomUUID());
-                    }
-                } else {   // DELIVERY: QUEUED → drop-collected (en route) → drop-completed (some COD)
-                    if (lead.getStatus() == TaskStatus.QUEUED) {
-                        daTaskService.markDropCollected(daId, lead.getId());
-                    } else if (lead.getStatus() == TaskStatus.IN_PROGRESS) {
-                        boolean cod = (lead.getShipmentId().hashCode() & 1) == 0;
-                        daTaskService.markDropCompleted(daId, lead.getId(), cod);
-                    }
-                }
-            } catch (RuntimeException ex) {
-                log.debug("[m5-demo] work-next skipped task {}: {}", lead.getId(), ex.getMessage());
-            }
-        }
-        return state(cityId, gridDate);
-    }
 
     /** Re-attempt every PENDING deferral that is due (DeferredRetryJob's per-call equivalent). */
     @Transactional
@@ -322,10 +226,39 @@ public class DispatchDemoService {
      */
     @Transactional
     public DispatchState markAbsent(UUID cityId, LocalDate gridDate, UUID daId) {
+        LocalDate date = today();
         daStatusService.updateStatus(daId, DaStatusEnum.ABSENT);
         daEventProducer.emitDaAbsent(daId, cityId);
-        log.info("[m5-demo] marked DA {} ABSENT", daId);
+        // Defer the absent DA's queued pickups (DA_ABSENT) so the resilience step is visible on the board:
+        // the count rises, then "Retry deferred" reassigns them to other feasible DAs. (Real M5 does this
+        // off the absence sweep; here we do it inline so the demo effect is immediate.)
+        int deferred = 0;
+        for (DispatchQueue task : queueRepository
+                .findByDaIdAndOperatingDateAndStatusIn(daId, date, List.of(TaskStatus.QUEUED))) {
+            // Record the deferral, then REMOVE the task from the absent DA's queue (a real reassignment
+            // takes it off this DA). Leaving a DEFERRED row here would block Retry-deferred from creating
+            // a fresh QUEUED row (unique shipment+task_type) → the parcel orphans (M4 says assigned, no
+            // live DA). Deleting it lets reassignDeferred cleanly re-place it on a feasible DA.
+            deferredRepository.save(daAbsentDeferral(task, date));
+            queueRepository.delete(task);
+            deferred++;
+        }
+        log.info("[m5-demo] marked DA {} ABSENT, deferred {} queued task(s)", daId, deferred);
         return state(cityId, gridDate);
+    }
+
+    private DeferredDispatch daAbsentDeferral(DispatchQueue task, LocalDate date) {
+        DeferredDispatch d = new DeferredDispatch();
+        d.setCityId(task.getCityId());
+        d.setShipmentId(task.getShipmentId());
+        d.setTaskType(task.getTaskType());
+        d.setTileId(task.getTileId());
+        d.setTaskLat(task.getTaskLat());
+        d.setTaskLon(task.getTaskLon());
+        d.setDeferReason(DeferReason.DA_ABSENT);
+        d.setStatus("PENDING");
+        d.setOperatingDate(date);
+        return d;
     }
 
     /**

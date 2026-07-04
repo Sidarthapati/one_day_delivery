@@ -18,14 +18,6 @@ const qs = (cityId, date) => `cityId=${cityId}&date=${date}`
 export const loadShift = (cityId, date) =>
   req(`/api/demo/dispatch/load-shift?${qs(cityId, date)}`, { method: 'POST' })
 
-export const assignPickups = (cityId, date, count) =>
-  req(`/api/demo/dispatch/assign?${qs(cityId, date)}&count=${count}`, { method: 'POST' })
-
-export const assignDeliveries = (cityId, date, count) =>
-  req(`/api/demo/dispatch/assign-deliveries?${qs(cityId, date)}&count=${count}`, { method: 'POST' })
-
-export const workNext = (cityId, date) =>
-  req(`/api/demo/dispatch/work-next?${qs(cityId, date)}`, { method: 'POST' })
 
 export const cancelTask = (cityId, date, shipmentId, taskType) =>
   req(`/api/demo/dispatch/cancel-task?${qs(cityId, date)}&shipmentId=${shipmentId}&taskType=${taskType}`,
@@ -33,6 +25,11 @@ export const cancelTask = (cityId, date, shipmentId, taskType) =>
 
 export const markAbsent = (cityId, date, daId) =>
   req(`/api/demo/dispatch/mark-absent?${qs(cityId, date)}&daId=${daId}`, { method: 'POST' })
+
+// After marking a DA absent: flip any now-orphaned M4 pickups (PICKUP_ASSIGNED with no live DA) →
+// PICKUP_FAILED ("reassigning"), so the customer's booking list stays honest.
+export const reconcileM4 = (city, date) =>
+  req(`/api/demo/da/reconcile-m4?city=${encodeURIComponent(city)}&date=${date}`, { method: 'POST' })
 
 export const endShift = (cityId, date) =>
   req(`/api/demo/dispatch/end-shift?${qs(cityId, date)}`, { method: 'POST' })
@@ -65,6 +62,10 @@ export const autoVerifyDeliveries = (city, date) =>
 // (the van carried them to the origin hub). Run after "Run the day".
 export const pickupsToHub = (city, date) =>
   req(`/api/demo/da/pickups/to-hub?city=${encodeURIComponent(city)}&date=${date}`, { method: 'POST' })
+
+// End of Run-the-day: van met the DA, parcel handed to the pickup van (PICKED_UP → HANDED_TO_PICKUP_VAN).
+export const pickupsToVan = (city, date) =>
+  req(`/api/demo/da/pickups/to-van?city=${encodeURIComponent(city)}&date=${date}`, { method: 'POST' })
 
 // Live RabbitMQ tap: real PUBLISH/CONSUME observations newer than `after`, plus the current head seq
 // (fast-forward the cursor to head at run start so the feed shows only this run's bus traffic).

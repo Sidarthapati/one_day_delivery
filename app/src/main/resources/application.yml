@@ -79,6 +79,11 @@ dispatch:
   # is still shown on demand via the per-DA "absent" button.
   da:
     absent-threshold-minutes: 1440
+  # Demo only: the DeferredRetryJob auto-reassigns PENDING deferrals on this cadence (default 300s = 5min),
+  # which silently drained the deferred pile mid-demo. Push it past a demo session so deferrals persist
+  # until you press "Retry deferred" manually (the manual path is unaffected).
+  monitor:
+    interval-seconds: 3600
 
 # M6 routing config. Same shadowing rule as grid above: the assembled app loads ITS OWN
 # application.yml, so RoutingProperties binds here (the routing module's yaml is shadowed and would

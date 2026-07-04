@@ -45,25 +45,6 @@ public class DispatchDemoController {
         return Map.of("pinged", service.recordGps(pings));
     }
 
-    @PostMapping("/assign")
-    public DispatchDemoService.AssignResult assign(@RequestParam UUID cityId,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
-            @RequestParam(defaultValue = "20") int count) {
-        return service.assign(cityId, date, count);
-    }
-
-    @PostMapping("/assign-deliveries")
-    public DispatchDemoService.AssignResult assignDeliveries(@RequestParam UUID cityId,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
-            @RequestParam(defaultValue = "20") int count) {
-        return service.assignDeliveries(cityId, date, count);
-    }
-
-    @PostMapping("/work-next")
-    public DispatchDemoService.DispatchState workNext(@RequestParam UUID cityId,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return service.workNext(cityId, date);
-    }
 
     @PostMapping("/cancel-task")
     public DispatchDemoService.DispatchState cancelTask(@RequestParam UUID cityId,

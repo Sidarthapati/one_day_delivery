@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { hashDaColor } from '../utils/daColors.js'
 import {
-  loadShift, assignPickups, assignDeliveries, workNext, retryDeferred, getDispatchState,
-  resetDispatch, cancelTask, markAbsent, endShift,
+  retryDeferred, getDispatchState,
+  resetDispatch, cancelTask, markAbsent, reconcileM4, endShift,
 } from '../api/dispatchApi.js'
 
 // M5 dispatch runs for TODAY (DispatchService stamps operating_date = today); the roster + cron come
@@ -73,20 +73,23 @@ function summarizeQueue(queue = []) {
 
 export default function DispatchView({ cityId, cityCode }) {
   const [state, setState] = useState(null)
-  const [count, setCount] = useState(20)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState(null)
-  const [lastAssign, setLastAssign] = useState(null)
+  const [msg, setMsg] = useState(null)         // { ok, text } success/failure note after an action
   const [selDef, setSelDef] = useState(null)   // deferred parcel selected for the detail panel
 
-  async function run(label, fn, keepAssign = false) {
-    setBusy(label); setErr(null)
+  // Run an action; `describe(before, after)` builds a success message from the state delta.
+  async function run(label, fn, describe) {
+    setBusy(label); setErr(null); setMsg(null)
+    const before = state
     try {
       const res = await fn()
-      if (res && res.das) setState(res)
-      if (!keepAssign) setLastAssign(null)
+      if (res && res.das != null) setState(res)
+      if (describe) setMsg({ ok: true, text: describe(before, res) })
       return res
-    } catch (e) { setErr(e.message) } finally { setBusy('') }
+    } catch (e) {
+      setErr(e.message); setMsg({ ok: false, text: e.message })
+    } finally { setBusy('') }
   }
 
   useEffect(() => {
@@ -113,21 +116,14 @@ export default function DispatchView({ cityId, cityCode }) {
       a === '__novan__' ? 1 : b === '__novan__' ? -1 : a.localeCompare(b))
   })()
 
-  async function doAssign(kind) {
-    setBusy(kind); setErr(null)
-    try {
-      const fn = kind === 'deliver' ? assignDeliveries : assignPickups
-      const r = await fn(cityId, TODAY, count)
-      setLastAssign({ ...r, kind })
-      setState(await getDispatchState(cityId, TODAY))
-    } catch (e) { setErr(e.message) } finally { setBusy('') }
-  }
-
   // Manual board refresh — pull the latest M5 state on demand (e.g. after seeding/assigning in Execution).
   async function refresh() {
-    setBusy('refresh'); setErr(null)
-    try { setState(await getDispatchState(cityId, TODAY)) }
-    catch (e) { setErr(e.message) } finally { setBusy('') }
+    setBusy('refresh'); setErr(null); setMsg(null)
+    try {
+      const res = await getDispatchState(cityId, TODAY); setState(res)
+      const sm = res.summary || {}
+      setMsg({ ok: true, text: `Board refreshed — ${sm.das ?? 0} DAs · ${sm.assigned ?? 0} queued · ${sm.deferred ?? 0} deferred.` })
+    } catch (e) { setErr(e.message); setMsg({ ok: false, text: e.message }) } finally { setBusy('') }
   }
 
   return (
@@ -144,75 +140,53 @@ export default function DispatchView({ cityId, cityCode }) {
             </button>
           </div>
           <p className="text-xs text-gray-500 leading-relaxed">
-            Run the Execution tab first (seed → territories → routes) so DAs + cron meetings exist for
-            today, then <strong>Load shift</strong>. Each task is placed on the least-loaded DA that can
-            still make its <strong>cron van meeting</strong> (the hard constraint), else deferred.
+            Set up on the <strong>Execution</strong> tab first (① Prepare → Load shift, ② Spread pickups).
+            Each task lands on the least-loaded DA that can still make its <strong>cron van meeting</strong>
+            (the hard constraint) — else it's <strong>deferred</strong> here.
           </p>
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1.5 mt-2 leading-relaxed">
-            ⚠️ The two <strong>Synthetic</strong> buttons below inject <strong>fake test parcels</strong>
-            (random hexes, no real booking) to stress the M5 engine. <strong>Real customer bookings
-            assign themselves automatically</strong> via M5's event consumer — you don't need these for
-            the real flow.
+          <p className="text-[11px] text-gray-500 bg-gray-50 border border-gray-100 rounded px-2 py-1.5 mt-2 leading-relaxed">
+            💡 To load the engine, book <strong>real</strong> parcels on the <strong>Execution</strong> tab
+            (② Seed → <strong>Spread pickups</strong>, e.g. count 40 across 10 DAs). M5 auto-assigns each via
+            its event consumer through the same cron-feasibility engine; overflow beyond a DA's cron capacity
+            defers here. Then use <strong>Work next</strong> / <strong>Retry deferred</strong> below.
           </p>
         </div>
 
         <div className="flex flex-col gap-2">
-          <button disabled={!!busy} onClick={() => run('load', () => loadShift(cityId, TODAY))}
-            className="px-3 py-2 text-sm rounded bg-gray-800 text-white disabled:opacity-50"
-            title="Clock today's planned DAs onto the shift, each seated on its cron van meeting. Queues start empty.">
-            {busy === 'load' ? 'Loading…' : '1 · Load shift'}
-          </button>
           <p className="text-[11px] text-gray-500 leading-snug">
-            Clocks today's <strong>planned DAs onto the shift</strong> (the roster M3 carved into
-            territories), each seated on its <strong>cron van meeting</strong>. This is <em>not</em>
-            parcel assignment — every queue starts empty (P 0 · D 0). Parcels land on a DA only later:
-            a real booking (M5 auto-assigns) or the Synthetic buttons below.
+            Load the shift from the <strong>Execution</strong> tab (① Setup → 👷 Load shift), then book real
+            parcels (② Spread pickups). The controls below drive M5's engine on whatever's queued.
           </p>
 
-          <div className="text-[11px] uppercase tracking-wide text-gray-400 mt-1">Synthetic test load (engine stress)</div>
-          <div className="flex items-center gap-2">
-            <input type="range" min="1" max="80" value={count}
-              onChange={(e) => setCount(+e.target.value)} className="flex-1" />
-            <span className="text-sm w-8 text-right text-gray-700">{count}</span>
-          </div>
           <div className="flex gap-2">
-            <button disabled={!!busy} onClick={() => doAssign('pickup')}
-              className="flex-1 px-3 py-2 text-sm rounded bg-blue-600 text-white disabled:opacity-50"
-              title="Inject fake pickup parcels (no real booking) to stress the M5 assignment engine">
-              {busy === 'pickup' ? '…' : `Synthetic: ${count} pickups`}
-            </button>
-            <button disabled={!!busy} onClick={() => doAssign('deliver')}
-              className="flex-1 px-3 py-2 text-sm rounded bg-indigo-600 text-white disabled:opacity-50"
-              title="Inject fake delivery parcels (no real booking) to stress the M5 delivery engine">
-              {busy === 'deliver' ? '…' : `Synthetic: ${count} deliveries`}
-            </button>
-          </div>
-
-          <div className="flex gap-2">
-            <button disabled={!!busy} onClick={() => run('work', () => workNext(cityId, TODAY))}
-              className="flex-1 px-3 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
-              {busy === 'work' ? '…' : 'Work next'}
-            </button>
-            <button disabled={!!busy} onClick={() => run('retry', () => retryDeferred(cityId, TODAY))}
-              className="flex-1 px-3 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
+            <button disabled={!!busy} onClick={() => run('retry', () => retryDeferred(cityId, TODAY),
+                (b, a) => { const r = (b?.summary?.deferred ?? 0) - (a.summary?.deferred ?? 0);
+                  return r > 0 ? `${r} deferral(s) reassigned to feasible DAs · ${a.summary?.deferred ?? 0} still deferred.`
+                              : `No deferral could be reassigned yet · ${a.summary?.deferred ?? 0} still deferred.` })}
+              className="flex-1 px-3 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+              title="Re-attempt every PENDING deferral through the cron-feasibility engine. Ones that now fit are placed on a DA; still-infeasible ones stay deferred. Use after freeing capacity, or after marking a DA absent.">
               {busy === 'retry' ? '…' : 'Retry deferred'}
             </button>
           </div>
           <div className="flex gap-2">
-            <button disabled={!!busy} onClick={() => run('endshift', () => endShift(cityId, TODAY))}
+            <button disabled={!!busy} onClick={() => run('endshift', () => endShift(cityId, TODAY),
+                (b, a) => `Shift ended — remaining queued tasks deferred (SHIFT_ENDED), DAs set OFFLINE. ${a.summary?.deferred ?? 0} deferred.`)}
               className="flex-1 px-3 py-2 text-sm rounded border border-amber-200 text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-              title="Defer all QUEUED tasks (SHIFT_ENDED) + set every DA OFFLINE">
+              title="End of the operating window: defer every remaining QUEUED task with reason SHIFT_ENDED and set all DAs OFFLINE. Clean end-of-day.">
               {busy === 'endshift' ? '…' : 'End shift'}
             </button>
             <button disabled={!!busy}
-              onClick={async () => { await run('reset', () => resetDispatch(cityId, TODAY)); setState(null); setLastAssign(null) }}
-              className="flex-1 px-3 py-2 text-sm rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50">
+              onClick={async () => { await run('reset', () => resetDispatch(cityId, TODAY), () => 'Board reset — in-memory roster + all queued/deferred tasks cleared for today. Re-load the shift from Execution.'); setState(null) }}
+              className="flex-1 px-3 py-2 text-sm rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+              title="Clear the in-memory DA roster + every queued/deferred task for today (start the M5 board over). Re-load the shift from the Execution tab afterward.">
               Reset
             </button>
           </div>
         </div>
 
-        {err && <div className="text-xs text-red-600 bg-red-50 rounded p-2 break-words">{err}</div>}
+        {msg && <div className={`text-xs rounded p-2 break-words border ${msg.ok
+          ? 'text-emerald-800 bg-emerald-50 border-emerald-100'
+          : 'text-red-700 bg-red-50 border-red-100'}`}>{msg.ok ? '✅ ' : '✕ '}{msg.text}</div>}
 
         {s && (
           <div className="grid grid-cols-2 gap-2 text-center">
@@ -225,14 +199,6 @@ export default function DispatchView({ cityId, cityCode }) {
           </div>
         )}
 
-        {lastAssign && (
-          <div className="text-xs text-gray-600 bg-gray-50 rounded p-2">
-            Last {lastAssign.kind === 'deliver' ? 'deliveries' : 'pickups'}:{' '}
-            <b className="text-emerald-700">{lastAssign.assigned}</b> placed,{' '}
-            <b className="text-red-600">{lastAssign.deferred}</b> deferred
-            {lastAssign.crossTerritory > 0 && <>, <b>{lastAssign.crossTerritory}</b> cross-territory</>}
-          </div>
-        )}
 
         <div className="flex-1">
           <div className="text-xs uppercase tracking-wide text-gray-400 mb-2">
@@ -293,9 +259,15 @@ export default function DispatchView({ cityId, cityCode }) {
                   </span>
                   {da.status !== 'ABSENT' && da.status !== 'OFFLINE' && (
                     <button disabled={!!busy}
-                      onClick={() => run('absent', () => markAbsent(cityId, TODAY, da.daId))}
-                      className="text-[10px] px-1 py-0.5 rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
-                      title="Force this DA absent (heartbeat lapse) — it stops taking pickups">absent</button>
+                      onClick={() => run('absent', async () => {
+                          const r = await markAbsent(cityId, TODAY, da.daId)
+                          await reconcileM4(cityCode, TODAY).catch(() => {})   // orphaned M4 pickups → "reassigning"
+                          return r
+                        },
+                        (b, a) => { const d = (a.summary?.deferred ?? 0) - (b?.summary?.deferred ?? 0);
+                          return `DA ${da.daId.slice(0, 8)} marked ABSENT — ${d > 0 ? d + ' queued task(s) deferred (DA_ABSENT), booking(s) now "reassigning"' : 'no queued tasks to defer'}. Use Retry deferred to reassign.` })}
+                      className="text-[10px] px-1.5 py-0.5 rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
+                      title="Action: force this DA absent (simulate a heartbeat lapse) — it stops taking pickups and its queued tasks defer as DA_ABSENT">⊘ mark absent</button>
                   )}
                 </div>
 
@@ -374,9 +346,10 @@ export default function DispatchView({ cityId, cityCode }) {
                           {t.crossTerritory && <span className="text-[10px] text-purple-600">XT</span>}
                           {t.status === 'QUEUED' && (
                             <button disabled={!!busy}
-                              onClick={() => run('cancel', () => cancelTask(cityId, TODAY, t.shipmentId, t.taskType))}
+                              onClick={() => run('cancel', () => cancelTask(cityId, TODAY, t.shipmentId, t.taskType),
+                                () => `Task ${String(t.shipmentId).slice(0, 8)} (${t.taskType}) cancelled — removed from the DA's queue.`)}
                               className="text-[10px] text-gray-300 hover:text-red-600 disabled:opacity-50"
-                              title="Cancel this task">✕</button>
+                              title="Remove this queued task from the DA's queue (cancel it)">✕</button>
                           )}
                         </li>
                       ))}
