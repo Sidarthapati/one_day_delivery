@@ -6,7 +6,9 @@ import com.oneday.common.kafka.enums.ShipmentEventType;
 import com.oneday.common.kafka.events.ShipmentCancelledEvent;
 import com.oneday.common.kafka.events.ShipmentCreatedEvent;
 import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
+import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.Shipment;
+import com.oneday.orders.repository.ShipmentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -36,9 +38,11 @@ public class ShipmentEventProducer {
     private static final Logger log = LoggerFactory.getLogger(ShipmentEventProducer.class);
 
     private final EventPublisher eventPublisher;
+    private final ShipmentRepository shipmentRepository;
 
-    ShipmentEventProducer(EventPublisher eventPublisher) {
+    ShipmentEventProducer(EventPublisher eventPublisher, ShipmentRepository shipmentRepository) {
         this.eventPublisher = eventPublisher;
+        this.shipmentRepository = shipmentRepository;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -53,6 +57,19 @@ public class ShipmentEventProducer {
         event.setToState(e.toState());
         event.setTriggeredBy(e.triggeredBy());
         event.setTriggerSource(e.triggerSource() != null ? e.triggerSource().name() : null);
+
+        // Q-M4-2: HANDED_TO_DROP_VAN is M5's last-mile assignment trigger — enrich this one
+        // transition with the destination data M5 needs, so it never has to GET back to M4.
+        if (e.toState() == ShipmentState.HANDED_TO_DROP_VAN) {
+            shipmentRepository.findById(e.shipmentId()).ifPresent(s -> {
+                event.setDestTileId(s.getDestTileId());
+                event.setDropType(s.getDropType());
+                if (s.getDestAddress() != null) {
+                    event.setDestLat(s.getDestAddress().getLatitude());
+                    event.setDestLon(s.getDestAddress().getLongitude());
+                }
+            });
+        }
 
         log.debug("Publishing STATE_CHANGED shipmentId={} {}->{}",
                 e.shipmentId(), e.fromState(), e.toState());
@@ -76,9 +93,20 @@ public class ShipmentEventProducer {
         event.setOriginCity(s.getOriginCity());
         event.setOriginPincode(s.getOriginPincode());
         event.setOriginTileId(s.getOriginTileId());
+        // Pickup coordinates — M5 resolves the city + pickup hex from these (without them it cannot
+        // assign a pickup). Sourced from the stored origin address (lat/lon are persisted on booking).
+        if (s.getOriginAddress() != null) {
+            event.setOriginLat(s.getOriginAddress().getLatitude());
+            event.setOriginLon(s.getOriginAddress().getLongitude());
+        }
         event.setDestCity(s.getDestCity());
         event.setDestPincode(s.getDestPincode());
         event.setDestTileId(s.getDestTileId());
+        // Drop coordinates — M5 uses these for last-mile delivery assignment (Q-M4-2 dest data).
+        if (s.getDestAddress() != null) {
+            event.setDestLat(s.getDestAddress().getLatitude());
+            event.setDestLon(s.getDestAddress().getLongitude());
+        }
         event.setChargeableWeightGrams(s.getChargeableWeightGrams());
         event.setSlaCommitmentMinutes(s.getSlaCommitmentMinutes() != null
                 ? s.getSlaCommitmentMinutes().intValue() : null);
