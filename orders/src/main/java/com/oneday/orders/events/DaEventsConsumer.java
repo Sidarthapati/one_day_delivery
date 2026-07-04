@@ -1,10 +1,12 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.events.DaEvent;
+import com.oneday.common.kafka.events.DaLifecycleEvent;
 import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
+import com.oneday.orders.service.exception.IllegalStateTransitionException;
+import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -38,7 +40,7 @@ public class DaEventsConsumer {
     }
 
     @RabbitListener(queues = OrdersMessagingTopology.DA_QUEUE)
-    public void onDaEvent(DaEvent event) {
+    public void onDaEvent(DaLifecycleEvent event) {
         ShipmentState target = switch (event.eventType()) {
             case PICKUP_ASSIGNED       -> ShipmentState.PICKUP_ASSIGNED;
             case PICKUP_FAILED         -> ShipmentState.PICKUP_FAILED;
@@ -58,16 +60,26 @@ public class DaEventsConsumer {
             log.debug("DA event {} ignored for shipment {}", event.eventType(), event.shipmentId());
             return;
         }
-        stateMachine.transition(event.shipmentId(), target,
-                TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+        // Idempotent + unprocessable-tolerant: the demo fast-forwards these states by hand (an event can
+        // arrive after the shipment already advanced → IllegalStateTransition) and can delete a shipment
+        // out from under an in-flight event (demo "Clear bookings" → EntityNotFound). Both are terminal
+        // for this message — ack and move on, never retry/DLQ.
+        try {
+            stateMachine.transition(event.shipmentId(), target,
+                    TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+        } catch (IllegalStateTransitionException | EntityNotFoundException e) {
+            log.debug("DA event {} → {} skipped for {} ({})",
+                    event.eventType(), target, event.shipmentId(), e.getMessage());
+            return;
+        }
 
         if (target == ShipmentState.PICKUP_ASSIGNED) {
-            generatePickupOtp(event);
+            generatePickupOtp(event);   // only on a real BOOKED→PICKUP_ASSIGNED, never a redelivery
         }
     }
 
     /** Mint a pickup OTP for the sender. Best-effort: a failure here never undoes the transition. */
-    private void generatePickupOtp(DaEvent event) {
+    private void generatePickupOtp(DaLifecycleEvent event) {
         try {
             String otp = pickupOtpService.generate(event.shipmentId());
             // TODO: dispatch to sender via the notification service (oneday.notifications.events).

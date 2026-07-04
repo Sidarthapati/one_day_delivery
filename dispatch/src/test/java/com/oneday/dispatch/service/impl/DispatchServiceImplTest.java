@@ -20,7 +20,6 @@ import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.CronFeasibilityService;
 import com.oneday.dispatch.service.DispatchService;
 import com.oneday.dispatch.service.FeasibilityResult;
-import com.oneday.dispatch.service.TaskInProgressException;
 import com.oneday.dispatch.service.model.DispatchTask;
 import com.oneday.grid.dto.response.TileLoadScoreResponse;
 import com.oneday.grid.service.GridService;
@@ -45,7 +44,6 @@ import java.util.concurrent.Future;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -218,15 +216,20 @@ class DispatchServiceImplTest {
     }
 
     @Test
-    void cancelInProgressTaskThrows() {
+    void cancelInProgressTaskRemovesItFromDaLoad() {
+        // A shipment cancelled after pickup (task already IN_PROGRESS) must leave the DA's active load —
+        // it's no longer a hub-bound pickup (the physical parcel becomes an RTO for M11).
         UUID da = readyDa(0);
         UUID shipment = UUID.randomUUID();
         DispatchQueue row = persistTask(da, shipment, TaskStatus.IN_PROGRESS, 0);
 
-        assertThatThrownBy(() -> service.cancelTask(shipment, TaskType.PICKUP))
-                .isInstanceOf(TaskInProgressException.class);
+        service.cancelTask(shipment, TaskType.PICKUP);
+
         assertThat(queueRepo.findById(row.getId()).orElseThrow().getStatus())
-                .isEqualTo(TaskStatus.IN_PROGRESS);   // unchanged
+                .isEqualTo(TaskStatus.CANCELLED);
+        List<DispatchQueue> active = queueRepo.findByDaIdAndOperatingDateAndStatusIn(
+                da, today, List.of(TaskStatus.QUEUED, TaskStatus.IN_PROGRESS));
+        assertThat(active).isEmpty();
     }
 
     @Test

@@ -1,6 +1,6 @@
 package com.oneday.orders.events;
 
-import com.oneday.common.kafka.events.CronEvent;
+import com.oneday.common.kafka.events.cron.CronEventPayload;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -23,9 +23,11 @@ public class CronEventsConsumer {
     private static final Logger log = LoggerFactory.getLogger(CronEventsConsumer.class);
 
     @RabbitListener(queues = OrdersMessagingTopology.CRON_QUEUE)
-    public void onCronEvent(CronEvent event) {
-        // TODO(M6): map the cron events M4 acts on once the M6 producer contract is finalized.
-        log.debug("Received cron event type={} shipmentId={} — no M4 transition wired yet",
-                event.eventTypeName(), event.shipmentId());
+    public void onCronEvent(CronEventPayload event) {
+        // The queue carries every cron payload type (DaCronScheduled, VanArrived, RoutePlanPublished, …).
+        // We take the sealed supertype so every sibling deserializes; none drives an M4 transition yet,
+        // so we log and ignore (TODO(M6): wire the cron→M4 mapping once the producer contract is final).
+        log.debug("Received cron event type={} key={} — no M4 transition wired yet",
+                event.eventTypeName(), event.partitionKey());
     }
 }

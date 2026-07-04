@@ -10,7 +10,6 @@ import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.DispatchService;
-import com.oneday.dispatch.service.TaskInProgressException;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.service.GridService;
 import org.slf4j.Logger;
@@ -124,17 +123,38 @@ public class ShipmentEventsConsumer {
     }
 
     /**
-     * Last-mile delivery assignment is triggered when a shipment reaches {@code HANDED_TO_DROP_VAN}
-     * with {@code DA_DELIVERY}. <b>Blocked on the M4 contract (Q-M4-2):</b> {@code ShipmentStateChangedEvent}
-     * carries no destination coordinates / tile / dropType, so M5 cannot place the task yet. We log the
-     * gap when the trigger state arrives; wiring {@code dispatchService.assignDelivery} awaits either an
-     * enriched event or an M4 shipment-query port.
+     * Last-mile delivery assignment (Q-M4-2 resolved): {@code HANDED_TO_DROP_VAN} with
+     * {@code DA_DELIVERY} triggers {@code assignDelivery}, using the destination data M4 now enriches
+     * onto the event for this one transition. Idempotent: a shipment with an already-active DELIVERY
+     * task (e.g. the demo assigned it synchronously) is skipped on redelivery.
      */
     private void handleStateChanged(ShipmentStateChangedEvent event) {
-        if (event.getToState() == ShipmentState.HANDED_TO_DROP_VAN) {
-            log.error("Shipment {} reached HANDED_TO_DROP_VAN but delivery assignment is blocked — "
-                    + "ShipmentStateChangedEvent lacks dest coords/tile/dropType (Q-M4-2)", event.getShipmentId());
+        if (event.getToState() != ShipmentState.HANDED_TO_DROP_VAN) {
+            return;
         }
+        UUID shipmentId = event.getShipmentId();
+        if (event.getDropType() != null && event.getDropType() != com.oneday.common.domain.enums.DropType.DA_DELIVERY) {
+            return;   // SELF_COLLECT etc. — no DA leg
+        }
+        if (queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.DELIVERY).isPresent()) {
+            log.debug("Shipment {} already has an active DELIVERY task — skipping", shipmentId);
+            return;
+        }
+        Double lat = event.getDestLat();
+        Double lon = event.getDestLon();
+        if (lat == null || lon == null) {
+            log.error("Shipment {} HANDED_TO_DROP_VAN without dest coordinates — cannot assign delivery", shipmentId);
+            return;
+        }
+        ServiceableAtResponse loc = gridService.serviceableAt(lat, lon);
+        if (loc == null || loc.cityId() == null) {
+            log.error("Shipment {} drop point ({},{}) is outside every serviceable grid — cannot assign",
+                    shipmentId, lat, lon);
+            return;
+        }
+        UUID tileId = event.getDestTileId() != null ? event.getDestTileId() : loc.hexId();
+        AssignmentResult result = dispatchService.assignDelivery(shipmentId, loc.cityId(), lat, lon, tileId);
+        log.debug("Delivery assignment for shipment {}: {}", shipmentId, result.outcome());
     }
 
     /**
@@ -146,11 +166,8 @@ public class ShipmentEventsConsumer {
     private void handleCancelled(ShipmentCancelledEvent event) {
         TaskType taskType = DELIVERY_PHASE.contains(event.getCancelledAtState())
                 ? TaskType.DELIVERY : TaskType.PICKUP;
-        try {
-            dispatchService.cancelTask(event.getShipmentId(), taskType);
-        } catch (TaskInProgressException e) {
-            log.warn("Shipment {} cancelled but its {} task is IN_PROGRESS — left for ops/M11: {}",
-                    event.getShipmentId(), taskType, e.getMessage());
-        }
+        // cancelTask removes the task from the DA's active load whether it was QUEUED or IN_PROGRESS
+        // (an in-progress cancellation becomes an RTO — see DispatchServiceImpl#cancelTask).
+        dispatchService.cancelTask(event.getShipmentId(), taskType);
     }
 }

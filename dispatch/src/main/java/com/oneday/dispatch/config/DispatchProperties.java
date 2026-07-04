@@ -248,11 +248,11 @@ public class DispatchProperties {
     public static class Events {
         /**
          * When true, {@code DaEventProducer} publishes to {@code EventStreams.DA_EVENTS}. Default
-         * FALSE: until the M5→M6 contract is settled (plan addendum §7), M6's {@code DaFeedConsumer}
-         * {@code #}-binds that exchange and would mis-read every DA event as a collected parcel.
-         * Flip to true once M6 narrows its binding and the collect payload is finalised.
+         * TRUE: the M5↔M6 contract is settled — {@code DaLifecycleEvent} is the single rich type on
+         * that exchange and both consumers (M4, M6) dispatch by {@code eventType}, so the {@code #}
+         * binding is safe. Kept as a kill-switch (set false to suppress publishing; events are logged).
          */
-        private boolean publishDaEvents = false;
+        private boolean publishDaEvents = true;
 
         /**
          * When true, {@code TileQueueDepthPublisher} publishes to {@code EventStreams.TILE_QUEUE_DEPTH}.

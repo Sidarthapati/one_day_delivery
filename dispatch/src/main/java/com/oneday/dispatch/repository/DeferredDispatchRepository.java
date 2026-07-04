@@ -15,6 +15,9 @@ public interface DeferredDispatchRepository extends JpaRepository<DeferredDispat
     /** Count of deferrals in a given state for a tile on a date (station view's deferred_count). */
     int countByTileIdAndOperatingDateAndStatus(UUID tileId, LocalDate operatingDate, String status);
 
+    /** All deferrals for a city on a date (demo state + reset). */
+    List<DeferredDispatch> findByCityIdAndOperatingDate(UUID cityId, LocalDate operatingDate);
+
     /**
      * PENDING deferrals for a city that are due for retry (retry_after null or already past).
      * Hits the partial index idx_deferred_retry (WHERE status = 'PENDING').
