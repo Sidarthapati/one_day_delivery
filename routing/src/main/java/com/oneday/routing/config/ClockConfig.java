@@ -12,7 +12,9 @@ import java.time.ZoneId;
  * calling {@code Instant.now()} so the simulation harness (§21) can drive a 16h day in seconds with
  * a fixed/accelerated clock. {@code @ConditionalOnMissingBean} lets tests supply their own.
  */
-@Configuration
+// ponytail: explicit bean name — hub.config.ClockConfig also default-names "clockConfig",
+// and both modules assemble in the app → ConflictingBeanDefinitionException without this.
+@Configuration("routingClockConfig")
 public class ClockConfig {
 
     /** IST — the operating window (07:00–20:00) and all cron times are wall-clock India time. */
