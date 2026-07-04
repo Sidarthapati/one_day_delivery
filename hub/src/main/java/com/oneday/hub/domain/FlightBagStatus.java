@@ -5,5 +5,6 @@ public enum FlightBagStatus {
     OPEN,         // accumulating parcels
     SEALED,       // frozen at cutoff, manifest generated
     DISPATCHED,   // on the airport shuttle
-    HANDED_OVER   // accepted by the airline/GHA
+    HANDED_OVER,  // accepted by the airline/GHA
+    CANCELLED     // emptied by an M9 flight reassignment (§9); its stand is freed
 }

@@ -17,6 +17,9 @@ public class HubMessagingTopology {
     /** M7's queue on M4's shipment exchange — hub-arrival state changes that trigger sortation. */
     public static final String SHIPMENTS_QUEUE = "hub.shipments";
 
+    /** M7's queue on M9's flight exchange — FLIGHT_REASSIGNED (§9) + advisory FLIGHT_TIME_CHANGED (§10). */
+    public static final String FLIGHT_QUEUE = "hub.flight";
+
     @Bean
     Declarables hubEventsExchange() {
         return RabbitStreamSupport.exchange(EventStreams.HUB_EVENTS);
@@ -25,5 +28,10 @@ public class HubMessagingTopology {
     @Bean
     Declarables shipmentsBinding() {
         return RabbitStreamSupport.consumer(SHIPMENTS_QUEUE, EventStreams.SHIPMENTS_EVENTS);
+    }
+
+    @Bean
+    Declarables flightBinding() {
+        return RabbitStreamSupport.consumer(FLIGHT_QUEUE, EventStreams.FLIGHT_EVENTS);
     }
 }

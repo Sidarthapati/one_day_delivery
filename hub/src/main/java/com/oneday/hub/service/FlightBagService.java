@@ -6,6 +6,7 @@ import com.oneday.hub.domain.FlightBag;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -36,8 +37,17 @@ public interface FlightBagService {
     /** The current (latest) manifest for a bag. */
     BagManifest currentManifest(UUID bagId);
 
+    /**
+     * Advisory seal-window update for a same-flight time change (§10, FLIGHT_TIME_CHANGED). Moves the
+     * open bag's cutoff; no parcels move. Returns empty if no open bag exists for the flight.
+     */
+    Optional<FlightBag> updateBagCutoff(String flightNo, LocalDate flightDate, String destHub, Instant newCutoff);
+
     /** Read a bag by id. */
     FlightBag bag(UUID bagId);
+
+    /** Operator console: the day's flight bags at a hub (the live origin directory). */
+    java.util.List<FlightBag> bagsForDate(UUID hubId, LocalDate date);
 
     record OpenBagCommand(
             UUID cityId,

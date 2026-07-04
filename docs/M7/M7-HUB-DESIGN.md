@@ -13,7 +13,7 @@
 > **How to read this doc.** Four parts.
 > **Part 0 — Physical reality:** §0. **Read this first.** One parcel's whole physical journey — the QR sticker, the scan guns, the shelves, the bag — in plain language, so every system term in the rest of the doc has a real-world picture behind it.
 > **Part I — What & boundaries:** §1–§4. What M7 does, what it owns, and the design decisions.
-> **Part II — The sort engine:** §5–§12. The two directions, receiving, stand/bag/manifest, reschedule, flight reactions, overload, same-city shortcut.
+> **Part II — The sort engine:** §5–§12. The two directions, receiving, stand/bag/manifest, M9-driven flight reassignment, flight reactions, overload, same-city shortcut.
 > **Part III — Integration & governance:** §13–§18. Cross-module RACI (where this doc resolves two live M5↔M6↔M7 contract conflicts), contracts, constraints, open questions, phase plan, testing.
 > Design decisions are tagged `M7-D-xxx`; constraints `Cn`; open questions `Qn`.
 
@@ -35,7 +35,7 @@
 6. [Inbound Receiving — Three Arrival Modes](#6-inbound-receiving--three-arrival-modes)
 7. [Outbound Sort — Stand, Flight Bag, Manifest](#7-outbound-sort--stand-flight-bag-manifest)
 8. [Inbound Sort — Delivery Staging & Hub-Collect](#8-inbound-sort--delivery-staging--hub-collect)
-9. [Low-Weight Flight-Bag Reschedule](#9-low-weight-flight-bag-reschedule)
+9. [Flight-Bag Reassignment — M7 Executes, M9 Decides](#9-flight-bag-reassignment--m7-executes-m9-decides)
 10. [Reacting to Flight Status](#10-reacting-to-flight-status)
 11. [Hub Overload Back-Pressure](#11-hub-overload-back-pressure)
 12. [The Same-City Shortcut](#12-the-same-city-shortcut)
@@ -178,7 +178,7 @@ These are the **same engine** run with two different sort keys (`M7-D-001`). The
 
 M7 is **workflow-heavy for human operators** (the hub operator scans, places, seals) and an **event consumer + producer**: it reacts to M8 scan events (parcel arrived) and M9 flight events (cutoff shifted / flight cancelled), and it emits the hub events M6/M9/M4/M10 react to.
 
-M7 produces, per city, per hub, per day: a stand assignment for every received parcel; flight bags grouped by flight with system-generated manifests; a stream of "sorted for delivery" parcels that M6 binds to drop-van loops; bag reschedule decisions; and hub-overload back-pressure signals.
+M7 produces, per city, per hub, per day: a stand assignment for every received parcel; flight bags grouped by flight with system-generated manifests; a stream of "sorted for delivery" parcels that M6 binds to drop-van loops; execution of M9-driven bag flight-reassignments; and hub-overload back-pressure signals.
 
 ---
 
@@ -193,8 +193,8 @@ M7 produces, per city, per hub, per day: a stand assignment for every received p
 | **Stand management** | Physical stand config, occupancy, capacity, overflow → reassignment + relabel workflow. |
 | **Flight bags** | Bag creation (group by flight), bag lifecycle (OPEN→SEALED→DISPATCHED→HANDED_OVER), weight accumulation, the dual-number (flight + stand) bag QR via M8. |
 | **Manifests** | System-generated per-bag, per-flight manifest at seal time; the append-only manifest record handed to M9/airline. |
-| **Reschedule** | The low-weight bag → next-flight decision, gated on per-parcel SLA (`M7-D-006`, A4). |
-| **Flight reactions** | Reacting to M9 delay/cancellation: reopening windows, forced re-bag onto next flight. |
+| **Reschedule (execute only)** | Executing M9's `FLIGHT_REASSIGNED` — re-point the bag to the new flight, re-stand, regenerate manifest (`M7-D-006`). M7 does **not** decide the move. |
+| **Flight reactions** | Consuming `oneday.flight.events`: `FLIGHT_REASSIGNED` (the reschedule) + optional `FLIGHT_TIME_CHANGED` (seal-window update). Landing is the physical dock scan, not a flight event. |
 | **Overload** | Hub-overload detection and back-pressure signalling — never silently drop SLA (`M7-D-007`, H3). |
 | **Delivery hand-off prep** | Producing the "sorted for delivery" feed M6 consumes; the hub-collect shelf for HUB_COLLECT shipments. |
 | **Operator UI contract** | The hub-operator scan-gun/console workflow (parallel to M5 owning the DA app, M6 the driver app). |
@@ -228,9 +228,9 @@ A hub is a **cross-dock**: goods arrive, are re-sorted by outbound destination, 
 | Manifest | **Container manifest / BOL** | The system record of contents handed to the carrier. |
 | Wave | **Sort wave / cut** | A timed batch of sorting aligned to outbound departures (flight cutoffs). |
 
-**How the industry does it:** FedEx/UPS hubs run a fixed **directory sort** (barcode → chute) on high-speed sorters; the intelligence is in the *directory* (kept current with the flight/linehaul plan) and in **wave planning** (which parcels must clear the sort by which cutoff). Amazon sort centers run the same directory pattern with `sort_key → stack` and **rate/health monitoring** for overload. Our hub is the **manual, low-volume version**: a human scan gun resolves the stand from the barcode, and the "sorter" is the operator. That makes M7 a **CRUD-plus-workflow** service, not a solver — its hard parts are (a) resolving the right open bag as flights and routes change, (b) the bag-seal/manifest discipline, (c) the SLA-gated reschedule, and (d) graceful overload back-pressure.
+**How the industry does it:** FedEx/UPS hubs run a fixed **directory sort** (barcode → chute) on high-speed sorters; the intelligence is in the *directory* (kept current with the flight/linehaul plan) and in **wave planning** (which parcels must clear the sort by which cutoff). Amazon sort centers run the same directory pattern with `sort_key → stack` and **rate/health monitoring** for overload. Our hub is the **manual, low-volume version**: a human scan gun resolves the stand from the barcode, and the "sorter" is the operator. That makes M7 a **CRUD-plus-workflow** service, not a solver — its hard parts are (a) resolving the right open bag as flights and routes change, (b) the bag-seal/manifest discipline, (c) executing M9's flight reassignments cleanly (re-point + manifest supersede), and (d) graceful overload back-pressure.
 
-**Our choice (`M7-D-001`):** a single direction-parametrised engine with **dynamic stand assignment** — the consolidation unit (flight bag / delivery bag) is allocated a free stand from the hub's physical pool when first opened, and the open unit is the live directory. No pre-seeded `destination → stand` mapping, no solver. (The classic automated-hub "directory sort" — a static `sort_key → chute` directory — is the high-volume pattern; for our manual low-volume hub dynamic allocation is simpler and never goes stale.) On the **destination** side the consolidation unit is a **route bag**: the parcel's `dest_hex → DA territory → delivery route (loop)` ladder (`M7-D-012`) picks the loop, the open route bag for that loop gets a free delivery stand, and a van loads the whole bag in one move. With no van service the hub falls back to a **DA-territory bag** the DA hub-collects — still dynamic, just keyed differently. Nothing on either side is pre-mapped. The reschedule check (§9) and overload back-pressure (§11) are the only non-trivial logic.
+**Our choice (`M7-D-001`):** a single direction-parametrised engine with **dynamic stand assignment** — the consolidation unit (flight bag / delivery bag) is allocated a free stand from the hub's physical pool when first opened, and the open unit is the live directory. No pre-seeded `destination → stand` mapping, no solver. (The classic automated-hub "directory sort" — a static `sort_key → chute` directory — is the high-volume pattern; for our manual low-volume hub dynamic allocation is simpler and never goes stale.) On the **destination** side the consolidation unit is a **route bag**: the parcel's `dest_hex → DA territory → delivery route (loop)` ladder (`M7-D-012`) picks the loop, the open route bag for that loop gets a free delivery stand, and a van loads the whole bag in one move. With no van service the hub falls back to a **DA-territory bag** the DA hub-collects — still dynamic, just keyed differently. Nothing on either side is pre-mapped. The M9-driven flight-reassignment executor (§9) and overload back-pressure (§11) are the only non-trivial logic.
 
 ---
 
@@ -242,7 +242,7 @@ A hub is a **cross-dock**: goods arrive, are re-sorted by outbound destination, 
 
 **M7-D-002 — M7 is the real backing for M6's `HubSortPort`.** The deliver-side feed M6 currently reads from its buffer stub is produced by M7: on destination-sort completion per parcel, M7 emits a per-parcel `PARCEL_SORTED_FOR_DELIVERY` hub event carrying `(parcelId, cityId, destinationHexId, validDate, sortedAt, slaDeadline)` — the exact shape of the provisional `ParcelSortedForDeliveryEvent` M6 already consumes. Building M7 swaps the stub for the real feed with **no change to M6's binder**.
 
-**M7-D-003 — The destination is read from the barcode; the stand is assigned dynamically.** Per PRD §10, the parcel's barcode payload carries `dest_hub` / `sort_key`; the hub scan reads the **destination** off the self-describing label — no M4 round-trip for routing data on the hot scan path (the M8 contract guarantees it). The **stand** is then the open flight bag's stand for that `(flight, dest_hub)` — allocated dynamically from the hub's pool on first open (`M7-D-001`), not looked up in a pre-seeded directory. M7 *does* read M4 for confirmed weight (bag weight, §7.2/§9) and SLA (reschedule gate), off the hot path.
+**M7-D-003 — The destination is read from the barcode; the stand is assigned dynamically.** Per PRD §10, the parcel's barcode payload carries `dest_hub` / `sort_key`; the hub scan reads the **destination** off the self-describing label — no M4 round-trip for routing data on the hot scan path (the M8 contract guarantees it). The **stand** is then the open flight bag's stand for that `(flight, dest_hub)` — allocated dynamically from the hub's pool on first open (`M7-D-001`), not looked up in a pre-seeded directory. M7 *does* read M4 for confirmed weight (bag weight, §7.2), off the hot path. (M7 no longer reads SLA to gate a reschedule — reschedules are M9-decided, `M7-D-006`.)
 
 **M7-D-012 — Destination sort resolves by a `hex → territory → route` ladder; the delivery bag is a route bag (van) with a DA-territory bag fallback (no van).** At the destination hub a parcel's last-mile grouping is decided **dynamically**, never from a directory and never per-hex (a city has ~thousands of delivery hexes — far too many to stand). The ladder:
 > 1. **`dest_hex`** — from the label `sort_key` (M3 serviceability fallback, off the hot path / cached).
@@ -263,7 +263,7 @@ A hub is a **cross-dock**: goods arrive, are re-sorted by outbound destination, 
 
 ### Bags, manifests, reschedule
 
-**M7-D-006 — Reschedule is SLA-gated on the *binding* parcel, computed at decision time.** A low-weight bag may move to a later flight only if **every parcel currently in the bag** still meets its SLA under the later departure (PRD §9.3, A4). M7 evaluates `max over parcels(needed_arrival) vs later_flight.arrival + dest_tail` at the moment of decision against the live bag contents — not a frozen snapshot — because bag contents change until seal. If even one parcel breaches → keep on original flight. The underweight *threshold* is config per (origin, dest, airline) — `Q1`.
+**M7-D-006 — Reschedule is M9's decision; M7 only executes it, keyed on flight number.** *(Revised v0.3 — supersedes the earlier "SLA-gated low-weight defer at M7".)* Which flight a parcel flies on, and whether to move it, is an **economic** choice needing per-flight fare, booked volume, remaining belly space and cost-per-kg — data M9 has and M7 does not (M7 sees only weight). So M7 does **no** low-weight defer, no next-flight search, no SLA gate. It reacts to a single M9 event — `FLIGHT_REASSIGNED { toFlightNo, toFlightDate, destHub, newCutoff, fromFlightNo?, parcelIds?, reason }` — and mechanically re-points the bag: pull items → target flight's bag → re-resolve stand → regenerate manifest (append-only supersede) → `BAG_RESCHEDULED` → M10. **Keyed on flight number, not `bagId`:** a flight bag is 1:1 with `(flightNo, flightDate, destHub)`, so the flight is the bag's external identity; a `bagId` would leak M7 internals into M9's contract and can go stale, whereas a flight number is stable and M7 resolves flight→bag(s) itself (owning any 1-flight→N-bags fan-out). **No `FLIGHT_CANCELLED`:** cancellation, capacity bumps and prepone-overflow all surface as `FLIGHT_REASSIGNED` with a `reason` (`OPTIMISATION|CANCELLATION|CAPACITY|PREPONE_OVERFLOW`) carrying the replacement flight, so M7 never parks parcels choosing a flight itself. SLA breach on a move is M10's detection / M11's recovery, never an M7 veto.
 
 **M7-D-007 — Overload never drops SLA; it back-pressures upstream and escalates.** When inbound rate or stand occupancy exceeds capacity, M7 (a) emits a `HUB_OVERLOAD_ALERT` to M10 + station manager, and (b) raises a **booking-throttle signal** consumable by M4 (advisory in v1). It never silently fails to sort a parcel (PRD §9.5, H3). The throttle *policy* (how hard M4 throttles, add-a-wave vs add-a-shift) is ops-owned and deferred — M7 provides the signal and the flag.
 
@@ -271,7 +271,7 @@ A hub is a **cross-dock**: goods arrive, are re-sorted by outbound destination, 
 
 ### Unbuilt-dependency seams
 
-**M7-D-009 — M9 stubbed behind `FlightAssignmentPort`.** M9 is unbuilt; until it lands, a stub returns a deterministic flight + cutoff per (dest city, ready time) so M7 builds and tests bagging end-to-end now (mirrors M6's `FlightCutoffPort`). M7 also *consumes* `oneday.flight.events` (delay/cancel) — dormant until M9 produces.
+**M7-D-009 — M9 stubbed behind `FlightAssignmentPort` (read-only).** M9 is unbuilt; until it lands, a stub returns a deterministic **assigned** flight + cutoff per (dest city, ready time) so M7 builds and tests bagging end-to-end now (mirrors M6's `FlightCutoffPort`). The port is **read-only — "what flight is this parcel on?"**; it has **no `nextFlightAfter`**, because M7 never picks a replacement flight (`M7-D-006`). M7 also *consumes* `oneday.flight.events` — a single decision event `FLIGHT_REASSIGNED` (+ optional advisory `FLIGHT_TIME_CHANGED`) — dormant until M9 produces.
 
 **M7-D-010 — M8 stubbed behind a barcode port.** M8's label/QR build and `getLatestScanAtPoint` are called through a port; a No-op/local impl until M8 ships. M7 consumes `oneday.scan.events` (arrival) — dormant until M8 produces; for now the M6 custody scans + M4 states drive M7 in the integrated demo.
 
@@ -376,39 +376,40 @@ The destination-hub path: break a landed parcel down toward last-mile (mirror of
 
 ---
 
-## 9. Low-Weight Flight-Bag Reschedule
+## 9. Flight-Bag Reassignment — M7 Executes, M9 Decides
 
-PRD §9.3 / A4. A flight bag that is **underweight** near cutoff is a cost inefficiency (a half-empty bag flies). M7 *may* defer it to a later flight — but only when SLA-safe.
+**M7 does not decide reschedules. M9 does.** (`M7-D-006`, revised v0.3.) A flight decision — which flight a parcel flies on, and whether to move it — is an *economic* choice: it depends on per-flight fare, booked volume, remaining belly space, cost-per-kg, and cutoff slack. M7 sees **only weight**; it cannot make that call without fighting M9's optimisation. So the reschedule *decision* lives entirely in M9. When M9 assigns a parcel to a flight, M7 treats it as **the best flight, full stop** — no low-weight defer, no next-flight-after search, no SLA gate on M7's side.
+
+M7's job shrinks to **mechanics**: when M9 tells it a parcel/flight has moved, M7 re-points the bag and re-issues the paperwork.
 
 ```
-At bag cutoff approach, if bag.weight < underweight_threshold(origin, dest, airline):    // Q1
-    later = FlightAssignmentPort.nextFlightAfter(this_flight, dest_hub)
-    safe = ∀ parcel ∈ bag.items:
-              needed_arrival(parcel)  ≥  later.arrival + dest_hub_tail            // M7-D-006
-              // needed_arrival from M4 SLA / M10 commitment; dest_hub_tail = sort+stage+drop budget (Q2)
-    if safe:  move bag → later flight  → re-resolve stand → regenerate manifest → BAG_RESCHEDULED
-    else:     keep on original flight (one tight parcel pins the whole bag)
+On FLIGHT_REASSIGNED { toFlightNo, toFlightDate, destHub, newCutoff, fromFlightNo?, parcelIds?, reason }:
+    items = parcelIds ? resolveItems(parcelIds)             // a subset moves
+                      : itemsOfBag(fromFlightNo, ...)        // whole from-flight bag moves
+    targetBag = openOrFind(toFlightNo, toFlightDate, destHub)   // lazy-create, allocates a stand
+    move items → targetBag  → re-resolve stand → regenerate manifest (append-only supersede)
+    emit BAG_RESCHEDULED  → M10 re-baselines the leg
 ```
 
-- **Evaluated against live contents at decision time** (`M7-D-006`) — bag contents change until seal.
-- The **earliest-deadline parcel pins the bag** (PRD: "earliest-received parcel must still be on time"; we generalise to the *tightest-SLA* parcel, which is the correct constraint).
-- `BAG_RESCHEDULED` → M9 (re-handover plan), M10 (leg re-baseline). Append-only: new manifest supersedes.
-- The `dest_hub_tail` budget is the same end-to-end timing budget M6 flagged as Q2 — **M7, M9, M10 must agree the split** (§16 Q2).
+- **Keyed on flight number, not bag id** (`M7-D-006`). A flight bag is 1:1 with `(flightNo, flightDate, destHub)`, so the flight *is* the bag's external identity; M9 speaks flights (which it owns), M7 resolves flight→bag(s) internally. A `bagId` would leak M7's internal construct into M9's contract and can go stale (sealed/relabelled/reopened); a flight number is stable. If overflow ever splits one flight into several bags, M7 owns that 1-flight→N-bags fan-out internally.
+- **One event, all causes.** Optimisation moves, cancellations, capacity bumps, and "a preponement stranded these parcels" **all** arrive as `FLIGHT_REASSIGNED` with a different `reason` (`OPTIMISATION | CANCELLATION | CAPACITY | PREPONE_OVERFLOW`). **There is no separate `FLIGHT_CANCELLED`** — M9 absorbs the cancellation and emits the replacement flight in one hop, so M7 never holds parcels in limbo picking a next flight itself.
+- **M7 never SLA-gates.** The old "one tight parcel pins the bag" rule is gone from M7 — M9 already accounted for SLA when it chose the flight. If a reassignment does breach, that's M10's detection (leg re-baseline off `BAG_RESCHEDULED`) and M11's recovery, not an M7 veto.
+- Append-only: the new manifest supersedes; `stand_reassignment_audit` records any stand move (`M7-D-008`).
 
 ---
 
 ## 10. Reacting to Flight Status
 
-M7 consumes `oneday.flight.events` (M9). A flight is not static; its status reshapes M7's windows:
+The **inbound trigger stays physical.** A landed bag starts inbound sort (§8) when it *physically arrives on the dock* (`HUB_DEST_IN` scan), reconciled against M9's manifest — M7 needs no `FLIGHT_LANDED` event to begin. Likewise dispatch/seal are driven by M7's own cutoff clock and the physical scans, not by M9 telling M7 "the flight left."
 
-| M9 event | Effect on M7 |
-|----------|--------------|
-| **`DELAYED`** | Bag cutoff shifts later → the window for adding parcels / rescheduling *reopens*. Re-evaluate open bags for this flight; pull in parcels that now fit; re-baseline manifest if not yet sealed. |
-| **`DEPARTED`** | Bag for this flight is gone; any not-yet-bagged parcel for it must re-bag onto the next flight (forced reschedule, SLA re-checked, §9). |
-| **`LANDED`** | Destination side: shuttle pulls the bag back; inbound sort (§8) begins on `HUB_DEST_IN`. |
-| **`CANCELLED`** (via `RTO_IN_TRANSIT`/status) | **Forced re-bag** of every parcel onto the next available flight; each re-checked for SLA; breaches → M10 + M11 (rebooking flow). Never auto-drop. |
+So M7 consumes **exactly one** decision event from `oneday.flight.events` (M9) — `FLIGHT_REASSIGNED` (§9) — plus one **optional, advisory** timing event:
 
-A delay that moves the cutoff is the *good* case (more slack); a cancellation is the back-pressure case. Both flow through the same re-bag + SLA-recheck path as §9, just triggered involuntarily.
+| M9 event | M7 reaction | Moves parcels? |
+|----------|-------------|----------------|
+| **`FLIGHT_REASSIGNED`** | Re-point bag(s) per §9 → `BAG_RESCHEDULED`. Covers optimisation, cancellation, capacity, prepone-overflow (via `reason`). | **Yes — the only reschedule** |
+| **`FLIGHT_TIME_CHANGED`** *(optional)* | Same flight, new departure/cutoff (delay or prepone). M7 adjusts the bag's **seal window** only so it doesn't seal early/late; no parcel movement. If a prepone strands parcels, M9 separately emits `FLIGHT_REASSIGNED` for them. Deferrable if M9 always folds accurate cutoffs into the assignment. | No (window only) |
+
+Everything that used to be a `DELAYED`/`DEPARTED`/`LANDED`/`CANCELLED` reaction is now either (a) a physical scan M7 already handles, or (b) collapsed into `FLIGHT_REASSIGNED`. M7 is purely reactive on flight economics.
 
 ---
 
@@ -460,7 +461,8 @@ The hub sits at the centre of the custody chain; getting its boundaries right is
 | Van load (stand→van) | stage only | **Own** (`VAN_LOAD`) | record scan | — | transition | — |
 | `HANDED_TO_DROP_VAN` trigger | ~~emit~~ → **M6's scan** | **Own** | record | — | transition | consume |
 | Hub-collect shelf | **Own** | — | `HUB_COLLECT_COMPLETED` | — | transition | — |
-| Reschedule decision | **Own** | — | — | re-handover | — | — |
+| Reschedule **decision** (which flight) | execute | — | — | **Own** (`FLIGHT_REASSIGNED`) | — | — |
+| Reschedule **execution** (re-point bag) | **Own** | — | bag QR relabel | consume | — | — |
 | Overload back-pressure | **Own** | — | — | — | throttle target | — |
 | SLA judgement | feed | feed | feed | feed | feed → **M10** | feed |
 
@@ -486,14 +488,14 @@ HubEventType (additions):
   BAG_CREATED                  bag opened on a stand → operator/ops          { bagId, cityId, hubId, direction, ...flight or route/territory key..., standNo }
   BAG_SEALED                   bag frozen + manifest generated → M9, M10    { bagId, direction, ...key..., standNo, parcelCount, weight }
   MANIFEST_GENERATED           system manifest / load list ready            { bagId, manifestId, direction, ...key... }
-  BAG_RESCHEDULED              low-weight/forced move to later flight (§9,§10) → M9, M10
+  BAG_RESCHEDULED              M9-driven flight move executed by M7 (§9,§10) → M10   { bagId, fromFlightNo, toFlightNo, toFlightDate, destHub, reason, parcelCount, standNo }
   HUB_OVERLOAD_ALERT           wave/stand overload → M10, station mgr (M7-D-007)
   HUB_DISCREPANCY              dock reconciliation mismatch → M11, M10
 ```
 
 > **Delivery (route/territory) bags reuse `BAG_CREATED` / `BAG_SEALED` / `MANIFEST_GENERATED` with `direction=INBOUND`** and the route/territory key in place of the flight fields (additive; tolerant readers ignore the unused side). No new enum values are needed for the dest bag lifecycle.
 
-**Consumed by M7:** `oneday.scan.events` (M8: `SELF_DROP_ACCEPTED`, `HUB_DEST_IN`, `GHA_ACCEPTANCE`, `HUB_COLLECT_COMPLETED`); `oneday.flight.events` (M9: `DELAYED`, `DEPARTED`, `LANDED`, `CANCELLED`); `oneday.shipments.events` (M4: `AT_ORIGIN_HUB` / `AT_DEST_HUB` state-changes as the sort trigger, and `CANCELLED` to pull a parcel from an open bag). Consumers dormant (`autoStartup=false`) until producers live, per the event-bus convention.
+**Consumed by M7:** `oneday.scan.events` (M8: `SELF_DROP_ACCEPTED`, `HUB_DEST_IN`, `GHA_ACCEPTANCE`, `HUB_COLLECT_COMPLETED`); `oneday.flight.events` (M9: **`FLIGHT_REASSIGNED`** — the sole reschedule trigger, `M7-D-006` — plus optional advisory `FLIGHT_TIME_CHANGED`; **no `FLIGHT_CANCELLED`/`LANDED` reactions** — cancellation folds into `FLIGHT_REASSIGNED`, landing is the physical `HUB_DEST_IN` scan); `oneday.shipments.events` (M4: `AT_ORIGIN_HUB` / `AT_DEST_HUB` state-changes as the sort trigger, and `CANCELLED` to pull a parcel from an open bag). Consumers dormant (`autoStartup=false`) until producers live, per the event-bus convention.
 
 > `PARCEL_SORTED_FOR_DELIVERY` deliberately matches the field shape of M6's provisional `routing.events.payload.ParcelSortedForDeliveryEvent` so the stub→real swap is a no-op for M6 (`M7-D-002`).
 
@@ -511,7 +513,7 @@ POST /hub/{hubId}/bags                            open/get bag for a flight
 POST /hub/{hubId}/bags/{bagId}/add                add parcel
 POST /hub/{hubId}/bags/{bagId}/reassign-stand     stand-full move (relabel) (M7-D-008)
 POST /hub/{hubId}/bags/{bagId}/seal               seal → manifest → BAG_SEALED
-POST /hub/{hubId}/bags/{bagId}/reschedule         SLA-gated next-flight move (§9)
+POST /hub/{hubId}/bags/reassign-flight            execute an M9 FLIGHT_REASSIGNED (imperative form of the consumer; ops/test) (§9)
 GET  /hub/{hubId}/bags/{bagId}/manifest           system manifest (M9 handover)
 # inbound / delivery staging
 POST /hub/{hubId}/inbound/break-bag               break landed bag, sort each parcel to its route/territory bag
@@ -559,7 +561,7 @@ Scans live in **M8's ledger** (referenced by `parcel_id` + scan point), not dupl
 
 | Port | Backs | Stub until |
 |------|-------|-----------|
-| `FlightAssignmentPort` | M9 — assigned flight + cutoff for (dest, ready-time); next-flight-after | M9 (`M7-D-009`) |
+| `FlightAssignmentPort` | M9 — **read-only** assigned flight + cutoff for (dest, ready-time). **No `nextFlightAfter`** — M7 never picks a replacement (`M7-D-006`); reschedules arrive as `FLIGHT_REASSIGNED` events | M9 (`M7-D-009`) |
 | `BarcodePort` | M8 — build bag QR label, latest-scan lookup | M8 (`M7-D-010`) |
 | `ShipmentInfoPort` (or reuse M4 service iface) | M4 — confirmed weight, SLA/commitment, drop type | M4 is built — wire real |
 | `TerritoryPort` | M3 — `dest_hex → DA territory (+zone)` for inbound sort (`M7-D-012`) | M3 is built — wire real |
@@ -582,7 +584,7 @@ And the **inverse**: M7 *implements* M6's expectation by producing `PARCEL_SORTE
 | C7 | Bag QR carries dual number — flight + physical stand | Hard | PRD §10.2, M8 |
 | C8 | Manifest is system-generated at seal, append-only | Hard | NFR-1, M7-D-008 |
 | C9 | Stand overflow → reassign + relabel, never lose the bag | Hard | M7-D-008, H2 |
-| C10 | Reschedule only if **every** bag parcel still meets SLA | Hard | M7-D-006, A4 |
+| C10 | Reschedule is M9-decided; M7 executes `FLIGHT_REASSIGNED` faithfully (re-point + manifest supersede), never invents or vetoes a move | Hard | M7-D-006 |
 | C11 | Overload never drops SLA — flag + back-pressure + escalate | Hard | M7-D-007, H3 |
 | C12 | Custody continuity — parcel never "nowhere" in the hub | Hard | §6 |
 | C13 | Dock reconciliation — expected = actual or discrepancy | Hard | §6, mirrors M6-D-018 |
@@ -597,7 +599,7 @@ And the **inverse**: M7 *implements* M6's expectation by producing `PARCEL_SORTE
 
 | # | Question | Why it matters | Leaning |
 |---|----------|----------------|---------|
-| Q1 | Underweight threshold for bag reschedule — per airline? per route? who sets it? | gates §9 (A4) | config per (origin,dest,airline); ops-set; default flag-only |
+| Q1 | ~~Underweight threshold for bag reschedule~~ | ~~gates §9~~ | **Resolved (v0.3): moved to M9.** M7 no longer decides low-weight reschedules — the economics (fare, booked volume, belly space, cost/kg) live in M9, which emits `FLIGHT_REASSIGNED`. M7 has no threshold config (`M7-D-006`). Remaining M9-side question: does M9 emit the advisory `FLIGHT_TIME_CHANGED` on delay/prepone, or always fold cutoffs into an assignment? |
 | Q2 | End-to-end timing budget split: `cutoff − (sort + bag + shuttle)` (origin) and `landed → delivered` tail (dest) — who owns each slice? | sets first-mile cutoff-derived deadlines (M6 C10) and the §9 reschedule maths | **define jointly with M6, M9, M10** — same Q2 M6 flagged |
 | Q3 | Label/QR standard — Code-128 vs PDF417 vs QR; do airline scanners need DataMatrix/IATA? | bag label print + airport scan (H1, M8 OD-M8-4) | QR for ours; validate IATA with M9/GHA before scale |
 | Q4 | Stand-full reassign — reprint vs electronic-only update? (H2) | dual-number sync (M7-D-008) | reprint new label; electronic pointer + append-only audit |
@@ -626,9 +628,9 @@ And the **inverse**: M7 *implements* M6's expectation by producing `PARCEL_SORTE
 | **P5** | Manifest generation (§7.3): `bag_manifest` + `MANIFEST_GENERATED`; M9 handover artefact. |
 | **P6** | **Inbound delivery sort (§8, `M7-D-012`)** — the hex→territory→route ladder (`TerritoryPort`/`DeliveryRoutePort`); `delivery_bag` (route bag + DA-territory fallback); the M6 seam: `PARCEL_SORTED_FOR_DELIVERY` (`M7-D-002`) + `DEST_SORT_COMPLETE`; hub-collect shelf + `AWAITING_HUB_COLLECT`. Swap M6's `BufferedHubSortPort` for the real feed. |
 | **P7** | Same-city shortcut (§12); `SAMECITY_OUTBOUND`. |
-| **P8** | Reschedule (§9) + flight-status reactions (§10): SLA-gated next-flight move; consume `oneday.flight.events` (against M9 stub). |
+| **P8** | Flight-reassignment executor (§9,§10): consume `FLIGHT_REASSIGNED` (against M9 stub) → re-point bag → `BAG_RESCHEDULED`; optional `FLIGHT_TIME_CHANGED` seal-window update. **No M7-side SLA gate / next-flight search** (`M7-D-006`). |
 | **P9** | Overload back-pressure (§11): `hub_load_snapshot`, `HUB_OVERLOAD_ALERT`, throttle signal. |
-| **P10** | Operator console API (§14.2) end-to-end; integration test with mock M6/M8/M9 consumers; virtual-hub simulation (§18). |
+| **P10** | Operator console API (§14.2) end-to-end; integration test with mock M6/M8/M9 consumers. **Virtual-hub simulation (§18) is deferred to a separate demo branch.** |
 
 ---
 
@@ -638,12 +640,12 @@ Same philosophy as M6 (§21): a **synthetic world** of fake producers talking to
 
 **Virtual hub (test-only).** Seeds the stand pool; consumes synthetic `VAN_UNLOAD` / `SELF_DROP_ACCEPTED` / `HUB_DEST_IN` arrivals; drives receive → resolve (open bags dynamically) → bag → seal via the real API; asserts the outputs. It pairs with M6's **virtual van** — M6's virtual van unloads collections that M7's virtual hub sorts; M7's `PARCEL_SORTED_FOR_DELIVERY` feeds M6's binder. The two simulators together exercise the full custody loop with no real hardware.
 
-**Test pyramid.** Unit (directory resolution, peak stand occupancy, reschedule SLA maths, weight accumulation) → Contract (event schemas — especially `PARCEL_SORTED_FOR_DELIVERY` against M6's consumer; Testcontainers Kafka+Postgres) → Integration (boot monolith, synthetic arrivals, assert bag/manifest rows + M4 state) → **Simulation ("virtual hub day")** (seed plan+stands; N synthetic arrivals across waves; accelerated clock; assert invariants: every parcel stands-or-escalates C1, custody continuity C12, no SLA silently dropped C11, reschedule never breaches C10, same-city skips flight C14).
+**Test pyramid.** Unit (directory resolution, peak stand occupancy, flight-reassignment re-point + manifest supersede, weight accumulation) → Contract (event schemas — especially `PARCEL_SORTED_FOR_DELIVERY` against M6's consumer, and `FLIGHT_REASSIGNED` against M9's stub; Testcontainers Kafka+Postgres) → Integration (boot monolith, synthetic arrivals, assert bag/manifest rows + M4 state) → **Simulation ("virtual hub day")** — **deferred to a separate demo branch** (seed stands; N synthetic arrivals across waves; accelerated clock; assert invariants: every parcel stands-or-escalates C1, custody continuity C12, no SLA silently dropped C11, same-city skips flight C14).
 
-**Fault library.** Stand full → reassign + relabel · mis-sort (extra at dock) → `HUB_DISCREPANCY` → M11 · underweight bag → reschedule if SLA-safe else hold · flight cancelled → forced re-bag + SLA recheck · arrival spike → `HUB_OVERLOAD_ALERT` + throttle · landed bag mismatch → reconciliation discrepancy.
+**Fault library.** Stand full → reassign + relabel · mis-sort (extra at dock) → `HUB_DISCREPANCY` → M11 · `FLIGHT_REASSIGNED` (optimisation) → re-point bag → `BAG_RESCHEDULED` · `FLIGHT_REASSIGNED` (`reason=CANCELLATION`) → whole from-flight bag re-points to the replacement · arrival spike → `HUB_OVERLOAD_ALERT` + throttle · landed bag mismatch → reconciliation discrepancy.
 
 **Rollout ladder.** Simulation → shadow (real dynamic sort on live arrivals, output logged not acted on) → canary (one city/hub — design is city-scoped) → full. Kafka replay enables deterministic before/after on a recorded hub day.
 
 ---
 
-*Draft v0.2. M7 owns the fixed cross-dock: inbound receive + sort (both directions, **fully dynamic** — origin flight bags, destination route bags with a DA-territory fallback, `M7-D-001`/`M7-D-012`), stand/bag/manifest, SLA-gated reschedule, flight-status reactions, overload back-pressure, and the hub↔van staging seam. Decisions M7-D-001…012, constraints C1…C17, open questions Q1…Q13. Sharpest items for next review: the end-to-end timing budget (Q2 — shared with M6/M9/M10), the route-bag ↔ M6-trip-binding reconciliation (Q12), the two custody-boundary conflict resolutions (§13, Q5/Q6), and the overload/throttle policy (Q7, H3).*
+*Draft v0.3. M7 owns the fixed cross-dock: inbound receive + sort (both directions, **fully dynamic** — origin flight bags, destination route bags with a DA-territory fallback, `M7-D-001`/`M7-D-012`), stand/bag/manifest, **M9-driven flight-bag reassignment** (M7 executes, M9 decides — `M7-D-006`), overload back-pressure, and the hub↔van staging seam. Decisions M7-D-001…012, constraints C1…C17, open questions Q1…Q13. Sharpest items for next review: the end-to-end timing budget (Q2 — shared with M6/M9/M10), the route-bag ↔ M6-trip-binding reconciliation (Q12), the two custody-boundary conflict resolutions (§13, Q5/Q6), and the overload/throttle policy (Q7, H3).*
