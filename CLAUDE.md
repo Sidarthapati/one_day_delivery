@@ -92,6 +92,37 @@ There are two Postgres databases. **Unless told otherwise, connect to the develo
 - Migrations run automatically via Flyway on app startup; to run manually against local: `psql -U oneday -d oneday -f <migration.sql>`.
 - **Run the M1+M4 demo:** build/run **must** use JDK 21 (`export JAVA_HOME=/opt/homebrew/opt/openjdk@21`; system default JDK 25 is rejected by the enforcer), then `mvn spring-boot:run -pl app` → `http://localhost:8080/`. The 5 city H3 grids seed on startup so serviceability is live. Demo UI is `app/src/main/resources/static/index.html`; `spring-boot:run` serves static files from `app/target/classes/static/`, so hot-update via `cp app/src/main/resources/static/index.html app/target/classes/static/index.html` + hard-refresh (backend changes still need `mvn clean install -pl orders,app -am -DskipTests` + restart). PREPAID uses the mock gateway by default; real Razorpay with `RAZORPAY_LIVE=true RAZORPAY_KEY_ID=… RAZORPAY_KEY_SECRET=…`.
 
+### Testing RabbitMQ events from the terminal (`rabbitmqadmin`)
+
+RabbitMQ is **CloudAMQP** (managed). Use the HTTP management API via `rabbitmqadmin` to inspect the M4→M5→M6 event flow on `oneday.*.events` exchanges — **never** commit the broker URL/credentials (source from `.env` `CLOUDAMQP_URL` only; the leaked secret should be rotated in the CloudAMQP console).
+
+**One-time setup** — derive a `~/.rabbitmqadmin.conf` `[oneday]` profile from `CLOUDAMQP_URL` (`amqps://USER:PASS@HOST/VHOST`; on CloudAMQP the username **is** the vhost):
+```ini
+[oneday]
+hostname = <host, e.g. armadillo.rmq.cloudamqp.com>
+port     = 443
+ssl      = True
+username = <user == vhost>
+password = <secret>
+vhost    = <user>
+```
+Then invoke as `rabbitmqadmin -N oneday …`.
+
+**Health check** — every live consumer queue should show `consumers = 1`; all `*.dlq` should be empty:
+```bash
+rabbitmqadmin -N oneday list queues name consumers messages
+```
+
+**Read message bodies without stealing them from real consumers** — the "peek queue" technique: declare a throwaway queue, bind it to the exchange you want to watch (catch-all `#`), then `get` non-destructively, then delete:
+```bash
+rabbitmqadmin -N oneday declare queue name=demo.peek durable=false auto_delete=true
+rabbitmqadmin -N oneday declare binding source=oneday.shipments.events destination=demo.peek routing_key='#'
+# ... trigger the action in the UI (book / assign / verify) ...
+rabbitmqadmin -N oneday get queue=demo.peek count=20 ackmode=reject_requeue_true   # leaves msgs in place
+rabbitmqadmin -N oneday delete queue name=demo.peek
+```
+Use `ackmode=reject_requeue_true` to peek without consuming; `ackmode=ack_requeue_false` to drain. The exchanges to watch: `oneday.shipments.events` (M4 — `ShipmentCreatedEvent`/`ShipmentStateChangedEvent`/`ShipmentCancelledEvent`), `oneday.da.events` (M5↔M4↔M6 — the unified `DaLifecycleEvent`, routing key = `eventType`; M6 acts only on `PICKUP_COMPLETED`), `oneday.cron.events` (M6). The target type is resolved from the producer's `__TypeId__` header (Jackson `DefaultClassMapper`), so a wrong-type/mismatched event lands in the DLQ rather than deserializing — a non-empty `*.dlq` is the first signal of a contract break.
+
 ## Open Questions (block implementation of specific modules)
 
 See `docs/PRD-ONE-DAY-DELIVERY.md §20` for full list. Key blockers:

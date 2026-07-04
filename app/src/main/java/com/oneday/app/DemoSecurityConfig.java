@@ -12,8 +12,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 /**
  * Local-dev / demo security override.
- * Opens /api/** and /internal/** (permitAll, no CSRF) so the demo website can call the backend
- * directly. Never active in prod (guarded by @Profile("!prod")).
+ * Opens /api/**, /internal/** and /routing/** (permitAll, no CSRF) so the demo website can call the
+ * backend directly. /routing/** carries the M6 plan-time + run-time endpoints the demo drives. Never
+ * active in prod (guarded by @Profile("!prod")).
  *
  * <p>The chain still runs {@link JwtAuthenticationFilter}, so a request that carries a real
  * {@code Authorization: Bearer <jwt>} is authenticated as its actual user/role (a customer can
@@ -30,16 +31,32 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Profile("!prod")
 class DemoSecurityConfig {
 
+    /**
+     * Lets the unified demo dashboard (the React app on :5173) embed the M1/M2/M4 static console
+     * (served here at {@code /}) in an iframe. Spring Security's default {@code X-Frame-Options: DENY}
+     * blocks all framing; for the static demo paths we drop it. Demo-only ({@code @Profile("!prod")}).
+     */
+    @Bean
+    @Order(0)
+    SecurityFilterChain demoStaticChain(HttpSecurity http) throws Exception {
+        return http
+                .securityMatcher("/", "/index.html", "/js/**", "/css/**", "/favicon.ico")
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+                .csrf(csrf -> csrf.disable())
+                .build();
+    }
+
     @Bean
     @Order(1)
     SecurityFilterChain demoApiChain(HttpSecurity http,
                                      JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         return http
-                .securityMatcher("/api/**", "/internal/**")
+                .securityMatcher("/api/**", "/internal/**", "/routing/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies. Keep CSRF
                 // enabled but ignore the stateless API paths (equivalent here, no blanket disable).
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"))
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**", "/routing/**"))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
