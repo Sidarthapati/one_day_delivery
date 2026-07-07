@@ -7,7 +7,7 @@ import {
   m6Replan, m6Approve, getAllStops, getLive, getFleet, putFleet, getPlan,
   runDay, runStop, runStatus, runEvents, runReturnToHub,
 } from '../api/routingApi.js'
-import { getDispatchState, autoVerifyPickups, dispatchDrops, autoVerifyDeliveries, seedSpread, loadShift, resetDispatch, pickupsToHub, pickupsToVan, clearBookings, getAmqpTap, pingDaGps } from '../api/dispatchApi.js'
+import { getDispatchState, autoVerifyPickups, dispatchDrops, dropsCollected, autoVerifyDeliveries, seedSpread, loadShift, resetDispatch, pickupsToHub, pickupsToVan, clearBookings, getAmqpTap, pingDaGps } from '../api/dispatchApi.js'
 import { CITIES } from '../cities.js'
 
 // Execution runs the whole chain for TODAY (telemetry resolves manifests by today's date), distinct
@@ -361,6 +361,18 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     try {
       const r = await autoVerifyDeliveries(CITIES[cityCode]?.label || cityCode, TODAY)
       setDeliverMsg('🏠 ' + (r.message || (r.delivered + ' delivered')))
+      // Reflect reality on the map now that every drop is DELIVERED: advance each DA to 'done'
+      // (0 parcels carried — badge clears — back in its territory), and drive the now-empty drop
+      // vans back to the hub (poll telemetry so the markers animate from their last stop to the hub).
+      setDaTs(prev => { const n = { ...prev }; das.forEach(d => { n[d.daId] = 1 }); return n })
+      try {
+        await runReturnToHub(cityId, TODAY)
+        const t0 = Date.now()
+        const anim = setInterval(async () => {
+          try { setVans(await getLive(cityId)) } catch { /* transient */ }
+          if (Date.now() - t0 > 6000) clearInterval(anim)
+        }, 500)
+      } catch { /* no plan/vans to drive home — deliveries already verified */ }
     } catch (e) {
       setDeliverMsg('✕ ' + e.message)
     } finally {
@@ -410,9 +422,18 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
           // advance M4 PICKED_UP → HANDED_TO_PICKUP_VAN (visible on :8080 / M4). Fire once per run.
           if (st.phase === 'DONE' && !handoffDoneRef.current) {
             handoffDoneRef.current = true
-            pickupsToVan(CITIES[cityCode]?.label || cityCode, TODAY)
-              .then(r => { setHubMsg('🤝 ' + (r.message || (r.advanced + ' handed to the pickup van'))); fetchDas() })
-              .catch(() => {})
+            const label = CITIES[cityCode]?.label || cityCode
+            // Van↔DA handoff at the meeting point: collected pickups go ONTO the van
+            // (PICKED_UP → HANDED_TO_PICKUP_VAN), and drops come OFF the van into the DA's hands
+            // (DROP_ASSIGNED → DROP_COLLECTED, delivery OTP minted). Fire once per run.
+            Promise.allSettled([pickupsToVan(label, TODAY), dropsCollected(label, TODAY)])
+              .then(([p, d]) => {
+                const msgs = []
+                if (p.status === 'fulfilled') msgs.push(p.value.message || `${p.value.advanced} handed to the pickup van`)
+                if (d.status === 'fulfilled') msgs.push(d.value.message || `${d.value.dispatched} collected by DAs`)
+                if (msgs.length) setHubMsg('🤝 ' + msgs.join(' · '))
+                fetchDas()
+              })
           }
         }
       } catch { /* transient — keep polling */ }

@@ -54,6 +54,11 @@ export const dispatchDrops = (cityId, city, date) =>
   req(`/api/demo/da/drops/dispatch?cityId=${cityId}&city=${encodeURIComponent(city)}&date=${date}`,
     { method: 'POST' })
 
+// Run-the-day handoff: the drop van reaches the DA, who takes the parcel off the van →
+// DROP_ASSIGNED shipments become DROP_COLLECTED (out for delivery) + the delivery OTP is minted.
+export const dropsCollected = (city, date) =>
+  req(`/api/demo/da/drops/collected?city=${encodeURIComponent(city)}&date=${date}`, { method: 'POST' })
+
 // Simulate every recipient's door OTP → DROP_COLLECTED parcels become DROPPED (Delivered).
 export const autoVerifyDeliveries = (city, date) =>
   req(`/api/demo/da/drops/auto-verify?city=${encodeURIComponent(city)}&date=${date}`, { method: 'POST' })

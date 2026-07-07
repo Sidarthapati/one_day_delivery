@@ -656,8 +656,7 @@ public class DemoDaController {
             p.add(ShipmentState.HANDED_TO_DROP_VAN);
         }
         // last-mile → out for delivery
-        p.add(ShipmentState.DROP_ASSIGNED);
-        p.add(ShipmentState.DROP_COLLECTED);
+        p.add(ShipmentState.DROP_ASSIGNED);   // on the drop van, a DA assigned — the DA collects it at the run
         return p;
     }
 
@@ -678,17 +677,45 @@ public class DemoDaController {
             if (sh.getDestCity() == null || !sh.getDestCity().equalsIgnoreCase(city)) continue;
             if (sh.getDestTileId() == null) { skipped++; continue; }
             try {
-                walkToDropCollected(sh);
-                dispatchDemoService.markDelivering(sh.getId());   // M5 DELIVERY task QUEUED → IN_PROGRESS
-                String otp = deliveryOtpService.generate(sh.getId());
-                deliveryOtpCache.put(sh.getId(), otp);
+                // Fast-forward across the (faked) hub + flight legs and onto the drop van: the parcel is
+                // now DROP_ASSIGNED (on the van, a delivery agent assigned). The DA collects it from the
+                // van at the meeting point during "Run the day" (→ DROP_COLLECTED, /drops/collected).
+                walkToDropAssigned(sh);
                 publishSortedForDelivery(sh.getId(), cityId, sh.getDestTileId(), date);
                 refs.add(sh.getShipmentRef());
             } catch (RuntimeException e) {
                 skipped++;   // a shipment that can't walk right now is left for the next call
             }
         }
-        String msg = refs.size() + " drop(s) dispatched to last-mile (out for delivery, OTP minted)"
+        String msg = refs.size() + " drop(s) dispatched to the drop van (assigned to a delivery agent)"
+                + (skipped > 0 ? ", " + skipped + " skipped" : "");
+        return new DropDispatchResponse(refs.size(), skipped, refs, msg);
+    }
+
+    /**
+     * Run-the-day handoff: the drop van reaches the DA at the meeting point and hands the parcel over.
+     * For each {@code DROP_ASSIGNED} shipment destined for {@code city}: {@code → DROP_COLLECTED}, mark
+     * the DA's DELIVERY task IN_PROGRESS, and mint the recipient delivery OTP (now the parcel is "out
+     * for delivery" in the agent's hands). Mirrors the pickup side's {@code /pickups/to-van}.
+     */
+    @PostMapping("/drops/collected")
+    public DropDispatchResponse dropsCollected(@RequestParam String city,
+                                               @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        List<String> refs = new ArrayList<>();
+        int skipped = 0;
+        for (Shipment sh : shipmentRepository.findByState(ShipmentState.DROP_ASSIGNED)) {
+            if (sh.getDestCity() == null || !sh.getDestCity().equalsIgnoreCase(city)) continue;
+            try {
+                stateMachine.transition(sh.getId(), ShipmentState.DROP_COLLECTED,
+                        TransitionContext.fromApi("demo-drops-collected", sh.getShipmentRef()));
+                dispatchDemoService.markDelivering(sh.getId());   // DA now carrying it → task IN_PROGRESS
+                deliveryOtpCache.put(sh.getId(), deliveryOtpService.generate(sh.getId()));
+                refs.add(sh.getShipmentRef());
+            } catch (RuntimeException e) {
+                skipped++;
+            }
+        }
+        String msg = refs.size() + " drop(s) collected by DAs at the meeting point (out for delivery, OTP minted)"
                 + (skipped > 0 ? ", " + skipped + " skipped" : "");
         return new DropDispatchResponse(refs.size(), skipped, refs, msg);
     }
@@ -707,6 +734,7 @@ public class DemoDaController {
             try {
                 stateMachine.transition(sh.getId(), ShipmentState.DROPPED,
                         TransitionContext.fromApi("demo-delivery-autoverify", sh.getShipmentRef()));
+                dispatchDemoService.markDelivered(sh.getId());   // complete the M5 DELIVERY task → leaves the DA's queue
                 delivered++;
             } catch (RuntimeException e) {
                 skipped++;
@@ -717,8 +745,8 @@ public class DemoDaController {
                         + (skipped > 0 ? ", " + skipped + " skipped" : ""));
     }
 
-    /** Walk a BOOKED shipment along its first-mile + delivery-type path to DROP_COLLECTED, one step at a time. */
-    private void walkToDropCollected(Shipment sh) {
+    /** Walk a BOOKED shipment along its first-mile + delivery-type path to DROP_ASSIGNED (on the drop van). */
+    private void walkToDropAssigned(Shipment sh) {
         String ref = sh.getShipmentRef();
         for (ShipmentState target : dropPath(sh)) {
             stateMachine.transition(sh.getId(), target,

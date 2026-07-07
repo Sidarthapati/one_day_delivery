@@ -69,6 +69,11 @@ public class DispatchDemoService {
     // once a DA's queue fills up.
     private static final long CRON_MEETING_MINUTES_AHEAD = 240;
 
+    // A future meeting closer than this is treated as "not comfortably reachable" for the demo: the
+    // cron-feasibility gate would fail every far pickup/drop against it. We drop such imminent slots so
+    // the DA's next meeting is always reachable, keeping late-day demos at 12-assigned/0-deferred.
+    private static final long CRON_MIN_REACHABLE_MINUTES = 45;
+
     private final GridService gridService;
     private final DispatchService dispatchService;
     private final DaTaskService daTaskService;
@@ -166,6 +171,11 @@ public class DispatchDemoService {
     @Transactional
     public DispatchState loadShift(UUID cityId, LocalDate gridDate) {
         LocalDate date = today();
+        // A prepare/replan between reset and load-shift writes raw M6 cron rows (via
+        // DaCronScheduledConsumer) whose wall-clock meetings may already be past/imminent. Clear them so
+        // ensureCron below re-seats every DA on a demo-reachable meeting — otherwise a late-day delivery
+        // defers CRON_INFEASIBLE against a stale meeting the assignment engine reads for that DA.
+        cronRepository.deleteAll(cronRepository.findByOperatingDateAndCityId(date, cityId));
         Map<UUID, double[]> hexCoords = hexCoords(cityId, gridDate);
         Map<UUID, List<UUID>> hexesByDa = territoriesByDa(cityId, gridDate);
         Map<UUID, DaCronSchedulePort.DaCron> m6Crons = m6Crons(cityId, gridDate);
@@ -477,6 +487,22 @@ public class DispatchDemoService {
                 .orElse(false);
     }
 
+    /** Mark a shipment's DELIVERY task COMPLETED — the M5-side effect of the recipient's door OTP
+     *  (parcel DROPPED). Moves it out of the DA's active queue so "Last-mile" / "DA has (drop)" drop to
+     *  zero and it counts as done. In-place demo update (M4 already transitioned to DROPPED). */
+    @Transactional
+    public boolean markDelivered(UUID shipmentId) {
+        return queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.DELIVERY)
+                .filter(q -> q.getStatus() == TaskStatus.IN_PROGRESS || q.getStatus() == TaskStatus.QUEUED)
+                .map(q -> {
+                    q.setStatus(TaskStatus.COMPLETED);
+                    q.setCompletedAt(java.time.Instant.now());
+                    queueRepository.save(q);
+                    return true;
+                })
+                .orElse(false);
+    }
+
     /** Wipe the demo's M5 state for the city so it can be re-run. */
     @Transactional
     public void reset(UUID cityId, LocalDate gridDate) {
@@ -520,38 +546,60 @@ public class DispatchDemoService {
         cron.setOperatingDate(date);
         cron.setStatus(CronAssignmentStatus.SCHEDULED);
 
+        List<String> planTimes;
         if (m6 != null && !(m6.meetingLat() == 0 && m6.meetingLon() == 0)) {
             // Prefer M6's real rendezvous: the DA seats on its actual meeting vertex, linked to its van.
             cron.setCronVertexId(m6.cronVertexId());
             cron.setMeetingLat(m6.meetingLat());
             cron.setMeetingLon(m6.meetingLon());
             cron.setVanId(m6.vanId());
-            List<String> times = m6.meetingTimes().isEmpty()
-                    ? List.of(LocalTime.ofInstant(future, zone()).withSecond(0).withNano(0).toString())
-                    : m6.meetingTimes();
-            cron.setMeetingTimes(times);
-            Instant scheduled = earliestMeetingInstant(times, date);
-            // Keep it ahead of the demo clock so the cron-feasibility constraint stays exercisable.
-            cron.setScheduledMeetingTime(scheduled.isAfter(Instant.now()) ? scheduled : future);
-            cronRepository.save(cron);
-            return;
+            planTimes = m6.meetingTimes();
+        } else {
+            // No M6 cron for this DA — synthesize one at a mid-territory hex vertex (no van link).
+            double[] vertex = hexCoords.getOrDefault(hexes.get(hexes.size() / 2), new double[]{0, 0});
+            cron.setCronVertexId(UUID.randomUUID());
+            cron.setMeetingLat(vertex[0]);
+            cron.setMeetingLon(vertex[1]);
+            cron.setVanId(null);
+            planTimes = List.of();
         }
-        // No M6 cron for this DA — synthesize one at a mid-territory hex vertex (no van link).
-        double[] vertex = hexCoords.getOrDefault(hexes.get(hexes.size() / 2), new double[]{0, 0});
-        cron.setCronVertexId(UUID.randomUUID());
-        cron.setMeetingLat(vertex[0]);
-        cron.setMeetingLon(vertex[1]);
-        cron.setVanId(null);
-        cron.setScheduledMeetingTime(future);
-        cron.setMeetingTimes(List.of(LocalTime.ofInstant(future, zone()).withSecond(0).withNano(0).toString()));
+        // The cron-feasibility gate measures slack against the DA's NEXT meeting (M5's activeMeetingTime).
+        // A late-day demo would otherwise fail every task against a meeting already passed or minutes
+        // away. Keep the plan's schedule for display, but guarantee the earliest FUTURE slot is
+        // comfortably reachable — so the demo stays 12-assigned/0-deferred at any wall-clock hour.
+        List<String> times = demoReachableTimes(planTimes, date, future);
+        cron.setMeetingTimes(times);
+        cron.setScheduledMeetingTime(earliestFutureInstant(times, date, future));
         cronRepository.save(cron);
     }
 
-    /** Earliest of the day's meeting times as an instant in the shift zone (falls back to ~90 min out). */
-    private Instant earliestMeetingInstant(List<String> times, LocalDate date) {
-        return times.stream().map(LocalTime::parse).min(Comparator.naturalOrder())
+    /**
+     * Plan meeting times made demo-safe: past slots kept (display only — the gate ignores them),
+     * imminent future slots (&lt; {@link #CRON_MIN_REACHABLE_MINUTES} out, unreachable-soon) dropped,
+     * and the ~4h synthesized slot always appended so the earliest future meeting is comfortably
+     * reachable no matter the hour.
+     */
+    private List<String> demoReachableTimes(List<String> planTimes, LocalDate date, Instant future) {
+        Instant now = Instant.now();
+        Instant floor = now.plus(CRON_MIN_REACHABLE_MINUTES, ChronoUnit.MINUTES);
+        List<String> out = new ArrayList<>();
+        for (String s : planTimes) {
+            Instant i = LocalTime.parse(s).atDate(date).atZone(zone()).toInstant();
+            if (i.isBefore(now) || !i.isBefore(floor)) {
+                out.add(s);   // keep past + comfortably-future; drop the imminent (now .. floor) window
+            }
+        }
+        out.add(LocalTime.ofInstant(future, zone()).withSecond(0).withNano(0).toString());
+        return out.stream().distinct().sorted().toList();
+    }
+
+    /** Earliest of {@code times} strictly after now (shift zone), else {@code fallback}. */
+    private Instant earliestFutureInstant(List<String> times, LocalDate date, Instant fallback) {
+        return times.stream().map(LocalTime::parse)
                 .map(t -> t.atDate(date).atZone(zone()).toInstant())
-                .orElse(Instant.now().plus(CRON_MEETING_MINUTES_AHEAD, ChronoUnit.MINUTES));
+                .filter(i -> i.isAfter(Instant.now()))
+                .min(Comparator.naturalOrder())
+                .orElse(fallback);
     }
 
     /**
