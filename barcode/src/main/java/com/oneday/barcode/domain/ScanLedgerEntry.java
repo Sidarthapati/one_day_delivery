@@ -30,6 +30,9 @@ import java.util.UUID;
 @AllArgsConstructor
 public class ScanLedgerEntry {
 
+    // id and recordedAt are also defaulted in the DB (gen_random_uuid() / now(), V8_1). Hibernate
+    // wins for app inserts; the DB defaults exist so a raw-SQL insert from another service — which the
+    // append-only ledger explicitly anticipates — still gets a valid id/timestamp without them.
     @Id
     @UuidGenerator
     @Column(updatable = false, nullable = false)
@@ -44,7 +47,7 @@ public class ScanLedgerEntry {
     @Column(name = "scan_type", nullable = false, length = 24, updatable = false)
     private String scanType;
 
-    @Column(name = "location_type", nullable = false, length = 16, updatable = false)
+    @Column(name = "location_type", nullable = false, length = 32, updatable = false)
     private String locationType;
 
     @Column(name = "location_id", updatable = false)

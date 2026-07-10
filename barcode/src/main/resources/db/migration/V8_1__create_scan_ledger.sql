@@ -8,7 +8,7 @@ CREATE TABLE scan_ledger (
     shipment_id     UUID         NOT NULL,               -- spine: joins to orders.shipments.id
     parcel_id       VARCHAR(30),                         -- barcode string, NULL until LABEL_GENERATED
     scan_type       VARCHAR(24)  NOT NULL,               -- ScanEventType (6) ∪ VanScanType (4)
-    location_type   VARCHAR(16)  NOT NULL,               -- HUB | VAN | DA | AIRPORT | CUSTOMER_COUNTER
+    location_type   VARCHAR(32)  NOT NULL,               -- HUB | VAN | DA | AIRPORT | CUSTOMER_COUNTER (CUSTOMER_COUNTER is 16 chars; 32 leaves headroom)
     location_id     UUID,                                -- hub / van / DA id
     actor_id        UUID,                                -- who held the gun
     counterparty_id UUID,                                -- the other party in a van handoff (the DA)
@@ -18,8 +18,13 @@ CREATE TABLE scan_ledger (
 );
 
 CREATE INDEX idx_scan_ledger_shipment ON scan_ledger (shipment_id, scanned_at);
-CREATE INDEX idx_scan_ledger_parcel   ON scan_ledger (parcel_id) WHERE parcel_id IS NOT NULL;
--- Idempotency + van-scan replay dedup: a retried scan carrying the same client_scan_id is one row.
+-- Ordered by scanned_at so the "who touched this box, in order" trail lookup needs no sort.
+CREATE INDEX idx_scan_ledger_parcel   ON scan_ledger (parcel_id, scanned_at) WHERE parcel_id IS NOT NULL;
+-- Idempotency: a retried REST scan carrying the same client_scan_id is collapsed to one row.
+-- NOTE: van custody scans (VAN_LOAD/VAN_TO_DA/DA_TO_VAN/VAN_UNLOAD) carry NO client_scan_id
+-- (routing's VanCustodyScan has no such field), so this index does not dedup them. PR4's adapter
+-- MUST guard van inserts with an existsByShipmentIdAndScanType read-check — there is no DB backstop
+-- here on purpose (RTO re-loads can legitimately repeat a scan_type, so a hard unique index is wrong).
 CREATE UNIQUE INDEX uq_scan_ledger_client ON scan_ledger (client_scan_id) WHERE client_scan_id IS NOT NULL;
 
 -- M8's load-bearing invariant. Beyond the app's updatable=false mapping, this rejects any
