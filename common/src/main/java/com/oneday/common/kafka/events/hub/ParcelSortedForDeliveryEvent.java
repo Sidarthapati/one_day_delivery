@@ -9,13 +9,13 @@ import java.util.UUID;
 
 /**
  * Per-parcel: M7 has sorted a destination parcel for last-mile delivery and staged it in its
- * route/territory bag (§8.2, M7-D-002). M6 consumes this and binds the parcel to a van loop.
+ * route/territory bag (§8.2, M7-D-002). M6's {@code HubFeedConsumer} consumes this exact class and
+ * binds the parcel to a van loop — one shared contract, so the {@code __TypeId__} the producer stamps
+ * matches the listener's parameter and the feed can't land in the DLQ.
  *
- * <p>The first six fields are the <b>exact shape</b> of M6's provisional
- * {@code routing.events.payload.ParcelSortedForDeliveryEvent}, so swapping M6's buffer stub for
- * this real feed is a no-op for the binder. The remaining fields are <b>additive</b> (M6 ignores
- * them via its tolerant reader): they expose M7's own route resolution + the bag the parcel sits in,
- * useful to M6/ops but never required for binding.</p>
+ * <p>The first six fields are all the binder needs. The remaining fields are <b>additive</b>: they
+ * expose M7's own route resolution + the bag the parcel sits in, useful to M6/ops but never required
+ * for binding (M6 reads only the six).</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ParcelSortedForDeliveryEvent(

@@ -38,6 +38,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
@@ -367,7 +369,26 @@ class DispatchServiceImpl implements DispatchService {
         FeasibilityStop newTask = new FeasibilityStop(new LatLon(req.lat(), req.lon()), serviceSeconds);
         LatLon cronVertex = new LatLon(cron.getMeetingLat(), cron.getMeetingLon());
         return new FeasibilityRequest(current, currentTime, existing, newTask, cronVertex,
-                cron.getScheduledMeetingTime());
+                activeMeetingTime(cron, currentTime));
+    }
+
+    /**
+     * The DA's next reachable van meeting: the earliest of its {@code meetingTimes} strictly after
+     * {@code now}. M6 emits the whole day's loop meetings (M6-D-008), but v1 pins
+     * {@code scheduled_meeting_time} to the morning slot and never rolls it forward — so mid-day the
+     * feasibility gate would measure slack against a meeting that already passed → every task
+     * CRON_INFEASIBLE. Computing the next future meeting here keeps the gate honest at any hour with
+     * no stale-pointer race. Falls back to the persisted primary when the list is empty or the day is
+     * genuinely over (→ correctly infeasible).
+     */
+    private Instant activeMeetingTime(DaCronAssignment cron, Instant now) {
+        ZoneId zone = ZoneId.of(props.getShift().getZone());
+        return cron.getMeetingTimes().stream()
+                .map(LocalTime::parse)
+                .map(t -> LocalDateTime.of(cron.getOperatingDate(), t).atZone(zone).toInstant())
+                .filter(i -> i.isAfter(now))
+                .min(Comparator.naturalOrder())
+                .orElse(cron.getScheduledMeetingTime());
     }
 
     private DispatchQueue newRow(UUID daId, Request req, UUID tileId, LocalDate date,

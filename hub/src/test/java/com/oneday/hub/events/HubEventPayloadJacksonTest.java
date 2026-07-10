@@ -100,12 +100,12 @@ class HubEventPayloadJacksonTest {
     }
 
     /**
-     * The whole point of M7-D-002: M7's richer payload must deserialize cleanly into M6's provisional
-     * {@code routing.events.payload.ParcelSortedForDeliveryEvent} — the 6 core fields recovered, the
-     * additive fields silently ignored — so swapping M6's buffer stub for the real feed is a no-op.
+     * M7-D-002 is now a single shared contract: M6's {@code HubFeedConsumer} consumes this very class
+     * (in {@code common}), so there is no second DTO to deserialize into. A JSON round-trip that
+     * preserves the six core fields the binder reads — with additive fields present — is all M6 needs.
      */
     @Test
-    void m6TolerantReader_recoversCoreShape_ignoresAdditive() throws Exception {
+    void coreShape_survivesRoundTrip_withAdditivePresent() throws Exception {
         UUID parcelId = UUID.randomUUID();
         UUID cityId = UUID.randomUUID();
         UUID destHex = UUID.randomUUID();
@@ -118,14 +118,13 @@ class HubEventPayloadJacksonTest {
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "D-1");
 
         String json = mapper.writeValueAsString(m7);
-        com.oneday.routing.events.payload.ParcelSortedForDeliveryEvent m6 =
-                mapper.readValue(json, com.oneday.routing.events.payload.ParcelSortedForDeliveryEvent.class);
+        ParcelSortedForDeliveryEvent back = mapper.readValue(json, ParcelSortedForDeliveryEvent.class);
 
-        assertThat(m6.parcelId()).isEqualTo(parcelId);
-        assertThat(m6.cityId()).isEqualTo(cityId);
-        assertThat(m6.destinationHexId()).isEqualTo(destHex);
-        assertThat(m6.validDate()).isEqualTo(validDate);
-        assertThat(m6.sortedAt()).isEqualTo(sortedAt);
-        assertThat(m6.slaDeadline()).isEqualTo(slaDeadline);
+        assertThat(back.parcelId()).isEqualTo(parcelId);
+        assertThat(back.cityId()).isEqualTo(cityId);
+        assertThat(back.destinationHexId()).isEqualTo(destHex);
+        assertThat(back.validDate()).isEqualTo(validDate);
+        assertThat(back.sortedAt()).isEqualTo(sortedAt);
+        assertThat(back.slaDeadline()).isEqualTo(slaDeadline);
     }
 }
