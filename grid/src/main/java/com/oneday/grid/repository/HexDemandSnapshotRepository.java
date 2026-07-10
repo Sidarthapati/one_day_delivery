@@ -16,6 +16,9 @@ public interface HexDemandSnapshotRepository extends JpaRepository<HexDemandSnap
 
     List<HexDemandSnapshot> findBySnapshotDate(LocalDate snapshotDate);
 
+    // Demo seeding pre-check: how many demand rows a city/date already has (DemoController).
+    int countByHexIdInAndSnapshotDate(List<UUID> hexIds, LocalDate snapshotDate);
+
     @Modifying
     @Query("DELETE FROM HexDemandSnapshot s WHERE s.hexId IN :hexIds AND s.snapshotDate = :date")
     void deleteByHexIdInAndSnapshotDate(List<UUID> hexIds, LocalDate date);

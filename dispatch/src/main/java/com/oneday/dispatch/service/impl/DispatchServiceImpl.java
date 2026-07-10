@@ -38,8 +38,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -249,8 +251,13 @@ class DispatchServiceImpl implements DispatchService {
         FeasibilityResult feasibility = null;
         int queuedInsertIndex;
         if (cronActive) {
-            feasibility = feasibilityService.checkFeasibility(buildFeasibility(daId, inProgress, queued, req, cron));
-            if (!feasibility.feasible()) {
+            Anchor anchor = anchor(daId, inProgress);
+            // The van rendezvous repeats through the day (M6-D-008: meeting_times is a list, ~hourly
+            // loops). A pickup only has to make the NEXT departure the DA can still reach — check the
+            // earliest meeting after "now" and roll forward to later loops if that one is unreachable.
+            // Every future meeting exhausted → last van of the day already gone → infeasible here.
+            feasibility = firstFeasibleMeeting(anchor, queued, req, cron);
+            if (feasibility == null) {
                 return Optional.empty();
             }
             queuedInsertIndex = feasibility.bestInsertionIndex();
@@ -344,31 +351,74 @@ class DispatchServiceImpl implements DispatchService {
 
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
-    private FeasibilityRequest buildFeasibility(UUID daId, List<DispatchQueue> inProgress,
-                                                List<DispatchQueue> queued, Request req, DaCronAssignment cron) {
-        long serviceSeconds = props.getService().getDefaultMinutes() * 60L;
-        LatLon current;
-        Instant currentTime;
+    /**
+     * Run cheapest-insertion feasibility against each upcoming van meeting in turn and return the
+     * first that clears; {@code null} when none do. This is what lets a mid-day pickup make a later
+     * loop instead of being rejected against a long-departed morning meeting.
+     */
+    private FeasibilityResult firstFeasibleMeeting(Anchor anchor, List<DispatchQueue> queued,
+                                                   Request req, DaCronAssignment cron) {
+        for (Instant meetingTime : upcomingMeetings(cron, anchor.time())) {
+            FeasibilityResult r = feasibilityService.checkFeasibility(
+                    buildFeasibility(anchor, queued, req, cron, meetingTime));
+            if (r.feasible()) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The DA's remaining van rendezvous, ascending — every {@code meeting_times} entry (M6-D-008)
+     * strictly after {@code now}; earlier loops have already departed. Falls back to the single
+     * {@code scheduledMeetingTime} for legacy rows that carry no list.
+     */
+    private List<Instant> upcomingMeetings(DaCronAssignment cron, Instant now) {
+        ZoneId zone = ZoneId.of(props.getShift().getZone());
+        LocalDate date = cron.getOperatingDate();
+        List<Instant> out = new ArrayList<>();
+        for (String hhmm : cron.getMeetingTimes()) {
+            Instant t = LocalTime.parse(hhmm).atDate(date).atZone(zone).toInstant();
+            if (t.isAfter(now)) {
+                out.add(t);
+            }
+        }
+        if (out.isEmpty() && cron.getScheduledMeetingTime() != null
+                && cron.getScheduledMeetingTime().isAfter(now)) {
+            out.add(cron.getScheduledMeetingTime());
+        }
+        out.sort(Comparator.naturalOrder());
+        return out;
+    }
+
+    /** Position + time the feasibility route starts from — the in-progress anchor (§8.4) or live GPS. */
+    private Anchor anchor(UUID daId, List<DispatchQueue> inProgress) {
         if (!inProgress.isEmpty()) {
             // §8.4: anchor on the in-progress stop and its expected completion (conservative).
-            DispatchQueue anchor = inProgress.stream()
+            DispatchQueue a = inProgress.stream()
                     .max(Comparator.comparing(r -> r.getExpectedEta() != null ? r.getExpectedEta() : Instant.now()))
                     .orElseThrow();
-            current = new LatLon(anchor.getTaskLat(), anchor.getTaskLon());
-            currentTime = anchor.getExpectedEta() != null ? anchor.getExpectedEta() : Instant.now();
-        } else {
-            DaLiveStatus live = daStatusService.getLiveStatus(daId);
-            current = new LatLon(live.getLat(), live.getLon());
-            currentTime = Instant.now();
+            Instant t = a.getExpectedEta() != null ? a.getExpectedEta() : Instant.now();
+            return new Anchor(new LatLon(a.getTaskLat(), a.getTaskLon()), t);
         }
+        DaLiveStatus live = daStatusService.getLiveStatus(daId);
+        return new Anchor(new LatLon(live.getLat(), live.getLon()), Instant.now());
+    }
+
+    private FeasibilityRequest buildFeasibility(Anchor anchor, List<DispatchQueue> queued, Request req,
+                                                DaCronAssignment cron, Instant meetingTime) {
+        long serviceSeconds = props.getService().getDefaultMinutes() * 60L;
         List<FeasibilityStop> existing = queued.stream()
                 .map(r -> new FeasibilityStop(new LatLon(r.getTaskLat(), r.getTaskLon()), serviceSeconds))
                 .toList();
         FeasibilityStop newTask = new FeasibilityStop(new LatLon(req.lat(), req.lon()), serviceSeconds);
         LatLon cronVertex = new LatLon(cron.getMeetingLat(), cron.getMeetingLon());
-        return new FeasibilityRequest(current, currentTime, existing, newTask, cronVertex,
-                cron.getScheduledMeetingTime());
+        return new FeasibilityRequest(anchor.position(), anchor.time(), existing, newTask, cronVertex,
+                meetingTime);
     }
+
+    /** DA route start: physical position and the time it becomes free there. */
+    private record Anchor(LatLon position, Instant time) {}
 
     private DispatchQueue newRow(UUID daId, Request req, UUID tileId, LocalDate date,
                                  int position, boolean crossTerritory, boolean cronSafe) {

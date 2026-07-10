@@ -13,8 +13,8 @@ import com.oneday.routing.domain.StopNodeKind;
 import com.oneday.routing.domain.VanManifest;
 import com.oneday.routing.domain.VanManifestItem;
 import com.oneday.routing.events.CronEventProducer;
+import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.events.HubFeedConsumer;
-import com.oneday.routing.events.payload.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.CityFleetConfigRepository;
 import com.oneday.routing.repository.DaCronScheduleRepository;
 import com.oneday.routing.repository.InboundParcelRepository;
@@ -119,8 +119,9 @@ class HubFeedToManifestWiringTest {
 
         // The broker would hand this to the @RabbitListener; invoke it directly.
         UUID parcelId = UUID.randomUUID();
-        consumer.onSortedForDelivery(new ParcelSortedForDeliveryEvent(
-                parcelId, CITY, HEX, DATE, instant(LocalTime.of(7, 0)), instant(LocalTime.of(11, 0))));
+        consumer.onHubEvent(new ParcelSortedForDeliveryEvent(
+                parcelId, CITY, HEX, DATE, instant(LocalTime.of(7, 0)), instant(LocalTime.of(11, 0)),
+                null, null, null, null, null));
 
         assertThat(buffer).hasSize(1); // recorded
         assertThat(itemStore).hasSize(1); // and bound in the same hop

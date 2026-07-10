@@ -1,0 +1,66 @@
+flowchart TD
+    Customer(["📦 Customer places order"]):::actor
+
+    %% ---------- Modules ----------
+    M4["M4 · Orders<br/><i>state machine</i>"]:::mod
+    M5["M5 · Dispatch<br/><i>DA assignment + cron gate</i>"]:::mod
+    M6["M6 · Routing<br/><i>van loops / custody</i>"]:::mod
+    M7["M7 · Hub<br/><i>sortation</i>"]:::mod
+    M8["M8 · Barcode<br/><i>scan ledger</i>"]:::mod
+    M9["M9 · Airline<br/><i>flight (stub)</i>"]:::mod
+    M10["M10 · SLA<br/><i>GREEN/AMBER/RED</i>"]:::mod
+
+    %% ---------- Exchanges (the bus spine) ----------
+    XS{{"oneday.shipments.events"}}:::exch
+    XD{{"oneday.da.events"}}:::exch
+    XH{{"oneday.hub.events"}}:::exch
+    XSC{{"oneday.scan.events"}}:::exch
+    XC{{"oneday.cron.events"}}:::exch
+
+    %% ========== 1 · BOOKING ==========
+    Customer --> M4
+    M4 -- "ShipmentCreated · CREATED" --> XS
+    XS -- "assignPickup()" --> M5
+
+    %% ========== 2 · ASSIGNMENT ==========
+    M5 -- "PickupAssigned · PICKUP_ASSIGNED" --> XD
+    XD -- "→ PICKUP_ASSIGNED<br/>+ generate pickup OTP" --> M4
+
+    %% ========== 3 · PICKUP + VAN HANDOFF ==========
+    M4 -- "StateChanged · PICKED_UP /<br/>HANDED_TO_PICKUP_VAN" --> XS
+    XS == "🔗 Seam A · bind collect loop" ==> M6
+    XS -- "arm SLA" --> M10
+
+    %% ========== 4 · CUSTODY + TELEMETRY ==========
+    M6 -- "VAN_LOAD / DA_TO_VAN / VAN_UNLOAD" --> XSC
+    XSC -- "append-only ledger" --> M8
+    M6 -- "VanArrived / VanRunningLate" --> XC
+
+    %% ========== 5 · ORIGIN HUB SORT ==========
+    XS -- "AT_ORIGIN_HUB" --> M7
+    M7 -- "StandAssigned / BagCreated /<br/>BagSealed" --> XH
+    XH -- "→ ORIGIN_HUB_PROCESSING" --> M4
+    XH -- "manifest / cutoff" --> M9
+    XH --> M10
+
+    %% ========== 6 · FREIGHT LEG (M9, compressed) ==========
+    M9 -. "DEPARTED → LANDED<br/>(states advanced)" .-> M4
+
+    %% ========== 7 · DEST HUB SORT ==========
+    XS -- "AT_DEST_HUB" --> M7
+    M7 -- "ParcelSortedForDelivery ·<br/>PARCEL_SORTED_FOR_DELIVERY" --> XH
+    M7 -- "DestSortComplete ·<br/>DEST_SORT_COMPLETE" --> XH
+    XH == "🔗 Seam B · bind deliver loop" ==> M6
+    XH -- "→ DEST_HUB_PROCESSING" --> M4
+
+    %% ========== 8 · LAST-MILE DELIVERY ==========
+    M6 -- "VAN_TO_DA scan" --> XSC
+    M4 -- "StateChanged · DROPPED" --> XS
+    XS -- "close SLA ✅" --> M10
+
+    %% ---------- Styling ----------
+    classDef actor fill:#ffe0b2,stroke:#e65100,stroke-width:2px,color:#111,font-weight:bold
+    classDef mod   fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#0d1b2a
+    classDef exch  fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#2e0854,font-weight:bold
+
+    linkStyle default stroke:#78909c,stroke-width:1.5px

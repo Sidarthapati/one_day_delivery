@@ -8,8 +8,8 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * M7's RabbitMQ topology: the HUB_EVENTS exchange it produces to, plus its consumer queue on M4's
- * shipment stream (the AT_ORIGIN_HUB / AT_DEST_HUB sort triggers). The consumer stays dormant
- * (autoStartup=false) until M4 produces; until then M7 is driven via the REST API and in tests.
+ * shipment stream (the AT_ORIGIN_HUB / AT_DEST_HUB sort triggers) — now live: {@code ShipmentStateConsumer}
+ * receives M4 state changes and drives sortation (the REST dock endpoints remain for ops/tests).
  */
 @Configuration
 public class HubMessagingTopology {

@@ -35,11 +35,14 @@ class DemoSecurityConfig {
     SecurityFilterChain demoApiChain(HttpSecurity http,
                                      JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
         return http
-                .securityMatcher("/api/**", "/internal/**")
+                // /routing/** carries the M6 plan-time + run-time endpoints the demo drives; /error
+                // is included so an error on a permitAll path returns its real status instead of the
+                // default chain's 401 (the /error-forward masking quirk).
+                .securityMatcher("/api/**", "/internal/**", "/routing/**", "/error")
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 // Stateless API: auth is via Authorization/X-Api-Key headers, not cookies. Keep CSRF
                 // enabled but ignore the stateless API paths (equivalent here, no blanket disable).
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**"))
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/internal/**", "/routing/**"))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }

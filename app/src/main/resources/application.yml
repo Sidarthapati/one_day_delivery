@@ -45,12 +45,22 @@ spring:
 grid:
   h3:
     resolution: 8
+  # OSRM base-url must live here too: the module yml is shadowed on the classpath, so without this
+  # GridProperties falls back to its Java default (localhost:5000) and every M3 replan degrades.
+  osrm:
+    base-url: http://46.225.155.64:5000
   cities:
     delhi: f47ac10b-58cc-4372-a567-0e02b2c3d479
     mumbai: 550e8400-e29b-41d4-a716-446655440000
     bangalore: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
     hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
     chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+
+# M6 (routing). Same shadowing caveat as grid — the routing module yml is ignored by the assembled
+# app, so the OSRM base-url must live here or RoutePlanningService hits a dead localhost:5000.
+routing:
+  osrm:
+    base-url: http://46.225.155.64:5000
 
 # M5 (dispatch). All thresholds default in DispatchProperties; only the shift-load roster
 # (which city codes to bootstrap) is environment-specific. City codes must match grid.cities keys.
@@ -62,3 +72,7 @@ dispatch:
       - bangalore
       - hyderabad
       - chennai
+  events:
+    # Publish DA lifecycle events on oneday.da.events. M6's DaFeedConsumer now consumes them and
+    # binds a first-mile parcel to a collect loop on PICKUP_COMPLETED (M5↔M6 contract settled).
+    publish-da-events: true

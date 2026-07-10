@@ -98,34 +98,4 @@ class HubEventPayloadJacksonTest {
         assertThat(mapper.readValue(json, ParcelSortedForDeliveryEvent.class)).isEqualTo(e);
         assertThat(json).contains("\"eventType\":\"PARCEL_SORTED_FOR_DELIVERY\"");
     }
-
-    /**
-     * The whole point of M7-D-002: M7's richer payload must deserialize cleanly into M6's provisional
-     * {@code routing.events.payload.ParcelSortedForDeliveryEvent} — the 6 core fields recovered, the
-     * additive fields silently ignored — so swapping M6's buffer stub for the real feed is a no-op.
-     */
-    @Test
-    void m6TolerantReader_recoversCoreShape_ignoresAdditive() throws Exception {
-        UUID parcelId = UUID.randomUUID();
-        UUID cityId = UUID.randomUUID();
-        UUID destHex = UUID.randomUUID();
-        LocalDate validDate = LocalDate.of(2026, 6, 27);
-        Instant sortedAt = Instant.parse("2026-06-27T08:00:00Z");
-        Instant slaDeadline = Instant.parse("2026-06-27T18:00:00Z");
-
-        ParcelSortedForDeliveryEvent m7 = new ParcelSortedForDeliveryEvent(
-                parcelId, cityId, destHex, validDate, sortedAt, slaDeadline,
-                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "D-1");
-
-        String json = mapper.writeValueAsString(m7);
-        com.oneday.routing.events.payload.ParcelSortedForDeliveryEvent m6 =
-                mapper.readValue(json, com.oneday.routing.events.payload.ParcelSortedForDeliveryEvent.class);
-
-        assertThat(m6.parcelId()).isEqualTo(parcelId);
-        assertThat(m6.cityId()).isEqualTo(cityId);
-        assertThat(m6.destinationHexId()).isEqualTo(destHex);
-        assertThat(m6.validDate()).isEqualTo(validDate);
-        assertThat(m6.sortedAt()).isEqualTo(sortedAt);
-        assertThat(m6.slaDeadline()).isEqualTo(slaDeadline);
-    }
 }
