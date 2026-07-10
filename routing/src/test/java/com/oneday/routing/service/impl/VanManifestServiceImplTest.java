@@ -5,6 +5,8 @@ import com.oneday.routing.config.RoutingProperties;
 import com.oneday.routing.domain.CityFleetConfig;
 import com.oneday.routing.domain.DaCronSchedule;
 import com.oneday.routing.domain.HandoffDirection;
+import com.oneday.routing.domain.ManifestItemStatus;
+import com.oneday.routing.domain.ManifestStatus;
 import com.oneday.routing.domain.RoutePlan;
 import com.oneday.routing.domain.RoutePlanStatus;
 import com.oneday.routing.domain.RoutePlanStop;
@@ -20,6 +22,7 @@ import com.oneday.routing.repository.VanManifestItemRepository;
 import com.oneday.routing.repository.VanManifestRepository;
 import com.oneday.routing.service.GridDataAdapter;
 import com.oneday.routing.service.model.BindOutcome;
+import com.oneday.routing.service.model.ReconcileSummary;
 import com.oneday.routing.service.port.DaAccumulationPort;
 import com.oneday.routing.service.port.FlightCutoffPort;
 import com.oneday.routing.service.port.HubSortPort;
@@ -122,6 +125,9 @@ class VanManifestServiceImplTest {
             if (!itemStore.contains(i)) itemStore.add(i);
             return i;
         });
+        when(itemRepository.findByManifestId(any())).thenAnswer(inv -> itemStore.stream()
+                .filter(i -> i.getManifestId().equals(inv.getArgument(0))).toList());
+        when(manifestRepository.save(any(VanManifest.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
@@ -183,6 +189,62 @@ class VanManifestServiceImplTest {
 
         assertThat(second.outcome()).isEqualTo(BindOutcome.Outcome.BOUND);
         assertThat(itemStore).hasSize(1); // not double-bound
+    }
+
+    @Test
+    void reconcileToLivePlan_repointsManifests_reroutesPlanned_keepsOrEscalatesLoaded() {
+        UUID oldPlan = UUID.randomUUID();
+        UUID strandedVertex = UUID.randomUUID(); // a vertex the live plan no longer visits
+        // High capacity so the re-routed PLANNED item rebinds rather than overflowing.
+        when(fleetConfigRepository.findByCityId(CITY))
+                .thenReturn(Optional.of(CityFleetConfig.builder().cityId(CITY).capacityPackets(100).build()));
+        // Two plans for the day: the live one (PLAN, from setUp) and a superseded one.
+        when(planRepository.findByCityIdAndValidForDate(CITY, DATE)).thenReturn(List.of(
+                RoutePlan.builder().id(PLAN).cityId(CITY).validForDate(DATE).status(RoutePlanStatus.APPROVED).revision(2).build(),
+                RoutePlan.builder().id(oldPlan).cityId(CITY).validForDate(DATE).status(RoutePlanStatus.SUPERSEDED).revision(1).build()));
+
+        // The superseded plan's two manifests on VAN (loops 0 and 1, both surviving in the live plan).
+        VanManifest o0 = manifest(oldPlan, 0);
+        VanManifest o1 = manifest(oldPlan, 1);
+        manifestStore.put(VAN + "|0", o0);
+        manifestStore.put(VAN + "|1", o1);
+        when(manifestRepository.findByRoutePlanId(oldPlan)).thenReturn(List.of(o0, o1));
+
+        UUID pPlanned = UUID.randomUUID(), pKept = UUID.randomUUID(), pStranded = UUID.randomUUID();
+        itemStore.add(item(o0.getId(), pPlanned, ManifestItemStatus.PLANNED, VERTEX, 1));        // not loaded → reroute
+        itemStore.add(item(o1.getId(), pKept, ManifestItemStatus.LOADED, VERTEX, 1));            // loaded, stop survives → keep
+        itemStore.add(item(o1.getId(), pStranded, ManifestItemStatus.LOADED, strandedVertex, 2)); // loaded, stop gone → escalate
+
+        ReconcileSummary summary = service.reconcileToLivePlan(CITY, DATE);
+
+        assertThat(o0.getRoutePlanId()).isEqualTo(PLAN); // both manifests repointed to the live plan
+        assertThat(o1.getRoutePlanId()).isEqualTo(PLAN);
+        assertThat(summary.repointedManifests()).isEqualTo(2);
+        assertThat(summary.reboundPlanned()).isEqualTo(1);
+        assertThat(summary.keptInCustody()).isEqualTo(1);
+        assertThat(summary.escalated()).isEqualTo(1);
+
+        // the PLANNED item is detached (EXCEPTION) and a fresh PLANNED item re-bound for the same parcel
+        List<VanManifestItem> forPlanned = itemStore.stream().filter(i -> i.getParcelId().equals(pPlanned)).toList();
+        assertThat(forPlanned).hasSize(2);
+        assertThat(forPlanned).anyMatch(i -> i.getStatus() == ManifestItemStatus.EXCEPTION);
+        assertThat(forPlanned).anyMatch(i -> i.getStatus() == ManifestItemStatus.PLANNED);
+
+        // loaded items are never moved; the surviving one is untouched, the stranded one escalated.
+        assertThat(itemStore.stream().filter(i -> i.getParcelId().equals(pKept)).findFirst().orElseThrow().getStatus())
+                .isEqualTo(ManifestItemStatus.LOADED);
+        verify(cronEventProducer).emitLoopOverflow(eq(CITY), eq(VAN), eq(pStranded), eq(1), any());
+    }
+
+    private VanManifest manifest(UUID planId, int loop) {
+        return VanManifest.builder().id(UUID.randomUUID()).routePlanId(planId).vanId(VAN).loopIndex(loop)
+                .validDate(DATE).status(ManifestStatus.LOADED).build();
+    }
+
+    private VanManifestItem item(UUID manifestId, UUID parcelId, ManifestItemStatus status, UUID vertex, int seq) {
+        return VanManifestItem.builder().id(UUID.randomUUID()).manifestId(manifestId).parcelId(parcelId)
+                .direction(HandoffDirection.DELIVER).stopSeq(seq).meetingVertexId(vertex).counterpartyDaId(DA)
+                .status(status).build();
     }
 
     private BindOutcome bind(LocalTime deadline) {

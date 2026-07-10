@@ -23,6 +23,7 @@ import com.oneday.routing.service.VanManifestService;
 import com.oneday.routing.service.model.BindOutcome;
 import com.oneday.routing.service.model.BindingResult;
 import com.oneday.routing.service.model.LoopSlot;
+import com.oneday.routing.service.model.ReconcileSummary;
 import com.oneday.routing.service.port.DaAccumulationPort;
 import com.oneday.routing.service.port.FlightCutoffPort;
 import com.oneday.routing.service.port.HubSortPort;
@@ -40,8 +41,10 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -198,7 +201,75 @@ class VanManifestServiceImpl implements VanManifestService {
         return BindingResult.from(outcomes);
     }
 
+    @Override
+    @Transactional
+    public ReconcileSummary reconcileToLivePlan(UUID cityId, LocalDate date) {
+        PlanCtx ctx = context(cityId, date); // the new live (APPROVED) plan
+        // Stops the new plan still visits, keyed by the physical (van, loop, vertex) — used to decide
+        // whether an already-loaded parcel can still be delivered on the van it is physically riding.
+        Set<String> survivingStops = new HashSet<>();
+        for (RoutePlanStop s : ctx.stops) {
+            survivingStops.add(stopKey(s.getVanId(), s.getLoopIndex(), s.getHexVertexId()));
+        }
+
+        int repointed = 0, rebound = 0, kept = 0, escalated = 0;
+        for (RoutePlan stale : planRepository.findByCityIdAndValidForDate(cityId, date)) {
+            if (stale.getId().equals(ctx.planId)) continue; // the live plan's manifests are already correct
+            for (VanManifest manifest : manifestRepository.findByRoutePlanId(stale.getId())) {
+                repoint(manifest, ctx.planId);
+                repointed++;
+                for (VanManifestItem item : itemRepository.findByManifestId(manifest.getId())) {
+                    switch (item.getStatus()) {
+                        case PLANNED -> {
+                            // Not yet physically loaded → free to re-route against the new plan.
+                            item.setStatus(ManifestItemStatus.EXCEPTION);
+                            itemRepository.save(item);
+                            rebindPlanned(ctx, cityId, date, item);
+                            rebound++;
+                        }
+                        case LOADED, ONBOARD -> {
+                            // Physically on the van; never auto-moved. Keep if its stop survived, else escalate.
+                            if (survivingStops.contains(stopKey(manifest.getVanId(), manifest.getLoopIndex(), item.getMeetingVertexId()))) {
+                                kept++;
+                            } else {
+                                cronEventProducer.emitLoopOverflow(cityId, manifest.getVanId(), item.getParcelId(),
+                                        manifest.getLoopIndex(), item.getSlaDeadline());
+                                escalated++;
+                            }
+                        }
+                        default -> kept++; // HANDED_OFF / RECONCILED / EXCEPTION — terminal, nothing to do
+                    }
+                }
+            }
+        }
+        if (repointed > 0) {
+            log.info("Reconciled day to live plan {} (city={} date={}): repointed={} reboundPlanned={} keptInCustody={} escalated={}",
+                    ctx.planId, cityId, date, repointed, rebound, kept, escalated);
+        }
+        return new ReconcileSummary(repointed, rebound, kept, escalated);
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────
+
+    // Re-route a not-yet-loaded item against the live plan via its counterparty DA. The old item is
+    // already EXCEPTION'd, so this appends a fresh PLANNED item on the correct loop, or escalates
+    // (LOOP_OVERFLOW) if that DA has no cron slot under the new plan.
+    private void rebindPlanned(PlanCtx ctx, UUID cityId, LocalDate date, VanManifestItem item) {
+        if (item.getDirection() == HandoffDirection.DELIVER) {
+            DaCronSchedule cron = ctx.daToCron.get(item.getCounterpartyDaId());
+            if (cron == null) {
+                cronEventProducer.emitLoopOverflow(cityId, null, item.getParcelId(), -1, item.getSlaDeadline());
+                return;
+            }
+            bindDeliverToCron(ctx, cityId, date, item.getParcelId(), cron, item.getSlaDeadline(), -1);
+        } else {
+            bindCollect(cityId, date, item.getParcelId(), item.getCounterpartyDaId());
+        }
+    }
+
+    private static String stopKey(UUID van, int loop, UUID vertex) {
+        return van + "|" + loop + "|" + vertex;
+    }
 
     private BindOutcome overflow(UUID cityId, UUID van, UUID parcelId, Instant deadline) {
         cronEventProducer.emitLoopOverflow(cityId, van, parcelId, -1, deadline);
@@ -235,7 +306,7 @@ class VanManifestServiceImpl implements VanManifestService {
 
     // Lock the loop's manifest row (creating it if absent); the unique constraint makes create race-safe.
     private VanManifest lockOrCreate(PlanCtx ctx, UUID van, int loop, LocalDate date) {
-        return manifestRepository.lockByVanLoopDate(van, loop, date).orElseGet(() -> {
+        return manifestRepository.lockByVanLoopDate(van, loop, date).map(m -> repoint(m, ctx.planId)).orElseGet(() -> {
             try {
                 manifestRepository.saveAndFlush(VanManifest.builder()
                         .routePlanId(ctx.planId).vanId(van).loopIndex(loop).validDate(date)
@@ -244,8 +315,20 @@ class VanManifestServiceImpl implements VanManifestService {
                 // another thread created it first — fall through and lock the existing row
             }
             return manifestRepository.lockByVanLoopDate(van, loop, date)
+                    .map(m -> repoint(m, ctx.planId))
                     .orElseThrow(() -> new IllegalStateException("manifest vanished for van=" + van + " loop=" + loop));
         });
+    }
+
+    // Option B safety net: if this physical (van,loop,day) row was created under a now-superseded plan
+    // (intraday re-plan), re-point it at the live plan rather than binding onto a stale manifest. A no-op
+    // when there is one plan/day. Backstops reconcileToLivePlan for binds that race an override.
+    private VanManifest repoint(VanManifest manifest, UUID livePlanId) {
+        if (!manifest.getRoutePlanId().equals(livePlanId)) {
+            manifest.setRoutePlanId(livePlanId);
+            manifestRepository.save(manifest);
+        }
+        return manifest;
     }
 
     private PlanCtx context(UUID cityId, LocalDate date) {

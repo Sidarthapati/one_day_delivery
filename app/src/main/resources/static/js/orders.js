@@ -15,6 +15,7 @@
   // so login just resets both forms' pickup/drop cards to empty.
   function resetLocationCards() {
     ['b2c', 'b2b'].forEach(form => ['origin', 'dest'].forEach(leg => clearPick(form, leg)));
+    refreshQuote('b2c');   // back to the placeholder state
   }
 
   function setupOrderExperience(role) {
@@ -45,26 +46,33 @@
     document.getElementById('order-no-booking').style.display = (canBook || isOrdersViewer) ? 'none' : '';
 
     // For a retail (B2C/C2C) booking the sender IS the logged-in account, so auto-fill the sender
-    // name from the stored account and lock it. (B2B's sender is the warehouse → stays editable.)
-    if (showB2c) applyAccountSender('o-b2c-sname');
+    // name and phone from the stored account and lock them. (B2B's sender is the warehouse → editable.)
+    if (showB2c) {
+      applyAccountSender('o-b2c-sname', currentUser && currentUser.name);
+      applyAccountSender('o-b2c-sphone', currentUser && currentUser.phone);
+    }
 
     recentBookings = [];
     renderRecent();
     // Bookings are persisted server-side and keyed to the logged-in user, so load the full
     // history (not just this session's bookings) on login and after every refresh.
-    if (canBook) loadMyBookings();
+    if (canBook) {
+      // No auto-refresh — it rebuilt the table and collapsed open details ("things not persisting").
+      // Refresh is manual: the ⟳ Refresh button (whole list) + a per-row ↻ (single booking). See renderRecent.
+      loadMyBookings();
+    }
     if (isOrdersViewer) loadAdminOrders();
     // Both the booking forms and the orders database live on the Orders tab.
     switchTab('orders');
   }
 
-  // Fills the given sender-name input from the logged-in account and locks it (read-only),
-  // since the booker is the sender. No-op if the account name is unknown (older token).
-  function applyAccountSender(inputId) {
+  // Fills the given sender input from the logged-in account and locks it (read-only),
+  // since the booker is the sender. No-op if the value is unknown (older token without it).
+  function applyAccountSender(inputId, value) {
     const el = document.getElementById(inputId);
     if (!el) return;
-    if (currentUser && currentUser.name) {
-      el.value = currentUser.name;
+    if (value) {
+      el.value = value;
       el.readOnly = true;
       el.classList.add('locked-field');
       el.title = 'Auto-filled from your account';
@@ -77,6 +85,137 @@
   function selectPay(btn) {
     document.querySelectorAll('#b2c-pay-seg button').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    refreshQuote('b2c');   // COD vs PREPAID changes the price (COD surcharge)
+  }
+
+  // ── Live M2 price preview (read-only cost box) ──────────────────────────────
+  // Mirrors what M4 sends to M2 at booking: chargeable weight = max(actual, L·W·H/5).
+  let _quoteTimer = null;
+  function quoteDirty(form) {
+    clearTimeout(_quoteTimer);
+    _quoteTimer = setTimeout(() => refreshQuote(form), 350);
+  }
+
+  function setCostBox(form, amount, note, state) {
+    const box = document.getElementById(`o-${form}-cost-box`);
+    if (!box) return;
+    document.getElementById(`o-${form}-cost-amount`).textContent = amount;
+    document.getElementById(`o-${form}-cost-note`).innerHTML = note;
+    box.classList.toggle('warn', state === 'warn');
+    box.classList.toggle('loading', state === 'loading');
+  }
+
+  async function refreshQuote(form) {
+    if (form !== 'b2c') return;                  // live preview wired for B2C
+    const o = picked.b2c.origin, d = picked.b2c.dest;
+    if (!o || !d) { setCostBox('b2c', '—', 'Set pickup &amp; drop on the map to see the price.', ''); return; }
+    const weight = +val('o-b2c-weight') || 0;
+    if (weight <= 0) { setCostBox('b2c', '—', 'Enter a weight to see the price.', ''); return; }
+    const l = +val('o-b2c-len') || 0, w = +val('o-b2c-wid') || 0, h = +val('o-b2c-hei') || 0;
+    const chargeable = Math.max(weight, Math.floor(l * w * h / 5));
+    const mode = document.querySelector('#b2c-pay-seg button.active').dataset.mode;
+    const reqBody = {
+      customer_type: 'B2C',
+      delivery_type: o.city === d.city ? 'SAME_CITY' : 'INTERCITY',
+      origin_city: o.city, dest_city: d.city,
+      chargeable_weight_grams: chargeable,
+      declared_value_paise: (+val('o-b2c-dval') || 0) * 100 || null,
+      payment_mode: mode,
+    };
+    setCostBox('b2c', '…', 'Pricing…', 'loading');
+    try {
+      const { status, data } = await orderApi('POST', '/api/v1/pricing/quote', reqBody);
+      if (status >= 200 && status < 300) {
+        const b = data.breakdown || {};
+        const parts = [`base ${inr(b.base_freight)}`];
+        if (b.cod_charge) parts.push(`COD ${inr(b.cod_charge)}`);
+        parts.push(`+ GST`);
+        setCostBox('b2c', inr(data.total_price_paise),
+          `Chargeable ${(chargeable / 1000).toFixed(2)} kg · ${parts.join(' · ')}`, '');
+      } else if (status === 422) {
+        setCostBox('b2c', '—', '⚠️ ' + esc(data && (data.detail || data.title) || 'No rate configured for this route.'), 'warn');
+      } else {
+        setCostBox('b2c', '—', 'Could not fetch price right now.', '');
+      }
+    } catch {
+      setCostBox('b2c', '—', 'Could not reach pricing service.', '');
+    }
+  }
+
+  // ── Published rate chart (read-only tariff browser) ─────────────────────────
+  const CITY_NAMES = {
+    DEL: 'Delhi', BBI: 'Bhubaneswar', CCU: 'Kolkata', BOM: 'Mumbai', HYD: 'Hyderabad',
+    BLR: 'Bengaluru', IXC: 'Chandigarh', GAU: 'Guwahati', MAA: 'Chennai',
+  };
+  const CITY_ORDER = ['DEL', 'BBI', 'CCU', 'BOM', 'HYD', 'BLR', 'IXC', 'GAU', 'MAA'];
+
+  async function openRateChart(customerType) {
+    const type = customerType || 'B2C';
+    document.getElementById('rate-chart-modal').style.display = 'flex';
+    const bodyEl = document.getElementById('rate-chart-body');
+    bodyEl.innerHTML = 'Loading…';
+    try {
+      const { status, data } = await orderApi('GET', '/api/v1/pricing/rate-card?customer_type=' + type);
+      if (status >= 200 && status < 300) renderRateChart(data, type);
+      else bodyEl.innerHTML = rateChartToggle(type) + `<p class="muted">No published tariff for ${type}.</p>`;
+    } catch {
+      bodyEl.innerHTML = '<p class="muted">Could not reach the pricing service.</p>';
+    }
+  }
+  function closeRateChart() { document.getElementById('rate-chart-modal').style.display = 'none'; }
+
+  // Customer-type switcher so any user (B2C / C2C / B2B) can view each published tariff.
+  function rateChartToggle(active) {
+    return '<div class="rate-toggle">' + ['B2C', 'C2C', 'B2B'].map(tp =>
+      `<button class="${tp === active ? 'active' : ''}" onclick="openRateChart('${tp}')">${tp}</button>`).join('') + '</div>';
+  }
+
+  function renderRateChart(t, activeType) {
+    document.getElementById('rate-chart-sub').textContent =
+      `${t.customer_type} · ${t.code} ${t.version} · base price = first ${(t.slab_grams / 1000)} kg`;
+
+    // Build the symmetric city-pair matrix from the flat rate list.
+    const lookup = {}; const present = new Set();
+    (t.rates || []).forEach(r => {
+      (lookup[r.origin_city] = lookup[r.origin_city] || {})[r.dest_city] = r.base_price_paise;
+      present.add(r.origin_city); present.add(r.dest_city);
+    });
+    const cities = [...present].sort((a, b) => {
+      const ia = CITY_ORDER.indexOf(a), ib = CITY_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+    const cityLabel = c => `${CITY_NAMES[c] || c}<br><span class="muted">${c}</span>`;
+
+    let head = '<tr><th>From \\ To</th>' + cities.map(c => `<th>${cityLabel(c)}</th>`).join('') + '</tr>';
+    let rows = cities.map(o => {
+      const tds = cities.map(d => {
+        if (o === d) return '<td class="rm-diag">—</td>';
+        const p = lookup[o] && lookup[o][d];
+        return `<td>${p ? '₹' + (p / 100) : '<span class="muted">—</span>'}</td>`;
+      }).join('');
+      return `<tr><th>${cityLabel(o)}</th>${tds}</tr>`;
+    }).join('');
+
+    const r = p => '₹' + (p / 100).toLocaleString('en-IN');
+    const discountNote = t.discount_bps > 0
+      ? `<li><b>Account discount:</b> ${(t.discount_bps / 100)}% off the base freight, applied at booking (B2B negotiated rate).</li>`
+      : '';
+    const rules = `
+      <ul class="rate-rules">
+        <li><b>Base price</b> is the charge for the first <b>${t.slab_grams / 1000} kg</b> of a city pair (table above, in ₹).</li>
+        <li><b>Volumetric weight</b> = L × W × H ÷ ${t.volumetric_divisor} (kg). Chargeable weight = <b>max(actual, volumetric)</b>.
+            <span class="muted">e.g. a 40×30×20 cm box = 24,000 ÷ ${t.volumetric_divisor} = 4.8 kg.</span></li>
+        <li><b>Additional weight:</b> each extra ${t.slab_grams / 1000} kg slab is charged at ${t.first_slab_pct - t.slab_decrement_pct}% of the base
+            and decreases ${t.slab_decrement_pct}% per slab, down to a floor of <b>${t.slab_floor_pct}%</b>.</li>
+        <li><b>COD charge:</b> max(${r(t.cod_min_paise)}, ${(t.cod_pct_bps / 100)}% of declared value). Prepaid has none.</li>
+        <li><b>GST:</b> ${(t.gst_bps / 100)}% on (freight + COD).</li>
+        <li><b>Same-city</b> base price: ${r(t.same_city_base_price_paise)} for the first slab.</li>
+        ${discountNote}
+      </ul>`;
+
+    document.getElementById('rate-chart-body').innerHTML =
+      rateChartToggle(activeType || t.customer_type) +
+      `<table class="rate-matrix"><thead>${head}</thead><tbody>${rows}</tbody></table>${rules}`;
   }
 
   // Builds an address block from a confirmed map pin (city + pincode are derived
@@ -84,7 +223,10 @@
   function legAddress(p) {
     const c = ORDER_CITIES[p.city];
     return {
-      line1: p.line1 || c.addr,
+      house_floor: p.houseFloor || null,
+      building_street: p.buildingStreet || null,
+      area_locality: p.areaLocality || null,
+      line1: p.line1 || p.buildingStreet || c.addr,
       city: c.name, pincode: p.pincode, state: c.state,
       latitude: p.lat, longitude: p.lon,
     };
@@ -285,17 +427,23 @@
       `<div class="loc-coords">${p.lat}, ${p.lon}</div>` +
       (p.hex ? `<div class="loc-addr">M3 hex ${p.hex}</div>` : '') +
       (p.label ? `<div class="loc-addr">${esc(p.label)}</div>` : '');
+    // Single funnel for both the map picker and the saved-address picker → keep the M2 cost box live.
+    refreshQuote(form);
   }
 
-  function openMapPicker(form, leg) {
-    _mapState = { form, leg };
+  // opts (optional) lets other modules reuse the picker: { title, onConfirm(pick) }. When given,
+  // confirm fires onConfirm instead of writing to the booking form's picked[form][leg].
+  function openMapPicker(form, leg, opts) {
+    _mapState = opts || { form, leg };
     _mapPick = null;
+    const isLeg = _mapState.leg === 'origin' || _mapState.leg === 'dest';
     document.getElementById('map-title').textContent =
-      (leg === 'origin' ? '📦 Pickup' : '🎯 Drop') + ' location';
+      (_mapState.title) ? _mapState.title
+      : (_mapState.leg === 'origin' ? '📦 Pickup' : '🎯 Drop') + ' location';
     document.getElementById('map-search').value = '';
     document.getElementById('map-search-results').style.display = 'none';
     document.getElementById('map-confirm').disabled = true;
-    setMapStatus('Search for an area, then click or drag the pin to the exact ' + (leg === 'origin' ? 'pickup' : 'drop') + ' point.');
+    setMapStatus('Search for an area, then click or drag the pin to the exact point.');
     document.getElementById('map-modal').style.display = 'flex';
 
     // Init after the container is visible so Leaflet measures it correctly.
@@ -306,14 +454,22 @@
           { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(_map);
         _map.on('click', e => placeMarker(e.latlng.lat, e.latlng.lng));
       }
-      const prev = picked[form][leg];
+      const prev = isLeg && _mapState.form ? picked[_mapState.form][_mapState.leg] : null;
       if (prev) { _map.setView([prev.lat, prev.lon], 15); placeMarker(prev.lat, prev.lon); }
       else      { _map.setView(INDIA_VIEW.center, INDIA_VIEW.zoom); if (_marker) { _map.removeLayer(_marker); _marker = null; } }
       _map.invalidateSize();
     }, 60);
   }
 
-  function closeMapPicker() { document.getElementById('map-modal').style.display = 'none'; }
+  function closeMapPicker() {
+    document.getElementById('map-modal').style.display = 'none';
+    // If the picker was opened from the address form, bring that form back (confirm or cancel).
+    if (window._reopenAddrForm) {
+      window._reopenAddrForm = false;
+      const m = document.getElementById('addr-modal');
+      if (m) m.style.display = 'flex';
+    }
+  }
 
   function setMapStatus(html, cls) {
     const el = document.getElementById('map-status');
@@ -376,9 +532,14 @@
 
   function confirmMapPicker() {
     if (!_mapPick || !_mapPick.city) return;
+    if (_mapState && typeof _mapState.onConfirm === 'function') {
+      _mapState.onConfirm(_mapPick);    // reused by the address book (cart.js)
+      closeMapPicker();
+      return;
+    }
     const { form, leg } = _mapState;
     picked[form][leg] = _mapPick;       // the pin is now the source of truth for city + pincode
-    renderLocCard(form, leg, _mapPick);
+    renderLocCard(form, leg, _mapPick); // renderLocCard refreshes the M2 cost box
     closeMapPicker();
   }
 
@@ -412,7 +573,7 @@
     const sumEl = document.getElementById(kind + '-booking-summary');
     if (status >= 200 && status < 300 && data && data.shipment_ref) {
       recentBookings.unshift({
-        ref: data.shipment_ref, state: data.state_label || data.state,
+        ref: data.shipment_ref, state: data.state_label || data.state, rawState: data.state,
         // Use the server's real customer type (B2C/C2C/B2B). The form 'kind' is only a fallback —
         // it would mislabel a C2C booking (which reuses the b2c form) as B2C.
         type: (data.customer_type || kind).toUpperCase(),
@@ -444,6 +605,7 @@
         recentBookings = data.map(s => ({
           ref: s.shipment_ref,
           state: s.state_label || s.state,
+          rawState: s.state,
           type: (s.customer_type || '').toUpperCase(),
           total: s.total_price_paise != null ? s.total_price_paise : null,
           by: currentUser.email,
@@ -453,24 +615,198 @@
     renderRecent();
   }
 
+  let bookingFilter = 'active';   // default: hide cancelled clutter
+  function setBookingFilter(v) { bookingFilter = v; renderRecent(); }
+
   function renderRecent() {
     const c = document.getElementById('recent-bookings');
     if (!recentBookings.length) { c.innerHTML = '<div class="empty-state">No bookings yet</div>'; return; }
-    c.innerHTML = `<table class="data-table">
+    const states = [...new Set(recentBookings.map(b => b.state))].sort();
+    const filtered = recentBookings.filter(b =>
+      bookingFilter === 'all' ? true
+        : bookingFilter === 'active' ? (b.rawState || b.state) !== 'CANCELLED'
+        : b.state === bookingFilter);
+    const filterCtl = `<div style="margin-bottom:.6rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+      <label class="muted" style="font-size:.85em">Filter by state</label>
+      <select onchange="setBookingFilter(this.value)" style="padding:.3rem .5rem;border:1px solid #cbd5e1;border-radius:.4rem;font-size:.85em">
+        <option value="active"${bookingFilter === 'active' ? ' selected' : ''}>Active (hide cancelled)</option>
+        <option value="all"${bookingFilter === 'all' ? ' selected' : ''}>All states (${recentBookings.length})</option>
+        ${states.map(s => `<option value="${esc(s)}"${bookingFilter === s ? ' selected' : ''}>${esc(s)}</option>`).join('')}
+      </select>
+      <span class="muted" style="font-size:.85em">showing ${filtered.length} of ${recentBookings.length}</span>
+    </div>`;
+    if (!filtered.length) { c.innerHTML = filterCtl + '<div class="empty-state">No bookings in this filter</div>'; return; }
+    c.innerHTML = filterCtl + `<table class="data-table">
       <thead><tr><th>Reference</th><th>Type</th><th>State</th><th>Total</th><th>Booked by</th><th></th></tr></thead>
-      <tbody>${recentBookings.map(b => {
-        const cancelled = b.state === 'CANCELLED';
-        const action = cancelled
+      <tbody>${filtered.map(b => {
+        const cancelled = (b.rawState || b.state) === 'CANCELLED';
+        const safeId = b.ref.replace(/[^A-Za-z0-9]/g, '_');
+        const refreshBtn = `<button class="btn btn-sm btn-ghost" onclick="refreshOneBooking('${esc(b.ref)}','${safeId}',this)" title="Refresh just this booking (status + DA/OTP)">↻</button> `;
+        const action = refreshBtn + (cancelled
           ? '<span class="muted">cancelled</span>'
-          : `<button class="btn btn-sm btn-danger" onclick="cancelMyBooking('${esc(b.ref)}','${esc(b.type)}',this)">Cancel</button>`;
+          : `<button class="btn btn-sm btn-danger" onclick="cancelMyBooking('${esc(b.ref)}','${esc(b.type)}',this)">Cancel</button>`);
         return `<tr>
-        <td><strong>${esc(b.ref)}</strong></td>
+        <td><strong><a href="#" onclick="toggleBookingDetail('${esc(b.ref)}','${safeId}');return false"
+              style="color:#1d4ed8;text-decoration:none" title="View the DB record">▸ ${esc(b.ref)}</a></strong></td>
         <td><span class="badge badge-blue">${esc(b.type)}</span></td>
-        <td>${esc(b.state)}</td>
+        <td id="bk-state-${safeId}">${stateCellInner(b)}</td>
         <td>${b.total != null ? inr(b.total) : '—'}</td>
         <td class="muted">${esc(b.by)}</td>
         <td>${action}</td>
+      </tr>
+      <tr class="booking-detail-row" id="bk-detail-${safeId}" style="display:none">
+        <td colspan="6" style="background:#f8fafc;padding:0"></td>
       </tr>`; }).join('')}</tbody></table>`;
+  }
+
+  // The State cell's inner markup — factored so a single-row refresh can re-render it identically.
+  // (DA + handover code live in the expanded detail now, not here.)
+  function stateCellInner(b) {
+    return `<code style="font-size:.85em">${esc(b.rawState || b.state)}</code>`
+      + (b.rawState && b.state !== b.rawState ? `<br><span class="muted" style="font-size:.8em">${esc(b.state)}</span>` : '');
+  }
+
+  // Refresh ONE booking in place — patches its State cell and re-renders its detail if open, without
+  // rebuilding the table (so nothing else collapses or loses scroll).
+  async function refreshOneBooking(ref, safeId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const { record, pk } = await fetchDetail(ref);
+      if (record) {
+        const b = recentBookings.find(x => x.ref === ref);
+        if (b) {
+          b.rawState = record.state; b.state = record.state_label || record.state;
+          const cell = document.getElementById('bk-state-' + safeId);
+          if (cell) cell.innerHTML = stateCellInner(b);
+        }
+        const row = document.getElementById('bk-detail-' + safeId);
+        if (row && row.style.display !== 'none') row.firstElementChild.innerHTML = renderBookingDetail(record, pk, safeId);
+      }
+    } catch (e) { /* keep the current row on a transient error */ }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '↻'; } }
+  }
+
+  // Fetch a booking's DB record + its live handover status (assigned DA + current pickup/delivery OTP).
+  async function fetchDetail(ref) {
+    const [rec, pkr] = await Promise.all([
+      orderApi('GET', `/api/v1/shipments/mine/${encodeURIComponent(ref)}`),
+      orderApi('POST', `/api/demo/da/refresh-status?ref=${encodeURIComponent(ref)}`, null).catch(() => null),
+    ]);
+    return {
+      record: (rec.status >= 200 && rec.status < 300) ? rec.data : null,
+      pk: (pkr && pkr.status === 200) ? pkr.data : null,
+    };
+  }
+
+  // Customer mints a fresh pickup code from inside the detail (old one expired). The DA never sees it —
+  // the customer reads the new code out. Re-renders the handover section with the new code.
+  async function regenerateInDetail(ref, safeId) {
+    try { await orderApi('POST', `/api/demo/da/regenerate-otp?ref=${encodeURIComponent(ref)}`, null); } catch (e) { /* ignore */ }
+    refreshOneBooking(ref, safeId);
+  }
+
+  // The handover-code section: shows the DA + one-time code for the CURRENT stage, and greys out once a
+  // stage is done. Pickup code (BOOKED/PICKUP_ASSIGNED) → grey once picked up → delivery code
+  // (DROP_COLLECTED) → grey once delivered.
+  function renderHandover(d, pk, safeId) {
+    const st = d.state;
+    const box = (bg, border, body) => `<div style="margin-bottom:.8rem;padding:.65rem .85rem;border-radius:.5rem;background:${bg};border:1px solid ${border}">${body}</div>`;
+    const grey = body => box('#f1f5f9', '#e2e8f0', `<span style="color:#94a3b8">${body}</span>`);
+    const codeBig = (label, code) => `<div style="font-size:.8rem;color:#334155">${label}</div>
+      <div style="font-family:ui-monospace,monospace;font-size:1.7rem;font-weight:700;letter-spacing:.18em;color:#0f172a;margin:.1rem 0">${esc(code)}</div>`;
+
+    if (st === 'BOOKED' || st === 'PICKUP_ASSIGNED' || st === 'PICKUP_FAILED') {
+      const da = pk && pk.da_short, otp = pk && pk.otp;
+      const daLine = st === 'PICKUP_FAILED'
+        ? `🔎 Your previous agent became unavailable — <b>reassigning</b> a new Delivery Associate…`
+        : da
+        ? `🚚 <b>DA ${esc(da)}</b> is on the way for your pickup${pk.van_short ? ' · van ' + esc(pk.van_short) : ''}${pk.meeting_time ? ' · hub cron ' + esc(pk.meeting_time) : ''}.`
+        : `🔎 Finding a Delivery Associate…`;
+      const codeLine = otp ? codeBig('🔑 Your one-time <b>pickup code</b> — share it with the DA when they arrive:', otp)
+        : `<span class="muted">Your code appears here once a DA is assigned.</span>`;
+      const regen = otp ? `<button class="btn btn-sm btn-ghost" style="margin-top:.35rem" onclick="regenerateInDetail('${esc(d.shipment_ref)}','${safeId}')" title="Mint a fresh code — read the new one to the DA">Regenerate code</button>` : '';
+      return box('#ecfdf5', '#a7f3d0', `<div style="font-weight:600;color:#065f46;margin-bottom:.35rem">🤝 Pickup handover</div>
+        <div style="margin-bottom:.35rem">${daLine}</div>${codeLine}${regen}`);
+    }
+    if (st === 'DROP_COLLECTED') {
+      const otp = pk && pk.otp;
+      const codeLine = otp ? codeBig('🔑 Your <b>delivery code</b> — give it to the agent at your door:', otp)
+        : `<span class="muted">Your delivery code will appear here.</span>`;
+      return box('#eff6ff', '#bfdbfe', `<div style="font-weight:600;color:#1e40af;margin-bottom:.35rem">🏠 Out for delivery</div>${codeLine}`);
+    }
+    if (st === 'DROPPED' || st === 'DELIVERED') return grey('✓ Delivered — parcel handed to the recipient. No code needed.');
+    if (st === 'CANCELLED') return grey('✕ Booking cancelled.');
+    // picked up but not yet out-for-delivery → pickup handover done
+    return grey('✓ Pickup handover complete — the DA has your parcel. Your pickup code is no longer needed.');
+  }
+
+  // Click a booking reference → reveal its DB record + live handover code (GET mine/{ref} + refresh-status).
+  async function toggleBookingDetail(ref, safeId) {
+    const row = document.getElementById('bk-detail-' + safeId);
+    if (!row) return;
+    const cell = row.firstElementChild;
+    if (row.style.display !== 'none') { row.style.display = 'none'; return; }   // collapse on second click
+    row.style.display = '';
+    cell.innerHTML = '<div class="muted" style="padding:.75rem 1rem">Loading record…</div>';
+    try {
+      const { record, pk } = await fetchDetail(ref);
+      if (!record) {
+        cell.innerHTML = `<div class="response error" style="margin:.5rem 1rem">Could not load ${esc(ref)}.</div>`;
+        return;
+      }
+      cell.innerHTML = renderBookingDetail(record, pk, safeId);
+    } catch (e) {
+      cell.innerHTML = `<div class="response error" style="margin:.5rem 1rem">${esc(String(e))}</div>`;
+    }
+  }
+
+  function renderBookingDetail(d, pk, safeId) {
+    const v = x => (x == null || x === '') ? '<span class="muted">—</span>' : esc(String(x));
+    const money = x => x == null ? '<span class="muted">—</span>' : inr(x);
+    const kg = g => g == null ? '<span class="muted">—</span>' : (g / 1000).toFixed(2) + ' kg';
+    const dt = s => s ? new Date(s).toLocaleString('en-IN') : '<span class="muted">—</span>';
+    const geo = (la, lo) => (la != null && lo != null) ? `${(+la).toFixed(5)}, ${(+lo).toFixed(5)}` : '<span class="muted">—</span>';
+    const cell = (label, val) =>
+      `<div style="display:flex;flex-direction:column;gap:.1rem">
+         <span class="muted" style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em">${label}</span>
+         <span style="font-size:.85rem">${val}</span>
+       </div>`;
+    const section = (title, body) =>
+      `<div style="margin-bottom:.7rem">
+         <div style="font-weight:600;font-size:.76rem;color:#334155;margin-bottom:.35rem;border-bottom:1px solid #e2e8f0;padding-bottom:.18rem">${title}</div>
+         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.45rem .9rem">${body}</div>
+       </div>`;
+    return `<div style="padding:.85rem 1.1rem;border-left:3px solid #1d4ed8">
+      ${renderHandover(d, pk, safeId)}
+      <div style="font-size:.68rem;color:#64748b;margin-bottom:.55rem">📄 shipments record · <code>GET /api/v1/shipments/mine/${esc(d.shipment_ref)}</code></div>
+      ${section('Shipment', [
+        cell('Reference', `<strong>${v(d.shipment_ref)}</strong>`),
+        cell('Customer type', v(d.customer_type)),
+        cell('State', `${v(d.state)} <span class="muted">(${v(d.state_label)})</span>`),
+        cell('Delivery type', v(d.delivery_type)),
+        cell('Pickup / Drop', `${v(d.pickup_type)} / ${v(d.drop_type)}`),
+        cell('Payment mode', v(d.payment_mode)),
+      ].join(''))}
+      ${section('Sender · origin', [
+        cell('Name', v(d.sender_name)), cell('Phone', v(d.sender_phone)), cell('Email', v(d.sender_email)),
+        cell('Address', v(d.origin_line1)), cell('City / pincode', `${v(d.origin_city)} · ${v(d.origin_pincode)}`),
+        cell('Lat, Lon', geo(d.origin_lat, d.origin_lon)), cell('Origin tile', v(d.origin_tile_id)),
+      ].join(''))}
+      ${section('Receiver · destination', [
+        cell('Name', v(d.receiver_name)), cell('Phone', v(d.receiver_phone)), cell('Email', v(d.receiver_email)),
+        cell('Address', v(d.dest_line1)), cell('City / pincode', `${v(d.dest_city)} · ${v(d.dest_pincode)}`),
+        cell('Lat, Lon', geo(d.dest_lat, d.dest_lon)), cell('Dest tile', v(d.dest_tile_id)),
+      ].join(''))}
+      ${section('Parcel & pricing', [
+        cell('Actual weight', kg(d.weight_grams)), cell('Volumetric', kg(d.volumetric_weight_grams)),
+        cell('Chargeable', kg(d.chargeable_weight_grams)), cell('Declared value', money(d.declared_value_paise)),
+        cell('Quoted', money(d.quoted_price_paise)), cell('Tax (GST)', money(d.tax_paise)),
+        cell('Total', `<strong>${money(d.total_price_paise)}</strong>`),
+      ].join(''))}
+      ${section('Lifecycle', [
+        cell('Created', dt(d.created_at)), cell('Cancelled', dt(d.cancelled_at)),
+      ].join(''))}
+    </div>`;
   }
 
   // Customer cancels one of their own (session) bookings. Lane comes from the booking type
@@ -483,7 +819,7 @@
       const { status, data } = await orderApi('DELETE', `/api/v1/${lane}/shipments/${encodeURIComponent(ref)}`);
       if (status >= 200 && status < 300) {
         const row = recentBookings.find(b => b.ref === ref);
-        if (row) row.state = 'CANCELLED';
+        if (row) { row.state = 'Cancelled'; row.rawState = 'CANCELLED'; }
         renderRecent();
       } else {
         alert('Cancel failed: ' + (data && (data.detail || data.title) || ('HTTP ' + status)));
@@ -495,6 +831,68 @@
     }
   }
 
+  // The customer never assigns a DA — M5 does that automatically off the CREATED event. This only POLLS
+  // the pickup status and reveals which DA M5 picked + the one-time pickup code (OTP). Safe to click
+  // repeatedly: the backend caches the OTP so the code stays stable.
+  async function refreshPickupStatus(silent) {
+    const ref = val('otp-ref');
+    if (!ref) { if (!silent) alert('Enter a shipment ref (book one first, or click "Track" on a booking)'); return; }
+    const btn = document.querySelector('[onclick="refreshPickupStatus()"]');
+    if (!silent) setLoading(btn, true);
+    try {
+      const { status, data } = await orderApi('POST', `/api/demo/da/refresh-status?ref=${encodeURIComponent(ref)}`, null);
+      if (status !== 200 || !data) { showResponse('otp-response', { body: data }, true); return; }
+      const row = recentBookings.find(b => b.ref === ref);
+      // DA_ASSIGNED is the only pre-pickup "a DA is coming, here's your OTP" reveal. A PICKED_UP (or
+      // later) shipment also returns assigned=true + a cached OTP, so we must key off the stage — not
+      // assigned/otp — otherwise a picked-up parcel falls back into the "DA is coming" branch and the
+      // row freezes at PICKUP_ASSIGNED.
+      if (data.stage === 'DA_ASSIGNED') {
+        const lines = [
+          `🚚 ${data.stage_label}: DA ${data.da_short} is coming for your ${data.leg}.`,
+          `🔑 Your pickup OTP: ${data.otp} — give it to the DA when they arrive.`,
+        ];
+        if (data.van_short) lines.push(`🚐 Van ${data.van_short}${data.meeting_time ? ' · meets hub cron ' + data.meeting_time : ''}`);
+        showResponse('otp-response', lines.join('\n'), false);
+        if (row) { row.state = data.stage_label; row.rawState = 'PICKUP_ASSIGNED'; row.da = data.da_short; row.otp = data.otp; row.van = data.van_short; renderRecent(); }
+      } else if (data.stage === 'FINDING_DA') {
+        showResponse('otp-response', '🔎 ' + (data.message || 'Finding a delivery associate…'), false);
+      } else {
+        // already past pickup — show the journey stage
+        showResponse('otp-response', '📦 ' + (data.stage_label || data.state), false);
+        if (row) { row.state = data.stage_label || data.state; row.rawState = data.state; renderRecent(); }
+      }
+    } catch (e) {
+      if (!silent) showResponse('otp-response', { body: { detail: 'Network error — is the backend up?' } }, true);
+    } finally { if (!silent) setLoading(btn, false); }
+  }
+
+  // Customer mints a fresh pickup code (old one expired). The DA never sees it — the customer reads
+  // the new code out. Updates the demo's stable cache so a subsequent Refresh shows the same code.
+  async function regeneratePickupOtp() {
+    const ref = val('otp-ref');
+    if (!ref) { alert('Enter shipment ref'); return; }
+    const btn = document.querySelector('[onclick="regeneratePickupOtp()"]');
+    setLoading(btn, true);
+    try {
+      const { status, data } = await orderApi('POST', `/api/demo/da/regenerate-otp?ref=${encodeURIComponent(ref)}`, null);
+      if (status === 200 && data && data.otp) {
+        showResponse('otp-response', `🔑 New pickup code: ${data.otp} — read it to the DA when they arrive.`, false);
+        const row = recentBookings.find(b => b.ref === ref);
+        if (row) { row.otp = data.otp; renderRecent(); }
+      } else showResponse('otp-response', { body: data }, true);
+    } catch (e) {
+      showResponse('otp-response', { body: { detail: 'Network error — is the backend up?' } }, true);
+    } finally { setLoading(btn, false); }
+  }
+
+  // Recent-bookings row shortcut: load the ref into the card and check its status in one click.
+  async function startPickup(ref) {
+    document.getElementById('otp-ref').value = ref;
+    document.getElementById('card-pickup-otp').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await refreshPickupStatus();
+  }
+
   async function otpVerify() {
     const ref = val('otp-ref'), otp = val('otp-code');
     if (!ref || !otp) { alert('Enter shipment ref and OTP'); return; }
@@ -502,8 +900,11 @@
     setLoading(btn, true);
     try {
       const { status, data } = await orderApi('POST', `/internal/v1/shipments/${encodeURIComponent(ref)}/pickup-otp/verify`, { otp });
-      if (status === 204) showResponse('otp-response', '✅ OTP verified — shipment transitioned PICKUP_ASSIGNED → PICKED_UP', false);
-      else showResponse('otp-response', { body: data }, true);
+      if (status === 204) {
+        showResponse('otp-response', '✅ OTP verified — shipment transitioned PICKUP_ASSIGNED → PICKED_UP', false);
+        const row = recentBookings.find(b => b.ref === ref);
+        if (row) { row.state = 'PICKED_UP'; row.rawState = 'PICKED_UP'; renderRecent(); }
+      } else showResponse('otp-response', { body: data }, true);
     } catch (e) {
       showResponse('otp-response', { body: { detail: 'Network error — is the backend up?' } }, true);
     } finally { setLoading(btn, false); }

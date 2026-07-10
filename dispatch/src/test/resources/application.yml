@@ -1,0 +1,21 @@
+# Test config for dispatch @DataJpaTest — runs against the LOCAL Postgres (real PG, no Docker).
+# Flyway is scoped to the dispatch migrations only; ignore-migration-patterns lets it coexist with a
+# local DB that already has other modules' Flyway history (their migrations are "missing" from this
+# module's classpath). ddl-auto=validate then asserts the JPA entities match the V5_* schema.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/oneday
+    username: oneday
+    password: secret      # local dev credential (documented in CLAUDE.md) — NOT the cloud secret
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/dispatch
+    out-of-order: true
+    # The local DB carries other modules' Flyway history that isn't on the dispatch test classpath;
+    # skip Flyway's own validate so those "missing" entries don't fail the run. Hibernate
+    # ddl-auto=validate below is what actually checks the M5 entities against the V5_* schema.
+    validate-on-migrate: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false

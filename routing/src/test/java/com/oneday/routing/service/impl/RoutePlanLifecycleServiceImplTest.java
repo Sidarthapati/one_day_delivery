@@ -19,6 +19,7 @@ import com.oneday.routing.repository.RoutePlanStopRepository;
 import com.oneday.routing.service.GridDataAdapter;
 import com.oneday.routing.service.RoutePlanningService;
 import com.oneday.routing.service.ShuttleScheduleService;
+import com.oneday.routing.service.VanManifestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,6 +55,7 @@ class RoutePlanLifecycleServiceImplTest {
     @Mock ShuttleScheduleService shuttleScheduleService;
     @Mock CronEventProducer cronEventProducer;
     @Mock GridDataAdapter gridDataAdapter;
+    @Mock VanManifestService vanManifestService;
 
     final Clock clock = Clock.fixed(Instant.parse("2026-06-09T03:30:00Z"), ZoneId.of("Asia/Kolkata"));
     RoutePlanLifecycleServiceImpl service;
@@ -65,7 +67,7 @@ class RoutePlanLifecycleServiceImplTest {
     void setUp() {
         service = new RoutePlanLifecycleServiceImpl(routePlanRepository, routePlanStopRepository,
                 daCronScheduleRepository, auditRepository, routePlanningService, shuttleScheduleService,
-                cronEventProducer, gridDataAdapter, new ObjectMapper(), clock);
+                cronEventProducer, gridDataAdapter, vanManifestService, new ObjectMapper(), clock);
     }
 
     private RoutePlan plan(UUID id, RoutePlanStatus status, RoutePlanSource source, int revision) {

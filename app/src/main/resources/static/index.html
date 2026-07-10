@@ -11,7 +11,7 @@
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <!-- Razorpay hosted checkout (used when the backend runs in live/test-API mode) -->
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/app.css?v=m2-ratechart" />
 </head>
 <body>
 
@@ -68,6 +68,10 @@
         <input type="text" id="reg-name" placeholder="Ravi Kumar" />
       </div>
       <div class="field" style="margin-bottom:.75rem">
+        <label>Phone (+91XXXXXXXXXX)</label>
+        <input type="tel" id="reg-phone" placeholder="+919000000001" />
+      </div>
+      <div class="field" style="margin-bottom:.75rem">
         <label>Email</label>
         <input type="email" id="reg-email" placeholder="ravi@example.com" />
       </div>
@@ -86,6 +90,7 @@
 <div id="dashboard-view">
   <div class="tab-bar">
     <button class="tab-btn active" onclick="switchTab('orders')">📦 Book Shipment</button>
+    <button class="tab-btn" id="cart-tab-btn" style="display:none" onclick="switchTab('cart')">🛒 Cart</button>
     <button class="tab-btn" onclick="switchTab('auth')">Auth</button>
     <button class="tab-btn" onclick="switchTab('users')">Users</button>
     <button class="tab-btn" onclick="switchTab('roles')">Roles</button>
@@ -119,14 +124,20 @@
           <div class="loc-card">
             <div class="loc-card-head">
               <span class="loc-kind">📦 Pickup location</span>
-              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2c','origin')">📍 Set on map</button>
+              <div style="display:flex;gap:.4rem">
+                <button type="button" class="btn btn-sm btn-ghost" onclick="openSavedPicker('b2c','origin')">📒 Saved</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="setOnMap('b2c','origin')">📍 Set on map</button>
+              </div>
             </div>
             <div class="loc-card-body" id="o-b2c-origin-loc"><div class="loc-empty">No pickup point yet — tap “Set on map”.</div></div>
           </div>
           <div class="loc-card">
             <div class="loc-card-head">
               <span class="loc-kind">🎯 Drop location</span>
-              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2c','dest')">📍 Set on map</button>
+              <div style="display:flex;gap:.4rem">
+                <button type="button" class="btn btn-sm btn-ghost" onclick="openSavedPicker('b2c','dest')">📒 Saved</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="setOnMap('b2c','dest')">📍 Set on map</button>
+              </div>
             </div>
             <div class="loc-card-body" id="o-b2c-dest-loc"><div class="loc-empty">No drop point yet — tap “Set on map”.</div></div>
           </div>
@@ -138,24 +149,45 @@
           <div class="field"><label>Receiver Phone</label><input id="o-b2c-rphone" value="+919000000002" /></div>
         </div>
         <div class="form-row">
-          <div class="field" style="max-width:130px"><label>Weight (g)</label><input id="o-b2c-weight" type="number" value="1000" /></div>
-          <div class="field" style="max-width:90px"><label>L (cm)</label><input id="o-b2c-len" type="number" value="20" /></div>
-          <div class="field" style="max-width:90px"><label>W (cm)</label><input id="o-b2c-wid" type="number" value="15" /></div>
-          <div class="field" style="max-width:90px"><label>H (cm)</label><input id="o-b2c-hei" type="number" value="10" /></div>
-          <div class="field" style="max-width:140px"><label>Declared Value (₹)</label><input id="o-b2c-dval" type="number" value="500" /></div>
+          <div class="field" style="max-width:130px"><label>Weight (g)</label><input id="o-b2c-weight" type="number" value="1000" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:90px"><label>L (cm)</label><input id="o-b2c-len" type="number" value="20" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:90px"><label>W (cm)</label><input id="o-b2c-wid" type="number" value="15" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:90px"><label>H (cm)</label><input id="o-b2c-hei" type="number" value="10" oninput="quoteDirty('b2c')" /></div>
+          <div class="field" style="max-width:140px"><label>Declared Value (₹)</label><input id="o-b2c-dval" type="number" value="500" oninput="quoteDirty('b2c')" /></div>
+        </div>
+        <!-- Live shipping cost computed by M2 (read-only) -->
+        <div class="cost-box" id="o-b2c-cost-box">
+          <div class="cost-box-info">
+            <span class="cost-box-label">📦 Shipping cost <span class="muted">(computed by M2)</span></span>
+            <span class="cost-box-note" id="o-b2c-cost-note">Set pickup, drop &amp; weight to see the price.</span>
+            <a href="#" class="cost-box-link" onclick="openRateChart('B2C');return false;">📋 View full rate chart</a>
+          </div>
+          <span class="cost-box-amount" id="o-b2c-cost-amount">—</span>
         </div>
         <div class="form-row" style="align-items:center">
           <div class="field" style="flex:0">
             <label>Payment</label>
             <div class="seg" id="b2c-pay-seg">
               <button type="button" class="active" data-mode="PREPAID" onclick="selectPay(this)">Prepaid</button>
-              <button type="button" data-mode="COD" onclick="selectPay(this)">COD</button>
             </div>
           </div>
+          <button class="btn btn-ghost" style="align-self:flex-end" onclick="addCurrentToCart('b2c')">🛒 Add to Cart</button>
           <button class="btn btn-primary" style="align-self:flex-end" onclick="bookB2c()">Book Shipment</button>
         </div>
         <div id="b2c-booking-summary"></div>
         <div id="b2c-booking-response" class="response"></div>
+
+        <!-- Bulk: one pickup → many destinations (B2C/B2B only) -->
+        <div id="b2c-bulk" style="display:none;margin-top:1rem;border-top:1px dashed #cbd5e1;padding-top:.85rem">
+          <div class="section-label">📑 Bulk destinations from this pickup <span class="tag tag-post">POST /api/v1/bulk/upload</span></div>
+          <p class="muted" style="margin:.25rem 0 .5rem">Set the <strong>Pickup location</strong> above, then upload a sheet of destinations — each becomes a cart item sharing this pickup.</p>
+          <div class="form-row" style="align-items:center">
+            <button class="btn btn-ghost" onclick="downloadTemplate()">⬇️ Destinations Template</button>
+            <input type="file" id="b2c-bulk-file" accept=".xlsx" style="display:none" onchange="uploadBulk(this,'b2c')" />
+            <button class="btn btn-primary" id="b2c-bulk-btn" onclick="document.getElementById('b2c-bulk-file').click()">⬆️ Upload Destinations</button>
+          </div>
+          <div id="b2c-bulk-response" class="response"></div>
+        </div>
       </div>
 
       <!-- B2B Booking -->
@@ -170,14 +202,20 @@
           <div class="loc-card">
             <div class="loc-card-head">
               <span class="loc-kind">📦 Pickup location</span>
-              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2b','origin')">📍 Set on map</button>
+              <div style="display:flex;gap:.4rem">
+                <button type="button" class="btn btn-sm btn-ghost" onclick="openSavedPicker('b2b','origin')">📒 Saved</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="setOnMap('b2b','origin')">📍 Set on map</button>
+              </div>
             </div>
             <div class="loc-card-body" id="o-b2b-origin-loc"><div class="loc-empty">No pickup point yet — tap “Set on map”.</div></div>
           </div>
           <div class="loc-card">
             <div class="loc-card-head">
               <span class="loc-kind">🎯 Drop location</span>
-              <button type="button" class="btn btn-sm btn-primary" onclick="openMapPicker('b2b','dest')">📍 Set on map</button>
+              <div style="display:flex;gap:.4rem">
+                <button type="button" class="btn btn-sm btn-ghost" onclick="openSavedPicker('b2b','dest')">📒 Saved</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="setOnMap('b2b','dest')">📍 Set on map</button>
+              </div>
             </div>
             <div class="loc-card-body" id="o-b2b-dest-loc"><div class="loc-empty">No drop point yet — tap “Set on map”.</div></div>
           </div>
@@ -197,17 +235,38 @@
         </div>
         <div class="form-row">
           <button class="btn btn-primary" onclick="bookB2b()">Book on Credit</button>
+          <button class="btn btn-ghost" onclick="addCurrentToCart('b2b')">🛒 Add to Cart</button>
           <button class="btn btn-ghost" onclick="bookB2b(true)" title="Books against the near-limit QuickShip demo account → 402">Demo: Over Credit Limit</button>
+          <a href="#" class="cost-box-link" onclick="openRateChart('B2B');return false;" style="align-self:center;margin-left:.4rem">📋 View rate chart</a>
         </div>
         <div id="b2b-booking-summary"></div>
         <div id="b2b-booking-response" class="response"></div>
+
+        <!-- Bulk: one pickup → many destinations -->
+        <div id="b2b-bulk" style="display:none;margin-top:1rem;border-top:1px dashed #cbd5e1;padding-top:.85rem">
+          <div class="section-label">📑 Bulk destinations from this pickup <span class="tag tag-post">POST /api/v1/bulk/upload</span></div>
+          <p class="muted" style="margin:.25rem 0 .5rem">Set the <strong>Pickup location</strong> above, then upload a sheet of destinations — each becomes a cart item sharing this pickup.</p>
+          <div class="form-row" style="align-items:center">
+            <button class="btn btn-ghost" onclick="downloadTemplate()">⬇️ Destinations Template</button>
+            <input type="file" id="b2b-bulk-file" accept=".xlsx" style="display:none" onchange="uploadBulk(this,'b2b')" />
+            <button class="btn btn-primary" id="b2b-bulk-btn" onclick="document.getElementById('b2b-bulk-file').click()">⬆️ Upload Destinations</button>
+          </div>
+          <div id="b2b-bulk-response" class="response"></div>
+        </div>
       </div>
 
       <!-- Recent bookings -->
       <div class="card" id="card-recent-bookings">
-        <h2><span class="icon">🧾</span> Your Bookings <span class="muted" style="font-weight:400">all of your shipments</span></h2>
+        <h2 style="display:flex;align-items:center;gap:.5rem">
+          <span class="icon">🧾</span> Your Bookings <span class="muted" style="font-weight:400">all of your shipments</span>
+          <button class="btn btn-sm btn-ghost" style="margin-left:auto" onclick="loadMyBookings()" title="Reload from the server">⟳ Refresh</button>
+        </h2>
         <div id="recent-bookings"><div class="empty-state">No bookings yet</div></div>
       </div>
+
+      <!-- Pickup status — customer-facing OTP + "your DA is coming" -->
+      <!-- Pickup/delivery handover code now lives inside each booking's expanded detail (click the ref
+           in "Your Bookings") — the DA/OTP shows there and greys out once each stage is done. -->
 
       <!-- Admin: read-only orders database (admin cannot book) -->
       <div class="card" id="card-admin-orders" style="display:none">
@@ -219,6 +278,30 @@
           <button class="btn btn-sm btn-ghost" id="admin-orders-clear" style="display:none" onclick="clearAdminFilters()">Clear filters</button>
         </div>
         <div id="admin-orders-container" style="overflow-x:auto"><div class="empty-state">Click Refresh to load orders</div></div>
+      </div>
+    </div>
+
+    <!-- ══════════ CART & BULK TAB (M4) ══════════ -->
+    <div class="tab-panel" id="tab-cart">
+
+      <!-- Cart (saved addresses are managed inline from the Book Shipment flow: "📒 Saved" /
+           "Save this address") so the dedicated address card lives there, not here. -->
+      <div class="card" id="card-cart">
+        <h2><span class="icon">🛒</span> Your Cart <span class="tag tag-get">GET /api/v1/cart</span></h2>
+        <p class="muted" style="margin-bottom:.5rem">Each line is an independent shipment. Add items from the Book Shipment tab or via Excel, then check out together.</p>
+        <div class="form-row" style="align-items:center">
+          <button class="btn btn-sm btn-ghost" onclick="loadCart()">Refresh</button>
+          <span class="muted" id="cart-summary">—</span>
+        </div>
+        <div id="cart-list" style="margin-top:.5rem"><div class="empty-state">Cart is empty</div></div>
+        <div class="form-row" id="cart-checkout-row" style="display:none;align-items:center;margin-top:.75rem">
+          <div class="field" id="cart-b2b-acct-field" style="display:none;max-width:340px">
+            <label>B2B Account ID</label>
+            <input id="cart-b2b-acct" value="a1b2c3d4-e5f6-7890-abcd-ef1234567890" />
+          </div>
+          <button class="btn btn-primary" style="align-self:flex-end" onclick="checkoutCart()">Checkout</button>
+        </div>
+        <div id="cart-response" class="response"></div>
       </div>
     </div>
 
@@ -603,11 +686,113 @@
   </div>
 </div>
 
-<script src="js/core.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/users.js"></script>
-<script src="js/orders.js"></script>
-<script src="js/admin.js"></script>
-<script src="js/init.js"></script>
+<!-- ══════════ RATE CHART MODAL ══════════ -->
+<div id="rate-chart-modal" class="map-modal" style="display:none">
+  <div class="pay-dialog" style="max-width:820px;width:94%">
+    <div class="pay-head">
+      <div>
+        <strong>📋 Rate chart</strong>
+        <div class="muted" id="rate-chart-sub">Published tariff</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeRateChart()" style="color:#fff;border-color:#3a4a6b">✕</button>
+    </div>
+    <div class="pay-body" id="rate-chart-body" style="max-height:72vh;overflow:auto">Loading…</div>
+  </div>
+</div>
+
+<!-- ══════════ ADDRESS FORM MODAL ══════════ -->
+<div id="addr-modal" class="map-modal" style="display:none">
+  <div class="map-dialog" style="max-width:520px">
+    <div class="map-head">
+      <strong id="addr-modal-title">Add address</strong>
+      <button class="btn btn-ghost btn-sm" onclick="closeAddressForm()">✕ Close</button>
+    </div>
+    <div style="padding:1rem;max-height:70vh;overflow-y:auto">
+      <div class="loc-card" id="addr-loc-card" style="margin-bottom:.75rem">
+        <div class="loc-card-head">
+          <span class="loc-kind">📍 Location</span>
+          <button type="button" class="btn btn-sm btn-primary" onclick="pickAddressOnMap()">Set on map</button>
+        </div>
+        <div class="loc-card-body" id="addr-loc-body"><div class="loc-empty">No location yet — tap “Set on map”.</div></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>House / Flat / Floor</label><input id="addr-house" placeholder="Flat G06" /></div>
+        <div class="field"><label>Building / Street</label><input id="addr-building" placeholder="Vajra Jasmine County" /></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Contact Name</label><input id="addr-cname" placeholder="Ravi Kumar" /></div>
+        <div class="field"><label>Contact Phone</label><input id="addr-cphone" placeholder="+919000000001" /></div>
+      </div>
+      <div class="form-row">
+        <div class="field" style="width:100%"><label>Delivery Instructions (optional)</label><input id="addr-instr" placeholder="Ring the bell" /></div>
+      </div>
+      <!-- Save toggle: shown only when capturing a location during booking (the Add Address tab always saves). -->
+      <div class="form-row" id="addr-save-toggle-row" style="display:none;margin-top:.25rem">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;font-weight:600">
+          <input type="checkbox" id="addr-save-toggle" onchange="toggleSaveFields()" /> 💾 Save this address to my address book
+        </label>
+      </div>
+      <div id="addr-save-fields">
+        <div class="field" style="margin:.5rem 0 .6rem">
+          <label>Label</label>
+          <div class="seg" id="addr-label-seg">
+            <button type="button" class="active" data-label="HOME" onclick="selectAddrLabel(this)">🏠 Home</button>
+            <button type="button" data-label="OFFICE" onclick="selectAddrLabel(this)">💼 Office</button>
+            <button type="button" data-label="OTHER" onclick="selectAddrLabel(this)">📍 Other</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Save as (optional)</label><input id="addr-saveas" placeholder="Mom's place" /></div>
+        </div>
+      </div>
+    </div>
+    <div class="map-foot">
+      <div id="addr-form-status" class="map-status">Pick a serviceable location, choose a label, then save.</div>
+      <div class="map-foot-actions">
+        <button class="btn btn-ghost" onclick="closeAddressForm()">Cancel</button>
+        <button id="addr-save-btn" class="btn btn-primary" onclick="confirmAddress()" disabled>Save Address</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ SAVED ADDRESS PICKER MODAL ══════════ -->
+<div id="saved-pick-modal" class="map-modal" style="display:none">
+  <div class="map-dialog" style="max-width:520px">
+    <div class="map-head">
+      <strong>📒 Choose a saved address</strong>
+      <button class="btn btn-ghost btn-sm" onclick="closeSavedPicker()">✕ Close</button>
+    </div>
+    <div style="padding:1rem;max-height:65vh;overflow-y:auto" id="saved-pick-list"></div>
+  </div>
+</div>
+
+<!-- ══════════ BULK UPLOAD FAILURE MODAL ══════════ -->
+<div id="bulk-modal" class="map-modal" style="display:none">
+  <div class="map-dialog" style="max-width:560px">
+    <div class="map-head">
+      <strong id="bulk-modal-title">Upload result</strong>
+      <button class="btn btn-ghost btn-sm" onclick="closeBulkModal()">✕ Close</button>
+    </div>
+    <div style="padding:1rem;max-height:65vh;overflow-y:auto">
+      <div id="bulk-modal-summary" class="order-banner" style="margin-bottom:.75rem"></div>
+      <div id="bulk-modal-failures"></div>
+    </div>
+    <div class="map-foot">
+      <div class="map-status">Valid rows have been added to your cart. Fix the rows below and re-upload.</div>
+      <div class="map-foot-actions">
+        <button class="btn btn-primary" onclick="closeBulkModal()">✕ Got it</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/core.js?v=m2-ratechart"></script>
+<script src="js/auth.js?v=m2-ratechart"></script>
+<script src="js/users.js?v=m2-ratechart"></script>
+<script src="js/orders.js?v=m2-ratechart"></script>
+<script src="js/cart.js?v=m2-ratechart"></script>
+<script src="js/admin.js?v=m2-ratechart"></script>
+<script src="js/init.js?v=m2-ratechart"></script>
 </body>
 </html>

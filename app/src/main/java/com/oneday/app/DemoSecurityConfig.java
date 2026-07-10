@@ -31,6 +31,22 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Profile("!prod")
 class DemoSecurityConfig {
 
+    /**
+     * Lets the unified demo dashboard (the React app on :5173) embed the M1/M2/M4 static console
+     * (served here at {@code /}) in an iframe. Spring Security's default {@code X-Frame-Options: DENY}
+     * blocks all framing; for the static demo paths we drop it. Demo-only ({@code @Profile("!prod")}).
+     */
+    @Bean
+    @Order(0)
+    SecurityFilterChain demoStaticChain(HttpSecurity http) throws Exception {
+        return http
+                .securityMatcher("/", "/index.html", "/js/**", "/css/**", "/favicon.ico")
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+                .csrf(csrf -> csrf.disable())
+                .build();
+    }
+
     @Bean
     @Order(1)
     SecurityFilterChain demoApiChain(HttpSecurity http,

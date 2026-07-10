@@ -121,6 +121,8 @@ public class IdempotencyFilter extends OncePerRequestFilter {
      * <ul>
      *   <li>Non-POST methods (GET, PUT, DELETE are naturally idempotent or handled differently)</li>
      *   <li>Paths that do not match {@link IdempotencyProperties#getApplyToPathPattern()}</li>
+     *   <li>Paths explicitly exempted via {@link IdempotencyProperties#getExemptPathPatterns()}
+     *       (simple resource CRUD that needs no replay protection)</li>
      * </ul>
      */
     @Override
@@ -128,7 +130,16 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         if (!HttpMethod.POST.matches(request.getMethod())) {
             return true;
         }
-        return !pathMatcher.match(properties.getApplyToPathPattern(), request.getRequestURI());
+        String uri = request.getRequestURI();
+        if (!pathMatcher.match(properties.getApplyToPathPattern(), uri)) {
+            return true;
+        }
+        for (String exempt : properties.getExemptPathPatterns()) {
+            if (pathMatcher.match(exempt, uri)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

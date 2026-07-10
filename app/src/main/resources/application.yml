@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday?reWriteBatchedInserts=true}
     username: ${SPRING_DATASOURCE_USERNAME:oneday}
     password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: org.postgresql.Driver
@@ -15,6 +15,18 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
+    properties:
+      hibernate:
+        # MUST live here, not in .env: spring.jpa.properties is a Map, and an env var binds the key
+        # with every _ → . ("hibernate.jdbc.batch.size"), which Hibernate ignores — it needs the
+        # literal "hibernate.jdbc.batch_size". YAML preserves the underscore so batching engages;
+        # with reWriteBatchedInserts (JDBC URL) seeding tens of thousands of grid rows over the WAN
+        # becomes a handful of multi-row round-trips instead of one INSERT per row.
+        jdbc:
+          batch_size: 2000
+        order_inserts: true
+        order_updates: true
+        batch_versioned_data: true
     properties:
       hibernate:
         # MUST live here, not in .env: spring.jpa.properties is a Map, and an env var binds the key
@@ -62,6 +74,28 @@ grid:
     bangalore: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
     hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
     chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+
+# M5 (dispatch). All thresholds default in DispatchProperties; only the shift-load roster
+# (which city codes to bootstrap) is environment-specific. City codes must match grid.cities keys.
+dispatch:
+  shift:
+    cities:
+      - delhi
+      - mumbai
+      - bangalore
+      - hyderabad
+      - chennai
+  # Demo only: real DAs ping GPS continuously, but the demo seats them once at Load shift and never
+  # pings again — so the 15-min absent watchdog would flip every DA to ABSENT mid-demo (then all
+  # assignments defer NO_DA_AVAILABLE). Push the threshold past a demo session; the ABSENT scenario
+  # is still shown on demand via the per-DA "absent" button.
+  da:
+    absent-threshold-minutes: 1440
+  # Demo only: the DeferredRetryJob auto-reassigns PENDING deferrals on this cadence (default 300s = 5min),
+  # which silently drained the deferred pile mid-demo. Push it past a demo session so deferrals persist
+  # until you press "Retry deferred" manually (the manual path is unaffected).
+  monitor:
+    interval-seconds: 3600
 
 # M6 routing config. Same shadowing rule as grid above: the assembled app loads ITS OWN
 # application.yml, so RoutingProperties binds here (the routing module's yaml is shadowed and would

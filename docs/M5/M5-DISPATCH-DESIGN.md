@@ -5,8 +5,15 @@
 | Module | M5 — dispatch |
 | Status | Draft v1.1 |
 | Author | Design session 2026-05-19 |
-| Depends on | common (Kafka contracts), M3 (tile/DA map, OSRM adjacency, load scores), M4 (shipment events), M6 (cron schedule) |
-| Consumed by | M4 (state updates via Kafka + OTP endpoint), M3 (tile_queue_depth feed), M10 (SLA leg open/close), M11 (failure flow) |
+| Depends on | common (event contracts), M3 (tile/DA map, OSRM adjacency, load scores), M4 (shipment events), M6 (cron schedule) |
+| Consumed by | M4 (state updates via the event bus + OTP endpoint), M3 (tile_queue_depth feed), M10 (SLA leg open/close), M11 (failure flow) |
+
+> ⚠️ **Messaging is RabbitMQ, not Kafka** (codebase refactored since this doc was written). Where the
+> text says "Kafka topic" read **`EventStreams` exchange**; "Kafka consumer" → **`@RabbitListener`** on
+> a queue declared in a `*MessagingTopology`; producers inject **`EventPublisher.publish(stream, event)`**
+> (event implements `DomainEvent`; its `eventTypeName()` is the routing key). The event-driven *design*
+> below is unchanged — only the transport differs. See `docs/EVENT-BUS-ARCHITECTURE.md` and
+> [KT §1b](M3-M6-KT-AND-HANDS-ON.md#kt-messaging).
 
 ---
 
@@ -27,7 +34,7 @@
 13. [COD Handling](#13-cod-handling)
 14. [Data Model](#14-data-model)
 15. [API Surface](#15-api-surface)
-16. [Kafka Event Contracts](#16-kafka-event-contracts)
+16. [Event Contracts (RabbitMQ)](#16-event-contracts-rabbitmq)
 17. [Implementation Notes](#17-implementation-notes)
 18. [Open Edge Cases](#18-open-edge-cases)
 19. [Out of Scope for v1](#19-out-of-scope-for-v1)
@@ -42,7 +49,7 @@ M5 owns two concerns that share the same algorithmic primitives:
 
 2. **Delivery dispatch (destination side):** After a parcel is loaded onto a drop van at the destination hub (`HANDED_TO_DROP_VAN`), assign a delivery DA, guide the DA through collecting the parcel from the van (`DROP_COLLECTED`) and delivering it to the customer (`DROPPED`).
 
-M5 is a **latency-sensitive, always-on background worker**. It reacts to Kafka events on `oneday.shipments.events` (from M4) and internal events, maintains per-DA priority queues in memory and DB, and publishes DA lifecycle events to `oneday.da.events`.
+M5 is a **latency-sensitive, always-on background worker**. It reacts to events on `oneday.shipments.events` (from M4) and internal events — delivered over RabbitMQ (see the messaging note above) — maintains per-DA priority queues in memory and DB, and publishes DA lifecycle events to `oneday.da.events`.
 
 M5 does **not** draw or reshape DA territories — that is M3's nightly job. M5 only dispatches work within already-approved territory assignments.
 
@@ -179,7 +186,7 @@ At 10k orders/day across 5 cities, ~2 orders/minute/city, synchronous DB writes 
 
 ## 5. Fulfillment Path Routing
 
-When M5 receives a `shipment.created` Kafka event, it first reads `pickupType`:
+When M5 receives a `shipment.created` event (on `oneday.shipments.events`), it first reads `pickupType`:
 
 ```
 pickupType = DA_PICKUP  → run pickup assignment flow (§6)
@@ -193,7 +200,7 @@ dropType = DA_DELIVERY  → run delivery assignment flow (§11)
 dropType = HUB_COLLECT  → ignore; M4 transitions to AWAITING_HUB_COLLECT; no DA involved
 ```
 
-This routing check is the first thing done in each Kafka consumer handler. Ignored events are acked immediately with no processing.
+This routing check is the first thing done in each `@RabbitListener` handler. Ignored events are acked immediately with no processing.
 
 > ↩ **Return to implementation plan:** [Phase 4 — PR #8 (ShipmentCreatedConsumer)](M5-Implementation-Plan.md#phase-4-pr8-build)
 
@@ -218,7 +225,7 @@ M5 ShipmentCreatedConsumer.onEvent()
          │
          ├─ 3. If no DA for tile
          │      Write DeferredDispatch (reason=NO_DA_AVAILABLE)
-         │      Kafka: grid.no_da_alert (M3 topic) if not already emitted today
+         │      event: grid.no_da_alert (M3 GRID_EVENTS exchange) if not already emitted today
          │      STOP
          │
          ├─ 4. If DA is in CRON_FREEZE window (§8.3)
@@ -331,7 +338,7 @@ When a new task is inserted at position k, all tasks at positions ≥ k shift do
 
 ### 8.1 What the cron is
 
-The "cron" is the scheduled meeting between a DA and the hub consolidation van at a specific grid vertex. M6 plans the van's route nightly and publishes each DA's cron schedule via a `cron.scheduled` Kafka event at plan time. M5 stores this in `da_cron_assignment`:
+The "cron" is the scheduled meeting between a DA and the hub consolidation van at a specific grid vertex. M6 plans the van's route nightly and publishes each DA's cron schedule via the **`DaCronScheduledEvent`** (`CronEventType.DA_CRON_SCHEDULED` on `oneday.cron.events`) at plan time — **now implemented** (it also persists `da_cron_schedule` and serves `GET /routing/cron/da/{daId}`). M5 stores this in `da_cron_assignment`. Note the event carries a **list** of meeting times (M6-D-008):
 
 - `cron_vertex_id` — grid vertex where the van will be
 - `meeting_lat`, `meeting_lon` — the vertex coordinates (from M3's `grid_vertex`)
@@ -749,7 +756,7 @@ Auth: DA role JWT
 Response: 200 { "task_id", "address", "eta_seconds" }
 ```
 
-Updates task to IN_PROGRESS. No Kafka event emitted — informational only.
+Updates task to IN_PROGRESS. No event emitted — informational only.
 
 ### 15.3 DA verifies customer OTP (pickup only)
 
@@ -846,16 +853,11 @@ Response: {
 
 ---
 
-## 16. Kafka Event Contracts
+## 16. Event Contracts (RabbitMQ)
 
-All M5-produced events go on the single topic `oneday.da.events` (defined in `common/kafka/KafkaTopics.java`). Each event carries a `DaEventType` discriminator matching the enum in `common/kafka/enums/DaEventType.java`.
+All M5-produced events go on the single exchange `oneday.da.events` (`EventStreams.DA_EVENTS`; `KafkaTopics` was renamed to **`common.kafka.EventStreams`**). Each event is a `DomainEvent` record carrying a `DaEventType` discriminator (the `eventTypeName()` routing key) matching the enum in `common/kafka/enums/DaEventType.java` — **which already exists** with the M4-consumed values; M5 only adds the 5 internal values.
 
-`dispatch.tile_queue_depth` requires a **new topic constant** to be added to `KafkaTopics.java`:
-
-```java
-// Add to KafkaTopics.java:
-public static final String DISPATCH_TILE_QUEUE_DEPTH = "oneday.dispatch.tile_queue_depth"; // M5 → M3
-```
+The tile-queue-depth feed does **not** need a new constant: M3's consumer already listens on the existing `EventStreams.TILE_QUEUE_DEPTH` (`"orders.tile_queue_depth"`) reading a `TileQueueDepthEvent(cityId, tileId, unservedOrders, bookedOrders, date)`. M5 publishes that same payload to that exchange — **pending confirmation of M4-vs-M5 producer ownership** (the code currently attributes it to M4). See [KT §7.3](M3-M6-KT-AND-HANDS-ON.md#kt-gives).
 
 ### 16.1 Events consumed by M5
 
@@ -864,11 +866,11 @@ public static final String DISPATCH_TILE_QUEUE_DEPTH = "oneday.dispatch.tile_que
 | `oneday.shipments.events` | M4 | `CREATED` (pickupType=DA_PICKUP) | Run pickup assignment |
 | `oneday.shipments.events` | M4 | `STATE_CHANGED` (state=HANDED_TO_DROP_VAN, dropType=DA_DELIVERY) | Run delivery assignment |
 | `oneday.shipments.events` | M4 | `CANCELLED` | Remove task from DA queue |
-| `oneday.cron.events` | M6 | `DEPARTED_HUB` (informational; M4 handles state) | — (M6 cron.scheduled event at nightly replan populates da_cron_assignment; not this runtime event) |
+| `oneday.cron.events` | M6 | `DA_CRON_SCHEDULED` (plan-time; `DaCronScheduledEvent`) | Populate `da_cron_assignment` with the DA's vertex + **list** of meeting times |
 | `oneday.exceptions.events` | M11 | `PICKUP_RESCHEDULED` | Re-run pickup assignment for rescheduled order |
 | `oneday.exceptions.events` | M11 | `DELIVERY_RESCHEDULED` | Re-run delivery assignment for rescheduled order |
 
-> Note: M6 populates `da_cron_assignment` by emitting a `cron.scheduled` event (not defined in `CronEventType` today — needs to be added) at nightly replan time, not at physical cron departure time. See §12.1.
+> Note: M6 populates `da_cron_assignment` by emitting `DA_CRON_SCHEDULED` (`DaCronScheduledEvent`, now in `CronEventType`) at nightly replan time, not at physical cron departure time. M5 may instead read M6's `da_cron_schedule` table or `GET /routing/cron/da/{daId}`. See §12.1.
 
 > ↩ **Return to implementation plan:** [Phase 4 — PR #8 (ShipmentCreatedConsumer)](M5-Implementation-Plan.md#phase-4-pr8-build) · [Phase 4 — PR #9 (StateChangedConsumer)](M5-Implementation-Plan.md#phase-4-pr9-build)
 

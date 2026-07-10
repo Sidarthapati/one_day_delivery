@@ -14,4 +14,9 @@ public interface HexRepository extends JpaRepository<Hex, UUID> {
     List<Hex> findByH3GridIdAndActiveTrue(UUID h3GridId);
 
     Optional<Hex> findByH3GridIdAndH3Index(UUID h3GridId, long h3Index);
+
+    // All city grids share one H3 resolution and H3 cells are globally unique, so an h3Index
+    // identifies at most one hex across every grid — lets serviceableAt resolve a point in a
+    // single query instead of scanning every city's grid.
+    Optional<Hex> findByH3Index(long h3Index);
 }

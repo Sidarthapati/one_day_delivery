@@ -118,25 +118,47 @@ public class GridServiceImpl implements GridService {
 
     @Override
     public ServiceableAtResponse serviceableAt(double lat, double lon) {
-        // A WGS84 point belongs to at most one city's polyfill, so scan the configured
-        // cities and return the first whose grid contains the point's H3 cell.
-        for (Map.Entry<String, UUID> entry : gridProperties.getCities().entrySet()) {
-            UUID cityId = entry.getValue();
-            Optional<Grid> gridOpt = gridRepository.findByCityId(cityId);
-            if (gridOpt.isEmpty()) {
-                continue;
-            }
-            Grid grid = gridOpt.get();
-            long h3Index = h3Core.latLngToCell(lat, lon, grid.getH3Resolution());
-            Optional<Hex> hexOpt = hexRepository.findByH3GridIdAndH3Index(grid.getId(), h3Index);
-            if (hexOpt.isPresent()) {
-                Hex hex = hexOpt.get();
-                return new ServiceableAtResponse(
-                        hex.isActive(), entry.getKey(), cityId, hex.getId(),
-                        Long.toHexString(hex.getH3Index()));
+        // Every city grid shares one H3 resolution and H3 cells are globally unique, so a WGS84
+        // point maps to exactly one hex across all grids. Resolve it in a single indexed lookup
+        // instead of scanning each city (the old loop did up to one findByCityId + one hex query
+        // per configured city, on every call). Grids are cached at startup and immutable intraday.
+        long h3Index = h3Core.latLngToCell(lat, lon, gridProperties.getH3().getResolution());
+        Optional<Hex> hexOpt = hexRepository.findByH3Index(h3Index);
+        if (hexOpt.isEmpty()) {
+            return new ServiceableAtResponse(false, null, null, null, null);
+        }
+        Hex hex = hexOpt.get();
+        UUID cityId = cityIdForGrid(hex.getH3GridId());
+        String cityCode = cityCodeForCity(cityId);
+        if (cityId == null || cityCode == null) {
+            // Hex exists but its grid is not a configured serviceable city — treat as not serviceable.
+            return new ServiceableAtResponse(false, null, null, null, null);
+        }
+        return new ServiceableAtResponse(
+                hex.isActive(), cityCode, cityId, hex.getId(), Long.toHexString(hex.getH3Index()));
+    }
+
+    /** Resolves a grid's own id to its cityId via the in-memory grid cache (no DB hit). */
+    private UUID cityIdForGrid(UUID gridId) {
+        for (Grid g : gridCache.values()) {
+            if (g.getId().equals(gridId)) {
+                return g.getCityId();
             }
         }
-        return new ServiceableAtResponse(false, null, null, null, null);
+        return null;
+    }
+
+    /** Reverse of the configured cityCode→cityId map. */
+    private String cityCodeForCity(UUID cityId) {
+        if (cityId == null) {
+            return null;
+        }
+        for (Map.Entry<String, UUID> e : gridProperties.getCities().entrySet()) {
+            if (cityId.equals(e.getValue())) {
+                return e.getKey();
+            }
+        }
+        return null;
     }
 
     @Override

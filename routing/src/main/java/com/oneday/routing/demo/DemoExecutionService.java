@@ -1,6 +1,9 @@
 package com.oneday.routing.demo;
 
 import com.oneday.common.kafka.EventStreams;
+import com.oneday.common.kafka.enums.DaEventType;
+import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.port.DaPickupQueuePort;
 import com.oneday.routing.config.RoutingProperties;
 import com.oneday.routing.domain.CityLogisticsNode;
 import com.oneday.routing.domain.HandoffDirection;
@@ -14,13 +17,13 @@ import com.oneday.routing.domain.VanManifest;
 import com.oneday.routing.domain.VanManifestItem;
 import com.oneday.routing.dto.TelemetryType;
 import com.oneday.routing.dto.VanTelemetryRequest;
-import com.oneday.routing.events.payload.DaParcelPickedUpEvent;
-import com.oneday.routing.events.payload.ParcelSortedForDeliveryEvent;
+import com.oneday.common.kafka.events.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.CityLogisticsNodeRepository;
 import com.oneday.routing.repository.DaCronScheduleRepository;
 import com.oneday.routing.repository.HandoffReconciliationRepository;
 import com.oneday.routing.repository.RoutePlanRepository;
 import com.oneday.routing.repository.RoutePlanStopRepository;
+import com.oneday.routing.domain.VanLiveStatus;
 import com.oneday.routing.repository.VanLiveStatusRepository;
 import com.oneday.routing.repository.VanManifestItemRepository;
 import com.oneday.routing.repository.VanManifestRepository;
@@ -34,6 +37,7 @@ import com.oneday.routing.service.port.ScanLedgerPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
@@ -96,6 +100,9 @@ public class DemoExecutionService {
     private final CustodyService custodyService;
     private final RoutingProperties properties;
     private final Clock clock;
+    // M5's live pickup queue. Optional: present only when the dispatch demo bean is on the context
+    // (routing depends on common, not dispatch), so the bridge is absent in routing's own tests.
+    private final ObjectProvider<DaPickupQueuePort> pickupQueue;
 
     private final DemoLog feed = new DemoLog();
     private final ExecutorService runner = Executors.newSingleThreadExecutor(r -> {
@@ -113,7 +120,8 @@ public class DemoExecutionService {
                          VanManifestRepository manifestRepository, VanManifestItemRepository itemRepository,
                          HandoffReconciliationRepository handoffRepository, VanLiveStatusRepository liveStatusRepository,
                          VanTrackingService trackingService, CustodyService custodyService,
-                         RoutingProperties properties, Clock clock) {
+                         RoutingProperties properties, Clock clock,
+                         ObjectProvider<DaPickupQueuePort> pickupQueue) {
         this.rabbitTemplate = rabbitTemplate;
         this.gridDataAdapter = gridDataAdapter;
         this.nodeRepository = nodeRepository;
@@ -128,6 +136,7 @@ public class DemoExecutionService {
         this.custodyService = custodyService;
         this.properties = properties;
         this.clock = clock;
+        this.pickupQueue = pickupQueue;
     }
 
     // ── public surface (controller) ──────────────────────────────────────────────────────────────
@@ -180,8 +189,8 @@ public class DemoExecutionService {
 
     private void runDay(RoutePlan plan, UUID cityId, LocalDate date, int deliveries, int collects, int tickMs) {
         try {
-            feed.add("INFO", "Run the day — city %s, plan %s, speed tick %dms"
-                    .formatted(shortId(cityId), shortId(plan.getId()), tickMs));
+            feed.add("INFO", "▶ Starting the day for city %s — executing approved M6 route plan %s. Vans will collect verified pickups from DAs and deliver drops along their loops."
+                    .formatted(shortId(cityId), shortId(plan.getId())));
 
             // Manifests are keyed by (van, loop, date), shared across plan revisions of the same day — a
             // re-plan would otherwise bind onto a superseded plan's manifests. Clear the day so every run
@@ -192,14 +201,16 @@ public class DemoExecutionService {
             setPhase("WAITING", published, 0, 0, 0, 0);
 
             // Binding is asynchronous (consumers off the broker); let the manifests settle before driving.
+            feed.add("BIND", "🔗 M6 is matching each published parcel to the earliest van loop with capacity (creating the van manifests)…");
             int bound = waitForBinds(plan.getId(), published);
-            feed.add("BIND", "Binding complete — %d parcels placed on van loops.".formatted(bound));
+            feed.add("BIND", "✅ %d parcel(s) placed on van loops — manifests ready. Vans can roll.".formatted(bound));
 
             setPhase("DRIVING", published, bound, 0, 0, 0);
             driveVans(plan, cityId, date, tickMs);
 
             setPhase(cancel ? "STOPPED" : "DONE", published, bound, status.delivered(), status.collected(), 0);
-            feed.add("INFO", cancel ? "Run stopped." : "Day complete — every loop returned and reconciled.");
+            feed.add("INFO", cancel ? "Run stopped."
+                    : "Run complete — vans delivered drops and collected pickups at the DAs. Press 'Complete first-mile' to bring the pickups to the hub.");
         } catch (RuntimeException e) {
             log.error("Demo run failed", e);
             status = new RunStatus("ERROR", cityId, date, status.published(), status.bound(),
@@ -251,33 +262,52 @@ public class DemoExecutionService {
             throw new IllegalStateException("Plan has no DA meeting vertices to bind to — re-check the grid/plan.");
         }
 
-        Random rng = new Random();
         int published = 0;
         Instant now = clock.instant();
+        DaPickupQueuePort queue = pickupQueue.getIfAvailable();
 
-        for (int i = 0; i < deliveries; i++) {
-            UUID da = bindableDas.get(rng.nextInt(bindableDas.size()));
-            List<UUID> hexes = hexByDa.get(da);
-            if (hexes.isEmpty()) continue;
-            UUID hex = hexes.get(rng.nextInt(hexes.size()));
-            UUID parcel = UUID.randomUUID();
+        // Deliveries: M5's real DELIVERY queue (one ParcelSortedForDelivery per task, to its dest hex),
+        // so the map's drops equal exactly what M5 dispatched. (Synthetic injection removed — book real
+        // drops via Spread drops + Dispatch drops.)
+        List<DaPickupQueuePort.QueuedPickup> m5Deliveries = queue == null ? List.of()
+                : queue.queuedDeliveries(cityId, date).stream()
+                        .filter(p -> bindableDas.contains(p.daId())).toList();
+        for (DaPickupQueuePort.QueuedPickup p : m5Deliveries) {
             rabbitTemplate.convertAndSend(EventStreams.HUB_EVENTS, "ParcelSortedForDelivery",
-                    new ParcelSortedForDeliveryEvent(parcel, cityId, hex, date, now, now.plus(Duration.ofHours(6))));
-            feed.add("FEED", "HUB_EVENTS ▸ %s sorted for delivery → DA %s".formatted(shortId(parcel), shortId(da)));
+                    new ParcelSortedForDeliveryEvent(p.shipmentId(), cityId, p.tileId(), date, now, now.plus(Duration.ofHours(6))));
+            feed.add("FEED", "HUB_EVENTS ▸ %s sorted for delivery → DA %s (M5 queue)"
+                    .formatted(shortId(p.shipmentId()), shortId(p.daId())));
             published++;
             settle(25);
         }
-        for (int i = 0; i < collects; i++) {
-            UUID da = bindableDas.get(rng.nextInt(bindableDas.size()));
-            UUID parcel = UUID.randomUUID();
-            rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, "DaParcelPickedUp",
-                    new DaParcelPickedUpEvent(parcel, cityId, da, date, now));
-            feed.add("FEED", "DA_EVENTS ▸ %s picked up by DA %s".formatted(shortId(parcel), shortId(da)));
+        if (!m5Deliveries.isEmpty()) feed.add("INFO", "Sourced %d delivery(ies) from M5's live queue.".formatted(m5Deliveries.size()));
+
+        // Collects: only carry pickups the DA has actually COLLECTED (OTP-verified at the door →
+        // task IN_PROGRESS). A parcel with no customer OTP has not been picked up, so the van must not
+        // take it — un-verified pickups are left behind (next loop). Use "Auto-verify pickups" to flip
+        // assigned pickups to collected before the run. (Synthetic injection removed — book real pickups.)
+        List<DaPickupQueuePort.QueuedPickup> m5Pickups = queue == null ? List.of()
+                : queue.pickedUpPickups(cityId, date).stream()
+                        .filter(p -> bindableDas.contains(p.daId())).toList();
+        for (DaPickupQueuePort.QueuedPickup p : m5Pickups) {
+            rabbitTemplate.convertAndSend(EventStreams.DA_EVENTS, DaEventType.PICKUP_COMPLETED.name(),
+                    daPickedUp(p.shipmentId(), cityId, p.daId(), date, now));
+            feed.add("FEED", "DA_EVENTS ▸ %s picked up by DA %s (M5 queue)"
+                    .formatted(shortId(p.shipmentId()), shortId(p.daId())));
             published++;
             settle(25);
         }
-        feed.add("INFO", "Published %d parcels to RabbitMQ (CloudAMQP).".formatted(published));
+        if (!m5Pickups.isEmpty()) feed.add("INFO", "Sourced %d collect(s) from M5's live pickup queue.".formatted(m5Pickups.size()));
+
+        feed.add("INFO", "📤 Published %d parcel(s) onto the message bus (RabbitMQ / CloudAMQP) — M6 now binds them to van loops.".formatted(published));
         return published;
+    }
+
+    /** A PICKUP_COMPLETED {@link DaLifecycleEvent} — the exact shape real M5 emits (parcelId == shipmentId in v1). */
+    private static DaLifecycleEvent daPickedUp(UUID shipmentId, UUID cityId, UUID daId, LocalDate date, Instant at) {
+        return new DaLifecycleEvent(UUID.randomUUID(), DaEventType.PICKUP_COMPLETED,
+                DaLifecycleEvent.SCHEMA_VERSION, at, shipmentId, null, daId, cityId,
+                null, null, null, shipmentId, date);
     }
 
     /**
@@ -324,10 +354,15 @@ public class DemoExecutionService {
         Random rng = new Random();
         List<Deque<Runnable>> programs = new ArrayList<>();
         for (VanManifest m : manifests) {
-            programs.add(buildProgram(plan, m, cityId, date, vertexCoords, hub, rng.nextInt(100)));
+            // Option 1: no return leg — the run drives the van out to collect from the DAs and stops there.
+            programs.add(buildProgram(plan, m, cityId, date, vertexCoords, hub, rng.nextInt(100), false));
         }
-        feed.add("INFO", "Driving %d van loops…".formatted(programs.size()));
+        feed.add("INFO", "🚚 Dispatching %d van loop(s) on their routes — each van visits its DA meeting points to swap parcels.".formatted(programs.size()));
+        stepPrograms(programs, tickMs, "DRIVING");
+    }
 
+    /** Step a set of van programs together, one action per tick, until all drain (or cancel). */
+    private void stepPrograms(List<Deque<Runnable>> programs, int tickMs, String phase) {
         while (!cancel) {
             boolean any = false;
             int active = 0;
@@ -342,15 +377,66 @@ public class DemoExecutionService {
                     }
                 }
             }
-            status = new RunStatus("DRIVING", status.cityId(), status.date(), status.published(),
+            status = new RunStatus(phase, status.cityId(), status.date(), status.published(),
                     status.bound(), status.delivered(), status.collected(), active, feed.lastSeq(), null);
             if (!any) break;
             settle(tickMs);
         }
     }
 
+    /**
+     * Option 1 — "Complete first-mile" van→hub leg. After the run left the vans at their last stop holding
+     * the collected pickups, drive each back to the hub (GPS + VAN_UNLOAD → RECONCILED). Runs async on the
+     * same executor so the map animates the return the way it animated the outbound run.
+     */
+    public synchronized RunStatus returnToHub(UUID cityId, LocalDate date) {
+        if (running.get()) {
+            throw new IllegalStateException("A demo run is in progress — let it finish first.");
+        }
+        RoutePlan plan = planRepository
+                .findByCityIdAndValidForDateAndStatus(cityId, date, RoutePlanStatus.APPROVED).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No APPROVED route plan for this city/date."));
+        cancel = false;
+        running.set(true);
+        status = new RunStatus("RETURNING", cityId, date, status.published(), status.bound(),
+                status.delivered(), status.collected(), 0, feed.lastSeq(), null);
+        runner.submit(() -> {
+            try {
+                Map<UUID, double[]> vertexCoords = gridDataAdapter.vertexCoords(cityId);
+                double[] hub = nodeRepository.findByCityIdAndKind(cityId, LogisticsNodeKind.HUB)
+                        .map(n -> new double[]{n.getLat(), n.getLon()})
+                        .orElseGet(() -> firstVertexFallback(vertexCoords));
+                // Drive each van home from where it ACTUALLY parked after the run (its live telemetry
+                // position), so the return leg starts at the van's real spot on the map, not a recomputed stop.
+                Map<UUID, double[]> vanPos = liveStatusRepository.findByCityId(cityId).stream()
+                        .filter(s -> s.getLastLat() != null && s.getLastLon() != null)
+                        .collect(Collectors.toMap(VanLiveStatus::getVanId,
+                                s -> new double[]{s.getLastLat(), s.getLastLon()}, (a, b) -> a));
+                List<Deque<Runnable>> programs = new ArrayList<>();
+                for (VanManifest m : manifestRepository.findByRoutePlanId(plan.getId())) {
+                    List<VanManifestItem> items = itemRepository.findByManifestId(m.getId());
+                    if (items.isEmpty()) continue;
+                    double[] from = vanPos.getOrDefault(m.getVanId(), hub);
+                    Deque<Runnable> steps = new ArrayDeque<>();
+                    appendReturnLeg(steps, m.getVanId(), cityId, m.getLoopIndex(), from, hub, items, date);
+                    programs.add(steps);
+                }
+                feed.add("INFO", "Vans returning to the origin hub (%d loop(s))…".formatted(programs.size()));
+                stepPrograms(programs, 120, "RETURNING");
+                setPhase("DONE", status.published(), status.bound(), status.delivered(), status.collected(), 0);
+            } catch (RuntimeException e) {
+                feed.add("ERROR", "Return-to-hub failed: " + e.getMessage());
+            } finally {
+                running.set(false);
+            }
+        });
+        return status;
+    }
+
     private Deque<Runnable> buildProgram(RoutePlan plan, VanManifest manifest, UUID cityId, LocalDate date,
-                                         Map<UUID, double[]> vertexCoords, double[] hub, int latePct) {
+                                         Map<UUID, double[]> vertexCoords, double[] hub, int latePct,
+                                         boolean withReturn) {
         UUID vanId = manifest.getVanId();
         int loop = manifest.getLoopIndex();
         List<VanManifestItem> items = itemRepository.findByManifestId(manifest.getId());
@@ -358,6 +444,14 @@ public class DemoExecutionService {
                 .findByRoutePlanIdAndVanIdAndLoopIndexOrderByStopSeq(plan.getId(), vanId, loop).stream()
                 .filter(s -> s.getNodeKind() == StopNodeKind.MEETING_VERTEX && s.getHexVertexId() != null)
                 .toList();
+        // Option 1: on a no-return run, park the van at its last PRODUCTIVE stop (the last one that
+        // actually has a parcel to deliver/collect) rather than driving on to trailing empty stops — so
+        // it visibly stops with the DA it served, not at some empty meeting point further down the loop.
+        if (!withReturn && !items.isEmpty()) {
+            int lastSeq = items.stream().filter(it -> it.getStopSeq() != null)
+                    .mapToInt(VanManifestItem::getStopSeq).max().orElse(Integer.MAX_VALUE);
+            stops = stops.stream().filter(s -> s.getStopSeq() <= lastSeq).toList();
+        }
 
         int lateOffset = latenessOffset(latePct);
         Deque<Runnable> steps = new ArrayDeque<>();
@@ -370,7 +464,7 @@ public class DemoExecutionService {
             for (VanManifestItem it : deliverItems) {
                 if (custody(it, ScanLedgerPort.VanScanType.VAN_LOAD, vanId).accepted()) n++;
             }
-            feed.add("LOAD", "Van %s loop %d ▸ loaded %d parcels at hub (LOADED)".formatted(shortId(vanId), loop, n));
+            feed.add("LOAD", "📦 Van %s (loop %d) loaded %d drop parcel(s) at the origin hub — departing on its delivery route.".formatted(shortId(vanId), loop, n));
         });
 
         // 2. Drive stop to stop: GPS pings → ARRIVED → custody scans for that stop.
@@ -391,7 +485,7 @@ public class DemoExecutionService {
                         ? "⚠ RUNNING LATE +%dm".formatted(lateOffset)
                         : (lateOffset > 0 ? "+%dm".formatted(lateOffset) : "on time");
                 feed.add(lateOffset >= properties.getLateThresholdMinutes() ? "LATE" : "ARRIVE",
-                        "Van %s loop %d ▸ arrived stop %d (%s)".formatted(shortId(vanId), loop, stopSeq, late));
+                        "🚚 Van %s (loop %d) reached DA meeting point #%d — %s.".formatted(shortId(vanId), loop, stopSeq, late));
             });
 
             List<VanManifestItem> atStop = items.stream()
@@ -407,15 +501,26 @@ public class DemoExecutionService {
                 }
                 bumpCounts(d, c);
                 if (d + c > 0) {
-                    feed.add("SCAN", "Van %s loop %d stop %d ▸ delivered %d, collected %d"
-                            .formatted(shortId(vanId), loop, stopSeq, d, c));
+                    feed.add("SCAN", "🤝 Van %s @ meeting point #%d — handed %d drop(s) to the DA, collected %d verified pickup(s) onto the van."
+                            .formatted(shortId(vanId), stopSeq, d, c));
                 }
             });
             prev = target;
         }
 
-        // 3. Return to hub: GPS back, mark RETURNED, unload collected parcels (ONBOARD → RECONCILED).
-        addLeg(steps, vanId, cityId, loop, prev, hub);
+        // 3. Return to hub — Option 1: the RUN stops here (van holds the collected pickups at its last
+        // stop). The van→hub leg (drive back + VAN_UNLOAD → RECONCILED) is deferred to "Complete
+        // first-mile", so the animation matches state: run = collect from DA, complete = van → hub.
+        if (withReturn) {
+            appendReturnLeg(steps, vanId, cityId, loop, prev, hub, items, date);
+        }
+        return steps;
+    }
+
+    /** The van→hub leg: GPS back, mark RETURNED, unload collected parcels (ONBOARD → RECONCILED). */
+    private void appendReturnLeg(Deque<Runnable> steps, UUID vanId, UUID cityId, int loop,
+                                 double[] from, double[] hub, List<VanManifestItem> items, LocalDate date) {
+        addLeg(steps, vanId, cityId, loop, from, hub);
         List<VanManifestItem> collectItems = items.stream()
                 .filter(it -> it.getDirection() == HandoffDirection.COLLECT).toList();
         steps.add(() -> {
@@ -430,7 +535,6 @@ public class DemoExecutionService {
                     : "Van %s loop %d ▸ returned to hub (delivery-only loop, all handed off)"
                         .formatted(shortId(vanId), loop));
         });
-        return steps;
     }
 
     private void addLeg(Deque<Runnable> steps, UUID vanId, UUID cityId, int loop, double[] from, double[] to) {

@@ -24,9 +24,48 @@
             <groupId>com.oneday</groupId>
             <artifactId>orders</artifactId>
         </dependency>
+        <!-- M1 auth: AuthUserDetails / principal-based authz on the DA endpoints. -->
+        <dependency>
+            <groupId>com.oneday</groupId>
+            <artifactId>auth</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- Micrometer metrics (M5 observability). micrometer-core only — NOT the actuator starter,
+             which pulls a CVE-flagged spring-boot-actuator-autoconfigure at the BOM-managed version. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <!-- Test: @DataJpaTest against a real PostgreSQL (local), Flyway-built schema. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>

@@ -1,10 +1,14 @@
 package com.oneday.orders.api;
 
+import com.oneday.orders.service.AddressBookService;
 import com.oneday.orders.service.B2bBookingService;
 import com.oneday.orders.service.BookingService;
+import com.oneday.orders.service.BulkUploadService;
 import com.oneday.orders.service.CancellationService;
+import com.oneday.orders.service.CartService;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
+import com.oneday.pricing.service.NoRateConfiguredException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -35,6 +39,48 @@ class OrdersGlobalExceptionHandler {
     ProblemDetail handleServiceability(BookingService.ServiceabilityException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
         pd.setTitle("Route not serviceable");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    // M2 has no rate configured for this lane (e.g. a serviceable city absent from the rate sheet).
+    // Surface it as a clear 422 instead of a generic 500 so booking/cart show why pricing failed.
+    @ExceptionHandler(NoRateConfiguredException.class)
+    ProblemDetail handleNoRateConfigured(NoRateConfiguredException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        pd.setTitle("Route not priceable");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(AddressBookService.AddressNotFoundException.class)
+    ProblemDetail handleAddressNotFound(AddressBookService.AddressNotFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setTitle("Address not found");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(CartService.CartItemNotFoundException.class)
+    ProblemDetail handleCartItemNotFound(CartService.CartItemNotFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setTitle("Cart item not found");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler({CartService.EmptyCartException.class, CartService.CheckoutValidationException.class})
+    ProblemDetail handleCartCheckout(RuntimeException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        pd.setTitle("Cart checkout not possible");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(BulkUploadService.BadTemplateException.class)
+    ProblemDetail handleBadTemplate(BulkUploadService.BadTemplateException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        pd.setTitle("Invalid upload");
         pd.setDetail(ex.getMessage());
         return pd;
     }

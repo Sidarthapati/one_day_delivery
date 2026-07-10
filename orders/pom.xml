@@ -69,5 +69,16 @@
             <artifactId>razorpay-java</artifactId>
             <version>1.4.8</version>
         </dependency>
+        <!-- Excel bulk upload: lightweight streaming .xlsx reader + writer (no full Apache POI) -->
+        <dependency>
+            <groupId>org.dhatim</groupId>
+            <artifactId>fastexcel</artifactId>
+            <version>0.18.4</version>
+        </dependency>
+        <dependency>
+            <groupId>org.dhatim</groupId>
+            <artifactId>fastexcel-reader</artifactId>
+            <version>0.18.4</version>
+        </dependency>
     </dependencies>
 </project>

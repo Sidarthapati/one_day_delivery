@@ -56,6 +56,10 @@ export const runDay = (cityId, { deliveries = 40, collects = 20, speed = 60 } = 
 
 export const runStop = () => req('/api/demo/run-stop', { method: 'POST' })
 
+// Option 1: drive the vans from their last stop back to the origin hub (the first-mile return leg).
+export const runReturnToHub = (cityId, date) =>
+  req(`/api/demo/run-return-to-hub?cityId=${cityId}&date=${date}`, { method: 'POST' })
+
 export const runStatus = () => req('/api/demo/run-status')
 
 export const runEvents = (after = 0) => req(`/api/demo/run-events?after=${after}`)

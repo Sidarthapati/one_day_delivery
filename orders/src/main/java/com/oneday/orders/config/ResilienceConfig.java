@@ -10,10 +10,12 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class ResilienceConfig {
@@ -24,28 +26,51 @@ public class ResilienceConfig {
                 .failureRateThreshold(props.getFailureRateThreshold())
                 .minimumNumberOfCalls(props.getMinimumNumberOfCalls())
                 .slidingWindowSize(props.getSlidingWindowSize())
+                // A missing rate card is a business outcome, not a downstream fault — don't let
+                // repeated unpriced-lane attempts trip the breaker and 503 the priced lanes too.
+                .ignoreExceptions(com.oneday.pricing.service.NoRateConfiguredException.class)
                 .build();
         return CircuitBreakerRegistry.of(config);
     }
 
     @Bean
     public TimeLimiterRegistry timeLimiterRegistry(ResilienceProperties props) {
-        Map<String, TimeLimiterConfig> configs = new HashMap<>();
-        configs.put("serviceability", TimeLimiterConfig.custom()
+        // NOTE: registry.timeLimiter("name") uses the registry's DEFAULT config, NOT the
+        // same-named entry from a config map. So we must pre-create each instance WITH its
+        // config; otherwise every limiter silently falls back to resilience4j's 1s default
+        // (which the booking service then hits against the remote dev DB).
+        TimeLimiterRegistry registry = TimeLimiterRegistry.ofDefaults();
+        registry.timeLimiter("serviceability", TimeLimiterConfig.custom()
                 .timeoutDuration(Duration.ofMillis(props.getServiceabilityTimeoutMs()))
                 .build());
-        configs.put("pricing", TimeLimiterConfig.custom()
+        registry.timeLimiter("pricing", TimeLimiterConfig.custom()
                 .timeoutDuration(Duration.ofMillis(props.getPricingTimeoutMs()))
                 .build());
-        configs.put("payment", TimeLimiterConfig.custom()
+        registry.timeLimiter("payment", TimeLimiterConfig.custom()
                 .timeoutDuration(Duration.ofMillis(props.getPaymentTimeoutMs()))
                 .build());
-        return TimeLimiterRegistry.of(configs);
+        return registry;
     }
 
     @Bean(name = "resilienceScheduler", destroyMethod = "shutdown")
     public ScheduledExecutorService resilienceScheduler() {
-        return Executors.newScheduledThreadPool(4);
+        // TimeLimiter-wrapped serviceability/pricing/payment calls run on this pool. Bulk upload
+        // prices rows in parallel, so each concurrent quote needs a slot here — 8 gives room for
+        // parallel bulk pricing without starving interactive bookings.
+        return Executors.newScheduledThreadPool(8);
+    }
+
+    /**
+     * Bounded pool for pricing bulk-upload rows concurrently (each row does a read-only
+     * serviceability + quote). Capped so a large sheet can't exhaust the DB connection pool or
+     * monopolise the resilience scheduler; overflow runs on the calling thread (back-pressure).
+     */
+    @Bean(name = "bulkPricingExecutor", destroyMethod = "shutdown")
+    public ExecutorService bulkPricingExecutor() {
+        int threads = 8;
+        return new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(256),
+                new ThreadPoolExecutor.CallerRunsPolicy());
     }
 
     @Bean

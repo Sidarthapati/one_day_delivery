@@ -9,6 +9,9 @@ import HexPanel from './components/HexPanel.jsx'
 import ProposalPanel from './components/ProposalPanel.jsx'
 import RoutesPanel from './components/RoutesPanel.jsx'
 import ExecutionView from './components/ExecutionView.jsx'
+import DispatchView from './components/DispatchView.jsx'
+import DaAppView from './components/DaAppView.jsx'
+import BookingConsole from './components/BookingConsole.jsx'
 import { hashDaColor } from './utils/daColors.js'
 import { buildRoutes } from './utils/buildRoutes.js'
 import { CITIES, PLAN_DATE } from './cities.js'
@@ -19,7 +22,13 @@ import {
   getFleet, putFleet, getNodes, getPlan, m6Replan, m6Approve, getAllStops, getDeferredVertices,
 } from './api/routingApi.js'
 
+// Planning plans for tomorrow (PLAN_DATE); Execution + Dispatch operate on TODAY. Surfacing both in
+// the toolbar keeps the "I planned 20 DAs but Dispatch shows a different roster" confusion from biting.
+const _now = new Date()
+const TODAY = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`
+
 export default function App() {
+  const [world, setWorld] = useState('logistics') // booking (M1·M2·M4) | logistics (M3·M5·M6)
   const [cityCode, setCityCode] = useState('delhi')
   const [view, setView] = useState('planning') // planning | execution
   const [mode, setMode] = useState('demand') // demand | territories | routes
@@ -212,15 +221,32 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Top-level world switch — one dashboard across M1–M6 */}
+      <div className="flex items-center gap-3 px-4 py-1.5 bg-gray-900 text-white z-20">
+        <div className="font-bold tracking-tight">1DD · OneDay</div>
+        <div className="flex gap-1 ml-2">
+          {[['booking', 'Booking & Ops', 'M1·M2·M4'], ['logistics', 'Logistics', 'M3·M5·M6']].map(([k, label, sub]) => (
+            <button key={k} onClick={() => setWorld(k)}
+              className={`text-sm px-3 py-1 rounded transition-colors ${
+                world === k ? 'bg-white text-gray-900' : 'bg-gray-700 hover:bg-gray-600 text-gray-100'}`}>
+              {label} <span className="opacity-60 text-xs">{sub}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {world === 'booking' && <BookingConsole />}
+
+      {world === 'logistics' && (<>
       {/* Toolbar */}
       <div className="flex items-center gap-4 px-4 py-2 bg-white border-b border-gray-200 shadow-sm z-10">
-        <div className="font-bold text-gray-800">OneDay — M6 {view === 'execution' ? 'Execution' : 'Route Planning'}</div>
+        <div className="font-bold text-gray-800">OneDay — {view === 'dispatch' ? 'M5 Dispatch (ops control tower)' : view === 'da' ? '📱 DA Phone (field view)' : `M6 ${view === 'execution' ? 'Execution' : 'Route Planning'}`}</div>
         <select value={cityCode} onChange={e => handleCityChange(e.target.value)}
           className="text-sm border border-gray-300 rounded px-2 py-1 text-gray-700 bg-white">
           {Object.entries(CITIES).map(([code, c]) => <option key={code} value={code}>{c.label}</option>)}
         </select>
         <div className="flex gap-1 ml-1">
-          {[['planning', 'Planning'], ['execution', 'Execution']].map(([k, label]) => (
+          {[['planning', 'Planning'], ['execution', 'Execution'], ['dispatch', 'Dispatch'], ['da', '📱 DA Phone']].map(([k, label]) => (
             <button key={k} onClick={() => setView(k)}
               className={`text-sm px-3 py-1 border rounded transition-colors ${
                 view === k ? 'bg-gray-800 text-white border-gray-800' : 'border-gray-300 hover:bg-gray-50'}`}>
@@ -229,6 +255,18 @@ export default function App() {
           ))}
         </div>
         {view === 'planning' && <div className="text-sm text-gray-500">{activeHexCount} active hexes · {PLAN_DATE}</div>}
+        {/* Date scope: planning is for tomorrow, execution/dispatch run today — make the split explicit. */}
+        {view === 'planning' ? (
+          <span className="text-xs px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+            title={`Planning produces TOMORROW's plan (${PLAN_DATE}). Execution & Dispatch run on TODAY (${TODAY}).`}>
+            📅 planning for tomorrow · {PLAN_DATE}
+          </span>
+        ) : (
+          <span className="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
+            title={`Execution & Dispatch operate on TODAY (${TODAY}) — today's approved roster, not the plan you build in Planning (${PLAN_DATE}, for tomorrow).`}>
+            📅 operating today · {TODAY}
+          </span>
+        )}
         <div className="flex-1" />
         {view === 'planning' && (
           <div className="flex gap-1">
@@ -247,6 +285,8 @@ export default function App() {
       {view === 'execution' && (
         <ExecutionView cityCode={cityCode} cityId={cityId} center={city.center} nodes={nodes} />
       )}
+      {view === 'dispatch' && <DispatchView cityId={cityId} cityCode={cityCode} />}
+      {view === 'da' && <DaAppView cityId={cityId} cityCode={cityCode} />}
       {view === 'planning' && (
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative">
@@ -303,6 +343,7 @@ export default function App() {
         </div>
       </div>
       )}
+      </>)}
     </div>
   )
 }

@@ -91,6 +91,7 @@ class AuthServiceImpl implements AuthService {
         user.setEmail(request.email());
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setName(request.name());
+        user.setPhone(request.phone());
         user.setRole(c2cRole);
         user.setActive(true);
         user.setMustChangePassword(false);
@@ -195,7 +196,7 @@ class AuthServiceImpl implements AuthService {
         String token = jwtService.createToken(user);
         Instant expiresAt = jwtService.expiryFor(user);
         return new LoginResponse(token, expiresAt, user.getRole().getName(),
-                user.getCityId(), user.getName(), user.isMustChangePassword());
+                user.getCityId(), user.getName(), user.getPhone(), user.isMustChangePassword());
     }
 
     private void writeAuditLog(UUID actorId, UUID targetUserId, String action,
