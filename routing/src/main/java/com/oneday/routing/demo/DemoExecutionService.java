@@ -185,6 +185,72 @@ public class DemoExecutionService {
         return feed.since(after);
     }
 
+    // ── full-day orchestration hooks (used by the app's DemoFullDayService) ─────────────────────────
+    // These are ADDITIVE and reuse the same feed/status stream so the whole intercity run (booking →
+    // origin hub → flight → dest hub → last mile) shows up in the one Execution log/map. Unlike the
+    // legacy single-city start(), the delivery phase here binds parcels the REAL M7 hub sorted (it
+    // emits ParcelSortedForDelivery), so there is NO synthetic delivery feed on this path.
+
+    /** Append a line to the shared demo feed (so the app orchestrator's phase messages join the stream). */
+    public void feed(String kind, String message) {
+        feed.add(kind, message);
+    }
+
+    /** Reset the shared feed (start of a fresh full-day run). */
+    public void clearFeed() {
+        feed.clear();
+    }
+
+    /** True while a van animation (start/driveDeliveries/returnToHub) is stepping. */
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    /** Public wrapper: wipe a city's manifests/items/handoffs/live-status before a fresh (real) feed. */
+    public void resetForCity(UUID cityId, LocalDate date) {
+        resetDay(cityId, date);
+    }
+
+    /**
+     * Last-mile driver for the full-day flow: bind and animate the deliveries the REAL dest hub sorted.
+     * No synthetic feed and no resetDay here — {@code expected} parcels were already emitted by M7 as
+     * {@code ParcelSortedForDelivery} and are binding on M6's HubFeedConsumer; we just wait for the
+     * binds to settle, then drive the drop vans over the approved plan.
+     */
+    public synchronized RunStatus driveDeliveries(UUID cityId, LocalDate date, int expected, int speed) {
+        if (running.get()) {
+            throw new IllegalStateException("A demo run is already in progress — stop it first.");
+        }
+        RoutePlan plan = planRepository
+                .findByCityIdAndValidForDateAndStatus(cityId, date, RoutePlanStatus.APPROVED).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "No APPROVED route plan for the destination city/date — plan & approve it first."));
+        cancel = false;
+        running.set(true);
+        int tickMs = Math.max(40, Math.min(1000, Math.round(200f * 60f / Math.max(1, speed))));
+        status = new RunStatus("DEST_BINDING", cityId, date, expected, 0,
+                status.delivered(), status.collected(), 0, feed.lastSeq(), null);
+        runner.submit(() -> {
+            try {
+                feed.add("BIND", "🔗 M6 is binding %d hub-sorted parcel(s) to destination drop-van loops…".formatted(expected));
+                int bound = waitForBinds(plan.getId(), expected);
+                feed.add("BIND", "✅ %d parcel(s) on drop-van loops — delivery vans can roll.".formatted(bound));
+                setPhase("DRIVING", expected, bound, status.delivered(), status.collected(), 0);
+                driveVans(plan, cityId, date, tickMs);
+                setPhase(cancel ? "STOPPED" : "DONE", expected, bound, status.delivered(), status.collected(), 0);
+            } catch (RuntimeException e) {
+                log.error("driveDeliveries failed", e);
+                feed.add("ERROR", "Delivery run failed: " + e.getMessage());
+                status = new RunStatus("ERROR", cityId, date, status.published(), status.bound(),
+                        status.delivered(), status.collected(), 0, feed.lastSeq(), e.getMessage());
+            } finally {
+                running.set(false);
+            }
+        });
+        return status;
+    }
+
     // ── the run ──────────────────────────────────────────────────────────────────────────────────
 
     private void runDay(RoutePlan plan, UUID cityId, LocalDate date, int deliveries, int collects, int tickMs) {

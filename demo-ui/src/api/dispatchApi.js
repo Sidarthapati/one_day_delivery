@@ -92,3 +92,19 @@ export const clearBookings = (email = 'b2c@demo.in') =>
 export const seedSpread = (cityId, city, kind, count, date) =>
   req(`/api/demo/da/seed/spread?cityId=${cityId}&city=${encodeURIComponent(city)}&kind=${kind}&count=${count}&date=${date}`,
     { method: 'POST' })
+
+// ── Full-day intercity (one-button) — real M4→M5→M6→M7 chain A→B ────────────────────────────────
+// Place `count` real intercity bookings (pickup in A, drop in B). M5 auto-assigns each pickup DA.
+export const placeFullDayOrders = ({ originCityId, originCity, originPin, destCityId, destCity, destPin, count, date }) =>
+  req(`/api/demo/full-day/order?originCityId=${originCityId}&originCity=${encodeURIComponent(originCity)}`
+    + `&originPin=${originPin}&destCityId=${destCityId}&destCity=${encodeURIComponent(destCity)}`
+    + `&destPin=${destPin}&count=${count}&date=${date}`, { method: 'POST' })
+
+// Run the whole chain (first-mile → origin hub → flight → dest hub → last-mile) for the booked A→B parcels.
+export const runFullDay = ({ originCityId, originCity, destCityId, destCity, date, speed }) =>
+  req(`/api/demo/full-day/run?originCityId=${originCityId}&originCity=${encodeURIComponent(originCity)}`
+    + `&destCityId=${destCityId}&destCity=${encodeURIComponent(destCity)}&date=${date}&speed=${speed}`,
+    { method: 'POST' })
+
+// Coarse macro-phase for the phase tracker.
+export const fullDayStatus = () => req('/api/demo/full-day/status')

@@ -27,18 +27,6 @@ spring:
         order_inserts: true
         order_updates: true
         batch_versioned_data: true
-    properties:
-      hibernate:
-        # MUST live here, not in .env: spring.jpa.properties is a Map, and an env var binds the key
-        # with every _ → . ("hibernate.jdbc.batch.size"), which Hibernate ignores — it needs the
-        # literal "hibernate.jdbc.batch_size". YAML preserves the underscore so batching engages;
-        # with reWriteBatchedInserts (JDBC URL) seeding tens of thousands of grid rows over the WAN
-        # becomes a handful of multi-row round-trips instead of one INSERT per row.
-        jdbc:
-          batch_size: 2000
-        order_inserts: true
-        order_updates: true
-        batch_versioned_data: true
   flyway:
     enabled: true
     # Single recursive location catches auth/ and orders/ subfolders AND grid's V3_x +

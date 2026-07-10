@@ -568,8 +568,9 @@ public class DemoDaController {
     }
 
     /** One representative coordinate per DA territory (hex centroid = average of its corner vertices).
-     *  Returns ALL territories; the caller decides how many shipments to place (wrapping for extras). */
-    private List<double[]> territoryCentroids(UUID cityId, LocalDate date) {
+     *  Returns ALL territories; the caller decides how many shipments to place (wrapping for extras).
+     *  Package-private so the full-day orchestrator ({@link DemoFullDayService}) can reuse it. */
+    List<double[]> territoryCentroids(UUID cityId, LocalDate date) {
         List<double[]> pts = new ArrayList<>();
         for (DaTerritoryResponse t : gridService.getDaTerritories(cityId, date)) {
             if (t.hexes().isEmpty() || t.hexes().get(0).vertices().isEmpty()) continue;
@@ -581,8 +582,9 @@ public class DemoDaController {
         return pts;
     }
 
-    /** Build a COD B2C booking between an origin point/city and a dest point/city (lat/lon drive serviceability). */
-    private BookingRequest booking(double[] origin, String originCity, String originPin,
+    /** Build a COD B2C booking between an origin point/city and a dest point/city (lat/lon drive serviceability).
+     *  Package-private so {@link DemoFullDayService} can reuse the exact same booking shape. */
+    BookingRequest booking(double[] origin, String originCity, String originPin,
                                    double[] dest, String destCity, String destPin) {
         BookingRequest r = new BookingRequest();
         r.setSenderName("Demo Sender");

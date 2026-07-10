@@ -7,8 +7,14 @@ import {
   m6Replan, m6Approve, getAllStops, getLive, getFleet, putFleet, getPlan,
   runDay, runStop, runStatus, runEvents, runReturnToHub,
 } from '../api/routingApi.js'
-import { getDispatchState, autoVerifyPickups, dispatchDrops, dropsCollected, autoVerifyDeliveries, seedSpread, loadShift, resetDispatch, pickupsToHub, pickupsToVan, clearBookings, getAmqpTap, pingDaGps } from '../api/dispatchApi.js'
+import { getDispatchState, autoVerifyPickups, dispatchDrops, dropsCollected, autoVerifyDeliveries, seedSpread, loadShift, resetDispatch, pickupsToHub, pickupsToVan, clearBookings, getAmqpTap, pingDaGps, placeFullDayOrders, runFullDay, fullDayStatus } from '../api/dispatchApi.js'
 import { CITIES } from '../cities.js'
+
+// Default pincodes per city (serviceability is coordinate-driven; pincode is just a fallback + pricing hint).
+const CITY_PIN = { delhi: '110001', mumbai: '400001', bangalore: '560001', hyderabad: '500001', chennai: '600001' }
+// The five macro-phases of the one-button intercity run, in order (for the phase tracker).
+const FD_PHASES = ['FIRST_MILE', 'ORIGIN_HUB', 'FLIGHT', 'DEST_HUB', 'LAST_MILE']
+const FD_LABEL = { FIRST_MILE: 'First-mile', ORIGIN_HUB: 'Origin hub', FLIGHT: 'Flight', DEST_HUB: 'Dest hub', LAST_MILE: 'Last-mile' }
 
 // Execution runs the whole chain for TODAY (telemetry resolves manifests by today's date), distinct
 // from the planning tab's "tomorrow". One date for seed → M3 → M6 → run.
@@ -87,6 +93,12 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   const [shiftMsg, setShiftMsg] = useState(null)
   const [clearing, setClearing] = useState(false)
   const [clearMsg, setClearMsg] = useState(null)
+  // Full-day intercity (one-button) panel: origin = the current city tab; dest is picked here.
+  const [destCode, setDestCode] = useState(cityCode === 'mumbai' ? 'delhi' : 'mumbai')
+  const [fdCount, setFdCount] = useState(5)
+  const [fdBusy, setFdBusy] = useState(null)   // 'prepare' | 'order' | 'run' | null
+  const [fdMsg, setFdMsg] = useState(null)
+  const [fdPhase, setFdPhase] = useState(null) // macro-phase from /api/demo/full-day/status
   const [running, setRunning] = useState(false)
   const [stat, setStat] = useState(null)
   const [vans, setVans] = useState([])
@@ -239,6 +251,83 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
       setApproving(false)
     }
   }
+
+  // ── Full-day intercity (one-button) handlers ─────────────────────────────────────────────────
+  // Prepare ONE city's plan (grid demand → M3 territories → M6 fleet → route plan), the same chain as
+  // prepare() but parameterised so we can run it for both the origin and the destination city.
+  async function prepareCityChain(code, id) {
+    await seedDemand(code, TODAY, { minMinutes: seedMin, maxMinutes: seedMax })
+    const prop = await replan(code, daCount, TODAY)
+    await approveProposal(prop.id)
+    await putFleet(id, { vans_available: vansAvail, capacity_packets: capacity, cycle_time_max_minutes: cycleMax })
+    const p = await m6Replan(id, TODAY)
+    if (!p.vansUsed) throw new Error(`${code}: no feasible routes (${p.notes || 'under-provisioned'})`)
+    await m6Approve(p.planId)
+    await loadShift(id, TODAY)               // clock the DAs on duty at their cron meetings
+  }
+
+  const destCity = () => CITIES[destCode]
+
+  async function prepareBothHandler() {
+    setFdBusy('prepare'); setFdMsg(null); setError(null)
+    try {
+      setFdMsg(`Preparing ${CITIES[cityCode].label}…`)
+      await prepareCityChain(cityCode, cityId)
+      setFdMsg(`Preparing ${destCity().label}…`)
+      await prepareCityChain(destCode, destCity().id)
+      setFdMsg(`✅ Both cities staffed & planned. Next → 🧾 Place orders.`)
+      setPrepared(true); fetchDas()
+    } catch (e) {
+      setFdMsg('✕ ' + e.message)
+    } finally { setFdBusy(null) }
+  }
+
+  async function placeOrdersHandler() {
+    setFdBusy('order'); setFdMsg(null)
+    try {
+      const r = await placeFullDayOrders({
+        originCityId: cityId, originCity: CITIES[cityCode].label, originPin: CITY_PIN[cityCode] || '110001',
+        destCityId: destCity().id, destCity: destCity().label, destPin: CITY_PIN[destCode] || '400001',
+        count: fdCount, date: TODAY,
+      })
+      setFdMsg('🧾 ' + (r.message || `${r.placed} placed`))
+    } catch (e) {
+      setFdMsg('✕ ' + e.message)
+    } finally { setFdBusy(null) }
+  }
+
+  async function runFullDayHandler() {
+    setFdBusy('run'); setFdMsg(null)
+    try {
+      await runFullDay({
+        originCityId: cityId, originCity: CITIES[cityCode].label,
+        destCityId: destCity().id, destCity: destCity().label, date: TODAY, speed,
+      })
+      setFdMsg('▶ Running the full day — watch the feed & map. Switch the city tab to see the destination leg.')
+    } catch (e) {
+      setFdMsg('✕ ' + e.message)
+      setFdBusy(null)
+    }
+    // fdBusy('run') is cleared by the status poller when the macro-phase reaches DONE/ERROR.
+  }
+
+  // Poll the macro-phase while a full-day run is active (drives the phase tracker + clears the busy flag).
+  useEffect(() => {
+    if (fdBusy !== 'run') return
+    let alive = true
+    const id = setInterval(async () => {
+      try {
+        const s = await fullDayStatus()
+        if (!alive) return
+        setFdPhase(s.phase)
+        if (s.phase === 'DONE' || s.phase === 'ERROR' || s.phase === 'IDLE') {
+          setFdBusy(null)
+          setFdMsg((s.phase === 'ERROR' ? '✕ ' : '✅ ') + (s.detail || s.phase))
+        }
+      } catch { /* transient */ }
+    }, 1000)
+    return () => { alive = false; clearInterval(id) }
+  }, [fdBusy])
 
   // Simulate every DA's door OTP handshake so the van carries only OTP-verified pickups.
   async function autoVerify() {
@@ -660,7 +749,54 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
             <div className="mt-1.5 text-gray-500">Left rail shows every real RabbitMQ publish/consume as it happens. Reset a demo with 🧹 Clear bookings + ♻️ Reset.</div>
           </details>
 
-          {/* ── ① SETUP — plan + shift ───────────────────────────────────────────── */}
+          {/* ── ⭐ ONE-BUTTON INTERCITY — the whole chain, A → B ──────────────────── */}
+          <div className="border-2 border-indigo-300 bg-indigo-50/70 rounded-lg p-2.5 space-y-2">
+            <div className="text-sm font-bold text-indigo-900 flex items-center gap-1">🚚 One-button intercity run</div>
+            <div className="text-[11px] text-indigo-700 leading-snug">
+              One parcel, the whole real chain: pickup → first-mile van → <b>real M7 origin hub</b> →
+              flight → <b>real M7 dest hub</b> (emits the real M6 feed) → drop van → delivered.
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-700">
+              <span className="font-semibold">{CITIES[cityCode].label}</span>
+              <span className="text-indigo-400">→</span>
+              <select value={destCode} onChange={e => setDestCode(e.target.value)}
+                disabled={fdBusy != null || running}
+                className="border rounded px-1 py-0.5 bg-white">
+                {Object.entries(CITIES).filter(([k]) => k !== cityCode)
+                  .map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+              </select>
+              <label className="ml-auto flex items-center gap-1">orders
+                <input type="number" min={1} max={30} value={fdCount} onChange={e => setFdCount(+e.target.value)}
+                  disabled={fdBusy != null || running} className="w-12 border rounded px-1 py-0.5" /></label>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button onClick={prepareBothHandler} disabled={fdBusy != null || running}
+                className="text-xs px-2 py-1 rounded bg-slate-600 text-white disabled:opacity-50">
+                {fdBusy === 'prepare' ? '…' : '① Prepare both'}</button>
+              <button onClick={placeOrdersHandler} disabled={fdBusy != null || running}
+                className="text-xs px-2 py-1 rounded bg-violet-600 text-white disabled:opacity-50">
+                {fdBusy === 'order' ? '…' : '🧾 ② Place orders'}</button>
+              <button onClick={runFullDayHandler} disabled={fdBusy != null || running}
+                className="text-xs px-2 py-1 rounded bg-indigo-700 text-white disabled:opacity-50 font-semibold">
+                {fdBusy === 'run' ? 'Running…' : '▶ ③ Run full day'}</button>
+            </div>
+            {/* Phase tracker */}
+            <div className="flex items-center gap-0.5 text-[10px]">
+              {FD_PHASES.map((ph, i) => {
+                const active = fdPhase === ph
+                const done = fdBusy === 'run' && FD_PHASES.indexOf(fdPhase) > i
+                return (
+                  <div key={ph} className={`flex-1 text-center rounded px-0.5 py-1 border
+                    ${active ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
+                      : done ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                      : 'bg-white text-gray-400 border-gray-200'}`}>{FD_LABEL[ph]}</div>
+                )
+              })}
+            </div>
+            {fdMsg && <div className="text-[11px] text-indigo-800 bg-white/70 rounded px-2 py-1">{fdMsg}</div>}
+          </div>
+
+          {/* ── ① SETUP — plan + shift (advanced / granular buttons) ─────────────────── */}
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 pt-1">① Setup — plan &amp; shift</div>
           <div className="grid grid-cols-3 gap-2 text-xs text-gray-600">
             <label className="flex flex-col gap-0.5">DAs
