@@ -54,14 +54,17 @@ Build order is chosen so nothing waits on a not-yet-built seam: the ledger exist
 **Business scenario.** The pickup van backs into the origin-hub dock at 11:40. The dock operator runs a scan gun down the line of boxes; each beep is a `HUB_ORIGIN_IN`. Within seconds the customer's tracking flips to "Arrived at origin hub" and the SLA clock for the first leg stops. Later that box gets `GHA_ACCEPTANCE` at the airport, `HUB_DEST_IN` at Bengaluru, and — for a hub-collect customer — `HUB_COLLECT_COMPLETED` when they walk up to the counter. Every beep is one REST call that writes an immutable row *and* nudges the M4 state machine.
 
 **Scope**
-- `api/ScanController#scan` — `POST /api/v1/scan {shipmentId, scanType, locationType, locationId, actorId, scannedAt, clientScanId, detail?}`. One door, discriminated by `scanType` (design §4.2). Validates `scanType ∈ ScanEventType` (van types are rejected here — they come via the sync port, PR4).
+- `api/ScanController#scan` — `POST /api/v1/scan {shipmentId, scanType, locationType, locationId, actorId, scannedAt, clientScanId, bagId?}`. One door, discriminated by `scanType` (design §4.2). Validates `scanType ∈ ScanEventType` (van types are rejected here — they come via the sync port, PR4).
 - Reuses `ScanLedgerService.record(...)` from PR2 → insert + AFTER_COMMIT `ScanEvent`.
-- **No `orders` change** — `ScanEventsConsumer` already maps `HUB_ORIGIN_IN/SELF_DROP_ACCEPTED/GHA_ACCEPTANCE/HUB_DEST_IN/HUB_COLLECT_COMPLETED` → states. This PR is what finally *feeds* that consumer; the queue stops being empty.
-- Auth: gate to hub-operator / GHA / counter roles (follow M4's `Authz` helper pattern; ADMIN always allowed under `!prod`).
+- **`common` change** — add `HUB_ORIGIN_OUT`, `DEST_SHUTTLE_IN`, `DELIVERED` to `ScanEventType` (D-007). This makes the switch in `orders/ScanEventsConsumer` non-exhaustive → **`orders` change required**: add branches `HUB_ORIGIN_OUT`→`DISPATCHED_TO_AIRPORT`, `DEST_SHUTTLE_IN`→`DISPATCHED_TO_HUB`, `DELIVERED`→`DROPPED` (co-gated with the delivery OTP). The 6 pre-existing types already map.
+- **Schema** — `bag_id` (D-006) already lives in `V8_1` (folded into PR1, migration was undeployed); PR3 just starts populating it. No new migration.
+- **Bag fan-out is M7-driven** (D-006): a bag scan (`HUB_ORIGIN_OUT`/`GHA_ACCEPTANCE`/`DEST_SHUTTLE_IN`/`HUB_DEST_IN`) is originated by M7, which iterates the bag's parcels and calls the scan API once per parcel (same `bag_id`, `parcel_id` NULL). New `location_type` `SHUTTLE`.
+- **M7/M9 coordination** (D-007): M7 hub / M9 flight events must **stop** emitting for the transitions the promoted scans now own; they keep the internal ones (`IN_TAKEOFF_BAG`, `DEPARTED`/`LANDED`, `DEST_HUB_PROCESSING`).
+- Auth: gate to hub-operator / GHA / shuttle / DA / counter roles (M4 `Authz` pattern).
 
-**Where it's used** — **hub** (dock gun: `HUB_ORIGIN_IN`, `HUB_DEST_IN`), **airport/GHA** (`GHA_ACCEPTANCE`), **hub counter** (`SELF_DROP_ACCEPTED`, `HUB_COLLECT_COMPLETED`), **orders** (state advances, customer tracking updates), **sla** (leg clocks start/stop off the resulting `ScanEvent`).
+**Where it's used** — **hub** (dock gun + bag-out fan-out), **shuttle** (`DEST_SHUTTLE_IN`), **airport/GHA** (`GHA_ACCEPTANCE`), **DA** (`DELIVERED`), **hub counter** (`SELF_DROP_ACCEPTED`, `HUB_COLLECT_COMPLETED`), **orders** (state advances), **sla** (leg clocks).
 
-**Tests** — each `ScanEventType` writes a row + emits the right event; van type via REST → `400`; replay via same `clientScanId` → one row; end-to-end: scan → `ScanEvent` → M4 transitions (reuse the `oneday.scan.events` test rig from `orders`).
+**Tests** — each `ScanEventType` (incl. the 3 new) writes a row + emits the right event + drives the right M4 state; a bag scan fans out to N rows sharing `bag_id`; `DELIVERED` reaches `DROPPED` only with OTP; van type via REST → `400`; replay dedup → one row.
 
 ---
 
@@ -82,7 +85,7 @@ Build order is chosen so nothing waits on a not-yet-built seam: the ledger exist
 
 ## Cross-cutting
 
-- **`common` touch is one field add** (PR2, `ScanEvent`) — coordinate with the `common` owner; tolerant-reader annotations mean no consumer breaks.
+- **`common` touches, coordinate with its owner:** (a) PR2 — one field add to `ScanEvent` (D-005, tolerant reader, no break); (b) PR3 — 3 new `ScanEventType` values (D-007), which **forces** the matching `orders/ScanEventsConsumer` branches (switch exhaustiveness) and **requires M7/M9 to drop the transitions those scans now own** (no double-emit).
 - **Append-only is the load-bearing invariant** — no PR introduces an update/delete path on `scan_ledger`. Reviewer's first check on every M8 PR.
 - **Idempotency is centralised** in `ScanLedgerService` (PR2), so PR3 (REST replay) and PR4 (van retry) inherit it for free.
 - **No new dependency.** Code-128/QR are *rendered by the device apps* from the string/payload M8 returns; M8 ships no barcode-imaging library (design §9).

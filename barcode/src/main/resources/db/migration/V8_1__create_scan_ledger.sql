@@ -6,9 +6,10 @@
 CREATE TABLE scan_ledger (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     shipment_id     UUID         NOT NULL,               -- spine: joins to orders.shipments.id
-    parcel_id       VARCHAR(30),                         -- barcode string, NULL until LABEL_GENERATED
-    scan_type       VARCHAR(24)  NOT NULL,               -- ScanEventType (6) ∪ VanScanType (4)
-    location_type   VARCHAR(32)  NOT NULL,               -- HUB | VAN | DA | AIRPORT | CUSTOMER_COUNTER (CUSTOMER_COUNTER is 16 chars; 32 leaves headroom)
+    parcel_id       VARCHAR(30),                         -- barcode string, NULL until LABEL_GENERATED / on bag+van scans
+    bag_id          UUID,                                -- set on BAG scans only (D-006); ties the N fanned-out per-parcel rows of one bag scan
+    scan_type       VARCHAR(24)  NOT NULL,               -- ScanEventType (9) ∪ VanScanType (4)
+    location_type   VARCHAR(32)  NOT NULL,               -- HUB | VAN | SHUTTLE | DA | AIRPORT | CUSTOMER_COUNTER (32 leaves headroom over CUSTOMER_COUNTER=16)
     location_id     UUID,                                -- hub / van / DA id
     actor_id        UUID,                                -- who held the gun
     counterparty_id UUID,                                -- the other party in a van handoff (the DA)
@@ -20,6 +21,8 @@ CREATE TABLE scan_ledger (
 CREATE INDEX idx_scan_ledger_shipment ON scan_ledger (shipment_id, scanned_at);
 -- Ordered by scanned_at so the "who touched this box, in order" trail lookup needs no sort.
 CREATE INDEX idx_scan_ledger_parcel   ON scan_ledger (parcel_id, scanned_at) WHERE parcel_id IS NOT NULL;
+-- "What else flew in this bag?" — the fanned-out per-parcel rows of one bag scan share a bag_id.
+CREATE INDEX idx_scan_ledger_bag      ON scan_ledger (bag_id) WHERE bag_id IS NOT NULL;
 -- Idempotency: a retried REST scan carrying the same client_scan_id is collapsed to one row.
 -- NOTE: van custody scans (VAN_LOAD/VAN_TO_DA/DA_TO_VAN/VAN_UNLOAD) carry NO client_scan_id
 -- (routing's VanCustodyScan has no such field), so this index does not dedup them. PR4's adapter

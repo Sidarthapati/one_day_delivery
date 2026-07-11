@@ -44,6 +44,11 @@ public class ScanLedgerEntry {
     @Column(name = "parcel_id", length = 30, updatable = false)
     private String parcelId;
 
+    // Set on BAG scans only (D-006). A bag scan reads one bag QR covering N parcels and fans out to
+    // N rows, one per parcel, all sharing this bagId; parcelId is NULL on those rows. NULL elsewhere.
+    @Column(name = "bag_id", updatable = false)
+    private UUID bagId;
+
     @Column(name = "scan_type", nullable = false, length = 24, updatable = false)
     private String scanType;
 
