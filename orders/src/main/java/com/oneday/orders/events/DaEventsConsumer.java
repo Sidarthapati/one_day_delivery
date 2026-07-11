@@ -45,6 +45,8 @@ public class DaEventsConsumer {
             case PICKUP_ASSIGNED       -> ShipmentState.PICKUP_ASSIGNED;
             case PICKUP_FAILED         -> ShipmentState.PICKUP_FAILED;
             case VAN_HANDOFF_COMPLETED -> ShipmentState.HANDED_TO_PICKUP_VAN;
+            // HUB_RETURN city: DA dropped at the hub (no van) — same custody step as a van handoff.
+            case HUB_RETURN_HANDOFF_COMPLETED -> ShipmentState.HANDED_TO_PICKUP_VAN;
             case DROP_ASSIGNED         -> ShipmentState.DROP_ASSIGNED;
             case DROP_COLLECTED        -> ShipmentState.DROP_COLLECTED;
             case DROP_COMPLETED        -> ShipmentState.DROPPED;

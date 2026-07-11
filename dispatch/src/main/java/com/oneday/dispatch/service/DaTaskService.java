@@ -15,9 +15,9 @@ public interface DaTaskService {
     DaTaskView markEnRoute(UUID daId, UUID taskId);
 
     /**
-     * PICKUP task IN_PROGRESS → COMPLETED at the cron van. Records the cron handoff and emits
-     * VAN_HANDOFF_COMPLETED. {@code parcelScans} must be non-empty (full M8 scan-ledger validation
-     * lands with barcode integration).
+     * PICKUP task IN_PROGRESS → COMPLETED at the rendezvous. Records the cron handoff and emits
+     * VAN_HANDOFF_COMPLETED (or, in a HUB_RETURN city with no van, HUB_RETURN_HANDOFF_COMPLETED).
+     * {@code parcelScans} must be non-empty (full M8 scan-ledger validation lands with barcode integration).
      */
     DaTaskView recordVanHandoff(UUID daId, UUID taskId, List<String> parcelScans, UUID vanId);
 

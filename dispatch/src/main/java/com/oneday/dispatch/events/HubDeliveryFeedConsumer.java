@@ -4,6 +4,7 @@ import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.kafka.events.hub.HubEventPayload;
 import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.common.port.CityMeetingModePort;
+import com.oneday.common.port.ShipmentLocationPort;
 import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.DispatchService;
 import com.oneday.grid.dto.response.DaTerritoryResponse;
@@ -24,10 +25,12 @@ import java.util.UUID;
  * delivery on the territory DA — who collects it on their next hub visit. In VAN_MEETING cities M6's
  * {@code HubFeedConsumer} owns this event (binds it to a van loop), so this consumer no-ops there.
  *
- * <p>Reuses the existing {@link DispatchService#assignDelivery} engine: the destination hex resolves
- * to the territory DA via M3, and the DA's hub-return cron gates the queue exactly like a pickup. The
- * assignment is idempotent (an already-active DELIVERY task is skipped), so it is safe even if M4's
- * own delivery path also fires for the shipment.</p>
+ * <p>Reuses the existing {@link DispatchService#assignDelivery} engine, assigning against the
+ * shipment's <b>real</b> drop lat/lon (via {@link ShipmentLocationPort}) exactly like M4's own
+ * delivery path — the hex centroid is only a fallback when the shipment carries no geocoded address.
+ * The DA's hub-return cron gates the queue exactly like a pickup. The assignment is idempotent (an
+ * already-active DELIVERY task is skipped), so it is safe even if M4's own delivery path also fires
+ * for the shipment.</p>
  */
 @Component
 public class HubDeliveryFeedConsumer {
@@ -37,13 +40,16 @@ public class HubDeliveryFeedConsumer {
     private final DispatchService dispatchService;
     private final GridService gridService;
     private final CityMeetingModePort meetingModePort;
+    private final ShipmentLocationPort shipmentLocationPort;
 
     public HubDeliveryFeedConsumer(DispatchService dispatchService,
                                    GridService gridService,
-                                   CityMeetingModePort meetingModePort) {
+                                   CityMeetingModePort meetingModePort,
+                                   ShipmentLocationPort shipmentLocationPort) {
         this.dispatchService = dispatchService;
         this.gridService = gridService;
         this.meetingModePort = meetingModePort;
+        this.shipmentLocationPort = shipmentLocationPort;
     }
 
     @RabbitListener(queues = DispatchMessagingTopology.HUB_QUEUE)
@@ -60,14 +66,26 @@ public class HubDeliveryFeedConsumer {
             return;   // VAN_MEETING → M6 binds this parcel to a van; nothing for M5 to do
         }
 
-        double[] centroid = hexCentroid(e.cityId(), e.validDate(), e.destinationHexId());
-        if (centroid == null) {
-            log.error("HUB_RETURN delivery parcel {} — destination hex {} not in any active territory for {}; cannot assign",
+        // Assign against the real drop lat/lon (v1: parcelId == shipmentId, no M8 barcode). The hex
+        // centroid is only a fallback when the shipment has no geocoded address, so the DA's queue
+        // sequences on the actual delivery point — matching M4's own delivery path.
+        double[] coords = shipmentLocationPort.dropLocation(e.parcelId())
+                .map(loc -> new double[]{loc.lat(), loc.lon()})
+                .orElseGet(() -> {
+                    double[] centroid = hexCentroid(e.cityId(), e.validDate(), e.destinationHexId());
+                    if (centroid != null) {
+                        log.warn("HUB_RETURN delivery parcel {} has no geocoded drop address — "
+                                + "falling back to hex {} centroid", e.parcelId(), e.destinationHexId());
+                    }
+                    return centroid;
+                });
+        if (coords == null) {
+            log.error("HUB_RETURN delivery parcel {} — no drop coords and hex {} not in any active territory for {}; cannot assign",
                     e.parcelId(), e.destinationHexId(), e.validDate());
             return;
         }
         AssignmentResult result = dispatchService.assignDelivery(
-                e.parcelId(), e.cityId(), centroid[0], centroid[1], e.destinationHexId());
+                e.parcelId(), e.cityId(), coords[0], coords[1], e.destinationHexId());
         log.debug("HUB_RETURN delivery assignment for parcel {}: {}", e.parcelId(), result.outcome());
     }
 

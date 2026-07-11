@@ -98,11 +98,15 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
             recordCronHandoff(daId, task.getOperatingDate(), parcelScans.size());
-            daEventProducer.emitVanHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
-            // M8-SEAM: in HUB_RETURN cities the DA drops collected pickups AT the hub, so this handoff
-            // is the origin-hub inbound scan (advances the shipment to AT_ORIGIN_HUB → M7/M9).
+            // HUB_RETURN cities have no van — the DA hands off AT the hub, so emit the neutral
+            // hub-return handoff event (not VAN_HANDOFF_COMPLETED, which would claim a van received it).
+            // Both map to HANDED_TO_PICKUP_VAN in M4; only the event label differs.
             if (isHubReturn(task)) {
-                hubScanSeamProducer.hubOriginIn(task.getShipmentId());
+                daEventProducer.emitHubReturnHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
+                // M8-SEAM: the hub drop is the origin-hub inbound scan (advances to AT_ORIGIN_HUB → M7/M9).
+                hubScanSeamProducer.emitHubOriginIn(task.getShipmentId());
+            } else {
+                daEventProducer.emitVanHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
             }
             log.debug("Van handoff: task {} (van {}) completed with {} scan(s)", taskId, vanId, parcelScans.size());
             return view;
@@ -141,7 +145,7 @@ class DaTaskServiceImpl implements DaTaskService {
             // M8-SEAM: in HUB_RETURN cities the DA collects the delivery FROM the hub, so record the
             // hub-dest custody scan (ledger only — the DA's later DROP_* events drive the state).
             if (isHubReturn(task)) {
-                hubScanSeamProducer.hubDestOut(task.getShipmentId());
+                hubScanSeamProducer.emitHubDestOut(task.getShipmentId());
             }
             return view;
         });
