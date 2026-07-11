@@ -1,16 +1,22 @@
 package com.oneday.dispatch.service.impl;
 
+import com.oneday.common.domain.MeetingMode;
+import com.oneday.common.port.CityMeetingModePort;
+import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.CronAssignmentStatus;
 import com.oneday.dispatch.domain.DaCronAssignment;
+import com.oneday.dispatch.domain.DaStatusEnum;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
+import com.oneday.dispatch.events.HubScanSeamProducer;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
+import com.oneday.dispatch.service.model.DaQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -20,6 +26,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -37,15 +47,28 @@ class DaTaskServiceImpl implements DaTaskService {
     private final DaCronAssignmentRepository cronRepository;
     private final DaStatusService daStatusService;
     private final DaEventProducer daEventProducer;
+    private final DispatchProperties props;
+    private final HubScanSeamProducer hubScanSeamProducer;
+    private final CityMeetingModePort meetingModePort;
 
     DaTaskServiceImpl(DispatchQueueRepository queueRepository,
                       DaCronAssignmentRepository cronRepository,
                       DaStatusService daStatusService,
-                      DaEventProducer daEventProducer) {
+                      DaEventProducer daEventProducer,
+                      DispatchProperties props,
+                      HubScanSeamProducer hubScanSeamProducer,
+                      CityMeetingModePort meetingModePort) {
         this.queueRepository = queueRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
         this.daEventProducer = daEventProducer;
+        this.props = props;
+        this.hubScanSeamProducer = hubScanSeamProducer;
+        this.meetingModePort = meetingModePort;
+    }
+
+    private boolean isHubReturn(DispatchQueue task) {
+        return meetingModePort.modeFor(task.getCityId()) == MeetingMode.HUB_RETURN;
     }
 
     @Override
@@ -76,6 +99,11 @@ class DaTaskServiceImpl implements DaTaskService {
             DaTaskView view = save(task);
             recordCronHandoff(daId, task.getOperatingDate(), parcelScans.size());
             daEventProducer.emitVanHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
+            // M8-SEAM: in HUB_RETURN cities the DA drops collected pickups AT the hub, so this handoff
+            // is the origin-hub inbound scan (advances the shipment to AT_ORIGIN_HUB → M7/M9).
+            if (isHubReturn(task)) {
+                hubScanSeamProducer.hubOriginIn(task.getShipmentId());
+            }
             log.debug("Van handoff: task {} (van {}) completed with {} scan(s)", taskId, vanId, parcelScans.size());
             return view;
         });
@@ -110,6 +138,11 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStartedAt(Instant.now());
             DaTaskView view = save(task);
             daEventProducer.emitDropCollected(daId, task.getCityId(), task.getShipmentId());
+            // M8-SEAM: in HUB_RETURN cities the DA collects the delivery FROM the hub, so record the
+            // hub-dest custody scan (ledger only — the DA's later DROP_* events drive the state).
+            if (isHubReturn(task)) {
+                hubScanSeamProducer.hubDestOut(task.getShipmentId());
+            }
             return view;
         });
     }
@@ -152,12 +185,51 @@ class DaTaskServiceImpl implements DaTaskService {
 
     private void recordCronHandoff(UUID daId, LocalDate date, int parcelCount) {
         cronRepository.findByDaIdAndOperatingDate(daId, date).ifPresent(cron -> {
-            cron.setStatus(CronAssignmentStatus.COMPLETED);
             cron.setHandoffCompletedAt(Instant.now());
             int prior = cron.getParcelCountHanded() != null ? cron.getParcelCountHanded() : 0;
             cron.setParcelCountHanded(prior + parcelCount);
-            cronRepository.save(cron);
+
+            // HUB_RETURN crons carry no van and recur through the day (M6 gate off). A hub drop that
+            // still has a later return today only COMPLETES this leg: roll the meeting to the next slot
+            // and stay SCHEDULED so the hard constraint keeps gating, and free the DA to work until then.
+            // The last return (no later slot) — and every van rendezvous (v1, single meeting) — is terminal.
+            Instant next = (cron.getVanId() == null) ? nextSlotAfter(cron, cron.getScheduledMeetingTime()) : null;
+            if (next != null) {
+                cron.setScheduledMeetingTime(next);
+                cron.setStatus(CronAssignmentStatus.SCHEDULED);
+                cronRepository.save(cron);
+                refreshMemCron(daId, next);
+                if (daStatusService.getStatus(daId) == DaStatusEnum.AT_CRON) {
+                    daStatusService.updateStatus(daId, DaStatusEnum.IDLE);
+                }
+            } else {
+                cron.setStatus(CronAssignmentStatus.COMPLETED);
+                cronRepository.save(cron);
+            }
         });
+    }
+
+    /** First periodic meeting strictly after {@code reference} (the just-completed slot); null if none left. */
+    private Instant nextSlotAfter(DaCronAssignment cron, Instant reference) {
+        if (cron.getMeetingTimes() == null || cron.getMeetingTimes().isEmpty() || reference == null) {
+            return null;
+        }
+        ZoneId zone = ZoneId.of(props.getShift().getZone());
+        return cron.getMeetingTimes().stream()
+                .map(LocalTime::parse)
+                .map(t -> LocalDateTime.of(cron.getOperatingDate(), t).atZone(zone).toInstant())
+                .filter(i -> i.isAfter(reference))
+                .min(Comparator.naturalOrder())
+                .orElse(null);
+    }
+
+    /** Keep the in-memory queue's cron in step so CronMonitorJob re-freezes ahead of the next return. */
+    private void refreshMemCron(UUID daId, Instant nextMeeting) {
+        DaQueue q = daStatusService.getQueue(daId);
+        if (q != null && q.getCron() != null) {
+            q.getCron().setScheduledMeetingTime(nextMeeting);
+            q.getCron().setStatus(CronAssignmentStatus.SCHEDULED);
+        }
     }
 
     private static void requireType(DispatchQueue task, TaskType expected) {

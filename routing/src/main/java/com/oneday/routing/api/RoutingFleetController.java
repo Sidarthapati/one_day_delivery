@@ -86,6 +86,8 @@ public class RoutingFleetController {
         if (req.shuttleCadenceMinutes() != null) fleet.setShuttleCadenceMinutes(req.shuttleCadenceMinutes());
         if (req.maxDaToVertexMinutes() != null) fleet.setMaxDaToVertexMinutes(req.maxDaToVertexMinutes());
         if (req.dwellMinutes() != null) fleet.setDwellMinutes(req.dwellMinutes());
+        if (req.meetingMode() != null) fleet.setMeetingMode(req.meetingMode());
+        if (req.hubReturnIntervalMinutes() != null) fleet.setHubReturnIntervalMinutes(req.hubReturnIntervalMinutes());
         return FleetConfigResponse.from(fleetRepository.save(fleet));
     }
 
