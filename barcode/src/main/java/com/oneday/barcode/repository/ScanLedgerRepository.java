@@ -4,6 +4,7 @@ import com.oneday.barcode.domain.ScanLedgerEntry;
 import org.springframework.data.repository.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -22,4 +23,10 @@ public interface ScanLedgerRepository extends Repository<ScanLedgerEntry, UUID> 
 
     /** Same trail looked up by the physical barcode string a scan gun reads off the box. */
     List<ScanLedgerEntry> findByParcelIdOrderByScannedAtAsc(String parcelId);
+
+    /** Idempotent replay guard: a device retry re-sends the same client key. */
+    Optional<ScanLedgerEntry> findByClientScanId(UUID clientScanId);
+
+    /** Label idempotency: a shipment gets exactly one LABEL_GENERATED — return it instead of re-minting. */
+    Optional<ScanLedgerEntry> findFirstByShipmentIdAndScanType(UUID shipmentId, String scanType);
 }
