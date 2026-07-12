@@ -21,7 +21,9 @@ class DaEventsConsumerTest {
 
     private final ShipmentStateMachine stateMachine = mock(ShipmentStateMachine.class);
     private final PickupOtpService otp = mock(PickupOtpService.class);
-    private final DaEventsConsumer consumer = new DaEventsConsumer(stateMachine, otp);
+    private final com.oneday.common.port.CityMeetingModePort meetingMode =
+            mock(com.oneday.common.port.CityMeetingModePort.class);
+    private final DaEventsConsumer consumer = new DaEventsConsumer(stateMachine, otp, meetingMode);
 
     private DaLifecycleEvent pickupAssigned(UUID shipmentId) {
         return new DaLifecycleEvent(UUID.randomUUID(), DaEventType.PICKUP_ASSIGNED, "1.0", Instant.now(),
