@@ -1,6 +1,7 @@
 package com.oneday.routing.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.oneday.common.domain.MeetingMode;
 import com.oneday.routing.config.RoutingProperties;
 import com.oneday.routing.domain.CityFleetConfig;
 import com.oneday.routing.domain.CityLogisticsNode;
@@ -71,6 +72,7 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
     private final RoutePlanRepository routePlanRepository;
     private final RoutePlanStopRepository routePlanStopRepository;
     private final DaCronScheduleRepository daCronScheduleRepository;
+    private final HubReturnScheduleService hubReturnScheduleService;
     private final RoutingProperties properties;
     private final ObjectMapper objectMapper;
 
@@ -84,6 +86,7 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
                              RoutePlanRepository routePlanRepository,
                              RoutePlanStopRepository routePlanStopRepository,
                              DaCronScheduleRepository daCronScheduleRepository,
+                             HubReturnScheduleService hubReturnScheduleService,
                              RoutingProperties properties,
                              ObjectMapper objectMapper) {
         this.gridDataAdapter = gridDataAdapter;
@@ -96,6 +99,7 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
         this.routePlanRepository = routePlanRepository;
         this.routePlanStopRepository = routePlanStopRepository;
         this.daCronScheduleRepository = daCronScheduleRepository;
+        this.hubReturnScheduleService = hubReturnScheduleService;
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
@@ -107,6 +111,12 @@ class RoutePlanningServiceImpl implements RoutePlanningService {
                 .orElseThrow(() -> new IllegalStateException("No city_fleet_config for cityId=" + cityId));
         CityLogisticsNode hub = logisticsNodeRepository.findByCityIdAndKind(cityId, LogisticsNodeKind.HUB)
                 .orElseThrow(() -> new IllegalStateException("No HUB logistics node for cityId=" + cityId));
+
+        // M6 gate: HUB_RETURN cities have no van route to solve — the DA periodically returns to the
+        // hub instead. Emit the degenerate hub-return schedule and skip the whole §7 pipeline.
+        if (fleet.getMeetingMode() == MeetingMode.HUB_RETURN) {
+            return hubReturnScheduleService.planHubReturn(cityId, date, fleet, hub);
+        }
 
         List<DaTerritory> territories = gridDataAdapter.getDaTerritories(cityId, date);
         Map<UUID, TerritoryDemand> demandByDa = demandAggregationService.aggregate(territories).stream()

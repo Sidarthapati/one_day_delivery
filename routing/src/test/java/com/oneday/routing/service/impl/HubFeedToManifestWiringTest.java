@@ -115,7 +115,10 @@ class HubFeedToManifestWiringTest {
         VanManifestServiceImpl service = new VanManifestServiceImpl(mock(com.oneday.routing.service.port.HubSortPort.class),
                 mock(DaAccumulationPort.class), mock(FlightCutoffPort.class), planRepo, stopRepo, cronRepo, fleetRepo,
                 manifestRepo, itemRepo, grid, producer, new RoutingProperties());
-        HubFeedConsumer consumer = new HubFeedConsumer(inboundRepo, service);
+        com.oneday.common.port.CityMeetingModePort meetingMode =
+                mock(com.oneday.common.port.CityMeetingModePort.class);
+        when(meetingMode.modeFor(any())).thenReturn(com.oneday.common.domain.MeetingMode.VAN_MEETING);
+        HubFeedConsumer consumer = new HubFeedConsumer(inboundRepo, service, meetingMode);
 
         // The broker would hand this to the @RabbitListener; invoke it directly.
         UUID parcelId = UUID.randomUUID();

@@ -283,7 +283,7 @@ export default function App() {
 
       {/* Main */}
       {view === 'execution' && (
-        <ExecutionView cityCode={cityCode} cityId={cityId} center={city.center} nodes={nodes} />
+        <ExecutionView cityCode={cityCode} cityId={cityId} center={city.center} nodes={nodes} onCityChange={handleCityChange} />
       )}
       {view === 'dispatch' && <DispatchView cityId={cityId} cityCode={cityCode} />}
       {view === 'da' && <DaAppView cityId={cityId} cityCode={cityCode} />}

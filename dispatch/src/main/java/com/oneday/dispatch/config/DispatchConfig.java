@@ -1,5 +1,7 @@
 package com.oneday.dispatch.config;
 
+import com.oneday.common.domain.MeetingMode;
+import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.dispatch.service.AdjacentDaProvider;
 import com.oneday.dispatch.service.OsrmRoutingPort;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -10,6 +12,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalLong;
 
 /**
@@ -51,5 +54,27 @@ public class DispatchConfig {
     @ConditionalOnMissingBean(MeterRegistry.class)
     MeterRegistry simpleMeterRegistry() {
         return new SimpleMeterRegistry();
+    }
+
+    /**
+     * Fallback for M5's isolated module tests: dispatch cannot depend on routing, which owns the real
+     * {@link CityMeetingModePort} (over {@code city_fleet_config}). Absent that, every city reads as
+     * VAN_MEETING — so {@code HubDeliveryFeedConsumer} no-ops. In the assembled app routing's
+     * {@code @Primary CityMeetingModeAdapter} is present, so this backs off.
+     */
+    @Bean
+    @ConditionalOnMissingBean(CityMeetingModePort.class)
+    CityMeetingModePort vanMeetingModePort() {
+        return new CityMeetingModePort() {
+            @Override
+            public MeetingMode modeFor(java.util.UUID cityId) {
+                return MeetingMode.VAN_MEETING;
+            }
+
+            @Override
+            public Optional<HubLocation> hubLocation(java.util.UUID cityId) {
+                return Optional.empty();
+            }
+        };
     }
 }

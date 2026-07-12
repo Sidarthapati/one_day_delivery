@@ -1,5 +1,7 @@
 package com.oneday.routing.events;
 
+import com.oneday.common.domain.MeetingMode;
+import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.routing.domain.InboundKind;
 import com.oneday.routing.domain.InboundParcel;
 import com.oneday.common.kafka.events.hub.HubEventPayload;
@@ -19,10 +21,13 @@ public class HubFeedConsumer {
 
     private final InboundParcelRepository repository;
     private final VanManifestService manifestService;
+    private final CityMeetingModePort meetingModePort;
 
-    public HubFeedConsumer(InboundParcelRepository repository, VanManifestService manifestService) {
+    public HubFeedConsumer(InboundParcelRepository repository, VanManifestService manifestService,
+                           CityMeetingModePort meetingModePort) {
         this.repository = repository;
         this.manifestService = manifestService;
+        this.meetingModePort = meetingModePort;
     }
 
     // The queue is bound `#` to oneday.hub.events, so it receives EVERY hub event shape. Take the
@@ -33,6 +38,13 @@ public class HubFeedConsumer {
     @RabbitListener(queues = RoutingMessagingTopology.HUB_FEED_QUEUE)
     public void onHubEvent(HubEventPayload payload) {
         if (!(payload instanceof ParcelSortedForDeliveryEvent event)) {
+            return;
+        }
+        // HUB_RETURN cities have no van to bind to — M5 assigns the delivery straight to the
+        // territory DA (HubDeliveryFeedConsumer), so M6 stays out of it.
+        if (meetingModePort.modeFor(event.cityId()) == MeetingMode.HUB_RETURN) {
+            log.debug("Skipping van bind for DELIVER parcel {} — city {} is HUB_RETURN",
+                    event.parcelId(), event.cityId());
             return;
         }
         if (!repository.existsByKindAndParcelId(InboundKind.DELIVER, event.parcelId())) {

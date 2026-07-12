@@ -72,6 +72,11 @@ public class DaEventProducer {
         emit(DaEventType.VAN_HANDOFF_COMPLETED, daId, cityId, shipmentId, null, null);
     }
 
+    /** HUB_RETURN city: DA dropped the picked-up parcel at the hub (no van). → M4 (HANDED_TO_PICKUP_VAN), M10. */
+    public void emitHubReturnHandoffCompleted(UUID daId, UUID cityId, UUID shipmentId) {
+        emit(DaEventType.HUB_RETURN_HANDOFF_COMPLETED, daId, cityId, shipmentId, null, null);
+    }
+
     /** A pickup could not be completed by the DA. → M4 (PICKUP_FAILED), M11. */
     public void emitPickupFailed(UUID daId, UUID cityId, UUID shipmentId, String reason) {
         emit(DaEventType.PICKUP_FAILED, daId, cityId, shipmentId, null, reason);
