@@ -2,6 +2,79 @@
 
 The demo UI shows the parcel moving and the live event feed. **The DB is where the *complete, permanent record* lives** — this is what you open in TablePlus (DEVELOPMENT connection → `singapore1dd`) to prove the chain of custody and its immutability.
 
+---
+
+# ⭐ ONE-PARCEL DEMO (auto-picks the latest booking — no ref to copy)
+
+You book **one** parcel via the UI, then run these in order. Each query auto-selects the most recent booking, so there's nothing to paste. **This is the set to use for the live business-owner demo.**
+
+**What the DB adds beyond the 2 events on the RabbitMQ feed:** the actual **barcode string**, the **complete 17-step lifecycle** (the feed/UI only shows 5 phases), the **immutability guarantee**, and the **barcode numbering**.
+
+### L1 — The parcel and its barcode
+> *"This is the box. Its permanent barcode is `1DD-BOM-…`."*
+```sql
+SELECT shipment_ref, parcel_id AS barcode, origin_city, dest_city, state,
+       payment_mode, total_price_paise/100.0 AS price_inr, created_at
+FROM shipments
+ORDER BY created_at DESC
+LIMIT 1;
+```
+
+### L2 — The two scan events, now permanent (this is what you saw on the feed)
+> *"The two events on the live feed weren't just messages — they're written here forever, timestamped."*
+```sql
+SELECT scan_type, location_type AS scanned_at_node, parcel_id AS barcode,
+       actor_id AS scanned_by, scanned_at
+FROM scan_ledger
+WHERE shipment_id = (SELECT id FROM shipments ORDER BY created_at DESC LIMIT 1)
+ORDER BY scanned_at;
+```
+
+### L3 — ⭐ The COMPLETE journey (every state, booked → delivered)
+> *"And here's the whole journey — all 17 steps the parcel passed through, end to end."*
+```sql
+SELECT row_number() OVER (ORDER BY occurred_at) AS step,
+       from_state, to_state, trigger_source, occurred_at
+FROM shipment_state_history
+WHERE shipment_id = (SELECT id FROM shipments ORDER BY created_at DESC LIMIT 1)
+ORDER BY occurred_at;
+```
+
+### L4 — ⭐ Tamper-proof (run it — the DB refuses)
+> *"Try to change history — the database itself says no."*
+```sql
+UPDATE scan_ledger SET scan_type = 'TAMPERED'
+WHERE shipment_id = (SELECT id FROM shipments ORDER BY created_at DESC LIMIT 1);
+--  ERROR:  scan_ledger is append-only: UPDATE is not permitted
+```
+
+### L5 — Barcode numbering (per destination hub, per day)
+> *"Every hub issues its own daily sequence; a number is used once and never reused."*
+```sql
+SELECT hub_iata, day, next_seq AS next_number
+FROM parcel_id_counter
+WHERE day = current_date
+ORDER BY hub_iata;
+```
+
+### L6 — Retry-safe (a double-beep never duplicates)
+```sql
+-- Zero rows = every scan is unique on its device key; retries collapse to one row.
+SELECT client_scan_id, count(*) AS copies
+FROM scan_ledger
+WHERE client_scan_id IS NOT NULL
+GROUP BY client_scan_id
+HAVING count(*) > 1;
+```
+
+> **Reality check for this demo:** a parcel booked through the **UI one-button run** has **2 scans** in the ledger (`LABEL_GENERATED` + `DELIVERED`) — exactly the two events on your feed — plus the **full 17-step state history**. The intermediate **van-custody and hub scans are not on this parcel** (those legs are fast-forwarded / bound to the manifest, not the booking). To make the *single* parcel show the full 11-scan chain of custody in the ledger AND the feed, apply the "full-trail" wiring fix (ask the engineer). Until then, lead with **L3 (complete journey)** as your end-to-end proof, not the scan count.
+
+---
+
+## Reference: keyed-by-ref queries (for a specific/older parcel)
+
+*(Use these if you want a parcel other than the latest — e.g. a runbook-driven one that already has the full 11-scan trail. Run Q0 to find one, paste its ref into `PUT-REF-HERE`.)*
+
 **How to use:** every query is keyed by a human tracking ref. Run **Q0 first** to pick a parcel with the richest trail, then paste its ref into `Q1`–`Q7` (replace `PUT-REF-HERE`).
 
 > **Which parcel to pick:** a parcel driven by the `m8-demo.md` runbook has the **full 11-scan trail** (label → van → hub in/out → airport → shuttle → dest hub → van → delivered). A parcel from the UI one-button run currently shows **label + delivered + van custody** only (the hub/airport legs are fast-forwarded). Q0 ranks by trail richness so you always pick the best one.
