@@ -31,7 +31,9 @@ public class OrdersMessagingTopology {
     @Bean Declarables daBinding()         { return RabbitStreamSupport.consumer(DA_QUEUE, EventStreams.DA_EVENTS); }
     @Bean Declarables hubBinding()        { return RabbitStreamSupport.consumer(HUB_QUEUE, EventStreams.HUB_EVENTS); }
     @Bean Declarables scanBinding()       { return RabbitStreamSupport.consumer(SCAN_QUEUE, EventStreams.SCAN_EVENTS); }
-    @Bean Declarables flightBinding()     { return RabbitStreamSupport.consumer(FLIGHT_QUEUE, EventStreams.FLIGHT_EVENTS); }
-    @Bean Declarables cronBinding()       { return RabbitStreamSupport.consumer(CRON_QUEUE, EventStreams.CRON_EVENTS); }
+    // Unique bean names — a bare `flightBinding`/`cronBinding` collides with M7/M5's identically-named
+    // beans and (under bean-override) silently drops one module's queue.
+    @Bean Declarables ordersFlightBinding()     { return RabbitStreamSupport.consumer(FLIGHT_QUEUE, EventStreams.FLIGHT_EVENTS); }
+    @Bean Declarables ordersCronBinding()       { return RabbitStreamSupport.consumer(CRON_QUEUE, EventStreams.CRON_EVENTS); }
     @Bean Declarables exceptionsBinding() { return RabbitStreamSupport.consumer(EXCEPTIONS_QUEUE, EventStreams.EXCEPTIONS_EVENTS); }
 }

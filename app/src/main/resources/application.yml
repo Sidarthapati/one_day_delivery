@@ -44,6 +44,7 @@ spring:
     listener:
       simple:
         acknowledge-mode: auto          # ack on success; throw → retry then dead-letter (per-queue DLX)
+        missing-queues-fatal: false     # a briefly-missing queue keeps retrying instead of killing the container
         prefetch: 10
         retry:
           enabled: true

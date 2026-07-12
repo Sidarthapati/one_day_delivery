@@ -25,13 +25,15 @@ public class HubMessagingTopology {
         return RabbitStreamSupport.exchange(EventStreams.HUB_EVENTS);
     }
 
+    // Unique bean names — @Bean method name IS the bean name; a bare `shipmentsBinding`/`flightBinding`
+    // collides with M5/M4's identically-named beans and (under bean-override) silently drops one queue.
     @Bean
-    Declarables shipmentsBinding() {
+    Declarables hubShipmentsBinding() {
         return RabbitStreamSupport.consumer(SHIPMENTS_QUEUE, EventStreams.SHIPMENTS_EVENTS);
     }
 
     @Bean
-    Declarables flightBinding() {
+    Declarables hubFlightBinding() {
         return RabbitStreamSupport.consumer(FLIGHT_QUEUE, EventStreams.FLIGHT_EVENTS);
     }
 }

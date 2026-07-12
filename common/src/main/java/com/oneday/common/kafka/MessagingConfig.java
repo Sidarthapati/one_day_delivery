@@ -1,6 +1,8 @@
 package com.oneday.common.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.support.converter.DefaultClassMapper;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
@@ -36,6 +38,22 @@ public class MessagingConfig {
         classMapper.setTrustedPackages("*");
         converter.setClassMapper(classMapper);
         return converter;
+    }
+
+    /**
+     * Replaces Boot's auto-configured RabbitAdmin with one that does NOT abort on a single bad
+     * declaration. RabbitAdmin declares every {@code *MessagingTopology} bean in one pass; if one
+     * queue conflicts with pre-existing broker state (a channel-level {@code PRECONDITION_FAILED}),
+     * the default admin lets the channel die and silently SKIPS every queue after it in that pass —
+     * which is how a single stale queue left {@code m5.shipments}/{@code orders.flight}/… undeclared
+     * and their consumers unbound. {@code ignoreDeclarationExceptions} makes each declaration
+     * independent, so the whole topology always comes up.
+     */
+    @Bean
+    public RabbitAdmin rabbitAdmin(ConnectionFactory connectionFactory) {
+        RabbitAdmin admin = new RabbitAdmin(connectionFactory);
+        admin.setIgnoreDeclarationExceptions(true);
+        return admin;
     }
 
     /** Convenience for tests/aliases that still reference a List of trusted packages. */

@@ -30,15 +30,17 @@ public class DispatchMessagingTopology {
         return RabbitStreamSupport.exchange(EventStreams.DA_EVENTS);
     }
 
+    // Unique bean names — a bare `shipmentsBinding`/`cronBinding` collides with M7/M4's identically-named
+    // beans and (under bean-override) silently drops one module's queue.
     /** All shipment events (CREATED / STATE_CHANGED / CANCELLED) on one ordered queue. */
     @Bean
-    Declarables shipmentsBinding() {
+    Declarables m5ShipmentsBinding() {
         return RabbitStreamSupport.consumer(SHIPMENTS_QUEUE, EventStreams.SHIPMENTS_EVENTS);
     }
 
     /** All cron events on one queue; the consumer acts only on DA_CRON_SCHEDULED. */
     @Bean
-    Declarables cronBinding() {
+    Declarables m5CronBinding() {
         return RabbitStreamSupport.consumer(CRON_QUEUE, EventStreams.CRON_EVENTS);
     }
 }
