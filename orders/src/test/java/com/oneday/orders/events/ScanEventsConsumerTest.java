@@ -48,6 +48,33 @@ class ScanEventsConsumerTest {
     }
 
     @Test
+    void hubOriginOut_transitionsToDispatchedToAirport() {
+        UUID id = UUID.randomUUID();
+
+        consumer.onScanEvent(new ScanEvent(id, ScanEventType.HUB_ORIGIN_OUT));
+
+        verify(stateMachine).transition(eq(id), eq(ShipmentState.DISPATCHED_TO_AIRPORT), any());
+    }
+
+    @Test
+    void destShuttleIn_transitionsToDispatchedToHub() {
+        UUID id = UUID.randomUUID();
+
+        consumer.onScanEvent(new ScanEvent(id, ScanEventType.DEST_SHUTTLE_IN));
+
+        verify(stateMachine).transition(eq(id), eq(ShipmentState.DISPATCHED_TO_HUB), any());
+    }
+
+    @Test
+    void delivered_isCustodyFactOnly_noTransition() {
+        // Option A: DELIVERED is recorded in M8 but DROPPED stays owned by the delivery-OTP path.
+        consumer.onScanEvent(new ScanEvent(UUID.randomUUID(), ScanEventType.DELIVERED));
+
+        verifyNoInteractions(stateMachine);
+        verify(shipmentRepository, never()).save(any());
+    }
+
+    @Test
     void labelGenerated_withNullParcelId_isIgnored() {
         UUID id = UUID.randomUUID();
 
