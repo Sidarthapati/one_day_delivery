@@ -20,15 +20,15 @@ ORDER BY created_at DESC
 LIMIT 1;
 ```
 
-### L1b — ⭐ THE WHOLE JOURNEY in one view (states + scans, by phase)
-> *"Its whole journey — every status and every scan, in order, grouped by leg. The 📷 rows are the physical barcode scans."*
+### L1b — ⭐ THE WHOLE JOURNEY in one view (state + scan + the RabbitMQ event each fired)
+> *"Its whole journey — every status and every scan, in order, grouped by leg. The 📷 rows are the physical barcode scans, and the `rabbitmq_event`/`exchange` columns are exactly the messages you watched stream on the live feed."*
 ```sql
 WITH sid AS (SELECT id FROM shipments ORDER BY created_at DESC LIMIT 1),
 tl AS (
-  SELECT occurred_at AS at, 'state'::text AS kind, to_state::text AS detail, NULL::text AS barcode
+  SELECT occurred_at AS at, 'state'::text AS kind, from_state::text AS from_state, to_state::text AS detail
   FROM shipment_state_history WHERE shipment_id = (SELECT id FROM sid)
   UNION ALL
-  SELECT scanned_at, '📷 SCAN', scan_type::text, parcel_id
+  SELECT scanned_at, '📷 SCAN', NULL, scan_type::text
   FROM scan_ledger WHERE shipment_id = (SELECT id FROM sid)
 )
 SELECT row_number() OVER (ORDER BY at) AS step,
@@ -39,10 +39,23 @@ SELECT row_number() OVER (ORDER BY at) AS step,
     WHEN detail IN ('AT_DEST_HUB','DEST_HUB_PROCESSING','HUB_DEST_IN') THEN '4 Dest hub'
     ELSE '5 Last-mile'
   END AS phase,
-  kind, detail AS event, barcode, to_char(at,'HH24:MI:SS') AS at
+  kind, detail AS event,
+  CASE
+    WHEN kind='state' AND from_state IS NULL THEN 'ShipmentCreatedEvent'
+    WHEN kind='state'                        THEN 'ShipmentStateChangedEvent'
+    WHEN detail IN ('VAN_LOAD','VAN_TO_DA','DA_TO_VAN','VAN_UNLOAD') THEN 'ScanEvent · not broadcast (D-004)'
+    ELSE 'ScanEvent'
+  END AS rabbitmq_event,
+  CASE
+    WHEN kind='state' THEN 'oneday.shipments.events'
+    WHEN detail IN ('VAN_LOAD','VAN_TO_DA','DA_TO_VAN','VAN_UNLOAD') THEN '— (ledger only)'
+    ELSE 'oneday.scan.events'
+  END AS exchange,
+  to_char(at,'HH24:MI:SS') AS at
 FROM tl
 ORDER BY at;
 ```
+*(Note: `PICKUP_ASSIGNED`/`DROP_ASSIGNED` also fired a `DaLifecycleEvent` on `oneday.da.events`; the table shows the shipment-level event. M7 hub events — `BagCreated`, `StandAssigned`, `ParcelSortedForDelivery`, … — are on the feed but aren't per-parcel scan/state rows, so they don't appear here.)*
 
 ### L2 — The two scan events, now permanent (this is what you saw on the feed)
 > *"The two events on the live feed weren't just messages — they're written here forever, timestamped."*
