@@ -119,7 +119,7 @@ class HubFeedToManifestWiringTest {
 
         // The broker would hand this to the @RabbitListener; invoke it directly.
         UUID parcelId = UUID.randomUUID();
-        consumer.onSortedForDelivery(new ParcelSortedForDeliveryEvent(
+        consumer.onHubEvent(new ParcelSortedForDeliveryEvent(
                 parcelId, CITY, HEX, DATE, instant(LocalTime.of(7, 0)), instant(LocalTime.of(11, 0)),
                 null, null, null, null, null));
 

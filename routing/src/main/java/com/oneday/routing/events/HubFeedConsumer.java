@@ -2,6 +2,7 @@ package com.oneday.routing.events;
 
 import com.oneday.routing.domain.InboundKind;
 import com.oneday.routing.domain.InboundParcel;
+import com.oneday.common.kafka.events.hub.HubEventPayload;
 import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.InboundParcelRepository;
 import com.oneday.routing.service.VanManifestService;
@@ -24,8 +25,16 @@ public class HubFeedConsumer {
         this.manifestService = manifestService;
     }
 
+    // The queue is bound `#` to oneday.hub.events, so it receives EVERY hub event shape. Take the
+    // sealed supertype and act only on ParcelSortedForDelivery — the other shapes (BagCreated,
+    // StandAssigned, …) are M7-internal and ignored here. Binding the concrete type instead made all
+    // the non-matching shapes fail deserialization and dead-letter (house pattern: one #-bound queue,
+    // supertype param, dispatch in code — see orders.HubEventsConsumer).
     @RabbitListener(queues = RoutingMessagingTopology.HUB_FEED_QUEUE)
-    public void onSortedForDelivery(ParcelSortedForDeliveryEvent event) {
+    public void onHubEvent(HubEventPayload payload) {
+        if (!(payload instanceof ParcelSortedForDeliveryEvent event)) {
+            return;
+        }
         if (!repository.existsByKindAndParcelId(InboundKind.DELIVER, event.parcelId())) {
             repository.save(InboundParcel.builder()
                     .kind(InboundKind.DELIVER)
