@@ -149,7 +149,11 @@ psql_dev -c "SELECT scan_type, location_type, location_id AS van, actor_id AS dr
 psql_dev -c "UPDATE scan_ledger SET scan_type='X' WHERE shipment_id='$SID';"   # ERROR: append-only
 psql_dev -c "DELETE FROM scan_ledger WHERE shipment_id='$SID';"                # ERROR: append-only
 
-# (b) REST dedup — same client_scan_id (fresh Idempotency-Key each) → one row:
+# (b) REST dedup — same client_scan_id (fresh Idempotency-Key each) → one row.
+#     Pre-position to DISPATCHED_TO_HUB so the single (deduped) HUB_DEST_IN transition is legal —
+#     otherwise firing it while already at AT_DEST_HUB is an illegal transition and the state-change
+#     event correctly dead-letters (the ledger row still lands; see the DLQ note below).
+psql_dev -qc "UPDATE shipments SET state='DISPATCHED_TO_HUB'::shipment_state WHERE id='$SID';"
 CS=$(uuidgen)
 for i in 1 2; do jpost "$BASE/api/v1/scan" -o /dev/null -w "%{http_code} " \
   -d "{\"shipment_id\":\"$SID\",\"scan_type\":\"HUB_DEST_IN\",\"location_type\":\"HUB\",\"client_scan_id\":\"$CS\"}"; done; echo
@@ -186,5 +190,11 @@ Expected ordered trail (one immutable row each): `LABEL_GENERATED`(DA) → `HUB_
 > Notes:
 > - §6 state pre-positioning stands in for the unbuilt M5/M7/M9 triggers on this branch — it exercises
 >   only M8's owned transitions and the live consumer, not the other modules' logic.
-> - If a scan returns 202 but state never advances and the DLQ grows, you're on a **shared broker** —
->   see the broker-isolation note up top.
+> - **DLQ semantics (by design):** a scan whose M4 transition is illegal *from the shipment's current
+>   state* still records its ledger row unconditionally — but the state-change event is rejected to
+>   `oneday.scan.events.dlq` rather than corrupting state. So an *out-of-order* scan legitimately
+>   grows the DLQ; only the **in-order** §6 walk should keep DLQ at 0. (`rabbitmqadmin -N <cfg> purge
+>   queue name=oneday.scan.events.dlq` to clear leftovers between runs.)
+> - Shared-broker tell (different problem): **in-order, legal** scans return 202 but state never
+>   advances *and* the DLQ grows — another consumer is eating your `orders.scan` messages. See the
+>   broker-isolation note up top.
