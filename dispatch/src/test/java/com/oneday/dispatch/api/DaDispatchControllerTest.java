@@ -1,8 +1,12 @@
 package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.common.domain.MeetingMode;
+import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.dispatch.dto.request.GpsPingRequest;
+import com.oneday.dispatch.dto.request.HubHandoffRequest;
 import com.oneday.dispatch.dto.request.OtpVerifyRequest;
+import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
@@ -32,9 +36,11 @@ class DaDispatchControllerTest {
     private DaStatusService daStatusService;
     private DaTaskService daTaskService;
     private OtpVerificationService otpVerificationService;
+    private CityMeetingModePort meetingModePort;
     private DaDispatchController controller;
 
     private final UUID da = UUID.randomUUID();
+    private final UUID city = UUID.randomUUID();
     private final UUID taskId = UUID.randomUUID();
 
     @BeforeEach
@@ -42,7 +48,8 @@ class DaDispatchControllerTest {
         daStatusService = mock(DaStatusService.class);
         daTaskService = mock(DaTaskService.class);
         otpVerificationService = mock(OtpVerificationService.class);
-        controller = new DaDispatchController(daStatusService, daTaskService, otpVerificationService);
+        meetingModePort = mock(CityMeetingModePort.class);
+        controller = new DaDispatchController(daStatusService, daTaskService, otpVerificationService, meetingModePort);
         when(daTaskService.markEnRoute(any(), any())).thenReturn(sampleView());
     }
 
@@ -93,6 +100,39 @@ class DaDispatchControllerTest {
         var resp = controller.resendOtp(da, taskId, principal(da, "DELIVERY_ASSOCIATE"));
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
         verify(otpVerificationService).resendOtp(da, taskId);
+    }
+
+    @Test
+    void hubHandoffDelegatesWhenCityIsHubReturn() {
+        stubCityMode(MeetingMode.HUB_RETURN);
+        controller.hubHandoff(da, taskId, principal(da, "DELIVERY_ASSOCIATE"),
+                new HubHandoffRequest(java.util.List.of("P-1"), null));
+        verify(daTaskService).recordHubHandoff(da, taskId, java.util.List.of("P-1"));
+    }
+
+    @Test
+    void hubHandoffRejectedWithConflictInVanCity() {
+        stubCityMode(MeetingMode.VAN_MEETING);
+        assertThatThrownBy(() -> controller.hubHandoff(da, taskId, principal(da, "DELIVERY_ASSOCIATE"),
+                new HubHandoffRequest(java.util.List.of("P-1"), null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409");
+        verify(daTaskService, org.mockito.Mockito.never()).recordHubHandoff(any(), any(), any());
+    }
+
+    @Test
+    void hubCollectDelegatesWhenCityIsHubReturn() {
+        stubCityMode(MeetingMode.HUB_RETURN);
+        controller.hubCollect(da, taskId, principal(da, "DELIVERY_ASSOCIATE"));
+        verify(daTaskService).recordHubCollect(da, taskId);
+    }
+
+    /** Wire the DA's live status → city → meeting mode (flat, to avoid nested stubbing). */
+    private void stubCityMode(MeetingMode mode) {
+        DaLiveStatus status = mock(DaLiveStatus.class);
+        when(status.getCityId()).thenReturn(city);
+        when(daStatusService.getLiveStatus(da)).thenReturn(status);
+        when(meetingModePort.modeFor(city)).thenReturn(mode);
     }
 
     private AuthUserDetails principal(UUID userId, String role) {

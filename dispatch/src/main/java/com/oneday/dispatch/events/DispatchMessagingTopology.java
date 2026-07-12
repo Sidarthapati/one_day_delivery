@@ -24,6 +24,13 @@ public class DispatchMessagingTopology {
     /** M5's queue on M6's cron stream (M5 acts only on DA_CRON_SCHEDULED; the rest are ignored). */
     public static final String CRON_QUEUE = "m5.cron";
 
+    /**
+     * M5's queue on M7's hub stream. M5 acts only on PARCEL_SORTED_FOR_DELIVERY and only for
+     * HUB_RETURN cities (no van — the territory DA collects the delivery at the hub); the rest are
+     * ignored. In VAN_MEETING cities M6 owns this event, so this consumer no-ops.
+     */
+    public static final String HUB_QUEUE = "m5.hub";
+
     /** Exchange M5 publishes DA lifecycle events to (gated — see DaEventProducer). */
     @Bean
     Declarables daEventsExchange() {
@@ -40,5 +47,11 @@ public class DispatchMessagingTopology {
     @Bean
     Declarables cronBinding() {
         return RabbitStreamSupport.consumer(CRON_QUEUE, EventStreams.CRON_EVENTS);
+    }
+
+    /** All hub events on one queue; the consumer acts only on PARCEL_SORTED_FOR_DELIVERY (HUB_RETURN). */
+    @Bean
+    Declarables hubBinding() {
+        return RabbitStreamSupport.consumer(HUB_QUEUE, EventStreams.HUB_EVENTS);
     }
 }

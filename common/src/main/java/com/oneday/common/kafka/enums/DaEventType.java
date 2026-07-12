@@ -14,6 +14,11 @@ public enum DaEventType {
     // M4 consumer: PICKED_UP → HANDED_TO_PICKUP_VAN  [QR scan — DA scans parcel in DA app]
     VAN_HANDOFF_COMPLETED,
 
+    // HUB_RETURN cities only (M6 gate off — no van). The DA carries the pickup back to the hub and
+    // hands it off there; same custody progression as a van handoff → M4 (HANDED_TO_PICKUP_VAN).
+    // A distinct type so consumers aren't told a "van" received the parcel when none exists.
+    HUB_RETURN_HANDOFF_COMPLETED,
+
     // M4 consumer: HANDED_TO_DROP_VAN → DROP_ASSIGNED
     DROP_ASSIGNED,
 

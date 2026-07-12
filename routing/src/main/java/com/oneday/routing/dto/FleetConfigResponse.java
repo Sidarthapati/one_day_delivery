@@ -1,5 +1,6 @@
 package com.oneday.routing.dto;
 
+import com.oneday.common.domain.MeetingMode;
 import com.oneday.routing.domain.CityFleetConfig;
 
 import java.time.Instant;
@@ -15,12 +16,15 @@ public record FleetConfigResponse(
         int shuttleCadenceMinutes,
         int maxDaToVertexMinutes,
         int dwellMinutes,
+        MeetingMode meetingMode,
+        Integer hubReturnIntervalMinutes,
         Instant updatedAt) {
 
     public static FleetConfigResponse from(CityFleetConfig c) {
         return new FleetConfigResponse(
                 c.getCityId(), c.getVansAvailable(), c.getCapacityPackets(),
                 c.getCycleTimeMinMinutes(), c.getCycleTimeMaxMinutes(), c.getShuttleCadenceMinutes(),
-                c.getMaxDaToVertexMinutes(), c.getDwellMinutes(), c.getUpdatedAt());
+                c.getMaxDaToVertexMinutes(), c.getDwellMinutes(),
+                c.getMeetingMode(), c.getHubReturnIntervalMinutes(), c.getUpdatedAt());
     }
 }

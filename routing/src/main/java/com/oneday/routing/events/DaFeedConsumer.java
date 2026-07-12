@@ -1,7 +1,9 @@
 package com.oneday.routing.events;
 
+import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.kafka.enums.DaEventType;
 import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.routing.domain.InboundKind;
 import com.oneday.routing.domain.InboundParcel;
 import com.oneday.routing.repository.InboundParcelRepository;
@@ -24,10 +26,13 @@ public class DaFeedConsumer {
 
     private final InboundParcelRepository repository;
     private final VanManifestService manifestService;
+    private final CityMeetingModePort meetingModePort;
 
-    public DaFeedConsumer(InboundParcelRepository repository, VanManifestService manifestService) {
+    public DaFeedConsumer(InboundParcelRepository repository, VanManifestService manifestService,
+                          CityMeetingModePort meetingModePort) {
         this.repository = repository;
         this.manifestService = manifestService;
+        this.meetingModePort = meetingModePort;
     }
 
     @RabbitListener(queues = RoutingMessagingTopology.DA_FEED_QUEUE)
@@ -39,6 +44,13 @@ public class DaFeedConsumer {
         if (parcelId == null || event.cityId() == null || event.validDate() == null) {
             log.warn("PICKUP_COMPLETED missing parcelId/cityId/validDate (parcel={} city={} date={}) — skipping bind",
                     parcelId, event.cityId(), event.validDate());
+            return;
+        }
+        // HUB_RETURN cities have no van — the DA carries the collected parcel to the hub on the next
+        // return, so there is nothing to bind here.
+        if (meetingModePort.modeFor(event.cityId()) == MeetingMode.HUB_RETURN) {
+            log.debug("Skipping van bind for COLLECT parcel {} — city {} is HUB_RETURN",
+                    parcelId, event.cityId());
             return;
         }
         if (!repository.existsByKindAndParcelId(InboundKind.COLLECT, parcelId)) {

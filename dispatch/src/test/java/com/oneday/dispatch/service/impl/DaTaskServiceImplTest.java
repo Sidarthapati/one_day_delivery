@@ -27,7 +27,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -48,6 +47,7 @@ class DaTaskServiceImplTest {
     private final LocalDate today = LocalDate.now();
 
     private DaEventProducer events;
+    private com.oneday.dispatch.events.HubScanSeamProducer scanSeam;
     private DaTaskService service;
 
     @BeforeEach
@@ -56,7 +56,8 @@ class DaTaskServiceImplTest {
         DaStatusServiceImpl daStatus = new DaStatusServiceImpl(daStatusRepo, props);
         daStatus.initShift(da, city, today, "MORNING", null);
         events = mock(DaEventProducer.class);
-        service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events);
+        scanSeam = mock(com.oneday.dispatch.events.HubScanSeamProducer.class);
+        service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam);
     }
 
     @Test
@@ -111,6 +112,48 @@ class DaTaskServiceImplTest {
         assertThat(cron.getHandoffCompletedAt()).isNotNull();
         assertThat(cron.getParcelCountHanded()).isEqualTo(1);
         verify(events).emitVanHandoffCompleted(eq(da), eq(city), eq(task.getShipmentId()));
+    }
+
+    @Test
+    void hubReturnHandoffRollsCronToNextSlotAndStaysScheduled() {
+        // HUB_RETURN cron (no van) with a later return today: the handoff completes THIS leg but keeps
+        // the assignment SCHEDULED, rolling the meeting to the next slot so the hard constraint holds.
+        DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.IN_PROGRESS);
+        persistHubReturnCron("10:00", java.util.List.of("10:00", "13:00"));
+
+        service.recordHubHandoff(da, task.getId(), java.util.List.of("P-1"));
+
+        DaCronAssignment cron = cronRepo.findByDaIdAndOperatingDate(da, today).orElseThrow();
+        assertThat(cron.getStatus()).isEqualTo(CronAssignmentStatus.SCHEDULED);
+        java.time.ZoneId zone = java.time.ZoneId.of(new DispatchProperties().getShift().getZone());
+        java.time.Instant expectedNext = java.time.LocalTime.parse("13:00")
+                .atDate(today).atZone(zone).toInstant();
+        assertThat(cron.getScheduledMeetingTime()).isEqualTo(expectedNext);
+        assertThat(cron.getParcelCountHanded()).isEqualTo(1);
+        // Hub handoff emits the neutral (non-van) event + the origin-hub M8 seam.
+        verify(events).emitHubReturnHandoffCompleted(eq(da), eq(city), eq(task.getShipmentId()));
+        verify(scanSeam).emitHubOriginIn(eq(task.getShipmentId()));
+    }
+
+    @Test
+    void hubReturnHandoffOnLastSlotCompletesCron() {
+        // Final return of the day (no later slot) is terminal, like a van rendezvous.
+        DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.IN_PROGRESS);
+        persistHubReturnCron("19:00", java.util.List.of("19:00"));
+
+        service.recordHubHandoff(da, task.getId(), java.util.List.of("P-1"));
+
+        DaCronAssignment cron = cronRepo.findByDaIdAndOperatingDate(da, today).orElseThrow();
+        assertThat(cron.getStatus()).isEqualTo(CronAssignmentStatus.COMPLETED);
+    }
+
+    @Test
+    void hubCollectMovesDeliveryToInProgressAndEmitsScanSeam() {
+        DispatchQueue task = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
+        service.recordHubCollect(da, task.getId());
+        assertThat(reload(task).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        verify(events).emitDropCollected(eq(da), eq(city), eq(task.getShipmentId()));
+        verify(scanSeam).emitHubDestOut(eq(task.getShipmentId()));
     }
 
     @Test
@@ -182,6 +225,22 @@ class DaTaskServiceImplTest {
         c.setMeetingLon(77.60);
         c.setScheduledMeetingTime(Instant.now().plus(2, ChronoUnit.HOURS));
         c.setStatus(status);
+        cronRepo.saveAndFlush(c);
+    }
+
+    private void persistHubReturnCron(String currentSlot, java.util.List<String> meetingTimes) {
+        java.time.ZoneId zone = java.time.ZoneId.of(new DispatchProperties().getShift().getZone());
+        DaCronAssignment c = new DaCronAssignment();
+        c.setDaId(da);
+        c.setCityId(city);
+        c.setOperatingDate(today);
+        c.setCronVertexId(UUID.randomUUID());
+        c.setMeetingLat(12.96);
+        c.setMeetingLon(77.60);
+        c.setScheduledMeetingTime(java.time.LocalTime.parse(currentSlot).atDate(today).atZone(zone).toInstant());
+        c.setMeetingTimes(meetingTimes);
+        c.setVanId(null);   // HUB_RETURN crons carry no van
+        c.setStatus(CronAssignmentStatus.SCHEDULED);
         cronRepo.saveAndFlush(c);
     }
 

@@ -14,7 +14,7 @@ import com.oneday.routing.domain.VanManifest;
 import com.oneday.routing.domain.VanManifestItem;
 import com.oneday.routing.events.CronEventProducer;
 import com.oneday.routing.events.HubFeedConsumer;
-import com.oneday.common.kafka.events.ParcelSortedForDeliveryEvent;
+import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.CityFleetConfigRepository;
 import com.oneday.routing.repository.DaCronScheduleRepository;
 import com.oneday.routing.repository.InboundParcelRepository;
@@ -115,12 +115,16 @@ class HubFeedToManifestWiringTest {
         VanManifestServiceImpl service = new VanManifestServiceImpl(mock(com.oneday.routing.service.port.HubSortPort.class),
                 mock(DaAccumulationPort.class), mock(FlightCutoffPort.class), planRepo, stopRepo, cronRepo, fleetRepo,
                 manifestRepo, itemRepo, grid, producer, new RoutingProperties());
-        HubFeedConsumer consumer = new HubFeedConsumer(inboundRepo, service);
+        com.oneday.common.port.CityMeetingModePort meetingMode =
+                mock(com.oneday.common.port.CityMeetingModePort.class);
+        when(meetingMode.modeFor(any())).thenReturn(com.oneday.common.domain.MeetingMode.VAN_MEETING);
+        HubFeedConsumer consumer = new HubFeedConsumer(inboundRepo, service, meetingMode);
 
         // The broker would hand this to the @RabbitListener; invoke it directly.
         UUID parcelId = UUID.randomUUID();
         consumer.onSortedForDelivery(new ParcelSortedForDeliveryEvent(
-                parcelId, CITY, HEX, DATE, instant(LocalTime.of(7, 0)), instant(LocalTime.of(11, 0))));
+                parcelId, CITY, HEX, DATE, instant(LocalTime.of(7, 0)), instant(LocalTime.of(11, 0)),
+                null, null, null, null, null));
 
         assertThat(buffer).hasSize(1); // recorded
         assertThat(itemStore).hasSize(1); // and bound in the same hop
