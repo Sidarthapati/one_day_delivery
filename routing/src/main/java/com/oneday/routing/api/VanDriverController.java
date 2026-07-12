@@ -14,7 +14,7 @@ import com.oneday.routing.service.CustodyService;
 import com.oneday.routing.service.HandoffService;
 import com.oneday.routing.service.model.StopReconciliation;
 import com.oneday.routing.service.model.VanCustodyCommand;
-import com.oneday.routing.service.port.ScanLedgerPort;
+import com.oneday.common.port.ScanLedgerPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;

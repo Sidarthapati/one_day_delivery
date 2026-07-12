@@ -17,7 +17,7 @@ import com.oneday.routing.domain.VanManifest;
 import com.oneday.routing.domain.VanManifestItem;
 import com.oneday.routing.dto.TelemetryType;
 import com.oneday.routing.dto.VanTelemetryRequest;
-import com.oneday.common.kafka.events.ParcelSortedForDeliveryEvent;
+import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.CityLogisticsNodeRepository;
 import com.oneday.routing.repository.DaCronScheduleRepository;
 import com.oneday.routing.repository.HandoffReconciliationRepository;
@@ -33,7 +33,7 @@ import com.oneday.routing.service.VanTrackingService;
 import com.oneday.routing.service.model.DaTerritory;
 import com.oneday.routing.service.model.TerritoryHex;
 import com.oneday.routing.service.model.VanCustodyCommand;
-import com.oneday.routing.service.port.ScanLedgerPort;
+import com.oneday.common.port.ScanLedgerPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -340,7 +340,8 @@ public class DemoExecutionService {
                         .filter(p -> bindableDas.contains(p.daId())).toList();
         for (DaPickupQueuePort.QueuedPickup p : m5Deliveries) {
             rabbitTemplate.convertAndSend(EventStreams.HUB_EVENTS, "ParcelSortedForDelivery",
-                    new ParcelSortedForDeliveryEvent(p.shipmentId(), cityId, p.tileId(), date, now, now.plus(Duration.ofHours(6))));
+                    new ParcelSortedForDeliveryEvent(p.shipmentId(), cityId, p.tileId(), date, now,
+                            now.plus(Duration.ofHours(6)), null, null, null, null, null));
             feed.add("FEED", "HUB_EVENTS ▸ %s sorted for delivery → DA %s (M5 queue)"
                     .formatted(shortId(p.shipmentId()), shortId(p.daId())));
             published++;

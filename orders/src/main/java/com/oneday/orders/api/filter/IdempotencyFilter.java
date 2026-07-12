@@ -97,6 +97,14 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     /** Maximum allowed length for the Idempotency-Key header value (matches DB column). */
     private static final int MAX_KEY_LENGTH = 100;
 
+    /**
+     * Stand-in stored for an empty response body. {@code response_body} is a {@code NOT NULL jsonb}
+     * column, and an empty string is not valid JSON — a handler returning no content (e.g. a 202/204)
+     * would otherwise fail the insert with {@code invalid input syntax for type json}. We store the
+     * JSON {@code null} literal and reproduce an empty body on replay.
+     */
+    private static final String JSON_NULL_LITERAL = "null";
+
     // Deliberately a bare ObjectMapper (no custom serializers) so the fingerprint is
     // unaffected by application-level Jackson configuration on the injected objectMapper.
     // Key sorting is done explicitly in sortKeysRecursively(), not via a mapper feature.
@@ -212,9 +220,12 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 log.debug("Idempotency hit — replaying key={}**** userId={}",
                         key.substring(0, Math.min(4, key.length())), userId);
                 wrappedResponse.setStatus(cached.getResponseStatus());
-                wrappedResponse.setContentType(MediaType.APPLICATION_JSON_VALUE);
                 wrappedResponse.addHeader(HEADER_IDEMPOTENCY_REPLAYED, "true");
-                wrappedResponse.getWriter().write(cached.getResponseBody());
+                String cachedBody = cached.getResponseBody();
+                if (cachedBody != null && !JSON_NULL_LITERAL.equals(cachedBody)) {
+                    wrappedResponse.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                    wrappedResponse.getWriter().write(cachedBody);
+                }
                 wrappedResponse.copyBodyToResponse();
                 return;
             }
@@ -235,7 +246,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
             record.setId(keyId);
             record.setRequestFingerprint(incomingFingerprint);
             record.setResponseStatus((short) status);
-            record.setResponseBody(responseBody);
+            // Empty body (e.g. a 202/204 with no content) isn't valid JSON for the jsonb column —
+            // store the JSON null literal and reproduce an empty body on replay (see JSON_NULL_LITERAL).
+            record.setResponseBody(responseBody.isBlank() ? JSON_NULL_LITERAL : responseBody);
             record.setExpiresAt(Instant.now().plus(properties.getTtl()));
             try {
                 repository.save(record);

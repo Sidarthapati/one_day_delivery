@@ -27,7 +27,7 @@ import com.oneday.common.domain.enums.PickupType;
 import com.oneday.common.kafka.EventStreams;
 import com.oneday.grid.dto.response.DaTerritoryResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
-import com.oneday.common.kafka.events.ParcelSortedForDeliveryEvent;
+import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.BadSqlGrammarException;
@@ -761,7 +761,7 @@ public class DemoDaController {
         Instant now = Instant.now();
         rabbitTemplate.convertAndSend(EventStreams.HUB_EVENTS, "ParcelSortedForDelivery",
                 new ParcelSortedForDeliveryEvent(shipmentId, cityId, destTileId, date, now,
-                        now.plus(Duration.ofHours(6))));
+                        now.plus(Duration.ofHours(6)), null, null, null, null, null));
     }
 
     // ── a DA's enriched task list (DA app) ────────────────────────────────────────────────────────
