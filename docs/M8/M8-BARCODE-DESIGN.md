@@ -79,37 +79,45 @@ The barcode is born at **first physical custody**, per PRD §10.1:
 ```
 id             UUID PK
 shipment_id    UUID        NOT NULL   -- spine (D-001), indexed
-parcel_id      VARCHAR(30)            -- barcode string, NULL before LABEL_GENERATED, indexed
-scan_type      VARCHAR(24) NOT NULL   -- union of ScanEventType + VanScanType (§4.2)
-location_type  VARCHAR(16) NOT NULL   -- HUB | VAN | DA | AIRPORT | CUSTOMER_COUNTER
-location_id    UUID                   -- hubId / vanId / daId
+parcel_id      VARCHAR(30)            -- barcode string, NULL before LABEL_GENERATED / on bag+van scans, indexed
+bag_id         UUID                   -- (V8_1) set on BAG scans only; ties the N fanned-out per-parcel rows
+scan_type      VARCHAR(24) NOT NULL   -- ScanEventType ∪ VanScanType (§4.2)
+location_type  VARCHAR(32) NOT NULL   -- HUB | VAN | SHUTTLE | DA | AIRPORT | CUSTOMER_COUNTER
+location_id    UUID                   -- hubId / vanId / shuttleId / daId
 actor_id       UUID                   -- who held the gun
 counterparty_id UUID                  -- the *other* party in a handoff (DA on a VAN_TO_DA)
 scanned_at     TIMESTAMPTZ NOT NULL   -- device wall-clock (when it physically happened)
 recorded_at    TIMESTAMPTZ NOT NULL   -- server insert time (default now())
-detail         JSONB                  -- scan-type-specific extras, else NULL
 client_scan_id UUID                   -- device-supplied idempotency key
 ```
+*(As built: `detail JSONB` from the original sketch was dropped — YAGNI, all identities are explicit columns; `location_type` widened to 32; `bag_id` folded into `V8_1` — the migration was still undeployed when D-006 landed, so no `V8_3` needed.)*
 - **Append-only invariant** (repo-wide rule): no `UPDATE`/`DELETE` in code. Optional hardening — one Postgres `RULE`/trigger that raises on update/delete (~3 lines); recommended but not blocking.
 - **Idempotency:** partial `UNIQUE (client_scan_id) WHERE client_scan_id IS NOT NULL`. A van driver's app retrying on flaky signal re-sends the same `client_scan_id` → duplicate insert is swallowed, one row stands. Matches routing's "replays are idempotent."
 
 ### 4.2 The unified scan-type vocabulary
-M8 stores **one** `scan_type` column spanning both existing families — no enum merge needed (they stay in `common`):
+M8 stores **one** `scan_type` column spanning both families. The three **🆕** rows are new `ScanEventType` values (added when we walked the full physical flow — bag dispatch, dest shuttle, final delivery):
 
-| `scan_type` | Source family | Location | Emits `ScanEvent`? |
-|---|---|---|---|
-| `LABEL_GENERATED` | `ScanEventType` | DA | yes (carries parcelId) |
-| `HUB_ORIGIN_IN` | `ScanEventType` | HUB | yes → M4 `AT_ORIGIN_HUB` |
-| `SELF_DROP_ACCEPTED` | `ScanEventType` | CUSTOMER_COUNTER | yes → M4 `AT_ORIGIN_HUB` |
-| `GHA_ACCEPTANCE` | `ScanEventType` | AIRPORT | yes → M4 `AT_AIRPORT` |
-| `HUB_DEST_IN` | `ScanEventType` | HUB | yes → M4 `AT_DEST_HUB` |
-| `HUB_COLLECT_COMPLETED` | `ScanEventType` | CUSTOMER_COUNTER | yes → M4 `HUB_COLLECTED` |
-| `VAN_LOAD` | `VanScanType` | VAN | no (routing owns manifest) |
-| `VAN_TO_DA` | `VanScanType` | VAN→DA | no |
-| `DA_TO_VAN` | `VanScanType` | DA→VAN | no |
-| `VAN_UNLOAD` | `VanScanType` | VAN→HUB | no |
+| `scan_type` | Source family | Unit | Location | Emits `ScanEvent`? |
+|---|---|---|---|---|
+| `LABEL_GENERATED` | `ScanEventType` | parcel | DA | yes (carries parcelId) |
+| `HUB_ORIGIN_IN` | `ScanEventType` | parcel | HUB | yes → M4 `AT_ORIGIN_HUB` |
+| `SELF_DROP_ACCEPTED` | `ScanEventType` | parcel | CUSTOMER_COUNTER | yes → M4 `AT_ORIGIN_HUB` |
+| `HUB_ORIGIN_OUT` 🆕 | `ScanEventType` | **bag** | HUB | yes → M4 `DISPATCHED_TO_AIRPORT` |
+| `GHA_ACCEPTANCE` | `ScanEventType` | **bag** | AIRPORT | yes → M4 `AT_AIRPORT` |
+| `DEST_SHUTTLE_IN` 🆕 | `ScanEventType` | **bag** | SHUTTLE | yes → M4 `DISPATCHED_TO_HUB` |
+| `HUB_DEST_IN` | `ScanEventType` | **bag** | HUB | yes → M4 `AT_DEST_HUB` |
+| `HUB_COLLECT_COMPLETED` | `ScanEventType` | parcel | CUSTOMER_COUNTER | yes → M4 `HUB_COLLECTED` |
+| `DELIVERED` 🆕 | `ScanEventType` | parcel | DA | yes → M4 `DROPPED` (co-gated with delivery OTP) |
+| `VAN_LOAD` | `VanScanType` | parcel | VAN | no (routing owns manifest) |
+| `VAN_TO_DA` | `VanScanType` | parcel | VAN→DA | no |
+| `DA_TO_VAN` | `VanScanType` | parcel | DA→VAN | no |
+| `VAN_UNLOAD` | `VanScanType` | parcel | VAN→HUB | no |
 
-**Decision D-004 — van scans are recorded, not broadcast.** The four van scans land in the ledger (custody truth) but M8 does **not** publish a `ScanEvent` for them — routing already advances its own manifest and M4 state moves off routing/hub events, not van custody. This confirms routing's Q12/Q14: the **van is a distinct `location_type` (VAN)**, and both van + driver identity ride the scan (`location_id`=vanId, `actor_id`=driverId, `counterparty_id`=daId).
+**Decision D-004 — van scans are recorded, not broadcast.** The four van scans land in the ledger (custody truth) but M8 does **not** publish a `ScanEvent` — routing advances its own manifest. Van + driver identity ride the scan (`location_id`=vanId, `actor_id`=driverId, `counterparty_id`=daId).
+
+**Decision D-006 — bag scans fan out to per-parcel rows.** A bag scan (`HUB_ORIGIN_OUT`, `GHA_ACCEPTANCE`, `DEST_SHUTTLE_IN`, `HUB_DEST_IN`) physically reads **one bag QR** covering N parcels. **M7 owns bag membership**, so M7 drives the fan-out: it iterates the bag's parcels and records one M8 scan each — same `bag_id`/`scan_type`/`scanned_at`, `parcel_id` NULL, distinct `shipment_id`. `bag_id` (`V8_1`) ties them so "what else flew with this parcel" is a join, not a timestamp guess.
+
+**Decision D-007 — the 3 promoted scans own the custody-transfer transitions; M7/M9 own the internal ones.** `HUB_ORIGIN_OUT`→`DISPATCHED_TO_AIRPORT`, `DEST_SHUTTLE_IN`→`DISPATCHED_TO_HUB`, `DELIVERED`→`DROPPED`. The in-between states (`IN_TAKEOFF_BAG`, `DEPARTED`/`LANDED`, `DEST_HUB_PROCESSING`) stay driven by M7 hub / M9 flight events. This clean split is the coordination the enum promotion requires — M7/M9 must **not** also emit for the transitions the scans now own. `DELIVERED` co-gates `DROPPED` with the delivery OTP (scan = right parcel, OTP = right customer).
 
 ### 4.3 Two ways in (monolith reality)
 | Path | Caller | Why |
@@ -163,6 +171,8 @@ com.oneday.barcode
 - **D-003** Code-128 for parcels, QR for bags (resolves **H1**).
 - **D-004** Van scans recorded in ledger, not published as `ScanEvent`; van is a distinct `location_type`.
 - **D-005** Extend `ScanEvent` with `parcelId` + `occurredAt` (closes M4 consumer TODO).
+- **D-006** Bag scans fan out to N per-parcel rows (M7-driven, owns membership); `bag_id` (`V8_1`) ties them.
+- **D-007** Promote `HUB_ORIGIN_OUT`/`DEST_SHUTTLE_IN`/`DELIVERED` to `ScanEventType`; they own the custody-transfer transitions, M7/M9 own the internal ones (no double-emit). New `location_type` `SHUTTLE`; `DELIVERED` co-gates `DROPPED` with the OTP.
 
 ## 9. Out of scope for M8
 - **H2** bag reassignment reprint workflow → M7 (`BagReassignmentService`). M8 only guarantees parcel Code-128s survive it.
