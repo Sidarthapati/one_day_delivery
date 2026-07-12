@@ -33,15 +33,28 @@ Nothing about M8 is flashy. Its value is that the record is **complete, automati
    rabbitmqadmin -N oneday list queues name consumers messages | grep -vE 'amq\.'
    ```
    Every app queue `consumers=1`; every `*.dlq` `messages=0`. *(This was previously broken by a bean-name collision — now fixed; all consumers bind and DLQ stays at 0.)*
-3. Have a terminal ready with the **ledger query** (Step 4) so you can run it on cue.
-4. Open the Ops console **Execution** tab so the live feed is visible.
+3. Have a terminal ready with the **ledger query** (Beat 4) so you can run it on cue.
+4. Open the Ops console **Execution** tab. You'll use two things on it:
+   - the **"One-button intercity run"** panel (top), and
+   - the **live RabbitMQ feed** panel (side) — keep it visible the whole time.
+
+### The "One-button intercity run" panel — the only controls you touch
+`Delhi [🚐 van] → Mumbai [🚐 van]   orders [2]` then three buttons, left to right:
+
+| Button | What it does | When |
+|---|---|---|
+| **① Prepare both** | Staffs + plans both cities for today (DA territories + van routes). Needs OSRM up. | Once, before the owner arrives (or as beat 0). |
+| **② Place orders** | Books `orders` real parcels → `ShipmentCreatedEvent` → M5 assigns DAs. | Beat 1 lead-in. |
+| **③ Run full day** | Runs the whole chain; the tracker **First-mile → Origin hub → Flight → Dest hub → Last-mile** lights up. | Beats 1–3. |
+
+Leave both meeting-mode dropdowns on **🚐 van** for this demo. (`🏭 hub` = HUB_RETURN, a second operating model — nice aside, not needed for the M8 story.)
 
 ---
 
 ## The demo (one button, four beats)
 
 ### Beat 1 — "Pick up the parcel, print the barcode"
-Book a Delhi → Mumbai parcel (Customer app, or the Execution tab's full-day controls), then press **Run the day**. The first thing that happens at pickup:
+On the **One-button intercity run** panel: click **② Place orders** (watch the feed light up with `ShipmentCreatedEvent` → `m5.shipments` consume → M5 assigns a DA), then click **③ Run full day**. The first M8 thing that happens, at pickup:
 
 **On the live feed, point out:**
 ```
