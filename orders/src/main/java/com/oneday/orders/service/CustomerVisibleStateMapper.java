@@ -24,6 +24,7 @@ public class CustomerVisibleStateMapper {
         LABELS.put(ShipmentState.PICKUP_ASSIGNED,          "Pickup agent assigned");
         LABELS.put(ShipmentState.PICKED_UP,                "Parcel collected");
         LABELS.put(ShipmentState.HANDED_TO_PICKUP_VAN,     "Parcel handed to transport");
+        LABELS.put(ShipmentState.RETURNED_TO_HUB,          "Parcel handed to transport");
         LABELS.put(ShipmentState.AWAITING_SELF_DROP,       "Please bring your parcel to the origin hub");
         LABELS.put(ShipmentState.AT_ORIGIN_HUB,            "Arrived at origin hub");
         LABELS.put(ShipmentState.ORIGIN_HUB_PROCESSING,    "Being processed at hub");
@@ -38,6 +39,8 @@ public class CustomerVisibleStateMapper {
         LABELS.put(ShipmentState.HANDED_TO_DROP_VAN,       "Out for delivery");
         LABELS.put(ShipmentState.DROP_ASSIGNED,            "Delivery agent assigned");
         LABELS.put(ShipmentState.DROP_COLLECTED,           "Delivery agent en route");
+        LABELS.put(ShipmentState.HUB_DELIVERY_ASSIGNED,    "Delivery agent assigned");
+        LABELS.put(ShipmentState.COLLECTED_FROM_HUB,       "Delivery agent en route");
         LABELS.put(ShipmentState.DROPPED,                  "Delivered");
         LABELS.put(ShipmentState.AWAITING_HUB_COLLECT,     "Your parcel is ready — collect from the hub");
         LABELS.put(ShipmentState.HUB_COLLECTED,            "Collected from hub");

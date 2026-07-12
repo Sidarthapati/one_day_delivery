@@ -1,7 +1,9 @@
 package com.oneday.app.demo;
 
+import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.hub.domain.FlightBag;
 import com.oneday.hub.domain.FlightBagStatus;
 import com.oneday.hub.service.FlightBagService;
@@ -70,6 +72,7 @@ public class DemoFullDayService {
     private final FlightBagService flightBags;
     private final DemoExecutionService demoExec;   // shared feed/status + van animation
     private final DemoDaController demoDa;          // reuse proven pickup/drop phase helpers
+    private final CityMeetingModePort meetingMode;  // per-city M6 gate: van meeting vs hub return
 
     private final ExecutorService runner = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "demo-full-day");
@@ -82,7 +85,8 @@ public class DemoFullDayService {
     public DemoFullDayService(ShipmentRepository shipments, ShipmentStateMachine stateMachine,
                               BookingService bookingService, UserRepository userRepository,
                               HubReceivingService hubReceiving, FlightBagService flightBags,
-                              DemoExecutionService demoExec, DemoDaController demoDa) {
+                              DemoExecutionService demoExec, DemoDaController demoDa,
+                              CityMeetingModePort meetingMode) {
         this.shipments = shipments;
         this.stateMachine = stateMachine;
         this.bookingService = bookingService;
@@ -91,6 +95,11 @@ public class DemoFullDayService {
         this.flightBags = flightBags;
         this.demoExec = demoExec;
         this.demoDa = demoDa;
+        this.meetingMode = meetingMode;
+    }
+
+    private boolean isHubReturn(UUID cityId) {
+        return meetingMode.modeFor(cityId) == MeetingMode.HUB_RETURN;
     }
 
     // ── public surface ──────────────────────────────────────────────────────────────────────────
@@ -178,11 +187,21 @@ public class DemoFullDayService {
                 try { demoDa.assignPickup(sh.getShipmentRef()); } catch (RuntimeException ignore) { /* already assigned */ }
             }
             demoDa.autoVerify(aCityId, date);                       // → PICKED_UP + M5 task IN_PROGRESS
-            demoExec.feed("PHASE", "① OTP handshakes done — driving the first-mile van(s) to collect from DAs…");
-            demoExec.start(aCityId, date, 0, batch.size(), speed);  // animate collect run (real M5→M6 collect bridge)
-            awaitVanIdle();
-            demoExec.returnToHub(aCityId, date);                    // drive vans home (map)
-            awaitVanIdle();
+            if (isHubReturn(aCityId)) {
+                // HUB_RETURN origin: no van meets the DA — the DA carries the collected pickups back to the
+                // hub on its periodic return (→ RETURNED_TO_HUB, not HANDED_TO_PICKUP_VAN). M6 binding is
+                // skipped for this city; there's nothing to animate.
+                for (Shipment sh : intercity(aCity, bCity, ShipmentState.PICKED_UP)) {
+                    advance(sh.getId(), sh.getShipmentRef(), ShipmentState.RETURNED_TO_HUB);
+                }
+                demoExec.feed("PHASE", "① %s is HUB_RETURN — DAs carried the pickups back to the hub themselves (→ RETURNED_TO_HUB, no first-mile van).".formatted(aCity));
+            } else {
+                demoExec.feed("PHASE", "① OTP handshakes done — driving the first-mile van(s) to collect from DAs…");
+                demoExec.start(aCityId, date, 0, batch.size(), speed);  // animate collect run (real M5→M6 collect bridge)
+                awaitVanIdle();
+                demoExec.returnToHub(aCityId, date);                    // drive vans home (map)
+                awaitVanIdle();
+            }
             demoDa.pickupsToHub(aCity, date);                       // → AT_ORIGIN_HUB
 
             // ── PHASE 2 — REAL M7 origin hub in A ────────────────────────────────────────────────
@@ -238,18 +257,28 @@ public class DemoFullDayService {
 
             // ── PHASE 5 — last-mile delivery in B ────────────────────────────────────────────────
             phase("LAST_MILE", "5/5 Last-mile delivery in " + bCity);
-            // HANDED_TO_DROP_VAN emits the event M5 reacts to (assignDelivery → drop DA), then onto the van.
-            for (Shipment sh : intercity(aCity, bCity, ShipmentState.DEST_HUB_PROCESSING)) {
-                advance(sh.getId(), sh.getShipmentRef(), ShipmentState.HANDED_TO_DROP_VAN);
+            if (isHubReturn(bCityId)) {
+                // HUB_RETURN dest: no drop van. M5's HubDeliveryFeedConsumer already assigned each sorted
+                // parcel to its territory DA, who collects it at the hub — drive the honest hub states
+                // (HUB_DELIVERY_ASSIGNED → COLLECTED_FROM_HUB → DROPPED), never the van states.
+                for (Shipment sh : intercity(aCity, bCity, ShipmentState.DEST_HUB_PROCESSING)) {
+                    advance(sh.getId(), sh.getShipmentRef(), ShipmentState.HUB_DELIVERY_ASSIGNED);
+                }
+                demoExec.feed("PHASE", "⑤ %s is HUB_RETURN — the %d delivery(ies) were assigned to territory DAs who collect them at the hub (→ HUB_DELIVERY_ASSIGNED, no drop van).".formatted(bCity, fed));
+            } else {
+                // HANDED_TO_DROP_VAN emits the event M5 reacts to (assignDelivery → drop DA), then onto the van.
+                for (Shipment sh : intercity(aCity, bCity, ShipmentState.DEST_HUB_PROCESSING)) {
+                    advance(sh.getId(), sh.getShipmentRef(), ShipmentState.HANDED_TO_DROP_VAN);
+                }
+                settle(500);                                           // let M5 assign the delivery DA
+                for (Shipment sh : intercity(aCity, bCity, ShipmentState.HANDED_TO_DROP_VAN)) {
+                    advance(sh.getId(), sh.getShipmentRef(), ShipmentState.DROP_ASSIGNED);
+                }
+                demoExec.feed("PHASE", "⑤ Driving the drop van(s) over the %d hub-sorted delivery(ies)…".formatted(fed));
+                demoExec.driveDeliveries(bCityId, date, fed, speed);   // bind (real feed) + animate
+                awaitVanIdle();
             }
-            settle(500);                                           // let M5 assign the delivery DA
-            for (Shipment sh : intercity(aCity, bCity, ShipmentState.HANDED_TO_DROP_VAN)) {
-                advance(sh.getId(), sh.getShipmentRef(), ShipmentState.DROP_ASSIGNED);
-            }
-            demoExec.feed("PHASE", "⑤ Driving the drop van(s) over the %d hub-sorted delivery(ies)…".formatted(fed));
-            demoExec.driveDeliveries(bCityId, date, fed, speed);   // bind (real feed) + animate
-            awaitVanIdle();
-            demoDa.dropsCollected(bCity, date);                    // → DROP_COLLECTED (DA carrying, OTP minted)
+            demoDa.dropsCollected(bCity, date);                    // → DROP_COLLECTED / COLLECTED_FROM_HUB (OTP minted)
             demoDa.autoVerifyDeliveries(bCity, date);              // → DROPPED
             updateCounts(bCity, date);
 

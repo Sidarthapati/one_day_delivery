@@ -1,7 +1,9 @@
 package com.oneday.orders.events;
 
+import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
@@ -33,22 +35,30 @@ public class DaEventsConsumer {
 
     private final ShipmentStateMachine stateMachine;
     private final PickupOtpService pickupOtpService;
+    private final CityMeetingModePort meetingModePort;
 
-    DaEventsConsumer(ShipmentStateMachine stateMachine, PickupOtpService pickupOtpService) {
+    DaEventsConsumer(ShipmentStateMachine stateMachine, PickupOtpService pickupOtpService,
+                     CityMeetingModePort meetingModePort) {
         this.stateMachine = stateMachine;
         this.pickupOtpService = pickupOtpService;
+        this.meetingModePort = meetingModePort;
     }
 
     @RabbitListener(queues = OrdersMessagingTopology.DA_QUEUE)
     public void onDaEvent(DaLifecycleEvent event) {
+        // The delivery-side events (DROP_ASSIGNED / DROP_COLLECTED) are shared between VAN_MEETING and
+        // HUB_RETURN cities — only the delivery city's mode distinguishes them. Resolve it once so the
+        // parcel's M4 state honestly reflects "on a drop van" vs "collected at the hub". Null/unknown → van.
+        boolean hubReturn = event.cityId() != null
+                && meetingModePort.modeFor(event.cityId()) == MeetingMode.HUB_RETURN;
         ShipmentState target = switch (event.eventType()) {
             case PICKUP_ASSIGNED       -> ShipmentState.PICKUP_ASSIGNED;
             case PICKUP_FAILED         -> ShipmentState.PICKUP_FAILED;
             case VAN_HANDOFF_COMPLETED -> ShipmentState.HANDED_TO_PICKUP_VAN;
-            // HUB_RETURN city: DA dropped at the hub (no van) — same custody step as a van handoff.
-            case HUB_RETURN_HANDOFF_COMPLETED -> ShipmentState.HANDED_TO_PICKUP_VAN;
-            case DROP_ASSIGNED         -> ShipmentState.DROP_ASSIGNED;
-            case DROP_COLLECTED        -> ShipmentState.DROP_COLLECTED;
+            // HUB_RETURN city: DA carried the pickup back to the hub itself — no pickup van involved.
+            case HUB_RETURN_HANDOFF_COMPLETED -> ShipmentState.RETURNED_TO_HUB;
+            case DROP_ASSIGNED         -> hubReturn ? ShipmentState.HUB_DELIVERY_ASSIGNED : ShipmentState.DROP_ASSIGNED;
+            case DROP_COLLECTED        -> hubReturn ? ShipmentState.COLLECTED_FROM_HUB    : ShipmentState.DROP_COLLECTED;
             case DROP_COMPLETED        -> ShipmentState.DROPPED;
             case DROP_FAILED           -> ShipmentState.DELIVERY_FAILED;
             // Not consumed by M4 — PICKED_UP is driven exclusively by the OTP verify endpoint.

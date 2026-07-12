@@ -38,7 +38,7 @@ const KIND_BADGE = {
 }
 const DEFAULT_BADGE = { icon: '•', badge: 'bg-gray-100 text-gray-500', text: 'text-gray-600' }
 
-export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) {
+export default function ExecutionView({ cityCode, cityId, center, nodes = [], onCityChange }) {
   // Prepare inputs (seed → M3 territories → M6 fleet). Fleet inputs prefill from getFleet on mount.
   const [daCount, setDaCount] = useState(25)
   const [seedMin, setSeedMin] = useState(4)
@@ -95,6 +95,11 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   const [clearMsg, setClearMsg] = useState(null)
   // Full-day intercity (one-button) panel: origin = the current city tab; dest is picked here.
   const [destCode, setDestCode] = useState(cityCode === 'mumbai' ? 'delhi' : 'mumbai')
+  // Per-city meeting mode (VAN_MEETING | HUB_RETURN), read from fleet config so the panel can show
+  // and flip each direction's mode. originMode tracks cityCode; destMode tracks destCode.
+  const [originMode, setOriginMode] = useState(null)
+  const [destMode, setDestMode] = useState(null)
+  const [flipBusy, setFlipBusy] = useState(false)
   const [fdCount, setFdCount] = useState(5)
   const [fdBusy, setFdBusy] = useState(null)   // 'prepare' | 'order' | 'run' | null
   const [fdMsg, setFdMsg] = useState(null)
@@ -132,6 +137,7 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
           if (f.vansAvailable != null) setVansAvail(f.vansAvailable)
           if (f.capacityPackets != null) setCapacity(f.capacityPackets)
           if (f.cycleTimeMaxMinutes != null) setCycleMax(f.cycleTimeMaxMinutes)
+          setOriginMode(f.meetingMode || 'VAN_MEETING')
         }
       } catch { /* no fleet config yet — keep defaults */ }
       // M5's DAs are independent of the M6 route geometry — load them first so the map reflects the
@@ -150,6 +156,48 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
     })()
     return () => { alive = false }
   }, [cityCode, cityId])
+
+  // Load the destination city's meeting mode whenever the dest picker changes, so the panel can show
+  // VAN vs HUB for the B leg too (and flip it).
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const f = await getFleet(destCity().id)
+        if (alive && f) setDestMode(f.meetingMode || 'VAN_MEETING')
+      } catch { setDestMode(null) }
+    })()
+    return () => { alive = false }
+  }, [destCode])
+
+  // Flip a city between VAN_MEETING and HUB_RETURN via the fleet config. HUB_RETURN needs an interval
+  // (default 180m = returns every 3h); VAN_MEETING clears it. Re-prepare after flipping to re-plan.
+  async function flipMode(id, toHubReturn, setLocal) {
+    setFlipBusy(true)
+    try {
+      const patch = toHubReturn
+        ? { meeting_mode: 'HUB_RETURN', hub_return_interval_minutes: 180 }
+        : { meeting_mode: 'VAN_MEETING', hub_return_interval_minutes: null }
+      const f = await putFleet(id, patch)
+      setLocal(f.meetingMode)
+      setFdMsg(`Meeting mode set → ${f.meetingMode === 'HUB_RETURN' ? '🏭 hub-return (no vans)' : '🚐 van'}. Re-run “① Prepare both” to re-plan.`)
+    } catch (e) {
+      setFdMsg(`⚠️ Could not change mode: ${e.message}`)
+    } finally { setFlipBusy(false) }
+  }
+
+  // A compact VAN/HUB toggle used for both origin and dest in the intercity panel.
+  const ModeToggle = ({ mode, onFlip }) => (
+    <select value={mode || 'VAN_MEETING'} onChange={e => onFlip(e.target.value === 'HUB_RETURN')}
+      disabled={fdBusy != null || running || flipBusy || mode == null}
+      title="Meeting mode — 🚐 van: M6 van meeting-points; 🏭 hub: DAs return to the hub on a cadence (no vans)."
+      className={`border rounded px-1 py-0.5 text-[10px] font-semibold disabled:opacity-50 ${
+        mode === 'HUB_RETURN' ? 'bg-amber-100 text-amber-800 border-amber-300'
+                              : 'bg-sky-100 text-sky-800 border-sky-300'}`}>
+      <option value="VAN_MEETING">🚐 van</option>
+      <option value="HUB_RETURN">🏭 hub</option>
+    </select>
+  )
 
   // Keep the DA overlay in sync with M5 while idle (a shift loaded / pickups assigned in the Dispatch
   // tab shows up here within a few seconds). During a run, das is a fixed snapshot the animation drives.
@@ -201,21 +249,27 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
       await seedDemand(cityCode, TODAY, { minMinutes: seedMin, maxMinutes: seedMax })
       const prop = await replan(cityCode, daCount, TODAY)
       await approveProposal(prop.id)            // → APPROVED, the state M6 reads (no activate on this branch)
-      // Persist the fleet config the route solve reads, then replan.
-      await putFleet(cityId, {
+      // Persist the fleet config the route solve reads, then replan. The response tells us the city's
+      // meeting mode (VAN_MEETING vs HUB_RETURN).
+      const fleet = await putFleet(cityId, {
         vans_available: vansAvail,
         capacity_packets: capacity,
         cycle_time_max_minutes: cycleMax,
       })
+      const hubReturn = fleet.meetingMode === 'HUB_RETURN'
       const p = await m6Replan(cityId, TODAY)
-      if (!p.vansUsed) throw new Error(`No feasible routes: ${p.notes || 'under-provisioned'}`)
-      await m6Approve(p.planId)
-      const stops = await getAllStops(cityId, TODAY)
+      // HUB_RETURN cities run no vans — M6 writes a degenerate, already-APPROVED plan (vansUsed 0), so
+      // there's nothing to gate on van count or to approve. Only VAN_MEETING plans come back PROPOSED.
+      if (!hubReturn) {
+        if (!p.vansUsed) throw new Error(`No feasible routes: ${p.notes || 'under-provisioned'}`)
+        await m6Approve(p.planId)
+      }
+      const stops = await getAllStops(cityId, TODAY)   // HUB_RETURN → no van stops (empty)
       const built = await buildRoutes(stops, nodes)
       setRoutes(built)
       const stopCount = built.reduce((a, r) => a + (r.markers?.length || 0), 0)
       setPlanInfo({ vansUsed: p.vansUsed, planId: p.planId, das: daCount, loops: built.length,
-        stops: stopCount, fresh: true })
+        stops: stopCount, fresh: true, hubReturn, notes: p.notes })
       setPrepared(true)
       fetchDas()
     } catch (e) {
@@ -255,15 +309,22 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   // ── Full-day intercity (one-button) handlers ─────────────────────────────────────────────────
   // Prepare ONE city's plan (grid demand → M3 territories → M6 fleet → route plan), the same chain as
   // prepare() but parameterised so we can run it for both the origin and the destination city.
+  // Prepares one city and returns its meeting mode so the caller can message VAN vs HUB_RETURN.
   async function prepareCityChain(code, id) {
     await seedDemand(code, TODAY, { minMinutes: seedMin, maxMinutes: seedMax })
     const prop = await replan(code, daCount, TODAY)
     await approveProposal(prop.id)
-    await putFleet(id, { vans_available: vansAvail, capacity_packets: capacity, cycle_time_max_minutes: cycleMax })
+    const fleet = await putFleet(id, { vans_available: vansAvail, capacity_packets: capacity, cycle_time_max_minutes: cycleMax })
+    const hubReturn = fleet.meetingMode === 'HUB_RETURN'
     const p = await m6Replan(id, TODAY)
-    if (!p.vansUsed) throw new Error(`${code}: no feasible routes (${p.notes || 'under-provisioned'})`)
-    await m6Approve(p.planId)
-    await loadShift(id, TODAY)               // clock the DAs on duty at their cron meetings
+    // HUB_RETURN cities run no vans: M6 emits a degenerate, already-APPROVED plan (vansUsed 0) — no
+    // van-count gate, no approve. Only VAN_MEETING plans come back PROPOSED needing a van route + approve.
+    if (!hubReturn) {
+      if (!p.vansUsed) throw new Error(`${code}: no feasible routes (${p.notes || 'under-provisioned'})`)
+      await m6Approve(p.planId)
+    }
+    await loadShift(id, TODAY)               // clock the DAs on duty at their cron / hub-return meetings
+    return fleet.meetingMode
   }
 
   const destCity = () => CITIES[destCode]
@@ -271,11 +332,12 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
   async function prepareBothHandler() {
     setFdBusy('prepare'); setFdMsg(null); setError(null)
     try {
+      const tag = (label, mode) => `${label} (${mode === 'HUB_RETURN' ? 'hub-return, no vans' : 'van'})`
       setFdMsg(`Preparing ${CITIES[cityCode].label}…`)
-      await prepareCityChain(cityCode, cityId)
+      const originMode = await prepareCityChain(cityCode, cityId)
       setFdMsg(`Preparing ${destCity().label}…`)
-      await prepareCityChain(destCode, destCity().id)
-      setFdMsg(`✅ Both cities staffed & planned. Next → 🧾 Place orders.`)
+      const destMode = await prepareCityChain(destCode, destCity().id)
+      setFdMsg(`✅ ${tag(CITIES[cityCode].label, originMode)} & ${tag(destCity().label, destMode)} staffed & planned. Next → 🧾 Place orders.`)
       setPrepared(true); fetchDas()
     } catch (e) {
       setFdMsg('✕ ' + e.message)
@@ -756,15 +818,24 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
               One parcel, the whole real chain: pickup → first-mile van → <b>real M7 origin hub</b> →
               flight → <b>real M7 dest hub</b> (emits the real M6 feed) → drop van → delivered.
             </div>
-            <div className="flex items-center gap-2 text-xs text-gray-700">
-              <span className="font-semibold">{CITIES[cityCode].label}</span>
+            <div className="flex items-center gap-1.5 text-xs text-gray-700 flex-wrap">
+              <select value={cityCode}
+                onChange={e => { const nc = e.target.value; if (nc === destCode) setDestCode(cityCode); onCityChange?.(nc) }}
+                disabled={fdBusy != null || running}
+                title="Origin city (also switches the map/tab). Pick its mode with the toggle → 🚐 van / 🏭 hub."
+                className="border rounded px-1 py-0.5 bg-white font-semibold">
+                {Object.entries(CITIES).filter(([k]) => k !== destCode)
+                  .map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+              </select>
+              <ModeToggle mode={originMode} onFlip={h => flipMode(cityId, h, setOriginMode)} />
               <span className="text-indigo-400">→</span>
               <select value={destCode} onChange={e => setDestCode(e.target.value)}
                 disabled={fdBusy != null || running}
-                className="border rounded px-1 py-0.5 bg-white">
+                className="border rounded px-1 py-0.5 bg-white font-semibold">
                 {Object.entries(CITIES).filter(([k]) => k !== cityCode)
                   .map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
               </select>
+              <ModeToggle mode={destMode} onFlip={h => flipMode(destCity().id, h, setDestMode)} />
               <label className="ml-auto flex items-center gap-1">orders
                 <input type="number" min={1} max={30} value={fdCount} onChange={e => setFdCount(+e.target.value)}
                   disabled={fdBusy != null || running} className="w-12 border rounded px-1 py-0.5" /></label>
@@ -831,9 +902,13 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [] }) 
             <div className="font-semibold">✅ {planInfo.restored
               ? (planInfo.wasApproved ? 'Existing plan loaded' : 'Plan approved')
               : 'Plan built & approved'}</div>
-            <div>M3 carved <b>{planInfo.das ?? daCount}</b> DA territories · M6 solved <b>{planInfo.vansUsed}</b> van
-              {' '}route{planInfo.vansUsed === 1 ? '' : 's'} over <b>{planInfo.loops ?? routes.length}</b> loop
-              {(planInfo.loops ?? routes.length) === 1 ? '' : 's'}{planInfo.stops ? <> · <b>{planInfo.stops}</b> cron stops</> : null}.</div>
+            {planInfo.hubReturn
+              ? <div>M3 carved <b>{planInfo.das ?? daCount}</b> DA territories · <b>HUB_RETURN</b> mode —
+                  no vans; DAs return to the hub on a fixed cadence.
+                  {planInfo.notes ? <> <span className="text-emerald-600">{planInfo.notes}</span></> : null}</div>
+              : <div>M3 carved <b>{planInfo.das ?? daCount}</b> DA territories · M6 solved <b>{planInfo.vansUsed}</b> van
+                  {' '}route{planInfo.vansUsed === 1 ? '' : 's'} over <b>{planInfo.loops ?? routes.length}</b> loop
+                  {(planInfo.loops ?? routes.length) === 1 ? '' : 's'}{planInfo.stops ? <> · <b>{planInfo.stops}</b> cron stops</> : null}.</div>}
             <div className="text-emerald-600">Next → 👷 Load shift to clock the DAs on duty.</div>
           </div>}
           <div className="flex gap-2">

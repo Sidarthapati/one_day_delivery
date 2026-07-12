@@ -263,10 +263,14 @@ public class DemoDaController {
         // must enter to complete the drop.
         if (state != ShipmentState.BOOKED && state != ShipmentState.PICKUP_ASSIGNED) {
             Stage s = stageFor(state);
-            String otp = state == ShipmentState.DROP_COLLECTED
+            // "Out for delivery" is DROP_COLLECTED (van) or COLLECTED_FROM_HUB (hub-return) — both reveal
+            // the recipient's delivery OTP.
+            boolean outForDelivery = state == ShipmentState.DROP_COLLECTED
+                    || state == ShipmentState.COLLECTED_FROM_HUB;
+            String otp = outForDelivery
                     ? deliveryOtpCache.get(shipment.getId())
                     : otpCache.get(shipment.getId());
-            String msg = (state == ShipmentState.DROP_COLLECTED && otp != null)
+            String msg = (outForDelivery && otp != null)
                     ? "Out for delivery — give the agent your delivery code " + otp + " to receive your parcel."
                     : s.label();
             return new StatusResponse(ref, shipment.getId(), state.name(), s.code(), s.label(),
@@ -345,8 +349,9 @@ public class DemoDaController {
             case PICKUP_FAILED        -> new Stage("FINDING_DA", "Reassigning — finding a new delivery associate", "first-mile pickup");
             case PICKED_UP            -> new Stage("PICKED_UP", "Picked up — the DA has your parcel", "first-mile pickup");
             case HANDED_TO_PICKUP_VAN -> new Stage("AT_VAN", "Handed to the van — en route to the hub", "first-mile pickup");
-            case DROP_ASSIGNED        -> new Stage("OUT_FOR_DELIVERY", "Out for delivery", "last-mile drop");
-            case DROP_COLLECTED       -> new Stage("OUT_FOR_DELIVERY", "Delivery associate has your parcel", "last-mile drop");
+            case RETURNED_TO_HUB      -> new Stage("AT_VAN", "DA returning to the hub with your parcel", "first-mile pickup");
+            case DROP_ASSIGNED, HUB_DELIVERY_ASSIGNED -> new Stage("OUT_FOR_DELIVERY", "Out for delivery", "last-mile drop");
+            case DROP_COLLECTED, COLLECTED_FROM_HUB   -> new Stage("OUT_FOR_DELIVERY", "Delivery associate has your parcel", "last-mile drop");
             case DROPPED              -> new Stage("DELIVERED", "Delivered", "last-mile drop");
             default                   -> new Stage("IN_TRANSIT", "In transit", "—");
         };
@@ -460,16 +465,22 @@ public class DemoDaController {
     public FirstMileResponse pickupsToHub(@RequestParam String city,
                                           @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         int advanced = 0, skipped = 0;
-        // Accept both HANDED_TO_PICKUP_VAN (normal path) and PICKED_UP (if Run-the-day's to-van didn't fire),
-        // so Complete first-mile still closes the lane end-to-end.
-        for (ShipmentState from : new ShipmentState[]{ShipmentState.HANDED_TO_PICKUP_VAN, ShipmentState.PICKED_UP}) {
+        // Accept the van custody state (HANDED_TO_PICKUP_VAN), the hub-return custody state
+        // (RETURNED_TO_HUB — DA carried it back itself), and PICKED_UP (if Run-the-day's handoff didn't
+        // fire), so Complete first-mile closes the lane end-to-end in either meeting mode.
+        for (ShipmentState from : new ShipmentState[]{
+                ShipmentState.HANDED_TO_PICKUP_VAN, ShipmentState.RETURNED_TO_HUB, ShipmentState.PICKED_UP}) {
             for (Shipment sh : shipmentRepository.findByState(from)) {
                 if (sh.getOriginCity() == null || !sh.getOriginCity().equalsIgnoreCase(city)) continue;
                 try {
                     String ref = sh.getShipmentRef();
+                    // A straggler still at PICKED_UP: push it through the van custody step so → AT_ORIGIN_HUB
+                    // is legal. RETURNED_TO_HUB already completed the DA's return handoff.
                     if (sh.getState() == ShipmentState.PICKED_UP) {
                         stateMachine.transition(sh.getId(), ShipmentState.HANDED_TO_PICKUP_VAN,
                                 TransitionContext.fromApi("demo-firstmile-hub", ref));
+                        dispatchDemoService.markPickupCompleted(sh.getId());
+                    } else if (sh.getState() == ShipmentState.RETURNED_TO_HUB) {
                         dispatchDemoService.markPickupCompleted(sh.getId());
                     }
                     stateMachine.transition(sh.getId(), ShipmentState.AT_ORIGIN_HUB,
@@ -705,16 +716,23 @@ public class DemoDaController {
                                                @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         List<String> refs = new ArrayList<>();
         int skipped = 0;
-        for (Shipment sh : shipmentRepository.findByState(ShipmentState.DROP_ASSIGNED)) {
-            if (sh.getDestCity() == null || !sh.getDestCity().equalsIgnoreCase(city)) continue;
-            try {
-                stateMachine.transition(sh.getId(), ShipmentState.DROP_COLLECTED,
-                        TransitionContext.fromApi("demo-drops-collected", sh.getShipmentRef()));
-                dispatchDemoService.markDelivering(sh.getId());   // DA now carrying it → task IN_PROGRESS
-                deliveryOtpCache.put(sh.getId(), deliveryOtpService.generate(sh.getId()));
-                refs.add(sh.getShipmentRef());
-            } catch (RuntimeException e) {
-                skipped++;
+        // Two collect legs: van (DROP_ASSIGNED → DROP_COLLECTED) and hub-return (HUB_DELIVERY_ASSIGNED →
+        // COLLECTED_FROM_HUB — the DA collects the parcel at the hub, no drop van). Both mean "out for delivery".
+        ShipmentState[][] legs = {
+                {ShipmentState.DROP_ASSIGNED, ShipmentState.DROP_COLLECTED},
+                {ShipmentState.HUB_DELIVERY_ASSIGNED, ShipmentState.COLLECTED_FROM_HUB}};
+        for (ShipmentState[] leg : legs) {
+            for (Shipment sh : shipmentRepository.findByState(leg[0])) {
+                if (sh.getDestCity() == null || !sh.getDestCity().equalsIgnoreCase(city)) continue;
+                try {
+                    stateMachine.transition(sh.getId(), leg[1],
+                            TransitionContext.fromApi("demo-drops-collected", sh.getShipmentRef()));
+                    dispatchDemoService.markDelivering(sh.getId());   // DA now carrying it → task IN_PROGRESS
+                    deliveryOtpCache.put(sh.getId(), deliveryOtpService.generate(sh.getId()));
+                    refs.add(sh.getShipmentRef());
+                } catch (RuntimeException e) {
+                    skipped++;
+                }
             }
         }
         String msg = refs.size() + " drop(s) collected by DAs at the meeting point (out for delivery, OTP minted)"
@@ -731,15 +749,19 @@ public class DemoDaController {
     public DeliveryVerifyResponse autoVerifyDeliveries(@RequestParam String city,
                                                        @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         int delivered = 0, skipped = 0;
-        for (Shipment sh : shipmentRepository.findByState(ShipmentState.DROP_COLLECTED)) {
-            if (sh.getDestCity() == null || !sh.getDestCity().equalsIgnoreCase(city)) continue;
-            try {
-                stateMachine.transition(sh.getId(), ShipmentState.DROPPED,
-                        TransitionContext.fromApi("demo-delivery-autoverify", sh.getShipmentRef()));
-                dispatchDemoService.markDelivered(sh.getId());   // complete the M5 DELIVERY task → leaves the DA's queue
-                delivered++;
-            } catch (RuntimeException e) {
-                skipped++;
+        // Both the van collect (DROP_COLLECTED) and the hub-return collect (COLLECTED_FROM_HUB) are "out
+        // for delivery" and complete at → DROPPED on the recipient OTP.
+        for (ShipmentState from : new ShipmentState[]{ShipmentState.DROP_COLLECTED, ShipmentState.COLLECTED_FROM_HUB}) {
+            for (Shipment sh : shipmentRepository.findByState(from)) {
+                if (sh.getDestCity() == null || !sh.getDestCity().equalsIgnoreCase(city)) continue;
+                try {
+                    stateMachine.transition(sh.getId(), ShipmentState.DROPPED,
+                            TransitionContext.fromApi("demo-delivery-autoverify", sh.getShipmentRef()));
+                    dispatchDemoService.markDelivered(sh.getId());   // complete the M5 DELIVERY task → leaves the DA's queue
+                    delivered++;
+                } catch (RuntimeException e) {
+                    skipped++;
+                }
             }
         }
         return new DeliveryVerifyResponse(delivered, skipped,
