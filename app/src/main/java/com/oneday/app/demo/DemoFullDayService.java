@@ -182,6 +182,11 @@ public class DemoFullDayService {
             // ── PHASE 1 — first-mile pickups in A ───────────────────────────────────────────────
             phase("FIRST_MILE", "1/5 First-mile pickups in " + aCity);
             List<Shipment> batch = intercity(aCity, bCity, ShipmentState.BOOKED, ShipmentState.PICKUP_ASSIGNED);
+            // Scope this run's counts to the parcels it actually starts with (the just-placed A→B orders),
+            // so the live bars and the final "delivered" tally aren't inflated by every DROPPED parcel ever
+            // sent to B on earlier runs/days.
+            java.util.Set<UUID> runIds = new java.util.LinkedHashSet<>();
+            for (Shipment sh : batch) runIds.add(sh.getId());
             demoExec.feed("PHASE", "① Assigning %d pickup(s) to DAs in %s + minting OTPs…".formatted(batch.size(), aCity));
             for (Shipment sh : batch) {
                 try { demoDa.assignPickup(sh.getShipmentRef()); } catch (RuntimeException ignore) { /* already assigned */ }
@@ -190,8 +195,11 @@ public class DemoFullDayService {
             if (isHubReturn(aCityId)) {
                 // HUB_RETURN origin: no van meets the DA — the DA carries the collected pickups back to the
                 // hub on its periodic return (→ RETURNED_TO_HUB, not HANDED_TO_PICKUP_VAN). M6 binding is
-                // skipped for this city; there's nothing to animate.
-                for (Shipment sh : intercity(aCity, bCity, ShipmentState.PICKED_UP)) {
+                // skipped for this city; there's nothing to animate. M5 assignment + our OTP handshake are
+                // async, so wait for this run's parcels to actually reach PICKED_UP before routing them the
+                // hub-return way — otherwise the downstream straggler path would force the van state.
+                List<Shipment> pickedUp = awaitPickedUp(runIds, aCityId, date);
+                for (Shipment sh : pickedUp) {
                     advance(sh.getId(), sh.getShipmentRef(), ShipmentState.RETURNED_TO_HUB);
                 }
                 demoExec.feed("PHASE", "① %s is HUB_RETURN — DAs carried the pickups back to the hub themselves (→ RETURNED_TO_HUB, no first-mile van).".formatted(aCity));
@@ -227,13 +235,13 @@ public class DemoFullDayService {
                 }
             }
             sealAndDispatchBags(aCity, bagIds);   // seal + dispatch exactly this run's bags (with real contents)
-            updateCounts(bCity, date);
+            updateCounts(runIds);
 
             // ── PHASE 3 — simulated flight A → B ─────────────────────────────────────────────────
             phase("FLIGHT", "3/5 Flight " + aCity + " → " + bCity);
             for (Shipment sh : intercity(aCity, bCity, ShipmentState.IN_TAKEOFF_BAG)) {
                 flightLeg(sh);
-                updateCounts(bCity, date);
+                updateCounts(runIds);
                 settle(150);
             }
             demoExec.feed("FLIGHT", "🛬 Flight(s) landed at %s — parcels shuttled to the destination hub.".formatted(bCity));
@@ -280,12 +288,12 @@ public class DemoFullDayService {
             }
             demoDa.dropsCollected(bCity, date);                    // → DROP_COLLECTED / COLLECTED_FROM_HUB (OTP minted)
             demoDa.autoVerifyDeliveries(bCity, date);              // → DROPPED
-            updateCounts(bCity, date);
+            updateCounts(runIds);
 
-            int delivered = countByState(bCity, ShipmentState.DROPPED);
+            int delivered = countInRun(runIds, ShipmentState.DROPPED);
             demoExec.feed("PHASE", "✅ Full-day run complete — %d parcel(s) delivered %s → %s.".formatted(delivered, aCity, bCity));
             progress = new Progress("DONE", "Delivered " + delivered + " parcel(s) " + aCity + " → " + bCity,
-                    progress.total(), 0, 0, 0, delivered, false, null);
+                    runIds.size(), 0, 0, 0, delivered, false, null);
         } catch (RuntimeException e) {
             log.error("Full-day run failed", e);
             demoExec.feed("ERROR", "Full-day run failed: " + e.getMessage());
@@ -346,20 +354,40 @@ public class DemoFullDayService {
         return out;
     }
 
-    private int countByState(String destCity, ShipmentState st) {
+    /**
+     * Wait for this run's parcels to reach PICKED_UP. M5's pickup assignment and our OTP handshake are
+     * async (event-driven), so a fast one-button run can outrun them; re-run the demo auto-verify until the
+     * run's parcels are collected (bounded, ~20s). Returns the run's parcels now in PICKED_UP.
+     */
+    private List<Shipment> awaitPickedUp(java.util.Set<UUID> runIds, UUID cityId, LocalDate date) {
+        List<Shipment> picked = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            try { demoDa.autoVerify(cityId, date); } catch (RuntimeException ignore) { /* keep polling */ }
+            picked = new ArrayList<>();
+            for (Shipment sh : shipments.findByState(ShipmentState.PICKED_UP)) {
+                if (runIds.contains(sh.getId())) picked.add(sh);
+            }
+            if (picked.size() >= runIds.size()) break;   // all collected
+            settle(500);
+        }
+        return picked;
+    }
+
+    /** Count parcels of THIS run (captured at PHASE 1) currently in state {@code st}. */
+    private int countInRun(java.util.Set<UUID> runIds, ShipmentState st) {
         int n = 0;
         for (Shipment sh : shipments.findByState(st)) {
-            if (eq(sh.getDestCity(), destCity)) n++;
+            if (runIds.contains(sh.getId())) n++;
         }
         return n;
     }
 
-    private void updateCounts(String destCity, LocalDate date) {
-        int origin = countByState(destCity, ShipmentState.IN_TAKEOFF_BAG);
+    private void updateCounts(java.util.Set<UUID> runIds) {
+        int origin = countInRun(runIds, ShipmentState.IN_TAKEOFF_BAG);
         int flight = 0;
-        for (ShipmentState st : FLIGHT_LEG) flight += countByState(destCity, st);
-        int destHub = countByState(destCity, ShipmentState.DEST_HUB_PROCESSING);
-        int delivered = countByState(destCity, ShipmentState.DROPPED);
+        for (ShipmentState st : FLIGHT_LEG) flight += countInRun(runIds, st);
+        int destHub = countInRun(runIds, ShipmentState.DEST_HUB_PROCESSING);
+        int delivered = countInRun(runIds, ShipmentState.DROPPED);
         progress = new Progress(progress.phase(), progress.detail(), progress.total(),
                 origin, flight, destHub, delivered, running.get(), null);
     }
