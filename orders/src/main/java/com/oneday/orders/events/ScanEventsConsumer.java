@@ -41,11 +41,16 @@ public class ScanEventsConsumer {
             return;
         }
         ShipmentState target = switch (event.eventType()) {
-            case HUB_ORIGIN_IN         -> ShipmentState.AT_ORIGIN_HUB;   // TODO: recalc ETA + notify customer
-            case SELF_DROP_ACCEPTED    -> ShipmentState.AT_ORIGIN_HUB;   // TODO: recalc ETA + notify customer
+            case HUB_ORIGIN_IN         -> ShipmentState.AT_ORIGIN_HUB;        // TODO: recalc ETA + notify customer
+            case SELF_DROP_ACCEPTED    -> ShipmentState.AT_ORIGIN_HUB;        // TODO: recalc ETA + notify customer
+            case HUB_ORIGIN_OUT        -> ShipmentState.DISPATCHED_TO_AIRPORT; // D-007
             case GHA_ACCEPTANCE        -> ShipmentState.AT_AIRPORT;
+            case DEST_SHUTTLE_IN       -> ShipmentState.DISPATCHED_TO_HUB;    // D-007
             case HUB_DEST_IN           -> ShipmentState.AT_DEST_HUB;
             case HUB_COLLECT_COMPLETED -> ShipmentState.HUB_COLLECTED;
+            // DELIVERED is a custody fact only (Option A) — DROPPED stays owned by the delivery-OTP
+            // verify path (scan = right box, OTP = right customer, mirroring LABEL_GENERATED/PICKED_UP).
+            case DELIVERED             -> null;
             case LABEL_GENERATED       -> null; // handled above
         };
         if (target == null) {
