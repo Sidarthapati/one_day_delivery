@@ -1,7 +1,5 @@
 package com.oneday.dispatch.service.impl;
 
-import com.oneday.common.domain.MeetingMode;
-import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.CronAssignmentStatus;
 import com.oneday.dispatch.domain.DaCronAssignment;
@@ -49,26 +47,19 @@ class DaTaskServiceImpl implements DaTaskService {
     private final DaEventProducer daEventProducer;
     private final DispatchProperties props;
     private final HubScanSeamProducer hubScanSeamProducer;
-    private final CityMeetingModePort meetingModePort;
 
     DaTaskServiceImpl(DispatchQueueRepository queueRepository,
                       DaCronAssignmentRepository cronRepository,
                       DaStatusService daStatusService,
                       DaEventProducer daEventProducer,
                       DispatchProperties props,
-                      HubScanSeamProducer hubScanSeamProducer,
-                      CityMeetingModePort meetingModePort) {
+                      HubScanSeamProducer hubScanSeamProducer) {
         this.queueRepository = queueRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
         this.daEventProducer = daEventProducer;
         this.props = props;
         this.hubScanSeamProducer = hubScanSeamProducer;
-        this.meetingModePort = meetingModePort;
-    }
-
-    private boolean isHubReturn(DispatchQueue task) {
-        return meetingModePort.modeFor(task.getCityId()) == MeetingMode.HUB_RETURN;
     }
 
     @Override
@@ -87,28 +78,43 @@ class DaTaskServiceImpl implements DaTaskService {
     @Override
     @Transactional
     public DaTaskView recordVanHandoff(UUID daId, UUID taskId, List<String> parcelScans, UUID vanId) {
+        return completePickupHandoff(daId, taskId, parcelScans, task -> {
+            daEventProducer.emitVanHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
+            log.debug("Van handoff: task {} (van {}) completed with {} scan(s)", taskId, vanId, parcelScans.size());
+        });
+    }
+
+    @Override
+    @Transactional
+    public DaTaskView recordHubHandoff(UUID daId, UUID taskId, List<String> parcelScans) {
+        // HUB_RETURN city (no van): the DA drops the collected pickups AT the hub. Same pickup-handoff
+        // lifecycle as the van path, but a neutral event (not VAN_HANDOFF_COMPLETED) + the origin-hub scan.
+        return completePickupHandoff(daId, taskId, parcelScans, task -> {
+            daEventProducer.emitHubReturnHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
+            // M8-SEAM: the hub drop is the origin-hub inbound scan (advances to AT_ORIGIN_HUB → M7/M9).
+            hubScanSeamProducer.emitHubOriginIn(task.getShipmentId());
+            log.debug("Hub handoff: task {} completed with {} scan(s)", taskId, parcelScans.size());
+        });
+    }
+
+    /**
+     * Shared PICKUP handoff at a rendezvous (van meeting point or hub): validate scans, complete the
+     * task, roll the cron handoff, then run {@code onComplete} for the mode-specific event/scan emission.
+     */
+    private DaTaskView completePickupHandoff(UUID daId, UUID taskId, List<String> parcelScans,
+                                             java.util.function.Consumer<DispatchQueue> onComplete) {
         if (parcelScans == null || parcelScans.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "At least one parcel scan is required");
         }
         return daStatusService.withDaLock(daId, () -> {
-            DispatchQueue task = ownedTask(daId, taskId); 
+            DispatchQueue task = ownedTask(daId, taskId);
             requireType(task, TaskType.PICKUP);
             requireStatus(task, TaskStatus.IN_PROGRESS);
             task.setStatus(TaskStatus.COMPLETED);
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
             recordCronHandoff(daId, task.getOperatingDate(), parcelScans.size());
-            // HUB_RETURN cities have no van — the DA hands off AT the hub, so emit the neutral
-            // hub-return handoff event (not VAN_HANDOFF_COMPLETED, which would claim a van received it).
-            // Both map to HANDED_TO_PICKUP_VAN in M4; only the event label differs.
-            if (isHubReturn(task)) {
-                daEventProducer.emitHubReturnHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
-                // M8-SEAM: the hub drop is the origin-hub inbound scan (advances to AT_ORIGIN_HUB → M7/M9).
-                hubScanSeamProducer.emitHubOriginIn(task.getShipmentId());
-            } else {
-                daEventProducer.emitVanHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
-            }
-            log.debug("Van handoff: task {} (van {}) completed with {} scan(s)", taskId, vanId, parcelScans.size());
+            onComplete.accept(task);
             return view;
         });
     }
@@ -134,6 +140,24 @@ class DaTaskServiceImpl implements DaTaskService {
     @Override
     @Transactional
     public DaTaskView markDropCollected(UUID daId, UUID taskId) {
+        return collectDelivery(daId, taskId, task -> { /* van pickup from the loop — no extra scan */ });
+    }
+
+    @Override
+    @Transactional
+    public DaTaskView recordHubCollect(UUID daId, UUID taskId) {
+        // HUB_RETURN city (no van): the DA collects the delivery FROM the hub for last-mile.
+        return collectDelivery(daId, taskId, task ->
+                // M8-SEAM: hub-dest custody scan (ledger only — the DA's later DROP_* events drive state).
+                hubScanSeamProducer.emitHubDestOut(task.getShipmentId()));
+    }
+
+    /**
+     * Shared DELIVERY collect (from a van loop or the hub): QUEUED → IN_PROGRESS, emit DROP_COLLECTED,
+     * then run {@code onCollected} for any mode-specific scan.
+     */
+    private DaTaskView collectDelivery(UUID daId, UUID taskId,
+                                       java.util.function.Consumer<DispatchQueue> onCollected) {
         return daStatusService.withDaLock(daId, () -> {
             DispatchQueue task = ownedTask(daId, taskId);
             requireType(task, TaskType.DELIVERY);
@@ -142,11 +166,7 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStartedAt(Instant.now());
             DaTaskView view = save(task);
             daEventProducer.emitDropCollected(daId, task.getCityId(), task.getShipmentId());
-            // M8-SEAM: in HUB_RETURN cities the DA collects the delivery FROM the hub, so record the
-            // hub-dest custody scan (ledger only — the DA's later DROP_* events drive the state).
-            if (isHubReturn(task)) {
-                hubScanSeamProducer.emitHubDestOut(task.getShipmentId());
-            }
+            onCollected.accept(task);
             return view;
         });
     }

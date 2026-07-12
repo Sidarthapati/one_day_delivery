@@ -27,11 +27,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 /** Real-Postgres tests of the DA task-lifecycle transitions, guards, and (gated) event emission. */
 @Tag("e2e")
@@ -49,6 +47,7 @@ class DaTaskServiceImplTest {
     private final LocalDate today = LocalDate.now();
 
     private DaEventProducer events;
+    private com.oneday.dispatch.events.HubScanSeamProducer scanSeam;
     private DaTaskService service;
 
     @BeforeEach
@@ -57,12 +56,8 @@ class DaTaskServiceImplTest {
         DaStatusServiceImpl daStatus = new DaStatusServiceImpl(daStatusRepo, props);
         daStatus.initShift(da, city, today, "MORNING", null);
         events = mock(DaEventProducer.class);
-        com.oneday.dispatch.events.HubScanSeamProducer scanSeam =
-                mock(com.oneday.dispatch.events.HubScanSeamProducer.class);
-        com.oneday.common.port.CityMeetingModePort meetingMode =
-                mock(com.oneday.common.port.CityMeetingModePort.class);
-        when(meetingMode.modeFor(any())).thenReturn(com.oneday.common.domain.MeetingMode.VAN_MEETING);
-        service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam, meetingMode);
+        scanSeam = mock(com.oneday.dispatch.events.HubScanSeamProducer.class);
+        service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam);
     }
 
     @Test
@@ -126,7 +121,7 @@ class DaTaskServiceImplTest {
         DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.IN_PROGRESS);
         persistHubReturnCron("10:00", java.util.List.of("10:00", "13:00"));
 
-        service.recordVanHandoff(da, task.getId(), java.util.List.of("P-1"), null);
+        service.recordHubHandoff(da, task.getId(), java.util.List.of("P-1"));
 
         DaCronAssignment cron = cronRepo.findByDaIdAndOperatingDate(da, today).orElseThrow();
         assertThat(cron.getStatus()).isEqualTo(CronAssignmentStatus.SCHEDULED);
@@ -135,6 +130,9 @@ class DaTaskServiceImplTest {
                 .atDate(today).atZone(zone).toInstant();
         assertThat(cron.getScheduledMeetingTime()).isEqualTo(expectedNext);
         assertThat(cron.getParcelCountHanded()).isEqualTo(1);
+        // Hub handoff emits the neutral (non-van) event + the origin-hub M8 seam.
+        verify(events).emitHubReturnHandoffCompleted(eq(da), eq(city), eq(task.getShipmentId()));
+        verify(scanSeam).emitHubOriginIn(eq(task.getShipmentId()));
     }
 
     @Test
@@ -143,10 +141,19 @@ class DaTaskServiceImplTest {
         DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.IN_PROGRESS);
         persistHubReturnCron("19:00", java.util.List.of("19:00"));
 
-        service.recordVanHandoff(da, task.getId(), java.util.List.of("P-1"), null);
+        service.recordHubHandoff(da, task.getId(), java.util.List.of("P-1"));
 
         DaCronAssignment cron = cronRepo.findByDaIdAndOperatingDate(da, today).orElseThrow();
         assertThat(cron.getStatus()).isEqualTo(CronAssignmentStatus.COMPLETED);
+    }
+
+    @Test
+    void hubCollectMovesDeliveryToInProgressAndEmitsScanSeam() {
+        DispatchQueue task = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
+        service.recordHubCollect(da, task.getId());
+        assertThat(reload(task).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        verify(events).emitDropCollected(eq(da), eq(city), eq(task.getShipmentId()));
+        verify(scanSeam).emitHubDestOut(eq(task.getShipmentId()));
     }
 
     @Test
