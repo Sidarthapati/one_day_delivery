@@ -1,12 +1,14 @@
 package com.oneday.routing.service.port;
 
+import com.oneday.common.port.ScanLedgerPort;
+import com.oneday.common.port.ScanLedgerPort.VanCustodyScan;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Logs van scans locally until M8 (scan ledger) ships. When it lands, provide a real impl annotated
- * {@code @Primary} to write to M8's append-only ledger (as M3's pattern).
+ * Fallback that logs van scans when M8 is absent (routing-only test slices). In the assembled app
+ * M8's {@code @Primary} {@code ScanLedgerPortAdapter} wins and writes to the append-only ledger.
  */
 @Component
 class NoOpScanLedgerPort implements ScanLedgerPort {
