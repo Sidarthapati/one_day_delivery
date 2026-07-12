@@ -20,6 +20,30 @@ ORDER BY created_at DESC
 LIMIT 1;
 ```
 
+### L1b — ⭐ THE WHOLE JOURNEY in one view (states + scans, by phase)
+> *"Its whole journey — every status and every scan, in order, grouped by leg. The 📷 rows are the physical barcode scans."*
+```sql
+WITH sid AS (SELECT id FROM shipments ORDER BY created_at DESC LIMIT 1),
+tl AS (
+  SELECT occurred_at AS at, 'state'::text AS kind, to_state::text AS detail, NULL::text AS barcode
+  FROM shipment_state_history WHERE shipment_id = (SELECT id FROM sid)
+  UNION ALL
+  SELECT scanned_at, '📷 SCAN', scan_type::text, parcel_id
+  FROM scan_ledger WHERE shipment_id = (SELECT id FROM sid)
+)
+SELECT row_number() OVER (ORDER BY at) AS step,
+  CASE
+    WHEN detail IN ('BOOKED','PICKUP_ASSIGNED','PICKED_UP','HANDED_TO_PICKUP_VAN','LABEL_GENERATED','DA_TO_VAN') THEN '1 First-mile'
+    WHEN detail IN ('AT_ORIGIN_HUB','ORIGIN_HUB_PROCESSING','IN_TAKEOFF_BAG','HUB_ORIGIN_IN','HUB_ORIGIN_OUT','VAN_UNLOAD') THEN '2 Origin hub'
+    WHEN detail IN ('DISPATCHED_TO_AIRPORT','AT_AIRPORT','DEPARTED','LANDED','DISPATCHED_TO_HUB','GHA_ACCEPTANCE','DEST_SHUTTLE_IN') THEN '3 Flight'
+    WHEN detail IN ('AT_DEST_HUB','DEST_HUB_PROCESSING','HUB_DEST_IN') THEN '4 Dest hub'
+    ELSE '5 Last-mile'
+  END AS phase,
+  kind, detail AS event, barcode, to_char(at,'HH24:MI:SS') AS at
+FROM tl
+ORDER BY at;
+```
+
 ### L2 — The two scan events, now permanent (this is what you saw on the feed)
 > *"The two events on the live feed weren't just messages — they're written here forever, timestamped."*
 ```sql
