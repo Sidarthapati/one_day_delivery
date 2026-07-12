@@ -8,6 +8,7 @@ public enum ScanEventType {
     DEST_SHUTTLE_IN,        // bag loaded on dest-hub shuttle → DISPATCHED_TO_HUB (D-007)
     HUB_DEST_IN,
     LABEL_GENERATED,
+    HUB_COLLECT_COMPLETED,  // hub-collect path: AWAITING_HUB_COLLECT → HUB_COLLECTED
+    HUB_DEST_OUT,           // HUB_RETURN: DA collected a dest parcel from the hub for last-mile (ledger only)
     DELIVERED,              // DA delivered the box (custody fact only, Option A — DROPPED stays OTP-owned)
-    HUB_COLLECT_COMPLETED   // hub-collect path: AWAITING_HUB_COLLECT → HUB_COLLECTED
 }

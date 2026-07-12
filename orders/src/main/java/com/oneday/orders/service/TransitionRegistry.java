@@ -51,10 +51,12 @@ public class TransitionRegistry {
         register(ShipmentState.PICKUP_ASSIGNED,       ShipmentState.PICKUP_FAILED);
         register(ShipmentState.PICKUP_ASSIGNED,       ShipmentState.CANCELLED);
 
-        register(ShipmentState.PICKED_UP,             ShipmentState.HANDED_TO_PICKUP_VAN);
+        register(ShipmentState.PICKED_UP,             ShipmentState.HANDED_TO_PICKUP_VAN);   // VAN_MEETING
+        register(ShipmentState.PICKED_UP,             ShipmentState.RETURNED_TO_HUB);        // HUB_RETURN
         register(ShipmentState.PICKED_UP,             ShipmentState.CANCELLED);
 
         register(ShipmentState.HANDED_TO_PICKUP_VAN,  ShipmentState.AT_ORIGIN_HUB);
+        register(ShipmentState.RETURNED_TO_HUB,       ShipmentState.AT_ORIGIN_HUB);
 
         // ── Hub processing ────────────────────────────────────────────────────
         register(ShipmentState.AT_ORIGIN_HUB,         ShipmentState.ORIGIN_HUB_PROCESSING);
@@ -73,9 +75,11 @@ public class TransitionRegistry {
         register(ShipmentState.AT_DEST_HUB,           ShipmentState.DEST_HUB_PROCESSING);
 
         // ── Last-mile delivery (drop_type branching at DEST_HUB_PROCESSING) ───
-        // Both targets are registered; impl filters to one at runtime.
-        register(ShipmentState.DEST_HUB_PROCESSING,   ShipmentState.HANDED_TO_DROP_VAN);    // DA_DELIVERY
-        register(ShipmentState.DEST_HUB_PROCESSING,   ShipmentState.AWAITING_HUB_COLLECT);  // HUB_COLLECT
+        // Three targets are registered; the producer/mode picks one (impl filters HUB_COLLECT out for
+        // DA_DELIVERY, but DA_DELIVERY itself splits VAN_MEETING vs HUB_RETURN by the delivery city's mode).
+        register(ShipmentState.DEST_HUB_PROCESSING,   ShipmentState.HANDED_TO_DROP_VAN);      // DA_DELIVERY · VAN_MEETING
+        register(ShipmentState.DEST_HUB_PROCESSING,   ShipmentState.HUB_DELIVERY_ASSIGNED);   // DA_DELIVERY · HUB_RETURN
+        register(ShipmentState.DEST_HUB_PROCESSING,   ShipmentState.AWAITING_HUB_COLLECT);    // HUB_COLLECT
 
         register(ShipmentState.AWAITING_HUB_COLLECT,  ShipmentState.HUB_COLLECTED);
 
@@ -84,12 +88,18 @@ public class TransitionRegistry {
         register(ShipmentState.DROP_COLLECTED,        ShipmentState.DROPPED);
         register(ShipmentState.DROP_COLLECTED,        ShipmentState.DELIVERY_FAILED);
 
+        // HUB_RETURN last-mile: no drop van — DA collects at the hub and delivers.
+        register(ShipmentState.HUB_DELIVERY_ASSIGNED, ShipmentState.COLLECTED_FROM_HUB);
+        register(ShipmentState.COLLECTED_FROM_HUB,    ShipmentState.DROPPED);
+        register(ShipmentState.COLLECTED_FROM_HUB,    ShipmentState.DELIVERY_FAILED);
+
         // ── Exception / failure paths (M11-driven) ───────────────────────────
         register(ShipmentState.PICKUP_FAILED,         ShipmentState.PICKUP_ASSIGNED);
         register(ShipmentState.PICKUP_FAILED,         ShipmentState.CANCELLED);
 
         register(ShipmentState.DELIVERY_FAILED,       ShipmentState.RTO_INITIATED);
-        register(ShipmentState.DELIVERY_FAILED,       ShipmentState.DROP_ASSIGNED);
+        register(ShipmentState.DELIVERY_FAILED,       ShipmentState.DROP_ASSIGNED);          // VAN_MEETING redelivery
+        register(ShipmentState.DELIVERY_FAILED,       ShipmentState.HUB_DELIVERY_ASSIGNED);  // HUB_RETURN redelivery
 
         // ── RTO path (delivery_type branching at RTO_INITIATED) ──────────────
         // Both targets registered; impl filters to one at runtime.

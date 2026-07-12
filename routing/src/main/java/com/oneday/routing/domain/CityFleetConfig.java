@@ -1,5 +1,6 @@
 package com.oneday.routing.domain;
 
+import com.oneday.common.domain.MeetingMode;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -49,6 +50,15 @@ public class CityFleetConfig {
 
     @Column(name = "dwell_minutes", nullable = false)
     private int dwellMinutes;
+
+    // Per-city M6 gate (V6_15). VAN_MEETING = full routing; HUB_RETURN = no M6, periodic hub return.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "meeting_mode", nullable = false, length = 20)
+    private MeetingMode meetingMode;
+
+    // HUB_RETURN cadence in minutes (null → code default). Ignored in VAN_MEETING.
+    @Column(name = "hub_return_interval_minutes")
+    private Integer hubReturnIntervalMinutes;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;

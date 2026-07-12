@@ -2,6 +2,7 @@ package com.oneday.routing.api;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.oneday.common.domain.MeetingMode;
 import com.oneday.routing.domain.CityFleetConfig;
 import com.oneday.routing.domain.RoutePlan;
 import com.oneday.routing.dto.FleetConfigResponse;
@@ -86,6 +87,12 @@ public class RoutingFleetController {
         if (req.shuttleCadenceMinutes() != null) fleet.setShuttleCadenceMinutes(req.shuttleCadenceMinutes());
         if (req.maxDaToVertexMinutes() != null) fleet.setMaxDaToVertexMinutes(req.maxDaToVertexMinutes());
         if (req.dwellMinutes() != null) fleet.setDwellMinutes(req.dwellMinutes());
+        if (req.meetingMode() != null) fleet.setMeetingMode(req.meetingMode());
+        if (req.hubReturnIntervalMinutes() != null) fleet.setHubReturnIntervalMinutes(req.hubReturnIntervalMinutes());
+        // The cadence belongs to HUB_RETURN only — a city switched (back) to VAN_MEETING carries no
+        // interval. Enforce the invariant here so a flip doesn't leave a stale interval behind (the
+        // client can't clear it via a null partial-update field).
+        if (fleet.getMeetingMode() == MeetingMode.VAN_MEETING) fleet.setHubReturnIntervalMinutes(null);
         return FleetConfigResponse.from(fleetRepository.save(fleet));
     }
 

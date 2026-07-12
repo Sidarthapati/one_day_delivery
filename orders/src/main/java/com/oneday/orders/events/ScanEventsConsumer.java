@@ -48,10 +48,15 @@ public class ScanEventsConsumer {
             case DEST_SHUTTLE_IN       -> ShipmentState.DISPATCHED_TO_HUB;    // D-007
             case HUB_DEST_IN           -> ShipmentState.AT_DEST_HUB;
             case HUB_COLLECT_COMPLETED -> ShipmentState.HUB_COLLECTED;
+            // Not a state transition — carries the generated parcelId (sets shipment.parcel_id).
+            // TODO: handle once ScanEvent is extended with the parcelId field.
+            case LABEL_GENERATED       -> null;
+            // HUB_RETURN custody ledger record (DA collected a dest parcel from the hub); the DA's
+            // later DROP_* events drive the last-mile state, so this is not an M4 transition.
+            case HUB_DEST_OUT          -> null;
             // DELIVERED is a custody fact only (Option A) — DROPPED stays owned by the delivery-OTP
             // verify path (scan = right box, OTP = right customer, mirroring LABEL_GENERATED/PICKED_UP).
             case DELIVERED             -> null;
-            case LABEL_GENERATED       -> null; // handled above
         };
         if (target == null) {
             log.debug("Scan event {} ignored for shipment {}", event.eventType(), event.shipmentId());
