@@ -28,6 +28,10 @@ import com.oneday.common.kafka.EventStreams;
 import com.oneday.grid.dto.response.DaTerritoryResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
 import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
+import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.barcode.service.LabelService;
+import com.oneday.barcode.service.ScanLedgerService;
+import com.oneday.barcode.service.ScanCommand;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.BadSqlGrammarException;
@@ -82,6 +86,8 @@ public class DemoDaController {
     private final BookingService bookingService;
     private final UserRepository userRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final LabelService labelService;         // M8: mint barcode + LABEL_GENERATED scan at pickup
+    private final ScanLedgerService scanLedger;      // M8: DELIVERED (ledger-only) scan at the door
 
     /**
      * In-memory demo cache of the cleartext pickup OTP per shipment so repeated "Refresh status" polls
@@ -97,7 +103,8 @@ public class DemoDaController {
                             GridService gridService, DispatchService dispatchService,
                             DispatchDemoService dispatchDemoService, RabbitTemplate rabbitTemplate,
                             BookingService bookingService, UserRepository userRepository,
-                            JdbcTemplate jdbcTemplate) {
+                            JdbcTemplate jdbcTemplate, LabelService labelService,
+                            ScanLedgerService scanLedger) {
         this.shipmentRepository = shipmentRepository;
         this.stateMachine = stateMachine;
         this.pickupOtpService = pickupOtpService;
@@ -109,6 +116,15 @@ public class DemoDaController {
         this.bookingService = bookingService;
         this.userRepository = userRepository;
         this.jdbcTemplate = jdbcTemplate;
+        this.labelService = labelService;
+        this.scanLedger = scanLedger;
+    }
+
+    // M8: city name → destination hub IATA for the barcode's human segment (5 grid cities).
+    private static final java.util.Map<String, String> IATA = java.util.Map.of(
+            "delhi", "DEL", "mumbai", "BOM", "bangalore", "BLR", "hyderabad", "HYD", "chennai", "MAA");
+    private static String destIata(String cityName) {
+        return cityName == null ? "XXX" : IATA.getOrDefault(cityName.trim().toLowerCase(), cityName.trim().toUpperCase());
     }
 
     // ── DTOs ────────────────────────────────────────────────────────────────────────────────────
@@ -385,9 +401,13 @@ public class DemoDaController {
                         stateMachine.transition(t.shipmentId(), ShipmentState.PICKED_UP,
                                 TransitionContext.fromApi("demo-autoverify", ref));
                         dispatchDemoService.markPickedUp(t.shipmentId());
+                        // M8: DA prints the label at pickup — mint barcode + LABEL_GENERATED scan
+                        // (idempotent per shipment; M4 stamps shipments.parcel_id, no state change).
+                        labelService.generateLabel(t.shipmentId(), destIata(opt.get().getDestCity()), da.daId(), null);
                         verified++;
                     } else if (st == ShipmentState.PICKED_UP) {
                         dispatchDemoService.markPickedUp(t.shipmentId());   // ensure M5 task is IN_PROGRESS
+                        labelService.generateLabel(t.shipmentId(), destIata(opt.get().getDestCity()), da.daId(), null);
                         already++;
                     }
                 } catch (RuntimeException ignore) { /* skip a task that can't transition right now */ }
@@ -737,6 +757,11 @@ public class DemoDaController {
                 stateMachine.transition(sh.getId(), ShipmentState.DROPPED,
                         TransitionContext.fromApi("demo-delivery-autoverify", sh.getShipmentRef()));
                 dispatchDemoService.markDelivered(sh.getId());   // complete the M5 DELIVERY task → leaves the DA's queue
+                // M8: DA scans the box at the door — DELIVERED is ledger-only (Option A); DROPPED above is
+                // the real completion (delivery OTP). Deterministic client key → idempotent on re-run.
+                scanLedger.record(new ScanCommand(sh.getId(), sh.getParcelId(), null,
+                        ScanEventType.DELIVERED.name(), "DA", null, null, null, java.time.Instant.now(),
+                        UUID.nameUUIDFromBytes((sh.getId() + ":DELIVERED").getBytes())));
                 delivered++;
             } catch (RuntimeException e) {
                 skipped++;
