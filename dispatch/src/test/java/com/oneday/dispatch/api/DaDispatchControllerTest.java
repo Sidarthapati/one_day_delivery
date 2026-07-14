@@ -143,6 +143,7 @@ class DaDispatchControllerTest {
     }
 
     private DaTaskView sampleView() {
-        return new DaTaskView(taskId, UUID.randomUUID(), TaskType.PICKUP, TaskStatus.IN_PROGRESS, 0, null);
+        return new DaTaskView(taskId, UUID.randomUUID(), TaskType.PICKUP, TaskStatus.IN_PROGRESS, 0, null,
+                12.9716, 77.5946, "PREPAID");
     }
 }

@@ -1,5 +1,6 @@
 package com.oneday.dispatch.service;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -10,6 +11,12 @@ import java.util.UUID;
  * (gated by {@code dispatch.events.publish-da-events}).
  */
 public interface DaTaskService {
+
+    /**
+     * The DA's queue for a day, ordered by queue position — the app's task list.
+     * {@code date} null → the DA's current operating day (shift zone).
+     */
+    List<DaTaskView> listTasks(UUID daId, LocalDate date);
 
     /** PICKUP task QUEUED → IN_PROGRESS (DA travelling to the sender). */
     DaTaskView markEnRoute(UUID daId, UUID taskId);

@@ -63,6 +63,14 @@ class DaTaskServiceImpl implements DaTaskService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<DaTaskView> listTasks(UUID daId, LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of(props.getShift().getZone()));
+        return queueRepository.findByDaIdAndOperatingDateOrderByQueuePosition(daId, day)
+                .stream().map(DaTaskView::of).toList();
+    }
+
+    @Override
     @Transactional
     public DaTaskView markEnRoute(UUID daId, UUID taskId) {
         return daStatusService.withDaLock(daId, () -> {
