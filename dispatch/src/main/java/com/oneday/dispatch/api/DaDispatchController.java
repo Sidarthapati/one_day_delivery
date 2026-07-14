@@ -75,6 +75,15 @@ public class DaDispatchController {
         return ResponseEntity.noContent().build();
     }
 
+    /** Manual "Mark arrived" at the van meeting vertex (replaces the removed geofence). */
+    @PostMapping("/arrived")
+    public ResponseEntity<Void> arrived(@PathVariable UUID daId,
+                                        @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        daStatusService.markArrivedAtCron(daId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/tasks/{taskId}/en-route")
     public DaTaskView enRoute(@PathVariable UUID daId, @PathVariable UUID taskId,
                               @AuthenticationPrincipal AuthUserDetails principal) {
