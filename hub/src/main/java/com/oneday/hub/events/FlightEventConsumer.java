@@ -21,11 +21,11 @@ import org.springframework.stereotype.Component;
  * Other flight events (DEPARTED/LANDED/…) need no reaction here — landing is the physical HUB_DEST_IN
  * dock scan (PR #2), not a flight event.
  *
- * <p>Dormant (autoStartup=false): the queue is declared so the subscription survives, but M9 is
- * unbuilt. Driven directly in tests and via the {@code /hub/{hubId}/bags/reassign-flight} endpoint.</p>
+ * <p>Enabled now that M9's reassignment engine produces these events. Also still directly reachable
+ * in tests and via the {@code /hub/{hubId}/bags/reassign-flight} endpoint.</p>
  */
 @Component
-@RabbitListener(queues = HubMessagingTopology.FLIGHT_QUEUE, autoStartup = "false")
+@RabbitListener(queues = HubMessagingTopology.FLIGHT_QUEUE, autoStartup = "true")
 public class FlightEventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(FlightEventConsumer.class);

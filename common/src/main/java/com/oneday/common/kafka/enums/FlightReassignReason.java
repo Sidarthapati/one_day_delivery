@@ -8,5 +8,6 @@ public enum FlightReassignReason {
     OPTIMISATION,      // cost/volume rebalancing (fill cheaper belly space, empty an underweight bag)
     CANCELLATION,      // the assigned flight was cancelled; M9 supplies the replacement
     CAPACITY,          // the assigned flight ran out of space
-    PREPONE_OVERFLOW   // a preponement left these parcels behind their old cutoff
+    PREPONE_OVERFLOW,  // a preponement left these parcels behind their old cutoff
+    DELAY              // the assigned flight was delayed enough to break the delivery promise
 }

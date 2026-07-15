@@ -55,5 +55,10 @@ public record MyShipmentDetailResponse(
         Long totalPricePaise,
         // lifecycle
         Instant createdAt,
-        Instant cancelledAt) {
+        Instant cancelledAt,
+        // live flight position — present only while the parcel's flight is airborne (M9, §8)
+        Double currentLat,
+        Double currentLon,
+        Instant positionAsOf,
+        String positionStatus) {
 }

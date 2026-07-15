@@ -7,6 +7,7 @@ import com.oneday.orders.dto.MyShipmentSummaryResponse;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.CustomerOrderQueryService;
 import com.oneday.orders.service.CustomerVisibleStateMapper;
+import com.oneday.orders.service.port.FlightTrackingPort;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -27,11 +28,14 @@ class CustomerOrderQueryServiceImpl implements CustomerOrderQueryService {
 
     private final ShipmentRepository shipmentRepository;
     private final CustomerVisibleStateMapper stateMapper;
+    private final FlightTrackingPort flightTrackingPort;
 
     CustomerOrderQueryServiceImpl(ShipmentRepository shipmentRepository,
-                                  CustomerVisibleStateMapper stateMapper) {
+                                  CustomerVisibleStateMapper stateMapper,
+                                  FlightTrackingPort flightTrackingPort) {
         this.shipmentRepository = shipmentRepository;
         this.stateMapper = stateMapper;
+        this.flightTrackingPort = flightTrackingPort;
     }
 
     @Override
@@ -63,6 +67,7 @@ class CustomerOrderQueryServiceImpl implements CustomerOrderQueryService {
     private MyShipmentDetailResponse toDetail(Shipment s) {
         Address o = s.getOriginAddress();
         Address d = s.getDestAddress();
+        Optional<FlightTrackingPort.LivePosition> position = flightTrackingPort.currentPosition(s.getId());
         return new MyShipmentDetailResponse(
                 s.getShipmentRef(), s.getCustomerType(), s.getState(), stateMapper.labelFor(s.getState()),
                 s.getDeliveryType(), s.getPickupType(), s.getDropType(), s.getPaymentMode(),
@@ -74,7 +79,11 @@ class CustomerOrderQueryServiceImpl implements CustomerOrderQueryService {
                 d != null ? d.getLatitude() : null, d != null ? d.getLongitude() : null, s.getDestTileId(),
                 s.getWeightGrams(), s.getVolumetricWeightGrams(), s.getChargeableWeightGrams(),
                 s.getDeclaredValuePaise(), s.getQuotedPricePaise(), s.getTaxPaise(), s.getTotalPricePaise(),
-                s.getCreatedAt(), s.getCancelledAt());
+                s.getCreatedAt(), s.getCancelledAt(),
+                position.map(FlightTrackingPort.LivePosition::lat).orElse(null),
+                position.map(FlightTrackingPort.LivePosition::lon).orElse(null),
+                position.map(FlightTrackingPort.LivePosition::asOf).orElse(null),
+                position.map(FlightTrackingPort.LivePosition::status).orElse(null));
     }
 
     private MyShipmentSummaryResponse toSummary(Shipment s) {
