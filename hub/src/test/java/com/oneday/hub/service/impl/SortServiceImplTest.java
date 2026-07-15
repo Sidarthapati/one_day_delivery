@@ -66,7 +66,7 @@ class SortServiceImplTest {
                 .flightDate(LocalDate.of(2026, 6, 28)).originHub("DELHI").destHub("CHENNAI")
                 .currentStandId(standId).status(FlightBagStatus.OPEN).parcelCount(0).weightGrams(0).build();
 
-        when(flightAssignmentPort.assignFlight("CHENNAI", now)).thenReturn(
+        when(flightAssignmentPort.assignFlight("DELHI", "CHENNAI", now)).thenReturn(
                 new FlightAssignmentPort.FlightAssignment("ODCHENNAI12", LocalDate.of(2026, 6, 28),
                         "CHENNAI", now.plusSeconds(3600), now.plusSeconds(10800)));
         when(flightBagService.openBag(any(FlightBagService.OpenBagCommand.class))).thenReturn(bag);

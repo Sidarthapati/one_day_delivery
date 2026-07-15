@@ -64,7 +64,8 @@ class SortServiceImpl implements SortService {
     public SortResult resolveOutbound(UUID hubId, ShipmentInfoPort.ParcelInfo parcel, Instant readyAt) {
         String destHub = parcel.destCity();   // OUTBOUND sort key = dest-hub code (M7-D-003)
 
-        FlightAssignmentPort.FlightAssignment flight = flightAssignmentPort.assignFlight(destHub, readyAt);
+        FlightAssignmentPort.FlightAssignment flight =
+                flightAssignmentPort.assignFlight(parcel.originCity(), destHub, readyAt);
 
         // Open (or find) the bag for this flight; first open allocates a free stand dynamically.
         FlightBag bag = flightBagService.openBag(new FlightBagService.OpenBagCommand(
