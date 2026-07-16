@@ -15,6 +15,7 @@ import java.util.UUID;
 public record DaTaskView(
         UUID taskId,
         UUID shipmentId,
+        String shipmentRef,
         TaskType taskType,
         TaskStatus status,
         int queuePosition,
@@ -23,8 +24,13 @@ public record DaTaskView(
         double taskLon,
         String paymentMode) {
 
+    /** Mutation responses don't need the ref (the app already holds it from listTasks). */
     public static DaTaskView of(DispatchQueue row) {
-        return new DaTaskView(row.getId(), row.getShipmentId(), row.getTaskType(),
+        return of(row, null);
+    }
+
+    public static DaTaskView of(DispatchQueue row, String shipmentRef) {
+        return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef, row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode());
     }
