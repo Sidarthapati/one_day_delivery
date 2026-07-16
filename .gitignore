@@ -21,3 +21,6 @@ dist/
 
 # Legacy demo UI — removed from main; keep it from being re-added here.
 demo-ui/
+
+# Personal progress tracker (do not commit)
+docs/SID-PROGRESS.md
