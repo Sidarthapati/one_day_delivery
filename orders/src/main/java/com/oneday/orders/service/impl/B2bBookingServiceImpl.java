@@ -258,7 +258,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         response.setPricing(pricing);
         response.setEtaPromised(etaPromised);
         response.setSlaCommitmentMinutes(slaCommitmentMinutes);
-        response.setTrackingUrl("/api/v1/shipments/" + shipment.getShipmentRef() + "/track");
+        response.setTrackingUrl("/api/v1/shipments/mine/" + shipment.getShipmentRef() + "/track");
         response.setParcelId(null);
         response.setLabelStatus("PENDING");
         response.setPayment(null);  // omitted from JSON via @JsonInclude(NON_NULL) on the field

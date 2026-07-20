@@ -1119,16 +1119,18 @@ _No design doc written yet. Decisions will be added when M9 design is authored._
 
 ## M10 — SLA Monitoring & Escalation
 
-_No design doc written yet. Decisions will be added when M10 design is authored._
+_Design: `docs/M10/M10-SLA-DESIGN.md`; plan: `docs/M10/M10-IMPLEMENTATION-PLAN.md`. Built on branch
+`f-m10-design`._
 
-### Placeholder Assumptions
-
-| ID | Assumption | Status | Source |
+| ID | Decision | Status | Source |
 |---|---|---|---|
 | M10-D-001 | SLA states: GREEN / AMBER / RED per leg | DECIDED | MODULES.md M10 |
-| M10-D-002 | RED state requires a supervisor action, not just a notification | DECIDED | MODULES.md M10 |
+| M10-D-002 | RED state requires a supervisor/station-manager action, not just a notification | DECIDED | MODULES.md M10 |
 | M10-D-003 | Hub-to-airport handover SLA threshold in minutes is TBD with ops | OPEN | CLAUDE.md §Open Questions |
-| M10-D-004 | All SLA events and escalation actions are audit-logged | DECIDED | CLAUDE.md |
+| M10-D-004 | All SLA events and escalation actions are append-only audit-logged | DECIDED | CLAUDE.md |
+| M10-D-005 | Buffer-aware projection: AMBER = leg over its budget; RED = projected end-to-end finish past the 16h internal target (resolves Q-S1) | DECIDED | user 2026-07-17 |
+| M10-D-006 | SLA clock start = order-placed: both 16h internal + 24h public anchor at BOOKED (resolves Q-S2) | DECIDED | user 2026-07-17 |
+| M10-D-007 | Self-contained v1: M10 owns its tables, reads other modules only via the event bus, emits escalation/breach on the new `oneday.sla.events` exchange, and changes no other module's logic (slaDeadline back-fill deferred) | DECIDED | user 2026-07-17 |
 
 ---
 
