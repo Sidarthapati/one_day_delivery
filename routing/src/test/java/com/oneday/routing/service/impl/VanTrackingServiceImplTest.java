@@ -18,7 +18,7 @@ import com.oneday.routing.repository.VanManifestRepository;
 import com.oneday.routing.service.CustodyService;
 import com.oneday.routing.service.model.CustodyResult;
 import com.oneday.routing.service.model.VanCustodyCommand;
-import com.oneday.routing.service.port.ScanLedgerPort;
+import com.oneday.common.port.ScanLedgerPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

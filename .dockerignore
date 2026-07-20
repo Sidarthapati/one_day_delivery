@@ -1,0 +1,18 @@
+# Build output — rebuilt inside the image
+**/target/
+
+# Local env & secrets — never bake into the image
+.env
+.env.*
+!.env.example
+
+# VCS & IDE
+.git/
+.gitignore
+.idea/
+*.iml
+.vscode/
+
+# Docs & scratch
+docs/
+*.md
