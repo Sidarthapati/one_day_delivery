@@ -110,7 +110,7 @@ class DaStatusServiceImplTest {
     }
 
     @Test
-    void gpsWithinProximityWhileCronLockedFlipsToAtCron() {
+    void markArrivedFlipsCronLockedToAtCron() {
         UUID da = UUID.randomUUID();
         UUID city = UUID.randomUUID();
         LocalDate today = LocalDate.now();
@@ -119,8 +119,12 @@ class DaStatusServiceImplTest {
         service.initShift(da, city, today, "A", cron);
         service.updateStatus(da, DaStatusEnum.CRON_LOCKED);
 
-        // ~30 m away (well inside the 200 m default) → AT_CRON.
+        // Geofence removed (Jul-20): a GPS ping near the vertex no longer flips status.
         service.updateGps(da, 12.97187, 77.5946, Instant.now());
+        assertThat(service.getStatus(da)).isEqualTo(DaStatusEnum.CRON_LOCKED);
+
+        // Manual "Mark arrived" makes the CRON_LOCKED → AT_CRON transition.
+        service.markArrivedAtCron(da);
         assertThat(service.getStatus(da)).isEqualTo(DaStatusEnum.AT_CRON);
     }
 

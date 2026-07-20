@@ -28,11 +28,18 @@ public interface DaStatusService {
                    DaCronAssignment cronAssignment);
 
     /**
-     * Record a GPS ping: update the live position + heartbeat and mark the DA dirty. If the DA is
-     * {@code CRON_LOCKED} and now within the configured proximity of its cron vertex, flips to
-     * {@code AT_CRON}. A ping while {@code OFFLINE}/{@code ABSENT} resumes the DA to {@code IDLE}.
+     * Record a GPS ping: update the live position + heartbeat and mark the DA dirty. GPS is
+     * display/tracking only (Jul-20: the proximity geofence was removed). A ping while
+     * {@code OFFLINE}/{@code ABSENT} resumes the DA to {@code IDLE}.
      */
     void updateGps(UUID daId, double lat, double lon, Instant timestamp);
+
+    /**
+     * Manual "Mark arrived" — the DA taps it at the van meeting vertex, replacing the removed
+     * geofence. {@code CRON_LOCKED → AT_CRON}; already {@code AT_CRON} is a no-op; any other
+     * status → 409.
+     */
+    void markArrivedAtCron(UUID daId);
 
     /** Set a DA's status in memory and synchronously through to {@code da_status} (under the DA lock). */
     void updateStatus(UUID daId, DaStatusEnum newStatus);

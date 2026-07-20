@@ -10,9 +10,11 @@ import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.dispatch.service.model.DaQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -100,18 +102,9 @@ class DaStatusServiceImpl implements DaStatusService {
         // Heartbeat resumes a silent DA back to IDLE (absent-recovery, design §12.4).
         if (status == DaStatusEnum.OFFLINE || status == DaStatusEnum.ABSENT) {
             updateStatus(daId, DaStatusEnum.IDLE);
-            return;
         }
-        // Proximity to the cron vertex closes the CRON_LOCKED → AT_CRON transition.
-        if (status == DaStatusEnum.CRON_LOCKED) {
-            DaQueue q = queues.get(daId);
-            DaCronAssignment cron = q != null ? q.getCron() : null;
-            if (cron != null
-                    && GeoDistance.meters(lat, lon, cron.getMeetingLat(), cron.getMeetingLon())
-                       <= props.getCron().getProximityMeters()) {
-                updateStatus(daId, DaStatusEnum.AT_CRON);
-            }
-        }
+        // Jul-20: the 200 m geofence is removed. CRON_LOCKED → AT_CRON is now a manual
+        // "Mark arrived" (see markArrivedAtCron) — GPS is display/tracking only, not a gate.
     }
 
     @Override
@@ -140,6 +133,22 @@ class DaStatusServiceImpl implements DaStatusService {
     public DaStatusEnum getStatus(UUID daId) {
         DaLiveStatus live = liveStatus.get(daId);
         return live != null ? live.getStatus() : null;
+    }
+
+    @Override
+    public void markArrivedAtCron(UUID daId) {
+        withDaLock(daId, () -> {
+            DaStatusEnum status = getStatus(daId);
+            if (status == DaStatusEnum.AT_CRON) {
+                return null; // already arrived — idempotent
+            }
+            if (status != DaStatusEnum.CRON_LOCKED) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "DA must be at the meeting (CRON_LOCKED) to mark arrived; was " + status);
+            }
+            updateStatus(daId, DaStatusEnum.AT_CRON);
+            return null;
+        });
     }
 
     @Override
