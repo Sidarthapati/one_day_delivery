@@ -74,3 +74,19 @@ tracking:
     BLR: { hub-lat: 12.9716, hub-lon: 77.5946, airport-lat: 13.1986, airport-lon: 77.7066 }
     HYD: { hub-lat: 17.3850, hub-lon: 78.4867, airport-lat: 17.2403, airport-lon: 78.4294 }
     MAA: { hub-lat: 13.0827, hub-lon: 80.2707, airport-lat: 12.9941, airport-lon: 80.1709 }
+
+# M10 SLA monitoring. Per-leg budgets (minutes) sum to 13.5h, leaving a 2.5h internal cushion under
+# the 16h target — that cushion is what AMBER eats before RED (M10-D-005). A further 8h (16h→24h)
+# is the customer-facing engineered buffer. Both clocks anchor at booking (M10-D-006).
+sla:
+  internal-target-hours: 16
+  public-promise-hours: 24
+  sweeper-fixed-delay-ms: 60000
+  legs:
+    FIRST_MILE: 180        # pickup DA → origin hub
+    ORIGIN_HUB: 60         # origin hub processing → bag seal
+    ORIGIN_AIRPORT: 120    # hub → airport, tender/screen/stage/load
+    AIR: 150               # wheels-up → landing
+    DEST_AIRPORT: 90       # landing → unload/break/sort/release
+    DEST_HUB: 60           # dest hub processing
+    LAST_MILE: 150         # hub out-scan → delivered   (Σ = 810m = 13.5h)
