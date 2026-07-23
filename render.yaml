@@ -1,0 +1,28 @@
+# Render Blueprint — staging environment for the One-Day Delivery backend.
+# The Postgres instance (oneday-db-staging, Singapore) and CloudAMQP instance
+# already exist and are managed outside this blueprint, so their connection
+# strings are supplied as `sync: false` env vars — Render prompts for the values
+# in the dashboard on first deploy. No secret is ever committed to git.
+services:
+  - type: web
+    name: oneday-api-staging
+    runtime: docker
+    region: singapore          # same region as oneday-db-staging → internal, no-SSL DB link
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /auth/health   # permitAll GET returning 200 (demo static index.html was removed)
+    autoDeploy: false           # deploy on demand, not on every push, for staging
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: staging
+      - key: JAVA_OPTS
+        value: -XX:MaxRAMPercentage=75.0
+      # ── Secrets: paste in the Render dashboard (values in the deploy notes) ──
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: CLOUDAMQP_URL
+        sync: false

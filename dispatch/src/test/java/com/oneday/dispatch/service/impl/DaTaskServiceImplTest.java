@@ -11,6 +11,7 @@ import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaTaskService;
+import com.oneday.dispatch.service.DaTaskView;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -57,7 +58,8 @@ class DaTaskServiceImplTest {
         daStatus.initShift(da, city, today, "MORNING", null);
         events = mock(DaEventProducer.class);
         scanSeam = mock(com.oneday.dispatch.events.HubScanSeamProducer.class);
-        service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam);
+        service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam,
+                ids -> java.util.Map.of());
     }
 
     @Test
@@ -66,6 +68,17 @@ class DaTaskServiceImplTest {
         service.markEnRoute(da, task.getId());
         assertThat(reload(task).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
         assertThat(reload(task).getStartedAt()).isNotNull();
+    }
+
+    @Test
+    void listTasksReturnsQueueWithCoordinates() {
+        DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.QUEUED);
+        List<DaTaskView> tasks = service.listTasks(da, today);
+        assertThat(tasks).hasSize(1);
+        DaTaskView v = tasks.get(0);
+        assertThat(v.taskId()).isEqualTo(task.getId());
+        assertThat(v.taskLat()).isEqualTo(12.97);
+        assertThat(v.taskLon()).isEqualTo(77.61);
     }
 
     @Test

@@ -52,4 +52,17 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
             """)
     Optional<DispatchQueue> findActiveByShipmentIdAndTaskType(
             @Param("shipmentId") UUID shipmentId, @Param("taskType") TaskType taskType);
+
+    /**
+     * Active tasks for a shipment across both legs (pickup + delivery), newest assignment first.
+     * Used by live tracking to find the DA currently carrying the parcel; QUEUED/IN_PROGRESS only.
+     */
+    @Query("""
+            select d from DispatchQueue d
+            where d.shipmentId = :shipmentId
+              and d.status in (com.oneday.dispatch.domain.TaskStatus.QUEUED,
+                               com.oneday.dispatch.domain.TaskStatus.IN_PROGRESS)
+            order by d.assignedAt desc
+            """)
+    List<DispatchQueue> findActiveByShipmentId(@Param("shipmentId") UUID shipmentId);
 }
