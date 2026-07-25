@@ -1,7 +1,7 @@
 package com.oneday.routing.service.model;
 
 import com.oneday.routing.domain.ManifestItemStatus;
-import com.oneday.routing.service.port.ScanLedgerPort;
+import com.oneday.common.port.ScanLedgerPort;
 
 import java.util.UUID;
 

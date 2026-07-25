@@ -13,3 +13,14 @@ application-local.properties
 # Local secrets — real Render/Confluent credentials live here, never in git.
 .env
 .env.local
+
+# Node / frontend build output (must never enter this Java backend repo).
+node_modules/
+dist/
+.vite/
+
+# Legacy demo UI — removed from main; keep it from being re-added here.
+demo-ui/
+
+# Personal progress tracker (do not commit)
+docs/SID-PROGRESS.md

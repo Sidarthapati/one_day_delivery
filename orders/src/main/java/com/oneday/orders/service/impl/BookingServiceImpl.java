@@ -344,7 +344,7 @@ class BookingServiceImpl implements BookingService {
         response.setPricing(pricing);
         response.setEtaPromised(etaPromised);
         response.setSlaCommitmentMinutes(slaCommitmentMinutes);
-        response.setTrackingUrl("/api/v1/shipments/" + shipment.getShipmentRef() + "/track");
+        response.setTrackingUrl("/api/v1/shipments/mine/" + shipment.getShipmentRef() + "/track");
         response.setParcelId(null);
         response.setLabelStatus("PENDING");
         response.setPayment(paymentSummary);

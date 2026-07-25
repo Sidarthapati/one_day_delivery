@@ -1,0 +1,23 @@
+# Staging profile (SPRING_PROFILES_ACTIVE=staging).
+# Loaded ON TOP of application.yml, which already externalises the datasource,
+# RabbitMQ, grid and dispatch config to env vars. So this file only carries the
+# few deltas that differ from local. All secrets come from the Render dashboard
+# (SPRING_DATASOURCE_*, CLOUDAMQP_URL) — never commit them here.
+#
+# Note: this profile is NOT "prod", so the DemoAuthFilter (@Profile("!prod"))
+# stays active — staging boots with demo auth until real JWT is wired (Jul 17).
+
+server:
+  # Render injects PORT for Docker web services; bind to it.
+  port: ${PORT:8080}
+
+spring:
+  jpa:
+    hibernate:
+      # Flyway owns all DDL — never let Hibernate mutate the staging schema.
+      ddl-auto: validate
+
+logging:
+  level:
+    root: INFO
+    com.oneday: INFO
