@@ -1,6 +1,6 @@
 # Godspeed for Business — B2B Shipper Portal: Plan
 
-**Status:** v0.2 · 2026-07-26 — P1 backbone + universal invoicing BUILT (see Build status)
+**Status:** v0.3 · 2026-07-27 — P1 + P2 core portal + universal invoicing BUILT (see Build status)
 **Branches:** backend `f-b2b-portal` (one_day_delivery) · frontend `f-b2b-portal` (oneday-web)
 **Owner:** Sid
 
@@ -23,10 +23,28 @@ service (SAC 996812). This corrects the original plan, which scoped invoices und
   mock; `GET /api/v1/invoices/mine` + `/{shipmentRef}`.
 - Frontend P1: `@oneday/api` extended (business onboarding, accounts/mine, invoices); `apps/business`
   multi-step **signup wizard** → KYC verdicts + pending-approval screen; landing routes to it.
+- **Frontend P2 (oneday-web commit `8643474`):** business **session** (`od_business_session` /
+  `od_business_token`) + guarded `(app)` shell + **account gate** (fetches `accounts/mine`, gates the
+  whole portal behind activation — pending / rejected / active). `/login` (email+password → `/dashboard`);
+  `/dashboard` (credit summary + verification badges + recent B2B shipments); `/ship` (single credit
+  booking → `POST /api/v1/b2b/shipments`, PO ref, parties, dims, declared value); `/shipments` + `/[ref]`
+  (filter/search table + full detail with linked invoice); `/invoices` (GST invoices, SAC 996812).
+  Shared `@oneday/api` gained `b2b.book`/`b2b.cancel` + `B2bBookingRequest`.
+- **Universal invoice download (consumer):** customer `/orders/[ref]/invoice` — a print-ready tax-invoice
+  document (seller/buyer, SAC line item, CGST/SGST-or-IGST split, browser print-to-PDF), linked from the
+  order-details payment card. Also merged the `f-order-details` branch (customer order-details page) into
+  `f-b2b-portal` so both live together.
 
-**Next:** business sign-in + session + dashboard (accounts/mine); admin KYC review queue UI; consumer
-"download invoice" on the orders page; then P2 (single booking, shipments table, consignees), P3 (bulk
-cart, COD remittance, invoice PDF/statements), P4 (wallet, developers, team).
+**Next:** admin KYC review queue UI (**needs a surface decision** — no admin app exists yet; approve/reject
+M1 endpoints already work); then P3 (bulk cart checkout + CSV import, COD remittance ledger, invoice
+PDF/statements), P4 (wallet, developers/webhooks, team, sales lead, white-label tracking). Consignee/pickup
+address book (P2 tail) still open.
+
+**P2 caveats:** the `/ship` form collects city + pincode + address text (no map pin yet) → the backend
+resolves serviceability by **pincode-prefix fallback** (coordinate hex resolution is skipped); add a map
+pin like the consumer `/book` before pilot. Migrations (`V1_12`/`V4_23`/`V4_24`) still unverified against a
+live DB. Seller GSTIN/registered address on the consumer invoice render as placeholders until the entity is
+GST-registered (`NEXT_PUBLIC_SELLER_GSTIN`).
 
 **Not yet done / caveats:** `SandboxKycAdapter` live HTTP endpoints must be verified against Sandbox's API
 docs before `KYC_LIVE=true`; invoice CGST/SGST/IGST split uses an intra-state assumption pending real
