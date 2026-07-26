@@ -1,8 +1,36 @@
 # Godspeed for Business — B2B Shipper Portal: Plan
 
-**Status:** Draft v0.1 · 2026-07-26
+**Status:** v0.2 · 2026-07-26 — P1 backbone + universal invoicing BUILT (see Build status)
 **Branches:** backend `f-b2b-portal` (one_day_delivery) · frontend `f-b2b-portal` (oneday-web)
 **Owner:** Sid
+
+## Build status (2026-07-26)
+
+**Locked decisions:** wallet-vs-credit → credit-first + prepaid-per-batch (wallet → P4); KYC → Sandbox.co.in
+behind `KycPort` (live keys in gitignored `.env`, `KYC_LIVE=false` default → mock); Aadhaar → deferred
+(GSTIN+PAN+bank only); invoices/remittance → in `orders`, no new module.
+
+**Invoicing is UNIVERSAL, not B2B-only.** Every order (C2C/B2C/B2B) gets a GST tax invoice for Godspeed's
+service (SAC 996812). This corrects the original plan, which scoped invoices under B2B billing.
+
+**Done (compiles / typechecks green, committed on the two `f-b2b-portal` branches):**
+- Backend P1 backbone: `KycPort` + GSTIN/PAN/bank DTOs + `SandboxKycAdapter` (mock default); business
+  onboarding (`POST /auth/request-business-onboarding` runs KYC, records PENDING; `V1_12`); approve →
+  create user + provision `B2bAccount` via `B2bProvisioningPort`; account KYC state machine (`V4_23`);
+  `GET /api/v1/b2b/accounts/mine`.
+- Universal invoicing: `Invoice` + `invoices` table & serial sequence (`V4_24`); lazy generation from
+  stored pricing (`GS/{FY}/NNNNNN`, CGST/SGST split w/ TODO place-of-supply); `EInvoicePort` (IRP seam) +
+  mock; `GET /api/v1/invoices/mine` + `/{shipmentRef}`.
+- Frontend P1: `@oneday/api` extended (business onboarding, accounts/mine, invoices); `apps/business`
+  multi-step **signup wizard** → KYC verdicts + pending-approval screen; landing routes to it.
+
+**Next:** business sign-in + session + dashboard (accounts/mine); admin KYC review queue UI; consumer
+"download invoice" on the orders page; then P2 (single booking, shipments table, consignees), P3 (bulk
+cart, COD remittance, invoice PDF/statements), P4 (wallet, developers, team).
+
+**Not yet done / caveats:** `SandboxKycAdapter` live HTTP endpoints must be verified against Sandbox's API
+docs before `KYC_LIVE=true`; invoice CGST/SGST/IGST split uses an intra-state assumption pending real
+place-of-supply logic (CA review); invoice generation is lazy (on first fetch) — no back-fill job yet.
 
 A separate, operator-grade web portal ("Godspeed for Business") for **business shippers** —
 companies that send parcels to *their* customers. It sits alongside the consumer Customer Web
