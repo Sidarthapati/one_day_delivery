@@ -35,10 +35,16 @@ service (SAC 996812). This corrects the original plan, which scoped invoices und
   order-details payment card. Also merged the `f-order-details` branch (customer order-details page) into
   `f-b2b-portal` so both live together.
 
-**Next:** admin KYC review queue UI (**needs a surface decision** — no admin app exists yet; approve/reject
-M1 endpoints already work); then P3 (bulk cart checkout + CSV import, COD remittance ledger, invoice
-PDF/statements), P4 (wallet, developers/webhooks, team, sales lead, white-label tracking). Consignee/pickup
-address book (P2 tail) still open.
+- **Admin console (oneday-web commit `3e08ac3`):** new `apps/admin` (`@oneday/admin`, :3004) — a separate
+  ADMIN-gated operator surface. **Onboarding & KYC review queue**: lists `GET /onboarding-requests`
+  (filter Pending/Approved/Rejected/All + search), shows each business's KYC verdicts (GSTIN + legal name,
+  PAN, business type, KYC message), and **Approve** (→ creates user + provisions the `B2bAccount`) /
+  **Reject** (reason modal). Backend: `OnboardingRequestResponse` enriched with the business/KYC fields
+  (`aff8f20`-adjacent M1 commit). Shared `@oneday/api` gained `onboarding.list/approve/reject`.
+
+**Next:** P3 (bulk cart checkout + CSV import → uses `geocodeText` review gate, COD remittance ledger,
+invoice PDF/statements), P4 (wallet, developers/webhooks, team, sales lead, white-label tracking).
+Consignee/pickup address book (P2 tail) still open.
 
 ### Address resolution (done for single orders; primitive ready for bulk)
 
