@@ -53,6 +53,10 @@ public class B2bBookingRequest {
 
     @NotNull @PositiveOrZero private Long declaredValuePaise;  // required for B2B insurance/valuation
 
+    // COD: goods' value to collect from the buyer on delivery, remitted to the vendor. Null/0 ⇒
+    // ordinary shipment. Shipping is still credit-billed — COD is orthogonal to the shipping fee.
+    @PositiveOrZero private Long codAmountToCollectPaise;
+
     @NotNull private PickupType pickupType;
     @NotNull private DropType   dropType;
 
@@ -116,6 +120,9 @@ public class B2bBookingRequest {
 
     public Long getDeclaredValuePaise()        { return declaredValuePaise; }
     public void setDeclaredValuePaise(Long v)  { this.declaredValuePaise = v; }
+
+    public Long getCodAmountToCollectPaise()        { return codAmountToCollectPaise; }
+    public void setCodAmountToCollectPaise(Long v)  { this.codAmountToCollectPaise = v; }
 
     public PickupType getPickupType()          { return pickupType; }
     public void setPickupType(PickupType v)    { this.pickupType = v; }

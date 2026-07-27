@@ -19,7 +19,7 @@ class IdempotencyE2eTest extends OrdersE2eSupport {
     void sameKeySameBody_replaysOriginalResponse() throws Exception {
         String token = tokenFor("B2C_CUSTOMER", randomUserId());
         String key = idemKey();
-        String body = json.writeValueAsString(b2cRequest(PaymentMode.COD));
+        String body = json.writeValueAsString(b2cRequest(PaymentMode.PREPAID));
 
         String first = mvc.perform(post("/api/v1/b2c/shipments")
                         .header("Authorization", "Bearer " + token)
@@ -49,10 +49,10 @@ class IdempotencyE2eTest extends OrdersE2eSupport {
                         .header("Authorization", "Bearer " + token)
                         .header("Idempotency-Key", key)
                         .contentType("application/json")
-                        .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
+                        .content(json.writeValueAsString(b2cRequest(PaymentMode.PREPAID))))
                 .andExpect(status().isCreated());
 
-        BookingRequest changed = b2cRequest(PaymentMode.COD);
+        BookingRequest changed = b2cRequest(PaymentMode.PREPAID);
         changed.setWeightGrams(9999);   // different fingerprint, same key
         mvc.perform(post("/api/v1/b2c/shipments")
                         .header("Authorization", "Bearer " + token)
@@ -68,7 +68,7 @@ class IdempotencyE2eTest extends OrdersE2eSupport {
         mvc.perform(post("/api/v1/b2c/shipments")
                         .header("Authorization", "Bearer " + tokenFor("B2C_CUSTOMER", randomUserId()))
                         .contentType("application/json")
-                        .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
+                        .content(json.writeValueAsString(b2cRequest(PaymentMode.PREPAID))))
                 .andExpect(status().isBadRequest());
     }
 }

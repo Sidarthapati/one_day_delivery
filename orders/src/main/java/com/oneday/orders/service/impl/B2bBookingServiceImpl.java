@@ -13,11 +13,13 @@ import com.oneday.common.port.dto.QuoteResult;
 import com.oneday.common.port.dto.ServiceabilityQuery;
 import com.oneday.common.port.dto.ServiceabilityResult;
 import com.oneday.orders.domain.B2bAccount;
+import com.oneday.orders.domain.CodCollection;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.domain.ShipmentStateHistory;
 import com.oneday.orders.dto.B2bBookingRequest;
 import com.oneday.orders.dto.BookingResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
+import com.oneday.orders.repository.CodCollectionRepository;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.B2bBookingService;
@@ -54,6 +56,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private final ShipmentRefService shipmentRefService;
     private final ShipmentRepository shipmentRepository;
     private final ShipmentStateHistoryRepository historyRepository;
+    private final CodCollectionRepository codCollectionRepository;
     private final CustomerVisibleStateMapper stateMapper;
     private final TransactionTemplate tx;
 
@@ -72,6 +75,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
                           ShipmentRefService shipmentRefService,
                           ShipmentRepository shipmentRepository,
                           ShipmentStateHistoryRepository historyRepository,
+                          CodCollectionRepository codCollectionRepository,
                           CustomerVisibleStateMapper stateMapper,
                           TransactionTemplate transactionTemplate,
                           CircuitBreakerRegistry circuitBreakerRegistry,
@@ -84,6 +88,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         this.shipmentRefService   = shipmentRefService;
         this.shipmentRepository   = shipmentRepository;
         this.historyRepository    = historyRepository;
+        this.codCollectionRepository = codCollectionRepository;
         this.stateMapper          = stateMapper;
         this.tx                   = transactionTemplate;
         this.serviceabilityCb     = circuitBreakerRegistry.circuitBreaker("serviceability");
@@ -203,11 +208,26 @@ class B2bBookingServiceImpl implements B2bBookingService {
         shipment.setOriginTileId(serviceability.originTileId());
         shipment.setDestTileId(serviceability.destTileId());
         shipment.setPaymentMode(null);   // B2B: credit; no payment mode column value
+        Long codToCollect = req.getCodAmountToCollectPaise();
+        boolean isCod = codToCollect != null && codToCollect > 0;
+        shipment.setCodAmountPaise(isCod ? codToCollect : null);
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());
         shipment.setBookedByUserId(UserIds.parse(userId));
 
         shipment = shipmentRepository.save(shipment);
+
+        // ── 5c-COD. Open the COD collection ledger row (AWAITING_COLLECTION) ────
+        // Shipping stays credit-billed above; this is the separate buyer→vendor money we will
+        // collect on delivery and remit. The delivery/cancel lifecycle hook advances it.
+        if (isCod) {
+            CodCollection collection = new CodCollection();
+            collection.setShipmentId(shipment.getId());
+            collection.setShipmentRef(shipment.getShipmentRef());
+            collection.setB2bAccountId(req.getB2bAccountId());
+            collection.setAmountPaise(codToCollect);
+            codCollectionRepository.save(collection);
+        }
 
         // ── 5d. Increment outstanding balance ──────────────────────────────────
         account.setOutstandingBalancePaise(newOutstanding);

@@ -188,6 +188,11 @@ public class Shipment extends MutableBaseEntity {
     @Column(name = "payment_id")
     private UUID paymentId;
 
+    // B2B COD: the goods' value to collect from the buyer on delivery and remit to the vendor.
+    // Null ⇒ ordinary (non-COD) shipment. Distinct from total_price (shipping) and declared_value.
+    @Column(name = "cod_amount_paise", updatable = false)
+    private Long codAmountPaise;
+
     // ── Idempotency ───────────────────────────────────────────────────────
 
     @Column(name = "idempotency_key", length = 100, updatable = false)
