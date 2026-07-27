@@ -221,6 +221,9 @@ class OnboardingServiceImpl implements OnboardingService {
         return new OnboardingRequestResponse(
                 r.getId(), r.getEmail(), r.getName(), r.getRequestedRole(),
                 r.getStatus(), r.getRejectionReason(), r.getReviewedBy(),
-                r.getReviewedAt(), r.getCreatedAt());
+                r.getReviewedAt(), r.getCreatedAt(),
+                r.getCompanyName(), r.getBusinessType(), r.getGstin(), r.getPan(),
+                r.getBillingEmail(), r.getCityId(), r.getGstinVerified(), r.getPanVerified(),
+                r.getGstinLegalName(), r.getKycMessage());
     }
 }
