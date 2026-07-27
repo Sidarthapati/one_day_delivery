@@ -4,6 +4,7 @@ import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.orders.config.RazorpayProperties;
 import com.oneday.orders.dto.AddCartItemRequest;
+import com.oneday.orders.dto.BulkCartAddRequest;
 import com.oneday.orders.dto.CartCheckoutRequest;
 import com.oneday.orders.dto.CartCheckoutResponse;
 import com.oneday.orders.dto.CartItemResponse;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -59,6 +61,18 @@ class CartController {
                                     @Valid @RequestBody AddCartItemRequest request) {
         Authz.requireCustomerRole(principal, CUSTOMER_ROLES);
         return cartService.addItem(userId(principal), request);
+    }
+
+    /**
+     * Bulk-add many pre-resolved drafts (the bulk-upload path — the client geocodes each destination
+     * to real coordinates first). Prices/serviceability-checks every row concurrently and returns the
+     * per-row outcome in input order. Valid rows land in the (still OPEN) cart; nothing is booked here.
+     */
+    @PostMapping("/items/bulk")
+    public List<CartService.BulkItemResult> addItemsBulk(@AuthenticationPrincipal AuthUserDetails principal,
+                                                         @Valid @RequestBody BulkCartAddRequest request) {
+        Authz.requireCustomerRole(principal, CUSTOMER_ROLES);
+        return cartService.addItems(userId(principal), request.getItems());
     }
 
     @PutMapping("/items/{id}")
