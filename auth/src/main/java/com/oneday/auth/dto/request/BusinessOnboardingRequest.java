@@ -24,5 +24,9 @@ public record BusinessOnboardingRequest(
         @NotBlank @Pattern(regexp = "[A-Z]{5}[0-9]{4}[A-Z]",
                 message = "must be a valid 10-character PAN") String pan,
         @NotBlank @Email String billingEmail,
-        @NotBlank @Size(max = 10) String cityId
+        @NotBlank @Size(max = 10) String cityId,
+        // Self-declared monthly parcel volume band. Optional (older clients omit it); when present
+        // it must be one of the known bands. "2000+" (and up) marks a large merchant → ADMIN review.
+        @Pattern(regexp = "0-200|200-500|500-1000|1000-2000|2000\\+",
+                message = "must be a known volume band") String expectedMonthlyOrders
 ) {}

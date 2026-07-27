@@ -33,6 +33,12 @@ public class OnboardingProperties {
          */
         private long maxCreditPaise = 0L;
 
+        /**
+         * A self-declared monthly volume at/above this forces manual review (large merchant). The
+         * "2000+" band has a floor of 2000, so the default sends exactly that band to the queue.
+         */
+        private int maxMonthlyOrders = 2000;
+
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean v) { this.enabled = v; }
 
@@ -41,5 +47,8 @@ public class OnboardingProperties {
 
         public long getMaxCreditPaise() { return maxCreditPaise; }
         public void setMaxCreditPaise(long v) { this.maxCreditPaise = v; }
+
+        public int getMaxMonthlyOrders() { return maxMonthlyOrders; }
+        public void setMaxMonthlyOrders(int v) { this.maxMonthlyOrders = v; }
     }
 }

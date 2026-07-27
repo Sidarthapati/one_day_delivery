@@ -62,6 +62,10 @@ public class OnboardingRequest extends BaseEntity {
     @Column(name = "city_id", length = 10)
     private String cityId;
 
+    // Self-declared monthly parcel volume band (e.g. "2000+"); drives small-vs-large auto-approval.
+    @Column(name = "expected_monthly_orders", length = 20)
+    private String expectedMonthlyOrders;
+
     @Column(name = "gstin_verified")
     private Boolean gstinVerified;
 

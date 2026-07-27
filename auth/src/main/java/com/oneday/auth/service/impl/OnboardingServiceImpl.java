@@ -122,6 +122,7 @@ class OnboardingServiceImpl implements OnboardingService {
         r.setPan(request.pan());
         r.setBillingEmail(request.billingEmail());
         r.setCityId(request.cityId());
+        r.setExpectedMonthlyOrders(request.expectedMonthlyOrders());
         r.setGstinVerified(gstin.verified());
         r.setGstinLegalName(gstin.legalName());
         r.setPanVerified(pan.verified());
@@ -131,7 +132,7 @@ class OnboardingServiceImpl implements OnboardingService {
         // Auto-approve the common case: clean KYC + a small merchant → instant activation, no
         // admin queue. Only KYC failures (or a flagged business type) fall through to review.
         boolean autoApproved = false;
-        if (autoApproveEligible(needsReview, request.businessType())) {
+        if (autoApproveEligible(needsReview, request.businessType(), request.expectedMonthlyOrders())) {
             activate(r, SYSTEM_ACTOR);
             autoApproved = true;
         }
@@ -142,13 +143,27 @@ class OnboardingServiceImpl implements OnboardingService {
     }
 
     /** True when a business onboarding can skip the ADMIN queue and activate immediately. */
-    private boolean autoApproveEligible(boolean needsReview, String businessType) {
+    private boolean autoApproveEligible(boolean needsReview, String businessType, String monthlyBand) {
         var cfg = onboardingProps.getAutoApprove();
         if (!cfg.isEnabled() || needsReview) return false;
         if (businessType != null && cfg.getReviewBusinessTypes().contains(businessType)) return false;
+        // Large merchants (declared volume at/above the threshold) always get a human look.
+        if (monthlyOrdersFloor(monthlyBand) >= cfg.getMaxMonthlyOrders()) return false;
         // Self-signup is prepaid (credit 0) today; the credit gate bites once signup collects a
         // requested line. 0 <= maxCreditPaise is always true, so prepaid onboardings pass.
         return 0L <= cfg.getMaxCreditPaise();
+    }
+
+    /** Lower bound of a declared volume band; 0 when the band is null/unknown (never large). */
+    private static int monthlyOrdersFloor(String band) {
+        if (band == null) return 0;
+        return switch (band.trim()) {
+            case "200-500" -> 200;
+            case "500-1000" -> 500;
+            case "1000-2000" -> 1000;
+            case "2000+" -> 2000;
+            default -> 0; // "0-200" and anything unrecognised
+        };
     }
 
     /** A GSTIN embeds its holder's PAN at positions 3–12; check the submitted PAN matches. */
@@ -265,7 +280,8 @@ class OnboardingServiceImpl implements OnboardingService {
                 r.getStatus(), r.getRejectionReason(), r.getReviewedBy(),
                 r.getReviewedAt(), r.getCreatedAt(),
                 r.getCompanyName(), r.getBusinessType(), r.getGstin(), r.getPan(),
-                r.getBillingEmail(), r.getCityId(), r.getGstinVerified(), r.getPanVerified(),
+                r.getBillingEmail(), r.getCityId(), r.getExpectedMonthlyOrders(),
+                r.getGstinVerified(), r.getPanVerified(),
                 r.getGstinLegalName(), r.getKycMessage());
     }
 }

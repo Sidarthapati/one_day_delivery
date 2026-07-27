@@ -20,6 +20,7 @@ public record OnboardingRequestResponse(
         String pan,
         String billingEmail,
         String cityId,
+        String expectedMonthlyOrders,
         Boolean gstinVerified,
         Boolean panVerified,
         String gstinLegalName,
