@@ -42,9 +42,22 @@ service (SAC 996812). This corrects the original plan, which scoped invoices und
   **Reject** (reason modal). Backend: `OnboardingRequestResponse` enriched with the business/KYC fields
   (`aff8f20`-adjacent M1 commit). Shared `@oneday/api` gained `onboarding.list/approve/reject`.
 
-**Next:** P3 (bulk cart checkout + CSV import → uses `geocodeText` review gate, COD remittance ledger,
-invoice PDF/statements), P4 (wallet, developers/webhooks, team, sales lead, white-label tracking).
-Consignee/pickup address book (P2 tail) still open.
+- **P3 bulk upload + geocode review (oneday-web `966ea55`, backend `M4` commit):** the B2B bulk path —
+  **one pickup, many destinations**, client-side geocoded so every row is verified before booking.
+  Business `/bulk` = 3-step wizard: (1) shared pickup on the map (AddressSearch + pin + `/serviceable-at`);
+  (2) download `.xlsx` template → upload → **parse client-side (SheetJS, .xlsx/.csv)** → **geocode EVERY row**
+  via `geocodeText` (bounded concurrency) → **review table** auto-accepting high-confidence rows and flagging
+  low-confidence / partial-match / pincode-mismatch / non-serviceable (excluded by default, toggleable);
+  (3) add selected rows — **carrying real lat/lon** — to the cart (`POST /api/v1/cart/items/bulk`, new;
+  prices + serviceability-checks server-side, nothing booked), then **checkout on credit**
+  (`POST /api/v1/cart/checkout`), per-row failures surfaced. `lib/bulk.ts` (template/parse/normalise/
+  reviewRow/pincode→IATA/pooled mapper). Shared `@oneday/api`: `cart.get/addBulk/checkoutB2b` + types.
+  **No manual per-address picking** — Google's best match is taken automatically; only uncertain rows need
+  a human. Note: the older server-side `/api/v1/bulk/upload` (pincode→centroid coords) is left intact for
+  B2C and is now superseded for B2B by this client-geocoded path.
+
+**Next:** COD remittance ledger, invoice PDF/statements (rest of P3); then P4 (wallet, developers/webhooks,
+team, sales lead, white-label tracking). Consignee/pickup address book (P2 tail) still open.
 
 ### Address resolution (done for single orders; primitive ready for bulk)
 
