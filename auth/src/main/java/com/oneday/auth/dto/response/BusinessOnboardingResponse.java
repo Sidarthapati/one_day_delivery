@@ -8,10 +8,11 @@ import java.util.UUID;
  */
 public record BusinessOnboardingResponse(
         UUID requestId,
-        String status,           // PENDING
+        String status,           // APPROVED (auto) or PENDING (review)
         boolean gstinVerified,
         String gstinLegalName,
         boolean panVerified,
         boolean needsReview,     // true when any KYC check failed → ADMIN must review
+        boolean autoApproved,    // true when the account was created + provisioned instantly
         String kycMessage
 ) {}

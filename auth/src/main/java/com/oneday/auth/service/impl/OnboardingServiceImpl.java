@@ -15,6 +15,7 @@ import com.oneday.auth.repository.OnboardingRequestRepository;
 import com.oneday.auth.repository.RoleAuditLogRepository;
 import com.oneday.auth.repository.RoleRepository;
 import com.oneday.auth.repository.UserRepository;
+import com.oneday.auth.config.OnboardingProperties;
 import com.oneday.auth.service.OnboardingService;
 import com.oneday.common.port.B2bProvisioningPort;
 import com.oneday.common.port.KycPort;
@@ -37,6 +38,8 @@ class OnboardingServiceImpl implements OnboardingService {
 
     private static final Logger LOG = LoggerFactory.getLogger(OnboardingServiceImpl.class);
     private static final String B2B_ROLE = "B2B_USER";
+    /** Sentinel actor for auto-approvals (no admin performed the action). */
+    private static final UUID SYSTEM_ACTOR = new UUID(0L, 0L);
 
     private final OnboardingRequestRepository onboardingRepository;
     private final UserRepository userRepository;
@@ -44,6 +47,7 @@ class OnboardingServiceImpl implements OnboardingService {
     private final PasswordEncoder passwordEncoder;
     private final RoleAuditLogRepository auditLogRepository;
     private final KycPort kycPort;
+    private final OnboardingProperties onboardingProps;
     // Optional: implemented by orders (M4). Absent in an auth-only context → provisioning is skipped.
     private final ObjectProvider<B2bProvisioningPort> provisioningPort;
 
@@ -53,6 +57,7 @@ class OnboardingServiceImpl implements OnboardingService {
                           PasswordEncoder passwordEncoder,
                           RoleAuditLogRepository auditLogRepository,
                           KycPort kycPort,
+                          OnboardingProperties onboardingProps,
                           ObjectProvider<B2bProvisioningPort> provisioningPort) {
         this.onboardingRepository = onboardingRepository;
         this.userRepository = userRepository;
@@ -60,6 +65,7 @@ class OnboardingServiceImpl implements OnboardingService {
         this.passwordEncoder = passwordEncoder;
         this.auditLogRepository = auditLogRepository;
         this.kycPort = kycPort;
+        this.onboardingProps = onboardingProps;
         this.provisioningPort = provisioningPort;
     }
 
@@ -92,9 +98,15 @@ class OnboardingServiceImpl implements OnboardingService {
             throw new EmailAlreadyExistsException(request.email());
         }
 
-        // Run KYC now (GSTIN + PAN) so the ADMIN reviews with verdicts in hand.
+        // Run KYC now so the verdicts drive auto-approval / the ADMIN queue. For a business the
+        // PAN is embedded in the GSTIN, so a verified/active GSTIN validates it — and the individual
+        // PAN-verify API needs a date of birth we don't collect for a company. Derive PAN from GSTIN.
         GstinResult gstin = kycPort.verifyGstin(request.gstin());
-        PanResult pan = kycPort.verifyPan(request.pan(), request.name());
+        boolean panMatches = gstin.verified() && gstinEmbeddedPanMatches(request.gstin(), request.pan());
+        PanResult pan = panMatches
+                ? new PanResult(true, request.pan(), request.name(), true, "Verified via GSTIN")
+                : PanResult.failed(request.pan(),
+                        gstin.verified() ? "PAN does not match the GSTIN" : "Pending GSTIN verification");
         boolean needsReview = !gstin.verified() || !pan.verified();
 
         var r = new OnboardingRequest();
@@ -116,9 +128,33 @@ class OnboardingServiceImpl implements OnboardingService {
         r.setKycMessage(needsReview ? kycMessage(gstin, pan) : "All checks passed");
         r = onboardingRepository.save(r);
 
+        // Auto-approve the common case: clean KYC + a small merchant → instant activation, no
+        // admin queue. Only KYC failures (or a flagged business type) fall through to review.
+        boolean autoApproved = false;
+        if (autoApproveEligible(needsReview, request.businessType())) {
+            activate(r, SYSTEM_ACTOR);
+            autoApproved = true;
+        }
+
         return new BusinessOnboardingResponse(
                 r.getId(), r.getStatus(), gstin.verified(), gstin.legalName(),
-                pan.verified(), needsReview, r.getKycMessage());
+                pan.verified(), needsReview, autoApproved, r.getKycMessage());
+    }
+
+    /** True when a business onboarding can skip the ADMIN queue and activate immediately. */
+    private boolean autoApproveEligible(boolean needsReview, String businessType) {
+        var cfg = onboardingProps.getAutoApprove();
+        if (!cfg.isEnabled() || needsReview) return false;
+        if (businessType != null && cfg.getReviewBusinessTypes().contains(businessType)) return false;
+        // Self-signup is prepaid (credit 0) today; the credit gate bites once signup collects a
+        // requested line. 0 <= maxCreditPaise is always true, so prepaid onboardings pass.
+        return 0L <= cfg.getMaxCreditPaise();
+    }
+
+    /** A GSTIN embeds its holder's PAN at positions 3–12; check the submitted PAN matches. */
+    private static boolean gstinEmbeddedPanMatches(String gstin, String pan) {
+        if (gstin == null || pan == null || gstin.length() < 12) return false;
+        return gstin.substring(2, 12).equalsIgnoreCase(pan.trim());
     }
 
     private static String kycMessage(GstinResult gstin, PanResult pan) {
@@ -145,7 +181,12 @@ class OnboardingServiceImpl implements OnboardingService {
         if (!"PENDING".equals(onboardingRequest.getStatus())) {
             throw new OnboardingRequestAlreadyProcessedException();
         }
+        activate(onboardingRequest, actorId);
+    }
 
+    /** Creates the user, audits the role grant, provisions a B2B account (if applicable), and
+     *  marks the request APPROVED. Shared by ADMIN approval and auto-approval (actor = SYSTEM). */
+    private void activate(OnboardingRequest onboardingRequest, UUID actorId) {
         if (userRepository.existsByEmail(onboardingRequest.getEmail())) {
             throw new EmailAlreadyExistsException(onboardingRequest.getEmail());
         }
@@ -161,7 +202,8 @@ class OnboardingServiceImpl implements OnboardingService {
         user.setPasswordHash(onboardingRequest.getPasswordHash());
         user.setRole(role);
         user.setActive(true);
-        user.setMustChangePassword(true);
+        // The applicant set their own password during signup, so no forced change on first login.
+        user.setMustChangePassword(false);
         user = userRepository.save(user);
 
         var auditLog = new RoleAuditLog();

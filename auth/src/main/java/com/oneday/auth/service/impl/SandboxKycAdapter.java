@@ -53,8 +53,9 @@ class SandboxKycAdapter implements KycPort {
                     "Active", "Mock address, India", "Verified (mock)");
         }
         try {
-            var body = authed().get()
-                    .uri("/gst/compliance/public/gstin/{gstin}", g)
+            var body = authed().post()
+                    .uri("/gst/compliance/public/gstin/search")
+                    .body(Map.of("gstin", g))
                     .retrieve().body(Map.class);
             return mapGstin(g, body);
         } catch (Exception e) {
@@ -75,7 +76,12 @@ class SandboxKycAdapter implements KycPort {
         try {
             var body = authed().post()
                     .uri("/kyc/pan/verify")
-                    .body(Map.of("pan", p, "name_as_per_pan", name == null ? "" : name))
+                    .body(Map.of(
+                            "@entity", "in.co.sandbox.kyc.pan_verification.request",
+                            "pan", p,
+                            "name_as_per_pan", name == null ? "" : name,
+                            "consent", "Y",
+                            "reason", "For B2B merchant onboarding"))
                     .retrieve().body(Map.class);
             return mapPan(p, name, body);
         } catch (Exception e) {
@@ -117,35 +123,65 @@ class SandboxKycAdapter implements KycPort {
                 .header("x-api-version", props.getApiVersion())
                 .retrieve()
                 .body(Map.class);
+        // Sandbox expects the RAW access token in Authorization (no "Bearer " prefix).
         String token = auth == null ? null : str(auth.get("access_token"));
         return RestClient.builder()
                 .baseUrl(props.getBaseUrl())
-                .defaultHeader("Authorization", "Bearer " + token)
+                .defaultHeader("Authorization", token == null ? "" : token)
                 .defaultHeader("x-api-key", props.getApiKey())
                 .defaultHeader("x-api-version", props.getApiVersion())
                 .build();
     }
 
-    @SuppressWarnings("unchecked")
+    // GSTIN search nests the taxpayer under data.data (lgnm/tradeNam/sts/pradr); errors carry `message`.
     private GstinResult mapGstin(String gstin, Map<?, ?> body) {
         if (body == null) return GstinResult.failed(gstin, "Empty response");
-        Object d = body.get("data");
-        Map<String, Object> data = (Map<String, Object>) (d instanceof Map ? d : body);
-        String status = str(data.get("status"));
+        Map<?, ?> data = nested(body, "data", "data");
+        if (data == null) {
+            String msg = str(body.get("message"));
+            return GstinResult.failed(gstin, msg != null ? msg : "GSTIN not found");
+        }
+        String status = str(data.get("sts"));
         boolean ok = status != null && status.equalsIgnoreCase("Active");
-        return new GstinResult(ok, gstin, str(data.get("legal_name")), str(data.get("trade_name")),
-                status, str(data.get("address")), ok ? "Verified" : "GSTIN not active");
+        return new GstinResult(ok, gstin, str(data.get("lgnm")), str(data.get("tradeNam")),
+                status, addressOf(data.get("pradr")), ok ? "Verified" : "GSTIN status: " + status);
     }
 
-    @SuppressWarnings("unchecked")
+    // PAN verify returns data.{status, name_as_per_pan_match, category}; status "valid" → verified.
     private PanResult mapPan(String pan, String name, Map<?, ?> body) {
         if (body == null) return PanResult.failed(pan, "Empty response");
         Object d = body.get("data");
-        Map<String, Object> data = (Map<String, Object>) (d instanceof Map ? d : body);
+        if (!(d instanceof Map<?, ?> data)) {
+            String msg = str(body.get("message"));
+            return PanResult.failed(pan, msg != null ? msg : "PAN invalid");
+        }
         boolean valid = "valid".equalsIgnoreCase(str(data.get("status")));
-        boolean nameMatch = Boolean.TRUE.equals(data.get("name_match")) || valid;
-        return new PanResult(valid, pan, str(data.getOrDefault("name", name)), nameMatch,
-                valid ? "Verified" : "PAN invalid");
+        boolean nameMatch = Boolean.TRUE.equals(data.get("name_as_per_pan_match"));
+        return new PanResult(valid, pan, name, nameMatch, valid ? "Verified" : "PAN invalid");
+    }
+
+    /** Walk a chain of nested map keys; null if any hop is missing or not a map. */
+    private static Map<?, ?> nested(Map<?, ?> body, String... keys) {
+        Map<?, ?> cur = body;
+        for (String k : keys) {
+            Object v = cur.get(k);
+            if (!(v instanceof Map<?, ?> m)) return null;
+            cur = m;
+        }
+        return cur;
+    }
+
+    /** Build a one-line address from a GSTIN `pradr` block ({addr:{bno,st,loc,dst,stcd,pncd}}). */
+    private static String addressOf(Object pradr) {
+        if (!(pradr instanceof Map<?, ?> pm)) return null;
+        Object addr = pm.get("addr");
+        if (!(addr instanceof Map<?, ?> am)) return null;
+        StringBuilder sb = new StringBuilder();
+        for (String k : new String[]{"bno", "st", "loc", "dst", "stcd", "pncd"}) {
+            String v = str(am.get(k));
+            if (v != null && !v.isBlank()) sb.append(sb.length() > 0 ? ", " : "").append(v);
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     @SuppressWarnings("unchecked")
