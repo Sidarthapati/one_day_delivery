@@ -40,11 +40,30 @@ M1 endpoints already work); then P3 (bulk cart checkout + CSV import, COD remitt
 PDF/statements), P4 (wallet, developers/webhooks, team, sales lead, white-label tracking). Consignee/pickup
 address book (P2 tail) still open.
 
-**P2 caveats:** the `/ship` form collects city + pincode + address text (no map pin yet) → the backend
-resolves serviceability by **pincode-prefix fallback** (coordinate hex resolution is skipped); add a map
-pin like the consumer `/book` before pilot. Migrations (`V1_12`/`V4_23`/`V4_24`) still unverified against a
-live DB. Seller GSTIN/registered address on the consumer invoice render as placeholders until the entity is
-GST-registered (`NEXT_PUBLIC_SELLER_GSTIN`).
+### Address resolution (done for single orders; primitive ready for bulk)
+
+Every order needs **coordinates** — M3 resolves the serviceable hex from lat/lon; text + pincode alone is
+only a coarse pincode-prefix fallback. Approach:
+
+- **Shared `@oneday/maps` package** (oneday-web commit `75dd77e`): the consumer's vendor-neutral
+  `MapsProvider` (Google autocomplete + pin-drag reverse-geocode) promoted out of `apps/customer` so all
+  apps + the bulk flow share one implementation. Added **`geocodeText(query, {pincode})`** — forward-geocode
+  a raw text address → best match + **confidence** (ROOFTOP/RANGE→high, GEOMETRIC→medium, else low) +
+  partial-match flag + pincode-agreement check.
+- **Single `/ship` (done):** interactive address search + a draggable map pin per party, each run through
+  `/serviceable-at`; booking carries real origin/dest lat/lon (+ derived IATA city, editable pincode).
+- **Bulk Excel (P3) — geocode-*before*-place, review gate:** parse the sheet → `geocodeText` **every** row
+  automatically (no manual picking — Google's best match is taken) → **validation table**: high-confidence
+  rows auto-accept; low-confidence / pincode-mismatch / partial-match rows are flagged for a quick inline
+  fix (edit text + re-geocode, or pin) or the shipper re-uploads a corrected sheet. Only after review are
+  orders placed. Chosen over "place-then-convert" because serviceability + delivery success both hinge on
+  the coordinate being right. Client-side geocoding for now (consistent, no new secret); add a server-side
+  cache/`GeocodePort` if volume needs it.
+
+**Remaining P2 caveats:** Migrations (`V1_12`/`V4_23`/`V4_24`) still unverified against a live DB. Seller
+GSTIN/registered address on the consumer invoice render as placeholders until the entity is GST-registered
+(`NEXT_PUBLIC_SELLER_GSTIN`). `geocodeText` uses `componentRestrictions.postalCode` as a *bias* — Google may
+relax it, so the pincode-agreement check (not the restriction) is what actually flags mismatches.
 
 **Not yet done / caveats:** `SandboxKycAdapter` live HTTP endpoints must be verified against Sandbox's API
 docs before `KYC_LIVE=true`; invoice CGST/SGST/IGST split uses an intra-state assumption pending real
