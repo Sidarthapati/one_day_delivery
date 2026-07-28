@@ -5,6 +5,7 @@ import com.oneday.auth.service.AuthService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -42,6 +43,11 @@ public class SecurityConfig {
                         .authenticationEntryPoint(
                                 (req, res, ex) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")))
                 .authorizeHttpRequests(auth -> auth
+                        // CORS preflight never carries the Authorization header, so a protected route
+                        // would otherwise 401 the OPTIONS request itself before the browser ever sends
+                        // the real one. Permitting OPTIONS doesn't loosen anything — the actual request
+                        // still goes through full authentication/authorization right below.
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/auth/login", "/auth/register", "/auth/health", "/auth/request-onboarding").permitAll()
                         .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
                         .anyRequest().authenticated())
