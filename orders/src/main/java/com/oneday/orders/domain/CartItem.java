@@ -80,6 +80,8 @@ public class CartItem extends MutableBaseEntity {
     private short heightCm;
     @Column(name = "declared_value_paise")
     private Long declaredValuePaise;
+    @Column(name = "cod_amount_to_collect_paise")
+    private Long codAmountToCollectPaise;
     @Enumerated(EnumType.STRING)
     @Column(name = "pickup_type", length = 16, nullable = false)
     private PickupType pickupType;

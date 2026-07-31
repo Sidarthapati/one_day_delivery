@@ -2,15 +2,21 @@ package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.domain.CodCollectionState;
+import com.oneday.orders.dto.BankAccountRequest;
+import com.oneday.orders.dto.BankAccountResponse;
 import com.oneday.orders.dto.CodCollectionResponse;
 import com.oneday.orders.dto.CodRemittanceResponse;
 import com.oneday.orders.dto.CodSummaryResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
+import com.oneday.orders.service.BankAccountService;
 import com.oneday.orders.service.CodRemittanceService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,11 +34,27 @@ import java.util.UUID;
 class CodController {
 
     private final CodRemittanceService cod;
+    private final BankAccountService bankAccounts;
     private final B2bAccountRepository accounts;
 
-    CodController(CodRemittanceService cod, B2bAccountRepository accounts) {
+    CodController(CodRemittanceService cod, BankAccountService bankAccounts, B2bAccountRepository accounts) {
         this.cod = cod;
+        this.bankAccounts = bankAccounts;
         this.accounts = accounts;
+    }
+
+    /** The bank account this vendor's COD is remitted into (masked). */
+    @GetMapping("/bank-account")
+    public BankAccountResponse bankAccount(@AuthenticationPrincipal AuthUserDetails principal) {
+        return bankAccounts.get(ownedAccountId(principal));
+    }
+
+    /** Submit or replace the payout bank account; kicks off verification. */
+    @PutMapping("/bank-account")
+    public BankAccountResponse saveBankAccount(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @Valid @RequestBody BankAccountRequest request) {
+        return bankAccounts.submit(ownedAccountId(principal), request);
     }
 
     @GetMapping("/summary")

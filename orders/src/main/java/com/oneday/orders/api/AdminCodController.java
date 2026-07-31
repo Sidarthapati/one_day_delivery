@@ -83,4 +83,13 @@ class AdminCodController {
         Authz.requireRole(principal, "ADMIN");
         return cod.markPaid(id, request.utr());
     }
+
+    /** Pay a remittance out via the payouts provider (RazorpayX). 409 if it can't settle automatically. */
+    @PostMapping("/remittances/{id}/payout")
+    public CodRemittanceResponse payout(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("id") UUID id) {
+        Authz.requireRole(principal, "ADMIN");
+        return cod.payout(id);
+    }
 }

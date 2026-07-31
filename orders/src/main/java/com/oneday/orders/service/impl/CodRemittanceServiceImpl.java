@@ -1,10 +1,12 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.orders.config.CodProperties;
+import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.CodCollection;
 import com.oneday.orders.domain.CodCollectionState;
 import com.oneday.orders.domain.CodRemittance;
 import com.oneday.orders.domain.CodRemittanceState;
+import com.oneday.orders.service.PayoutPort;
 import com.oneday.orders.dto.CodAccountBalanceResponse;
 import com.oneday.orders.dto.CodCollectionResponse;
 import com.oneday.orders.dto.CodRemittanceResponse;
@@ -38,15 +40,18 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
     private final CodRemittanceRepository remittances;
     private final B2bAccountRepository accounts;
     private final CodProperties props;
+    private final PayoutPort payouts;
 
     CodRemittanceServiceImpl(CodCollectionRepository collections,
                              CodRemittanceRepository remittances,
                              B2bAccountRepository accounts,
-                             CodProperties props) {
+                             CodProperties props,
+                             PayoutPort payouts) {
         this.collections = collections;
         this.remittances = remittances;
         this.accounts = accounts;
         this.props = props;
+        this.payouts = payouts;
     }
 
     // ── Lifecycle hooks — run in their own transaction (called AFTER_COMMIT) ────
@@ -158,6 +163,13 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
     @Override
     @Transactional
     public CodRemittanceResponse createRemittance(UUID accountId, UUID actorId) {
+        B2bAccount account = accounts.findById(accountId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
+        // A payout needs a verified bank account on file — you can't remit into thin air.
+        if (account.getBankVerificationState() == null || !account.getBankVerificationState().isPayable()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "No verified bank account on file for this vendor — ask them to add their payout account first");
+        }
         List<CodCollection> batch = collections.findRemittable(accountId);
         if (batch.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No COD available to remit for this account");
@@ -215,6 +227,32 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
         }
         log.info("Remittance {} → PAID (utr {}), {} collections REMITTED", r.getReference(), utr, items.size());
         return toRemittance(r, items.stream().map(CodRemittanceServiceImpl::toCollection).toList());
+    }
+
+    @Override
+    @Transactional
+    public CodRemittanceResponse payout(UUID remittanceId) {
+        CodRemittance r = remittances.findById(remittanceId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Remittance not found"));
+        if (r.getState() != CodRemittanceState.PENDING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Remittance is not PENDING");
+        }
+        B2bAccount a = accounts.findById(r.getB2bAccountId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
+        if (a.getBankVerificationState() == null || !a.getBankVerificationState().isPayable()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Vendor's bank account is not verified");
+        }
+
+        PayoutPort.PayoutResult result = payouts.createPayout(new PayoutPort.PayoutRequest(
+                new PayoutPort.BankAccount(a.getBankAccountNumber(), a.getBankIfsc(), a.getBankBeneficiaryName()),
+                a.getBankPennyDropRef(), r.getNetPaise(), r.getReference()));
+
+        if (!result.settled() || result.utr() == null) {
+            // Manual provider, or the payout only queued — the admin records the real UTR by hand.
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Payout was not settled automatically (" + result.message() + ") — record the UTR manually once the transfer clears");
+        }
+        return markPaid(remittanceId, result.utr());
     }
 
     // ── Mapping ──────────────────────────────────────────────────────────────────

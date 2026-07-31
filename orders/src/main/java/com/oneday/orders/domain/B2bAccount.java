@@ -83,6 +83,31 @@ public class B2bAccount extends MutableBaseEntity {
     @Column(name = "bank_verified")
     private Boolean bankVerified;
 
+    // ── Payout bank account (V4_26) — how COD is remitted to the merchant ──────────
+    @Column(name = "bank_account_number", length = 30)
+    private String bankAccountNumber;
+
+    @Column(name = "bank_beneficiary_name", length = 200)
+    private String bankBeneficiaryName;
+
+    @Column(name = "bank_name", length = 120)
+    private String bankName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "bank_verification_state", length = 20, nullable = false)
+    private BankVerificationState bankVerificationState = BankVerificationState.NONE;
+
+    // Provider reference for the penny-drop / fund-account validation (RazorpayX etc).
+    @Column(name = "bank_penny_drop_ref", length = 80)
+    private String bankPennyDropRef;
+
+    @Column(name = "bank_verified_at")
+    private Instant bankVerifiedAt;
+
+    // Comma-separated emails notified when a COD payout is made (Delhivery-parity).
+    @Column(name = "cod_notify_emails", length = 500)
+    private String codNotifyEmails;
+
     @Column(name = "kyc_submitted_at")
     private Instant kycSubmittedAt;
 

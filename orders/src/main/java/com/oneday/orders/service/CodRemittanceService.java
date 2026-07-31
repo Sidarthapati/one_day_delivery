@@ -48,4 +48,11 @@ public interface CodRemittanceService {
 
     /** Confirm the bank transfer for a PENDING remittance → PAID; its collections become REMITTED. */
     CodRemittanceResponse markPaid(UUID remittanceId, String utr);
+
+    /**
+     * Pay a PENDING remittance out through the payouts provider (RazorpayX). On a settled payout the
+     * remittance goes PAID with the provider's UTR; if the provider only queued it (or there is no
+     * automated provider), throws 409 telling the admin to record the UTR manually via {@link #markPaid}.
+     */
+    CodRemittanceResponse payout(UUID remittanceId);
 }
