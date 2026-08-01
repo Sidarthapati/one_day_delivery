@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>DA Live Track</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: -apple-system, system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+    #bar {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+      background: rgba(17,17,17,.85); color: #fff; padding: 8px 12px;
+      font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between;
+    }
+    #bar b { font-weight: 600; }
+    #stale { color: #ffcc00; }
+    #login {
+      position: absolute; inset: 0; z-index: 2000; background: #111; color: #fff;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px;
+    }
+    #login input, #login button {
+      width: 100%; max-width: 320px; padding: 14px; font-size: 16px; border-radius: 10px; border: 1px solid #333;
+    }
+    #login input { background: #1c1c1c; color: #fff; }
+    #login button { background: #fff; color: #111; font-weight: 600; border: none; }
+    #login .err { color: #ff5555; font-size: 13px; min-height: 16px; }
+    #login h1 { font-size: 18px; margin: 0 0 4px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="bar">
+    <span><b>DA</b> <span id="da">—</span></span>
+    <span id="count">0 fixes</span>
+    <span id="age">—</span>
+  </div>
+
+  <div id="login">
+    <h1>DA Live Track</h1>
+    <input id="email" type="email" placeholder="email" value="admin@oneday.in" autocomplete="username" />
+    <input id="pw" type="password" placeholder="password" autocomplete="current-password" />
+    <button id="go">Sign in &amp; track</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Served same-origin from the backend, so /auth/login and /dispatch/... are same-origin (no CORS).
+    var DA = new URLSearchParams(location.search).get('da') || 'f6674c7e-adf0-43bb-b4c1-53b34fd85974';
+    var POLL_MS = 15000;
+    document.getElementById('da').textContent = DA;
+
+    var map = L.map('map').setView([12.97, 77.59], 12); // Bengaluru default until first fix
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap'
+    }).addTo(map);
+    var line = L.polyline([], { color: '#111', weight: 4 }).addTo(map);
+    var dot = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 2, fillColor: '#e10600', fillOpacity: 1 });
+    var fitted = false;
+
+    function token() { return localStorage.getItem('oneday.track.jwt'); }
+
+    async function login() {
+      var err = document.getElementById('err');
+      err.textContent = '';
+      try {
+        var r = await fetch('/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: document.getElementById('email').value, password: document.getElementById('pw').value })
+        });
+        if (!r.ok) { err.textContent = 'Sign-in failed (' + r.status + ')'; return; }
+        var j = await r.json();
+        localStorage.setItem('oneday.track.jwt', j.token);
+        document.getElementById('login').style.display = 'none';
+        poll();
+      } catch (e) { err.textContent = 'Network error'; }
+    }
+    document.getElementById('go').onclick = login;
+
+    async function poll() {
+      var t = token();
+      if (!t) { document.getElementById('login').style.display = 'flex'; return; }
+      try {
+        var r = await fetch('/dispatch/da/' + DA + '/track', { headers: { Authorization: 'Bearer ' + t } });
+        if (r.status === 401 || r.status === 403) {           // token expired → re-login
+          localStorage.removeItem('oneday.track.jwt');
+          document.getElementById('login').style.display = 'flex';
+          return;
+        }
+        if (r.ok) {
+          var fixes = await r.json();
+          var pts = fixes.map(function (f) { return [f.lat, f.lon]; });
+          line.setLatLngs(pts);
+          document.getElementById('count').textContent = pts.length + ' fixes';
+          if (pts.length) {
+            var last = pts[pts.length - 1];
+            dot.setLatLng(last).addTo(map);
+            if (!fitted) { map.fitBounds(line.getBounds().pad(0.2)); fitted = true; }
+            var ageSec = Math.round((Date.now() - new Date(fixes[fixes.length - 1].recorded_at).getTime()) / 1000);
+            var age = document.getElementById('age');
+            age.textContent = 'last fix ' + ageSec + 's ago';
+            age.id = ageSec > 90 ? 'stale' : 'age';
+          } else {
+            document.getElementById('age').textContent = 'waiting for pings…';
+          }
+        }
+      } catch (e) { /* transient — next poll retries */ }
+      setTimeout(poll, POLL_MS);
+    }
+
+    // Auto-start if we already have a token from a previous session.
+    if (token()) { document.getElementById('login').style.display = 'none'; poll(); }
+  </script>
+</body>
+</html>

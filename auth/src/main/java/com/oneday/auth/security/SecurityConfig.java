@@ -56,7 +56,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/auth/login", "/auth/register", "/auth/health", "/auth/request-onboarding").permitAll()
                         .requestMatchers("/auth/oauth/google", "/auth/otp/request", "/auth/otp/verify").permitAll()
-                        .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
+                        .requestMatchers("/", "/index.html", "/track.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
                         // Permit the error dispatch (Spring Boot's default). The JWT filter is skipped
                         // on the ERROR dispatch, so without this any 404/500 on an authenticated
                         // endpoint would be masked as a misleading 401.
