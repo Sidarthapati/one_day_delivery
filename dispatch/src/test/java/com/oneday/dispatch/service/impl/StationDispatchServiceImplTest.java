@@ -10,6 +10,7 @@ import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
@@ -41,6 +42,7 @@ class StationDispatchServiceImplTest {
     @Autowired DeferredDispatchRepository deferredRepo;
     @Autowired DaCronAssignmentRepository cronRepo;
     @Autowired DaStatusRepository daStatusRepo;
+    @Autowired DaGpsPingRepository daGpsPingRepo;
 
     private final LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
     private final UUID city = UUID.randomUUID();
@@ -52,7 +54,7 @@ class StationDispatchServiceImplTest {
     @BeforeEach
     void setUp() {
         DispatchProperties props = new DispatchProperties();
-        daStatus = new DaStatusServiceImpl(daStatusRepo, props);
+        daStatus = new DaStatusServiceImpl(daStatusRepo, daGpsPingRepo, props);
         service = new StationDispatchServiceImpl(queueRepo, deferredRepo, cronRepo, daStatus, props);
     }
 
