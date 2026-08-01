@@ -10,6 +10,7 @@ import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DaAssignmentAuditRepository;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
@@ -64,6 +65,7 @@ class DispatchServiceImplTest {
     @Autowired DaAssignmentAuditRepository auditRepo;
     @Autowired DaCronAssignmentRepository cronRepo;
     @Autowired DaStatusRepository daStatusRepo;
+    @Autowired DaGpsPingRepository daGpsPingRepo;
 
     private final LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
     private final UUID city = UUID.randomUUID();
@@ -80,7 +82,7 @@ class DispatchServiceImplTest {
     @BeforeEach
     void setUp() {
         props = new DispatchProperties();
-        daStatus = new DaStatusServiceImpl(daStatusRepo, props);
+        daStatus = new DaStatusServiceImpl(daStatusRepo, daGpsPingRepo, props);
         feasibility = mock(CronFeasibilityService.class);
         loadScore = mock(IntradayLoadScoreService.class);
         grid = mock(GridService.class);

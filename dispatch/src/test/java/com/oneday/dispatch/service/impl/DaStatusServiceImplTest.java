@@ -4,6 +4,7 @@ import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DaCronAssignment;
 import com.oneday.dispatch.domain.DaStatus;
 import com.oneday.dispatch.domain.DaStatusEnum;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.service.DaStatusService;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +55,7 @@ class DaStatusServiceImplTest {
         });
 
         DispatchProperties props = new DispatchProperties();   // defaults: 200m proximity
-        service = new DaStatusServiceImpl(repo, props);
+        service = new DaStatusServiceImpl(repo, mock(DaGpsPingRepository.class), props);
     }
 
     @Test
