@@ -1,7 +1,9 @@
 package com.oneday.auth.api;
 
+import com.oneday.auth.dto.request.BusinessOnboardingRequest;
 import com.oneday.auth.dto.request.OnboardingSubmitRequest;
 import com.oneday.auth.dto.request.RejectOnboardingRequest;
+import com.oneday.auth.dto.response.BusinessOnboardingResponse;
 import com.oneday.auth.dto.response.OnboardingRequestResponse;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.auth.service.OnboardingService;
@@ -28,6 +30,13 @@ public class OnboardingController {
     public ResponseEntity<OnboardingRequestResponse> submit(
             @Valid @RequestBody OnboardingSubmitRequest request) {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(onboardingService.submit(request));
+    }
+
+    /** Business (B2B_USER) self-onboarding — runs KYC and records a PENDING request for ADMIN review. */
+    @PostMapping("/auth/request-business-onboarding")
+    public ResponseEntity<BusinessOnboardingResponse> submitBusiness(
+            @Valid @RequestBody BusinessOnboardingRequest request) {
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(onboardingService.submitBusiness(request));
     }
 
     @GetMapping("/onboarding-requests")

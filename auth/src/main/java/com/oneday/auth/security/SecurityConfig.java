@@ -55,7 +55,12 @@ public class SecurityConfig {
                         // CORS preflight carries no credentials — never gate it behind auth.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/auth/login", "/auth/register", "/auth/health", "/auth/request-onboarding").permitAll()
+                        // Business self-signup — public, like /auth/request-onboarding (runs KYC, files a PENDING request).
+                        .requestMatchers("/auth/request-business-onboarding").permitAll()
                         .requestMatchers("/auth/oauth/google", "/auth/otp/request", "/auth/otp/verify").permitAll()
+                        // Public "Talk to sales" capture + white-label shipment tracking (token-scoped).
+                        .requestMatchers(HttpMethod.POST, "/api/sales/leads").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()
                         .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
                         // Permit the error dispatch (Spring Boot's default). The JWT filter is skipped
                         // on the ERROR dispatch, so without this any 404/500 on an authenticated

@@ -32,17 +32,20 @@ import java.util.function.Consumer;
 class TrackingServiceImpl implements TrackingService {
 
     private final ShipmentRepository shipmentRepository;
+    private final com.oneday.orders.repository.B2bAccountRepository b2bAccountRepository;
     private final CustomerVisibleStateMapper stateMapper;
     private final LocationResolver locationResolver;
     private final MilestoneBuilder milestoneBuilder;
     private final CityNodeCatalog cities;
 
     TrackingServiceImpl(ShipmentRepository shipmentRepository,
+                        com.oneday.orders.repository.B2bAccountRepository b2bAccountRepository,
                         CustomerVisibleStateMapper stateMapper,
                         LocationResolver locationResolver,
                         MilestoneBuilder milestoneBuilder,
                         CityNodeCatalog cities) {
         this.shipmentRepository = shipmentRepository;
+        this.b2bAccountRepository = b2bAccountRepository;
         this.stateMapper = stateMapper;
         this.locationResolver = locationResolver;
         this.milestoneBuilder = milestoneBuilder;
@@ -59,6 +62,22 @@ class TrackingServiceImpl implements TrackingService {
         return shipmentRepository.findByShipmentRef(shipmentRef)
                 .filter(s -> id.equals(s.getBookedByUserId()))   // ownership scope: not yours → not found
                 .map(this::toResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<com.oneday.orders.dto.PublicTrackResponse> trackByToken(String token) {
+        if (token == null || token.isBlank()) {
+            return Optional.empty();
+        }
+        return shipmentRepository.findByTrackToken(token).map(s -> {
+            com.oneday.orders.dto.TrackBranding branding = s.getB2bAccountId() == null
+                    ? com.oneday.orders.dto.TrackBranding.empty()
+                    : b2bAccountRepository.findById(s.getB2bAccountId())
+                        .map(com.oneday.orders.dto.TrackBranding::from)
+                        .orElse(com.oneday.orders.dto.TrackBranding.empty());
+            return new com.oneday.orders.dto.PublicTrackResponse(toResponse(s), branding);
+        });
     }
 
     private ShipmentTrackResponse toResponse(Shipment s) {

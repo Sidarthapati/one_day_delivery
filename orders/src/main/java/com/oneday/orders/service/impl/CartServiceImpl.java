@@ -295,6 +295,7 @@ class CartServiceImpl implements CartService {
         item.setWidthCm(r.getWidthCm());
         item.setHeightCm(r.getHeightCm());
         item.setDeclaredValuePaise(r.getDeclaredValuePaise());
+        item.setCodAmountToCollectPaise(r.getCodAmountToCollectPaise());
         item.setPickupType(r.getPickupType());
         item.setDropType(r.getDropType());
     }
@@ -345,6 +346,7 @@ class CartServiceImpl implements CartService {
         b.setWidthCm(i.getWidthCm());
         b.setHeightCm(i.getHeightCm());
         b.setDeclaredValuePaise(i.getDeclaredValuePaise());
+        b.setCodAmountToCollectPaise(i.getCodAmountToCollectPaise());
         b.setPickupType(i.getPickupType());
         b.setDropType(i.getDropType());
         return b;
