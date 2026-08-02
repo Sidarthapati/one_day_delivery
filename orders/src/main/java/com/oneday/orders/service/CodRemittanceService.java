@@ -17,8 +17,13 @@ public interface CodRemittanceService {
 
     // ── Lifecycle hooks (driven by shipment state transitions) ─────────────────
 
-    /** Delivery confirmed → mark the shipment's collection COLLECTED. No-op if none / already done. */
-    void onDelivered(UUID shipmentId);
+    /**
+     * Delivery confirmed → mark the shipment's collection COLLECTED and attribute the cash to the
+     * collecting DA. No-op if there's no collection / it's already done.
+     *
+     * @param collectedByDaId the delivery associate who took the cash (transition actor); may be null
+     */
+    void onDelivered(UUID shipmentId, UUID collectedByDaId);
 
     /** Shipment cancelled or returned before delivery → CANCELLED. No-op if none / already collected. */
     void onCancelled(UUID shipmentId);

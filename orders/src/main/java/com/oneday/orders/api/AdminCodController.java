@@ -1,17 +1,22 @@
 package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.orders.dto.AdminCodReconciliationRow;
 import com.oneday.orders.dto.CodAccountBalanceResponse;
+import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.CodCollectionResponse;
 import com.oneday.orders.dto.CodRemittanceResponse;
 import com.oneday.orders.dto.CreateRemittanceRequest;
 import com.oneday.orders.dto.MarkRemittancePaidRequest;
+import com.oneday.orders.dto.ReconcileDepositRequest;
 import com.oneday.orders.domain.CodCollectionState;
+import com.oneday.orders.service.CodCashService;
 import com.oneday.orders.service.CodRemittanceService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,9 +37,11 @@ import java.util.UUID;
 class AdminCodController {
 
     private final CodRemittanceService cod;
+    private final CodCashService codCash;
 
-    AdminCodController(CodRemittanceService cod) {
+    AdminCodController(CodRemittanceService cod, CodCashService codCash) {
         this.cod = cod;
+        this.codCash = codCash;
     }
 
     /** Vendors that currently have a payout-available balance, largest first. */
@@ -91,5 +98,32 @@ class AdminCodController {
             @PathVariable("id") UUID id) {
         Authz.requireRole(principal, "ADMIN");
         return cod.payout(id);
+    }
+
+    // ── DA cash reconciliation ───────────────────────────────────────────────────
+
+    /** Per-DA collected-vs-deposited cash, riders with the largest outstanding first. */
+    @GetMapping("/cash/reconciliation")
+    public List<AdminCodReconciliationRow> reconciliation(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, "ADMIN");
+        return codCash.reconciliation();
+    }
+
+    /** Every declared cash deposit, newest first. */
+    @GetMapping("/cash/deposits")
+    public List<CodCashDepositResponse> deposits(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, "ADMIN");
+        return codCash.allDeposits();
+    }
+
+    /** Verify a deposit: matched → RECONCILED, else DISCREPANCY. PATCH (not idempotency-gated). */
+    @PatchMapping("/cash/deposits/{id}")
+    public CodCashDepositResponse reconcile(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("id") UUID id,
+            @Valid @RequestBody ReconcileDepositRequest request) {
+        Authz.requireRole(principal, "ADMIN");
+        UUID adminId = UUID.fromString(Authz.requireUserId(principal));
+        return codCash.reconcile(id, adminId, request.reconciled(), request.note());
     }
 }

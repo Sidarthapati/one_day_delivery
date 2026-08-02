@@ -65,6 +65,7 @@ class B2bBookingServiceImplTest {
     @Mock private ShipmentRepository shipmentRepository;
     @Mock private ShipmentStateHistoryRepository historyRepository;
     @Mock private com.oneday.orders.repository.CodCollectionRepository codCollectionRepository;
+    @Mock private com.oneday.orders.service.WalletService walletService;
 
     private static final AbstractPlatformTransactionManager NO_OP_TX =
             new AbstractPlatformTransactionManager() {
@@ -92,7 +93,7 @@ class B2bBookingServiceImplTest {
         service = new B2bBookingServiceImpl(
                 b2bAccountRepository, serviceabilityPort, pricingPort, etaPort,
                 shipmentRefService, shipmentRepository, historyRepository,
-                codCollectionRepository, stateMapper, new TransactionTemplate(NO_OP_TX),
+                codCollectionRepository, stateMapper, walletService, new TransactionTemplate(NO_OP_TX),
                 CircuitBreakerRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),
                 scheduler);

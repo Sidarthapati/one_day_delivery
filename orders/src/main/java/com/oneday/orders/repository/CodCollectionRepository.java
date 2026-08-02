@@ -41,4 +41,24 @@ public interface CodCollectionRepository extends JpaRepository<CodCollection, UU
     @Query("SELECT DISTINCT c.b2bAccountId FROM CodCollection c "
             + "WHERE c.state = com.oneday.orders.domain.CodCollectionState.COLLECTED AND c.remittanceId IS NULL")
     List<UUID> findAccountsWithRemittableBalance();
+
+    // ── DA cash reconciliation ─────────────────────────────────────────────────
+
+    /** Σ COD cash a DA collected (COLLECTED or already REMITTED — both mean cash was taken in hand). */
+    @Query("SELECT COALESCE(SUM(c.amountPaise), 0) FROM CodCollection c WHERE c.collectedByDaId = :daId "
+            + "AND c.state IN (com.oneday.orders.domain.CodCollectionState.COLLECTED, "
+            + "com.oneday.orders.domain.CodCollectionState.REMITTED)")
+    long sumCollectedByDa(@Param("daId") UUID daId);
+
+    /** How many collections a DA has taken cash for. */
+    @Query("SELECT COUNT(c) FROM CodCollection c WHERE c.collectedByDaId = :daId "
+            + "AND c.state IN (com.oneday.orders.domain.CodCollectionState.COLLECTED, "
+            + "com.oneday.orders.domain.CodCollectionState.REMITTED)")
+    long countCollectedByDa(@Param("daId") UUID daId);
+
+    /** Distinct DAs that have collected COD cash (admin reconciliation worklist). */
+    @Query("SELECT DISTINCT c.collectedByDaId FROM CodCollection c WHERE c.collectedByDaId IS NOT NULL "
+            + "AND c.state IN (com.oneday.orders.domain.CodCollectionState.COLLECTED, "
+            + "com.oneday.orders.domain.CodCollectionState.REMITTED)")
+    List<UUID> findDasWithCollectedCash();
 }

@@ -46,4 +46,8 @@ public class CodCollection extends BaseEntity {
     // Set when the collection is assigned to a remittance batch.
     @Column(name = "remittance_id")
     private UUID remittanceId;
+
+    // The delivery associate who collected the cash (transition actor); null for hub-collect / old rows.
+    @Column(name = "collected_by_da_id")
+    private UUID collectedByDaId;
 }

@@ -15,6 +15,7 @@ import com.oneday.orders.repository.B2bAccountRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
 import com.oneday.orders.repository.CodRemittanceRepository;
 import com.oneday.orders.service.CodRemittanceService;
+import com.oneday.orders.service.Notifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -41,28 +42,32 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
     private final B2bAccountRepository accounts;
     private final CodProperties props;
     private final PayoutPort payouts;
+    private final Notifier notifier;
 
     CodRemittanceServiceImpl(CodCollectionRepository collections,
                              CodRemittanceRepository remittances,
                              B2bAccountRepository accounts,
                              CodProperties props,
-                             PayoutPort payouts) {
+                             PayoutPort payouts,
+                             Notifier notifier) {
         this.collections = collections;
         this.remittances = remittances;
         this.accounts = accounts;
         this.props = props;
         this.payouts = payouts;
+        this.notifier = notifier;
     }
 
     // ── Lifecycle hooks — run in their own transaction (called AFTER_COMMIT) ────
 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void onDelivered(UUID shipmentId) {
+    public void onDelivered(UUID shipmentId, UUID collectedByDaId) {
         collections.findByShipmentId(shipmentId).ifPresent(c -> {
             if (c.getState() == CodCollectionState.AWAITING_COLLECTION) {
                 c.setState(CodCollectionState.COLLECTED);
                 c.setCollectedAt(Instant.now());
+                c.setCollectedByDaId(collectedByDaId);
                 collections.save(c);
                 log.info("COD collection {} for shipment {} → COLLECTED ({} paise)",
                         c.getId(), c.getShipmentRef(), c.getAmountPaise());
@@ -226,6 +231,12 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
             collections.save(c);
         }
         log.info("Remittance {} → PAID (utr {}), {} collections REMITTED", r.getReference(), utr, items.size());
+
+        // Best-effort merchant confirmation (log-sink until a provider is wired).
+        final String reference = r.getReference();
+        final long netPaise = r.getNetPaise();
+        accounts.findById(r.getB2bAccountId())
+                .ifPresent(a -> notifier.remittancePaid(a, reference, netPaise, utr));
         return toRemittance(r, items.stream().map(CodRemittanceServiceImpl::toCollection).toList());
     }
 

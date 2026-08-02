@@ -53,6 +53,10 @@ public class B2bAccount extends MutableBaseEntity {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 
+    // Prepaid wallet balance (V4_28). Recharge-then-ship funding source; credit stays separate.
+    @Column(name = "wallet_balance_paise", nullable = false)
+    private Long walletBalancePaise = 0L;
+
     // M1 user authorized to book against this account's credit (nullable = unrestricted).
     @Column(name = "owner_user_id")
     private UUID ownerUserId;
@@ -107,6 +111,22 @@ public class B2bAccount extends MutableBaseEntity {
     // Comma-separated emails notified when a COD payout is made (Delhivery-parity).
     @Column(name = "cod_notify_emails", length = 500)
     private String codNotifyEmails;
+
+    // ── White-label branding for the public tracking page (V4_31) ─────────────────
+    @Column(name = "brand_name", length = 120)
+    private String brandName;
+
+    @Column(name = "brand_logo_url", length = 500)
+    private String brandLogoUrl;
+
+    @Column(name = "brand_color", length = 20)
+    private String brandColor;
+
+    @Column(name = "support_email", length = 254)
+    private String supportEmail;
+
+    @Column(name = "support_phone", length = 20)
+    private String supportPhone;
 
     @Column(name = "kyc_submitted_at")
     private Instant kycSubmittedAt;

@@ -14,6 +14,7 @@ import com.oneday.common.port.dto.ServiceabilityQuery;
 import com.oneday.common.port.dto.ServiceabilityResult;
 import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.CodCollection;
+import com.oneday.orders.domain.FundingSource;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.domain.ShipmentStateHistory;
 import com.oneday.orders.dto.B2bBookingRequest;
@@ -27,6 +28,7 @@ import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.CustomerVisibleStateMapper;
 import com.oneday.orders.service.ShipmentRefService;
 import com.oneday.orders.service.TransitionContext;
+import com.oneday.orders.service.WalletService;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiter;
@@ -58,6 +60,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private final ShipmentStateHistoryRepository historyRepository;
     private final CodCollectionRepository codCollectionRepository;
     private final CustomerVisibleStateMapper stateMapper;
+    private final WalletService walletService;
     private final TransactionTemplate tx;
 
     private final CircuitBreaker serviceabilityCb;
@@ -77,6 +80,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
                           ShipmentStateHistoryRepository historyRepository,
                           CodCollectionRepository codCollectionRepository,
                           CustomerVisibleStateMapper stateMapper,
+                          WalletService walletService,
                           TransactionTemplate transactionTemplate,
                           CircuitBreakerRegistry circuitBreakerRegistry,
                           TimeLimiterRegistry timeLimiterRegistry,
@@ -90,6 +94,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         this.historyRepository    = historyRepository;
         this.codCollectionRepository = codCollectionRepository;
         this.stateMapper          = stateMapper;
+        this.walletService        = walletService;
         this.tx                   = transactionTemplate;
         this.serviceabilityCb     = circuitBreakerRegistry.circuitBreaker("serviceability");
         this.pricingCb            = circuitBreakerRegistry.circuitBreaker("pricing");
@@ -161,15 +166,25 @@ class B2bBookingServiceImpl implements B2bBookingService {
                 .orElseThrow(() -> new AccountNotFoundException(
                         "B2B account not found inside transaction: " + req.getB2bAccountId()));
 
-        // ── 5b. Pessimistic credit check ───────────────────────────────────────
-        long newOutstanding = account.getOutstandingBalancePaise() + quote.totalPricePaise();
-        if (newOutstanding > account.getCreditLimitPaise()) {
-            throw new CreditLimitExceededException(
-                    "Credit limit exceeded for account " + req.getB2bAccountId() +
-                    ": outstanding " + account.getOutstandingBalancePaise() +
-                    " + booking " + quote.totalPricePaise() +
-                    " > limit " + account.getCreditLimitPaise());
+        // ── 5b. Funding: WALLET debit or CREDIT check ──────────────────────────
+        // Default: an account with a credit line ships on credit; otherwise it must recharge first.
+        FundingSource funding = req.getFundingSource();
+        if (funding == null) {
+            funding = account.getCreditLimitPaise() != null && account.getCreditLimitPaise() > 0
+                    ? FundingSource.CREDIT : FundingSource.WALLET;
         }
+        if (funding == FundingSource.CREDIT) {
+            long newOutstanding = account.getOutstandingBalancePaise() + quote.totalPricePaise();
+            if (newOutstanding > account.getCreditLimitPaise()) {
+                throw new CreditLimitExceededException(
+                        "Credit limit exceeded for account " + req.getB2bAccountId() +
+                        ": outstanding " + account.getOutstandingBalancePaise() +
+                        " + booking " + quote.totalPricePaise() +
+                        " > limit " + account.getCreditLimitPaise());
+            }
+        }
+        // WALLET: the debit (with an insufficient-balance 409) happens at 5d, after the shipment ref
+        // exists so the ledger row can reference it.
 
         // ── 5c. Persist Shipment ───────────────────────────────────────────────
         String shipmentRef = shipmentRefService.generateRef(req.getOriginCity());
@@ -207,10 +222,13 @@ class B2bBookingServiceImpl implements B2bBookingService {
         shipment.setState(ShipmentState.BOOKED);
         shipment.setOriginTileId(serviceability.originTileId());
         shipment.setDestTileId(serviceability.destTileId());
-        shipment.setPaymentMode(null);   // B2B: credit; no payment mode column value
+        shipment.setPaymentMode(null);   // B2B: credit/wallet; no gateway payment mode
+        shipment.setFundingSource(funding);
+        shipment.setTrackToken(java.util.UUID.randomUUID().toString().replace("-", ""));
         Long codToCollect = req.getCodAmountToCollectPaise();
         boolean isCod = codToCollect != null && codToCollect > 0;
         shipment.setCodAmountPaise(isCod ? codToCollect : null);
+        shipment.setEwayBillNumber(req.getEwayBillNumber());
         shipment.setIdempotencyKey(idempotencyKey);
         shipment.setCityId(req.getOriginCity().toUpperCase());
         shipment.setBookedByUserId(UserIds.parse(userId));
@@ -229,9 +247,14 @@ class B2bBookingServiceImpl implements B2bBookingService {
             codCollectionRepository.save(collection);
         }
 
-        // ── 5d. Increment outstanding balance ──────────────────────────────────
-        account.setOutstandingBalancePaise(newOutstanding);
-        b2bAccountRepository.save(account);
+        // ── 5d. Charge the funding source ──────────────────────────────────────
+        if (funding == FundingSource.WALLET) {
+            // Debits the wallet + appends a ledger row; 409 if the balance can't cover it.
+            walletService.debitForBooking(account, quote.totalPricePaise(), shipmentRef, UserIds.parse(userId));
+        } else {
+            account.setOutstandingBalancePaise(account.getOutstandingBalancePaise() + quote.totalPricePaise());
+            b2bAccountRepository.save(account);
+        }
 
         // ── 5e. State history ──────────────────────────────────────────────────
         TransitionContext ctx = TransitionContext.fromApi(userId, idempotencyKey);

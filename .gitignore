@@ -24,3 +24,6 @@ demo-ui/
 
 # Personal progress tracker (do not commit)
 docs/SID-PROGRESS.md
+
+# Playwright MCP browser artifacts (local testing)
+.playwright-mcp/

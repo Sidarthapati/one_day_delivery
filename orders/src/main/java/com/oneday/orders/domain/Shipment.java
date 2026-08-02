@@ -193,6 +193,21 @@ public class Shipment extends MutableBaseEntity {
     @Column(name = "cod_amount_paise", updatable = false)
     private Long codAmountPaise;
 
+    // Optional e-way bill number (GST): required for interstate movement of goods > ₹50k.
+    // Captured advisory-only at booking; NIC API validation deferred (Track A).
+    @Column(name = "eway_bill_number", length = 20)
+    private String ewayBillNumber;
+
+    // Which funding source paid the shipping fee (B2B only): CREDIT or WALLET. Drives the
+    // cancellation reversal. Null for B2C/C2C (gateway-paid).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "funding_source", length = 10, updatable = false)
+    private FundingSource fundingSource;
+
+    // Public, unguessable token for the white-label tracking page (B2B). Null for B2C/C2C.
+    @Column(name = "track_token", length = 40, updatable = false)
+    private String trackToken;
+
     // ── Idempotency ───────────────────────────────────────────────────────
 
     @Column(name = "idempotency_key", length = 100, updatable = false)

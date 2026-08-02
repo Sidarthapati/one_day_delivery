@@ -1,5 +1,6 @@
 package com.oneday.orders.service;
 
+import com.oneday.orders.dto.PublicTrackResponse;
 import com.oneday.orders.dto.ShipmentTrackResponse;
 
 import java.util.Optional;
@@ -17,4 +18,10 @@ public interface TrackingService {
      * @return the tracking view, or empty if no such ref exists for this caller
      */
     Optional<ShipmentTrackResponse> track(String userId, String shipmentRef);
+
+    /**
+     * Public, unauthenticated tracking by white-label token — the same tracking view plus the
+     * merchant's branding. Empty if the token is unknown.
+     */
+    Optional<PublicTrackResponse> trackByToken(String token);
 }
