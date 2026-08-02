@@ -8,6 +8,7 @@ import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaTaskService;
@@ -41,6 +42,7 @@ class DaTaskServiceImplTest {
     @Autowired DispatchQueueRepository queueRepo;
     @Autowired DaCronAssignmentRepository cronRepo;
     @Autowired DaStatusRepository daStatusRepo;
+    @Autowired DaGpsPingRepository daGpsPingRepo;
 
     private final UUID da = UUID.randomUUID();
     private final UUID city = UUID.randomUUID();
@@ -54,7 +56,7 @@ class DaTaskServiceImplTest {
     @BeforeEach
     void setUp() {
         DispatchProperties props = new DispatchProperties();
-        DaStatusServiceImpl daStatus = new DaStatusServiceImpl(daStatusRepo, props);
+        DaStatusServiceImpl daStatus = new DaStatusServiceImpl(daStatusRepo, daGpsPingRepo, props);
         daStatus.initShift(da, city, today, "MORNING", null);
         events = mock(DaEventProducer.class);
         scanSeam = mock(com.oneday.dispatch.events.HubScanSeamProducer.class);

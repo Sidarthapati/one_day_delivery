@@ -2,10 +2,13 @@ package com.oneday.dispatch.service.impl;
 
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DaCronAssignment;
+import com.oneday.dispatch.domain.DaGpsPing;
 import com.oneday.dispatch.domain.DaStatus;
 import com.oneday.dispatch.domain.DaStatusEnum;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.service.DaStatusService;
+import com.oneday.dispatch.service.GpsFixView;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.dispatch.service.model.DaQueue;
 import org.slf4j.Logger;
@@ -47,10 +50,13 @@ class DaStatusServiceImpl implements DaStatusService {
     private final Set<UUID> dirty = ConcurrentHashMap.newKeySet();
 
     private final DaStatusRepository daStatusRepository;
+    private final DaGpsPingRepository daGpsPingRepository;
     private final DispatchProperties props;
 
-    DaStatusServiceImpl(DaStatusRepository daStatusRepository, DispatchProperties props) {
+    DaStatusServiceImpl(DaStatusRepository daStatusRepository, DaGpsPingRepository daGpsPingRepository,
+                        DispatchProperties props) {
         this.daStatusRepository = daStatusRepository;
+        this.daGpsPingRepository = daGpsPingRepository;
         this.props = props;
     }
 
@@ -88,9 +94,14 @@ class DaStatusServiceImpl implements DaStatusService {
 
     @Override
     public void updateGps(UUID daId, double lat, double lon, Instant timestamp) {
+        // Append-only breadcrumb FIRST, unconditionally — the route trail must capture every ping even
+        // when the DA has no shift loaded in memory (ad-hoc tracking / route replay). ponytail: one insert
+        // per ping, fine at current DA volume; batch-buffer if ping QPS ever climbs.
+        daGpsPingRepository.save(new DaGpsPing(daId, lat, lon, timestamp));
+
         DaLiveStatus live = liveStatus.get(daId);
         if (live == null) {
-            log.debug("GPS ping for unloaded DA {} ignored", daId);
+            log.debug("GPS ping for unloaded DA {} recorded to trail; live status skipped", daId);
             return;
         }
         live.setLat(lat);
@@ -105,6 +116,15 @@ class DaStatusServiceImpl implements DaStatusService {
         }
         // Jul-20: the 200 m geofence is removed. CRON_LOCKED → AT_CRON is now a manual
         // "Mark arrived" (see markArrivedAtCron) — GPS is display/tracking only, not a gate.
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<GpsFixView> listTrack(UUID daId, Instant from, Instant to) {
+        return daGpsPingRepository.findByDaIdAndRecordedAtBetweenOrderByRecordedAtAsc(daId, from, to)
+                .stream()
+                .map(p -> new GpsFixView(p.getLat(), p.getLon(), p.getRecordedAt()))
+                .toList();
     }
 
     @Override
