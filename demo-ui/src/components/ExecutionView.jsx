@@ -15,6 +15,9 @@ const CITY_PIN = { delhi: '110001', mumbai: '400001', bangalore: '560001', hyder
 // The five macro-phases of the one-button intercity run, in order (for the phase tracker).
 const FD_PHASES = ['FIRST_MILE', 'ORIGIN_HUB', 'FLIGHT', 'DEST_HUB', 'LAST_MILE']
 const FD_LABEL = { FIRST_MILE: 'First-mile', ORIGIN_HUB: 'Origin hub', FLIGHT: 'Flight', DEST_HUB: 'Dest hub', LAST_MILE: 'Last-mile' }
+// The four macro-phases of the one-button *intracity* (moving-map) run, in order.
+const CITY_PHASES = ['PICKUPS', 'HANDOFF', 'DELIVERY', 'DONE']
+const CITY_LABEL = { PICKUPS: 'Pickups', HANDOFF: 'Handoff', DELIVERY: 'Delivery', DONE: 'Done' }
 
 // Execution runs the whole chain for TODAY (telemetry resolves manifests by today's date), distinct
 // from the planning tab's "tomorrow". One date for seed → M3 → M6 → run.
@@ -48,7 +51,9 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [], on
   const [cycleMax, setCycleMax] = useState(180)
 
   // The run carries ONLY real M5 parcels (verified pickups + dispatched drops) — no synthetic fallback.
-  const [speed, setSpeed] = useState(60)
+  // Default 18 (not 60): 60 finishes the day in ~5s — too fast to see the vans/DAs move on camera; ~15-20
+  // gives a watchable ~13s run. Investor-demo pacing; bump higher to fast-forward. (animation pacing only)
+  const [speed, setSpeed] = useState(18)
 
   const [preparing, setPreparing] = useState(false)
   const [approving, setApproving] = useState(false)
@@ -104,6 +109,11 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [], on
   const [fdBusy, setFdBusy] = useState(null)   // 'prepare' | 'order' | 'run' | null
   const [fdMsg, setFdMsg] = useState(null)
   const [fdPhase, setFdPhase] = useState(null) // macro-phase from /api/demo/full-day/status
+  // One-button *intracity* (moving-map) panel: single-city ① Prepare → ② Place → ③ Run, with pills.
+  const [cityBusy, setCityBusy] = useState(null)   // 'prepare' | 'place' | 'run' | null
+  const [cityPhase, setCityPhase] = useState(null) // 'PICKUPS' | 'HANDOFF' | 'DELIVERY' | 'DONE'
+  const [cityMsg, setCityMsg] = useState(null)
+  const cityRunRef = useRef(false)                 // true only while a one-button city run is in flight
   const [running, setRunning] = useState(false)
   const [stat, setStat] = useState(null)
   const [vans, setVans] = useState([])
@@ -549,6 +559,61 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [], on
     try { await runStop() } catch { /* ignore */ }
   }
 
+  // Fire-and-forget: drive the vans back to the hub and poll telemetry for ~6s so the markers animate home.
+  function animateVansHome() {
+    runReturnToHub(cityId, TODAY).then(() => {
+      const t0 = Date.now()
+      const anim = setInterval(async () => {
+        try { setVans(await getLive(cityId)) } catch { /* transient */ }
+        if (Date.now() - t0 > 6000) clearInterval(anim)
+      }, 500)
+    }).catch(() => { /* no plan/vans to drive home — the state transition already ran */ })
+  }
+
+  // ── ONE-BUTTON INTRACITY (moving-map) — ① Prepare → ② Place orders → ③ Run the day ──────────────
+  // Collapses the ~9-button granular flow (kept under "Advanced") into 3 buttons that chain the exact
+  // same existing calls, mirroring the intercity panel. ③ ALWAYS auto-verifies pickups first — the
+  // step whose omission left the old flow stuck with 0 collects in PICKUP_ASSIGNED.
+  async function cityPrepareHandler() {
+    setCityBusy('prepare'); setCityMsg(null); setCityPhase(null); setError(null)
+    try {
+      const mode = await prepareCityChain(cityCode, cityId)   // seed→M3→M6→approve→loadShift (throws on failure)
+      const stops = await getAllStops(cityId, TODAY)          // build the map routes like prepare() does
+      setRoutes(await buildRoutes(stops, nodes))
+      setPrepared(true)
+      await fetchDas()
+      setCityMsg(`✅ ${CITIES[cityCode].label} planned & staffed${mode === 'HUB_RETURN' ? ' (hub-return, no vans)' : ''}. Next → 🧾 Place orders.`)
+    } catch (e) { setCityMsg('✕ ' + e.message); setPrepared(false) }
+    finally { setCityBusy(null) }
+  }
+
+  async function cityPlaceHandler() {
+    setCityBusy('place'); setCityMsg(null)
+    const label = CITIES[cityCode]?.label || cityCode
+    try {
+      await seedSpread(cityId, label, 'PICKUP', spreadCount, TODAY)
+      await seedSpread(cityId, label, 'DROP', spreadCount, TODAY)
+      await dispatchDrops(cityId, label, TODAY)               // drops → dest hub → out-for-delivery (before Run)
+      await fetchDas()
+      setCityMsg(`🧾 ${spreadCount} pickups + ${spreadCount} drops booked & dispatched. Next → ▶ Run the day.`)
+    } catch (e) { setCityMsg('✕ ' + e.message) }
+    finally { setCityBusy(null) }
+  }
+
+  async function cityRunHandler() {
+    setCityBusy('run'); setCityMsg(null)
+    try {
+      await autoVerifyPickups(cityId, TODAY)   // THE FIX: verify so the run carries real pickups (not 0)
+      await fetchDas()
+      setCityPhase('PICKUPS')
+      cityRunRef.current = true
+      await run()                              // backend runDay + map animation; poller drives HANDOFF→DELIVERY→DONE + lane-closes
+      setCityMsg('▶ Running — DAs collect, meet the vans, then drops deliver. Watch the map & feed.')
+    } catch (e) {
+      setCityMsg('✕ ' + e.message); cityRunRef.current = false
+    } finally { setCityBusy(null) }   // `running` (set by run()) keeps ③ showing "Running…"
+  }
+
   // Poll live status, events and run status while a run is active.
   useEffect(() => {
     if (!running) return
@@ -574,16 +639,33 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [], on
           if (st.phase === 'DONE' && !handoffDoneRef.current) {
             handoffDoneRef.current = true
             const label = CITIES[cityCode]?.label || cityCode
+            const orchestrated = cityRunRef.current   // one-button city run → auto-close both lanes
+            if (orchestrated) setCityPhase('HANDOFF')
             // Van↔DA handoff at the meeting point: collected pickups go ONTO the van
             // (PICKED_UP → HANDED_TO_PICKUP_VAN), and drops come OFF the van into the DA's hands
             // (DROP_ASSIGNED → DROP_COLLECTED, delivery OTP minted). Fire once per run.
             Promise.allSettled([pickupsToVan(label, TODAY), dropsCollected(label, TODAY)])
-              .then(([p, d]) => {
+              .then(async ([p, d]) => {
                 const msgs = []
                 if (p.status === 'fulfilled') msgs.push(p.value.message || `${p.value.advanced} handed to the pickup van`)
                 if (d.status === 'fulfilled') msgs.push(d.value.message || `${d.value.dispatched} collected by DAs`)
                 if (msgs.length) setHubMsg('🤝 ' + msgs.join(' · '))
-                fetchDas()
+                await fetchDas()
+                if (!orchestrated) return   // legacy granular flow: user closes the lanes manually
+                // One-button city run: chain the two lane-closes in-process (mirrors intercity runAll)
+                // so ③ needs no post-run clicks — first-mile van → hub, then recipient OTP → Delivered.
+                try {
+                  setCityPhase('DELIVERY')
+                  await pickupsToHub(label, TODAY); animateVansHome()
+                  await autoVerifyDeliveries(label, TODAY)
+                  setDaTs(prev => { const n = { ...prev }; dasRef.current.forEach(dd => { n[dd.daId] = 1 }); return n })
+                  animateVansHome()
+                  setCityPhase('DONE')
+                  setCityMsg('✅ Day complete — pickups at the hub, drops delivered.')
+                  await fetchDas()
+                } catch (e) {
+                  setCityMsg('✕ ' + e.message)
+                } finally { cityRunRef.current = false }
               })
           }
         }
@@ -811,6 +893,53 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [], on
             <div className="mt-1.5 text-gray-500">Left rail shows every real RabbitMQ publish/consume as it happens. Reset a demo with 🧹 Clear bookings + ♻️ Reset.</div>
           </details>
 
+          {/* ── 🏙️ ONE-BUTTON CITY RUN — the moving-map day, minimal buttons ─────────── */}
+          <div className="border-2 border-blue-300 bg-blue-50/70 rounded-lg p-2.5 space-y-2">
+            <div className="text-sm font-bold text-blue-900 flex items-center gap-1">🏙️ One-button city run</div>
+            <div className="text-[11px] text-blue-700 leading-snug">
+              The whole intracity day on the map: DAs collect pickups → meet vans at the cron vertex →
+              vans carry to the hub → drops delivered. Real M5/M6 events stream on the feed.
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-gray-700 flex-wrap">
+              <select value={cityCode} onChange={e => onCityChange?.(e.target.value)}
+                disabled={cityBusy != null || running}
+                title="City to run (also switches the map/tab)."
+                className="border rounded px-1 py-0.5 bg-white font-semibold">
+                {Object.entries(CITIES).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+              </select>
+              <label className="ml-auto flex items-center gap-1">orders
+                <input type="number" min={1} max={60} value={spreadCount} onChange={e => setSpreadCount(+e.target.value)}
+                  disabled={cityBusy != null || running} className="w-12 border rounded px-1 py-0.5" /></label>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button onClick={cityPrepareHandler} disabled={cityBusy != null || running}
+                className="text-xs px-2 py-1 rounded bg-slate-600 text-white disabled:opacity-50">
+                {cityBusy === 'prepare' ? '…' : '① Prepare'}</button>
+              <button onClick={cityPlaceHandler} disabled={cityBusy != null || running || !prepared}
+                className="text-xs px-2 py-1 rounded bg-violet-600 text-white disabled:opacity-50">
+                {cityBusy === 'place' ? '…' : '🧾 ② Place orders'}</button>
+              <button onClick={cityRunHandler} disabled={cityBusy != null || running || !prepared}
+                className="text-xs px-2 py-1 rounded bg-blue-700 text-white disabled:opacity-50 font-semibold">
+                {(cityBusy === 'run' || running) ? 'Running…' : '▶ ③ Run the day'}</button>
+            </div>
+            {/* Phase tracker */}
+            <div className="flex items-center gap-0.5 text-[10px]">
+              {CITY_PHASES.map((ph, i) => {
+                const active = cityPhase === ph
+                const done = CITY_PHASES.indexOf(cityPhase) > i
+                return (
+                  <div key={ph} className={`flex-1 text-center rounded px-0.5 py-1 border
+                    ${active ? 'bg-blue-600 text-white border-blue-600 font-semibold'
+                      : done ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                      : 'bg-white text-gray-400 border-gray-200'}`}>{CITY_LABEL[ph]}</div>
+                )
+              })}
+            </div>
+            {running && <button onClick={stop}
+              className="w-full text-[11px] px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50">■ Stop</button>}
+            {cityMsg && <div className="text-[11px] text-blue-800 bg-white/70 rounded px-2 py-1">{cityMsg}</div>}
+          </div>
+
           {/* ── ⭐ ONE-BUTTON INTERCITY — the whole chain, A → B ──────────────────── */}
           <div className="border-2 border-indigo-300 bg-indigo-50/70 rounded-lg p-2.5 space-y-2">
             <div className="text-sm font-bold text-indigo-900 flex items-center gap-1">🚚 One-button intercity run</div>
@@ -867,6 +996,10 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [], on
             {fdMsg && <div className="text-[11px] text-indigo-800 bg-white/70 rounded px-2 py-1">{fdMsg}</div>}
           </div>
 
+          {/* ── ⚙️ ADVANCED — the granular step-by-step controls (collapsed for the demo) ──── */}
+          <details className="border border-gray-200 rounded-lg bg-white/40">
+          <summary className="text-[11px] font-semibold text-slate-500 cursor-pointer px-2 py-1.5 select-none">⚙️ Advanced — granular step-by-step controls</summary>
+          <div className="p-2 space-y-2">
           {/* ── ① SETUP — plan + shift (advanced / granular buttons) ─────────────────── */}
           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 pt-1">① Setup — plan &amp; shift</div>
           <div className="grid grid-cols-3 gap-2 text-xs text-gray-600">
@@ -1039,6 +1172,8 @@ export default function ExecutionView({ cityCode, cityId, center, nodes = [], on
             {verifyingDrops ? 'Delivering…' : '🏠 Auto-verify deliveries (recipient OTP → Delivered)'}
           </button>
           {deliverMsg && <div className="text-[11px] text-emerald-700">{deliverMsg}</div>}
+          </div>
+          </details>
         </div>
 
         {/* Stats */}
