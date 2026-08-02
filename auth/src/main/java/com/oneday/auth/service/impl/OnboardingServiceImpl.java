@@ -252,7 +252,9 @@ class OnboardingServiceImpl implements OnboardingService {
         }
 
         onboardingRequest.setStatus("APPROVED");
-        onboardingRequest.setReviewedBy(actorId);
+        // Auto-approval has no human reviewer: reviewed_by has an FK to users(id), so the SYSTEM
+        // sentinel (all-zeros UUID) would violate it. Record NULL — reviewedAt still marks when.
+        onboardingRequest.setReviewedBy(SYSTEM_ACTOR.equals(actorId) ? null : actorId);
         onboardingRequest.setReviewedAt(Instant.now());
         onboardingRepository.save(onboardingRequest);
     }
