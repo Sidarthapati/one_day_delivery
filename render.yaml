@@ -1,8 +1,11 @@
-# Render Blueprint — staging environment for the One-Day Delivery backend.
-# The Postgres instance (oneday-db-staging, Singapore) and CloudAMQP instance
-# already exist and are managed outside this blueprint, so their connection
-# strings are supplied as `sync: false` env vars — Render prompts for the values
-# in the dashboard on first deploy. No secret is ever committed to git.
+# Render Blueprint — One-Day Delivery backend.
+# NOTE: the LIVE service (name "one_day_delivery", id srv-d9ako3t7vvec739049v0) was
+# created and is managed in the Render dashboard, not by blueprint sync — so this file
+# documents intent rather than driving the deploy. The live service tracks `main` with
+# auto-deploy ON: merging to main redeploys the backend automatically.
+# The Postgres instance (oneday-db-staging, Singapore) and CloudAMQP instance already
+# exist and are managed outside this blueprint, so their connection strings are supplied
+# as `sync: false` env vars set in the dashboard. No secret is ever committed to git.
 services:
   - type: web
     name: oneday-api-staging
@@ -10,14 +13,15 @@ services:
     region: singapore          # same region as oneday-db-staging → internal, no-SSL DB link
     plan: starter
     dockerfilePath: ./Dockerfile
+    branch: main
     healthCheckPath: /auth/health   # permitAll GET returning 200 (demo static index.html was removed)
-    autoDeploy: false           # deploy on demand, not on every push, for staging
+    autoDeploy: true            # merge to main → auto-deploy
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: staging
       - key: JAVA_OPTS
         value: -XX:MaxRAMPercentage=75.0
-      # ── Secrets: paste in the Render dashboard (values in the deploy notes) ──
+      # ── Secrets: set in the Render dashboard (values never committed) ──
       - key: SPRING_DATASOURCE_URL
         sync: false
       - key: SPRING_DATASOURCE_USERNAME
@@ -26,3 +30,10 @@ services:
         sync: false
       - key: CLOUDAMQP_URL
         sync: false
+      # ── Optional integrations (default to mock/log-sink if unset) ──
+      # RAZORPAY_LIVE / RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET   (payments)
+      # GOOGLE_OAUTH_CLIENT_ID                                   (Google sign-in)
+      # NOTIFY_SMS_PROVIDER + provider creds                     (SMS; default "log")
+      # NOTIFY_EMAIL_PROVIDER + provider creds                   (email; default "log")
+      # PAYOUT_PROVIDER + RazorpayX creds                        (merchant payout; default "manual")
+      # KYC_LIVE / KYC_APIKEY / KYC_APISECRET                    (GST/PAN verify; default sandbox)
