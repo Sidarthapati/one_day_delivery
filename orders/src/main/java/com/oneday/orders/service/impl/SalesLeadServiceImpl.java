@@ -39,7 +39,7 @@ class SalesLeadServiceImpl implements SalesLeadService {
         lead.setMessage(blankToNull(r.getMessage()));
         lead.setStatus(SalesLeadStatus.NEW);
         lead = leads.save(lead);
-        log.info("New sales lead {} from {} ({})", lead.getId(), lead.getEmail(), lead.getCompany());
+        log.info("New sales lead {} from {} ({})", lead.getId(), safe(lead.getEmail()), safe(lead.getCompany()));
         return SalesLeadResponse.from(lead);
     }
 
@@ -71,5 +71,10 @@ class SalesLeadServiceImpl implements SalesLeadService {
 
     private static String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    // Strip CR/LF/tab from caller-supplied strings before logging (prevents log forging).
+    private static String safe(String s) {
+        return s == null ? null : s.replaceAll("[\\r\\n\\t]", "_");
     }
 }

@@ -3,6 +3,7 @@ package com.oneday.dispatch.batch;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DaGpsPing;
 import com.oneday.dispatch.repository.DaGpsPingRepository;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -14,6 +15,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+// Real-Postgres @DataJpaTest (Flyway builds the schema); excluded from CI which has no DB.
+@Tag("e2e")
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class DaGpsPingRetentionJobTest {

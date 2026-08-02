@@ -66,20 +66,20 @@ class WalletServiceImpl implements WalletService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
         // Idempotent: a payment id credits the wallet exactly once.
         if (ledger.existsByReference(razorpayPaymentId)) {
-            log.info("Wallet recharge for payment {} already applied; returning current balance", razorpayPaymentId);
+            log.info("Wallet recharge for payment {} already applied; returning current balance", safe(razorpayPaymentId));
             return WalletResponse.of(accountId, balance(a));
         }
         // A tampered signature throws PaymentVerificationException → mapped to 402 by the handler.
         paymentPort.verifySignature(razorpayOrderId, razorpayPaymentId, signature);
         paymentPort.capture(razorpayPaymentId, amountPaise);
 
-        long newBalance = balance(a) + amountPaise;
+        long newBalance = Math.addExact(balance(a), amountPaise);
         a.setWalletBalancePaise(newBalance);
         accounts.save(a);
         record(accountId, WalletTransactionType.RECHARGE, amountPaise, newBalance,
                 razorpayPaymentId, "Wallet recharge", null);
         log.info("Wallet recharged: account {} +{} paise → {} (payment {})",
-                accountId, amountPaise, newBalance, razorpayPaymentId);
+                accountId, amountPaise, newBalance, safe(razorpayPaymentId));
         return WalletResponse.of(accountId, newBalance);
     }
 
@@ -96,18 +96,18 @@ class WalletServiceImpl implements WalletService {
         record(account.getId(), WalletTransactionType.DEBIT, -amountPaise, newBalance,
                 shipmentRef, "Shipment " + shipmentRef, actorId);
         log.info("Wallet debited: account {} -{} paise → {} (shipment {})",
-                account.getId(), amountPaise, newBalance, shipmentRef);
+                account.getId(), amountPaise, newBalance, safe(shipmentRef));
     }
 
     @Override
     public void refundForCancellation(B2bAccount account, long amountPaise, String shipmentRef, UUID actorId) {
-        long newBalance = balance(account) + amountPaise;
+        long newBalance = Math.addExact(balance(account), amountPaise);
         account.setWalletBalancePaise(newBalance);
         accounts.save(account);
         record(account.getId(), WalletTransactionType.REFUND, amountPaise, newBalance,
                 shipmentRef, "Refund — cancelled " + shipmentRef, actorId);
         log.info("Wallet refunded: account {} +{} paise → {} (cancelled {})",
-                account.getId(), amountPaise, newBalance, shipmentRef);
+                account.getId(), amountPaise, newBalance, safe(shipmentRef));
     }
 
     @Override
@@ -115,7 +115,7 @@ class WalletServiceImpl implements WalletService {
     public WalletResponse mockCredit(UUID accountId, long amountPaise) {
         B2bAccount a = accounts.findByIdForUpdate(accountId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
-        long newBalance = balance(a) + amountPaise;
+        long newBalance = Math.addExact(balance(a), amountPaise);
         a.setWalletBalancePaise(newBalance);
         accounts.save(a);
         record(accountId, WalletTransactionType.RECHARGE, amountPaise, newBalance,
@@ -146,5 +146,10 @@ class WalletServiceImpl implements WalletService {
     private static long balance(B2bAccount a) {
         Long b = a.getWalletBalancePaise();
         return b == null ? 0L : b;
+    }
+
+    // Strip CR/LF/tab from caller-supplied strings before logging (prevents log forging).
+    private static String safe(String s) {
+        return s == null ? null : s.replaceAll("[\\r\\n\\t]", "_");
     }
 }
