@@ -35,6 +35,13 @@ public interface DaStatusService {
     void updateGps(UUID daId, double lat, double lon, Instant timestamp);
 
     /**
+     * The DA's GPS breadcrumb trail between {@code from} and {@code to} (inclusive), oldest first.
+     * Reads the append-only {@code da_gps_ping} table — unlike the live status, this survives pod
+     * restarts and captures every recorded fix (route replay).
+     */
+    List<GpsFixView> listTrack(UUID daId, Instant from, Instant to);
+
+    /**
      * Manual "Mark arrived" — the DA taps it at the van meeting vertex, replacing the removed
      * geofence. {@code CRON_LOCKED → AT_CRON}; already {@code AT_CRON} is a no-op; any other
      * status → 409.
