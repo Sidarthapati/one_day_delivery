@@ -18,6 +18,7 @@ import com.oneday.orders.service.B2bBookingService.AccountAccessException;
 import com.oneday.orders.service.CancellationPolicy;
 import com.oneday.orders.service.CancellationService;
 import com.oneday.orders.service.PaymentPort;
+import com.oneday.orders.service.ShipmentCustody;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import jakarta.persistence.EntityNotFoundException;
@@ -86,6 +87,25 @@ class CancellationServiceImpl implements CancellationService {
         // No lane guard (admin cancels any lane) and ownership is bypassed below.
         Shipment shipment = shipmentRepository.findByShipmentRef(shipmentRef)
                 .orElseThrow(() -> new EntityNotFoundException("Shipment not found: " + shipmentRef));
+        return doCancel(shipment, reason, userId, true);
+    }
+
+    @Override
+    @Transactional
+    public CancellationResponse cancelAsStationManager(String shipmentRef, String reason, String userId,
+                                                        String cityScope) {
+        Shipment shipment = shipmentRepository.findByShipmentRef(shipmentRef)
+                .orElseThrow(() -> new EntityNotFoundException("Shipment not found: " + shipmentRef));
+
+        String custodyCity = ShipmentCustody.custodian(shipment.getState()) == ShipmentCustody.Custodian.ORIGIN
+                ? shipment.getOriginCity()
+                : shipment.getDestCity();
+        if (!cityScope.equals(custodyCity)) {
+            // Not this station's parcel to act on right now — 404, not 403, same reasoning as the
+            // b2b/b2c lane guard above.
+            throw new EntityNotFoundException("Shipment not found: " + shipmentRef);
+        }
+
         return doCancel(shipment, reason, userId, true);
     }
 

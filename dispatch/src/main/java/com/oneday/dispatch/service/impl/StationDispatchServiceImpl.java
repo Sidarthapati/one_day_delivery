@@ -1,15 +1,19 @@
 package com.oneday.dispatch.service.impl;
 
 import com.oneday.dispatch.config.DispatchProperties;
+import com.oneday.dispatch.domain.DeferredDispatch;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
 import com.oneday.dispatch.dto.response.TileQueueResponse.DaQueueView;
+import com.oneday.dispatch.dto.response.TileQueueResponse.DeferredTaskView;
 import com.oneday.dispatch.dto.response.TileQueueResponse.TaskView;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
+import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.DaStatusService;
+import com.oneday.dispatch.service.DispatchService;
 import com.oneday.dispatch.service.StationDispatchService;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import org.springframework.http.HttpStatus;
@@ -42,17 +46,20 @@ class StationDispatchServiceImpl implements StationDispatchService {
     private final DeferredDispatchRepository deferredRepository;
     private final DaCronAssignmentRepository cronRepository;
     private final DaStatusService daStatusService;
+    private final DispatchService dispatchService;
     private final DispatchProperties props;
 
     StationDispatchServiceImpl(DispatchQueueRepository queueRepository,
                                DeferredDispatchRepository deferredRepository,
                                DaCronAssignmentRepository cronRepository,
                                DaStatusService daStatusService,
+                               DispatchService dispatchService,
                                DispatchProperties props) {
         this.queueRepository = queueRepository;
         this.deferredRepository = deferredRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
+        this.dispatchService = dispatchService;
         this.props = props;
     }
 
@@ -73,8 +80,47 @@ class StationDispatchServiceImpl implements StationDispatchService {
         for (UUID daId : daIds) {
             das.add(buildDaView(daId, date, today, now));
         }
-        int deferred = deferredRepository.countByTileIdAndOperatingDateAndStatus(tileId, date, PENDING);
-        return new TileQueueResponse(tileId, date, das, deferred);
+        List<DeferredTaskView> deferredTasks = deferredRepository
+                .findByTileIdAndOperatingDateAndStatus(tileId, date, PENDING).stream()
+                .map(d -> new DeferredTaskView(d.getId(), d.getShipmentId(), d.getTaskType().name(),
+                        d.getDeferReason().name(), d.getDeferredAt(), d.getRetryAfter(), d.getRetryCount()))
+                .toList();
+        return new TileQueueResponse(tileId, date, das, deferredTasks.size(), deferredTasks);
+    }
+
+    @Override
+    @Transactional
+    public AssignmentResult assignDeferred(UUID tileId, UUID deferredId, UUID daId, UUID scopeCityId) {
+        DeferredDispatch deferred = requireDeferredOnTile(tileId, deferredId, scopeCityId);
+        List<UUID> roster = daStatusService.dasForTile(tileId);
+        if (!roster.contains(daId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "DA " + daId + " does not serve tile " + tileId);
+        }
+        return dispatchService.assignDeferredToDa(deferred.getId(), daId);
+    }
+
+    @Override
+    @Transactional
+    public void escalateDeferred(UUID tileId, UUID deferredId, UUID scopeCityId) {
+        DeferredDispatch deferred = requireDeferredOnTile(tileId, deferredId, scopeCityId);
+        dispatchService.escalateDeferred(deferred.getId());
+    }
+
+    /** Loads the deferred row, 404s if it isn't on this tile, 403s if it's outside the caller's city. */
+    private DeferredDispatch requireDeferredOnTile(UUID tileId, UUID deferredId, UUID scopeCityId) {
+        DeferredDispatch deferred = deferredRepository.findById(deferredId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "No deferred dispatch " + deferredId));
+        if (!deferred.getTileId().equals(tileId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "Deferred dispatch " + deferredId + " is not on tile " + tileId);
+        }
+        if (scopeCityId != null && !scopeCityId.equals(deferred.getCityId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Deferred dispatch " + deferredId + " is outside the caller's city");
+        }
+        return deferred;
     }
 
     private DaQueueView buildDaView(UUID daId, LocalDate date, boolean today, Instant now) {

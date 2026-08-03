@@ -161,9 +161,27 @@ public class GridServiceImpl implements GridService {
         return null;
     }
 
+    // orders/sla scope STATION_MANAGER.cityId by exact IATA-code match against Shipment.originCity/
+    // destCity (e.g. "DEL"); grid.cities is keyed by the lowercase city name instead. Accepting the
+    // IATA code here too means the same cityId value resolves correctly everywhere it's used, instead
+    // of 404ing on this endpoint while working fine on the orders/SLA ones.
+    private static final Map<String, String> IATA_ALIASES = Map.of(
+            "del", "delhi",
+            "bom", "mumbai",
+            "blr", "bangalore",
+            "hyd", "hyderabad",
+            "maa", "chennai");
+
     @Override
     public UUID resolveCityId(String cityCode) {
-        UUID cityId = gridProperties.getCities().get(cityCode.toLowerCase());
+        String key = cityCode.toLowerCase();
+        UUID cityId = gridProperties.getCities().get(key);
+        if (cityId == null) {
+            String alias = IATA_ALIASES.get(key);
+            if (alias != null) {
+                cityId = gridProperties.getCities().get(alias);
+            }
+        }
         if (cityId == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown cityCode: " + cityCode);
         }

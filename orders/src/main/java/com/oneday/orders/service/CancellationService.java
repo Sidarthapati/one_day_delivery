@@ -39,6 +39,25 @@ public interface CancellationService {
      */
     CancellationResponse cancelAsAdmin(String shipmentRef, String reason, String userId);
 
+    /**
+     * City-scoped cancellation for STATION_MANAGER ops tooling. Only the shipment's <em>current
+     * custodian</em> city ({@link ShipmentCustody#custodian(com.oneday.common.domain.enums.ShipmentState)})
+     * may cancel — narrower than the read-side "origin or destination" visibility rule in
+     * {@code AdminOrderQueryService}, since cancelling is a write against whichever city actually
+     * holds the parcel right now. Refund/credit-reversal and the cancellation cutoff behave exactly
+     * as {@link #cancelAsAdmin}.
+     *
+     * @param shipmentRef the shipment reference
+     * @param reason      ops-supplied cancellation reason (nullable)
+     * @param userId      the station manager's user id (recorded as the transition actor)
+     * @param cityScope   the station manager's own city (IATA code, e.g. {@code "DEL"})
+     * @throws jakarta.persistence.EntityNotFoundException if no such shipment, or {@code cityScope}
+     *         is not its current custodian (404, not 403 — mirrors the b2b/b2c lane guard on
+     *         {@link #cancel}: a city with no legitimate business seeing this ref shouldn't be able
+     *         to confirm it exists)
+     */
+    CancellationResponse cancelAsStationManager(String shipmentRef, String reason, String userId, String cityScope);
+
     /** Thrown when the shipment's current state is past the cancellation cutoff (HTTP 409). */
     class CancellationNotAllowedException extends RuntimeException {
         public CancellationNotAllowedException(String message) { super(message); }

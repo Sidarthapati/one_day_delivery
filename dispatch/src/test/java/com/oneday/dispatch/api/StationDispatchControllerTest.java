@@ -1,7 +1,9 @@
 package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.dispatch.dto.request.AssignDeferredRequest;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
+import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.StationDispatchService;
 import com.oneday.grid.service.GridService;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,7 +39,7 @@ class StationDispatchControllerTest {
         gridService = mock(GridService.class);
         controller = new StationDispatchController(stationDispatchService, gridService);
         when(stationDispatchService.tileQueue(any(), any(), any()))
-                .thenReturn(new TileQueueResponse(tile, date, List.of(), 0));
+                .thenReturn(new TileQueueResponse(tile, date, List.of(), 0, List.of()));
     }
 
     @Test
@@ -66,6 +68,39 @@ class StationDispatchControllerTest {
         assertThatThrownBy(() -> controller.tileQueue(tile, date, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("401");
+    }
+
+    @Test
+    void assignDeferredScopedToStationManagerCity() {
+        UUID cityId = UUID.randomUUID();
+        UUID deferredId = UUID.randomUUID();
+        UUID daId = UUID.randomUUID();
+        when(stationDispatchService.assignDeferred(tile, deferredId, daId, cityId))
+                .thenReturn(AssignmentResult.assigned(daId, 0));
+
+        controller.assignDeferred(tile, deferredId, new AssignDeferredRequest(daId),
+                principal(UUID.randomUUID(), "STATION_MANAGER", cityId.toString()));
+
+        verify(stationDispatchService).assignDeferred(tile, deferredId, daId, cityId);
+    }
+
+    @Test
+    void assignDeferredForbiddenForOtherRole() {
+        assertThatThrownBy(() -> controller.assignDeferred(tile, UUID.randomUUID(),
+                new AssignDeferredRequest(UUID.randomUUID()),
+                principal(UUID.randomUUID(), "DELIVERY_ASSOCIATE", null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("403");
+    }
+
+    @Test
+    void escalateDeferredScopedToStationManagerCity() {
+        UUID cityId = UUID.randomUUID();
+        UUID deferredId = UUID.randomUUID();
+
+        controller.escalateDeferred(tile, deferredId, principal(UUID.randomUUID(), "STATION_MANAGER", cityId.toString()));
+
+        verify(stationDispatchService).escalateDeferred(tile, deferredId, cityId);
     }
 
     private AuthUserDetails principal(UUID userId, String role, String cityId) {

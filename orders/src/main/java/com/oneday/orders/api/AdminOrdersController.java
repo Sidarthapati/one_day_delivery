@@ -16,13 +16,14 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Read-only orders-database access. The counterpart to the customer booking endpoints — these
- * roles cannot book (see {@link Authz#requireCustomerRole}) but can read shipments:
+ * Orders-database access for ops tooling. The counterpart to the customer booking endpoints — these
+ * roles cannot book (see {@link Authz#requireCustomerRole}) but can read, and now also cancel:
  * <ul>
- *   <li><b>ADMIN</b> — oversight across every city.</li>
- *   <li><b>STATION_MANAGER</b> — scoped to their own city: every shipment whose origin OR
- *       destination is that city (the custody model's "X, Y can read" rule). Each row also carries
- *       {@code custody_city} + {@code can_act} so the manager sees which parcels they currently own.</li>
+ *   <li><b>ADMIN</b> — reads every city; cancels any shipment, any lane.</li>
+ *   <li><b>STATION_MANAGER</b> — reads every shipment whose origin OR destination is their own city
+ *       (the custody model's "X, Y can read" rule; each row carries {@code custody_city} +
+ *       {@code can_act} so the manager sees which parcels they currently own). Cancel is narrower
+ *       than read: only a shipment whose <em>current</em> custodian is their city.</li>
  * </ul>
  */
 @RestController
@@ -62,16 +63,28 @@ class AdminOrdersController {
     }
 
     /**
-     * Admin row-action cancel from the orders database. ADMIN only — privileged cancellation that
-     * works on either lane and skips the B2B account-ownership check (admin acts on behalf). The
-     * cancellation cutoff still applies (→ 409 if past it).
+     * Admin row-action cancel from the orders database. ADMIN cancels any shipment, any lane, no
+     * ownership check. STATION_MANAGER may also cancel, but only a shipment currently in their own
+     * city's custody ({@link com.oneday.orders.service.ShipmentCustody}) — a ref outside that scope
+     * 404s rather than 403ing, matching the b2b/b2c lane guard elsewhere in this module. The
+     * cancellation cutoff still applies either way (→ 409 if past it).
      */
     @DeleteMapping("/{ref}")
     public CancellationResponse cancelShipment(
             @AuthenticationPrincipal AuthUserDetails principal,
             @PathVariable("ref") String ref,
             @RequestParam(value = "reason", required = false) String reason) {
-        Authz.requireRole(principal);   // ADMIN only (no other allowed roles)
-        return cancellationService.cancelAsAdmin(ref, reason, Authz.requireUserId(principal));
+        Authz.requireRole(principal, STATION_MANAGER);
+        String userId = Authz.requireUserId(principal);
+
+        if (STATION_MANAGER.equals(principal.getUser().getRole().getName())) {
+            String cityScope = principal.getUser().getCityId();
+            if (cityScope == null || cityScope.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                        "Station manager has no city assigned");
+            }
+            return cancellationService.cancelAsStationManager(ref, reason, userId, cityScope);
+        }
+        return cancellationService.cancelAsAdmin(ref, reason, userId);
     }
 }

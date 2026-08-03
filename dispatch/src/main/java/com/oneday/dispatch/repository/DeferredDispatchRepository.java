@@ -15,6 +15,9 @@ public interface DeferredDispatchRepository extends JpaRepository<DeferredDispat
     /** Count of deferrals in a given state for a tile on a date (station view's deferred_count). */
     int countByTileIdAndOperatingDateAndStatus(UUID tileId, LocalDate operatingDate, String status);
 
+    /** Deferrals in a given state for a tile on a date (the station view's "unassigned pickups" list). */
+    List<DeferredDispatch> findByTileIdAndOperatingDateAndStatus(UUID tileId, LocalDate operatingDate, String status);
+
     /** All deferrals for a city on a date (demo state + reset). */
     List<DeferredDispatch> findByCityIdAndOperatingDate(UUID cityId, LocalDate operatingDate);
 

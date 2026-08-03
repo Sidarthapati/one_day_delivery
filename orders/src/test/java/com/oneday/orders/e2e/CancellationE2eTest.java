@@ -111,4 +111,31 @@ class CancellationE2eTest extends OrdersE2eSupport {
         long after = b2bAccountRepository.findById(accountId).orElseThrow().getOutstandingBalancePaise();
         assertThat(after).isEqualTo(before);
     }
+
+    // A station manager in the shipment's own (origin) city can cancel it from the admin orders view.
+    @Test
+    void stationManagerCancelsInOwnCity_succeeds() throws Exception {
+        // Default b2c route is DEL → BLR, still BOOKED (origin-held custody) — a DEL station manager
+        // is the current custodian.
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+
+        mvc.perform(delete("/api/v1/admin/shipments/{ref}", ref)
+                        .header("Authorization", "Bearer " + tokenForCity("STATION_MANAGER", randomUserId(), "DEL")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("CANCELLED"));
+    }
+
+    // A station manager in a city with no custody over the shipment is refused — 404, not 403, so
+    // they can't use the error to confirm the ref exists at all (mirrors the b2b/b2c lane guard).
+    @Test
+    void stationManagerCancelsOutsideOwnCity_returns404() throws Exception {
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+
+        mvc.perform(delete("/api/v1/admin/shipments/{ref}", ref)
+                        .header("Authorization", "Bearer " + tokenForCity("STATION_MANAGER", randomUserId(), "BOM")))
+                .andExpect(status().isNotFound());
+
+        assertThat(shipmentRepository.findByShipmentRef(ref).orElseThrow().getState())
+                .isEqualTo(ShipmentState.BOOKED);
+    }
 }
