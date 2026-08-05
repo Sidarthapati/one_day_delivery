@@ -162,6 +162,26 @@ class DaTaskServiceImpl implements DaTaskService {
 
     @Override
     @Transactional
+    public DaTaskView reattempt(UUID daId, UUID taskId) {
+        return daStatusService.withDaLock(daId, () -> {
+            DispatchQueue task = ownedTask(daId, taskId);
+            requireStatus(task, TaskStatus.FAILED);
+            // Re-queue at the end of the DA's own list so current work continues first, then this retry.
+            int endPos = queueRepository
+                    .findByDaIdAndOperatingDateOrderByQueuePosition(daId, task.getOperatingDate()).stream()
+                    .mapToInt(DispatchQueue::getQueuePosition).max().orElse(task.getQueuePosition());
+            task.setStatus(TaskStatus.QUEUED);
+            task.setQueuePosition(endPos + 1);
+            task.setStartedAt(null);
+            task.setCompletedAt(null);
+            DaTaskView view = save(task);
+            daEventProducer.emitQueueReordered(daId, task.getCityId());
+            return view;
+        });
+    }
+
+    @Override
+    @Transactional
     public DaTaskView markDropCollected(UUID daId, UUID taskId) {
         return collectDelivery(daId, taskId, task -> { /* van pickup from the loop — no extra scan */ });
     }

@@ -163,6 +163,29 @@ class DaTaskServiceImplTest {
     }
 
     @Test
+    void reattemptRequeuesAFailedTaskAtTheEndOfTheList() {
+        DispatchQueue existing = persist(TaskType.DELIVERY, TaskStatus.QUEUED); // queue pos 0
+        DispatchQueue failed = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+        service.markFailed(da, failed.getId(), "customer not home");
+
+        service.reattempt(da, failed.getId());
+
+        DispatchQueue reloaded = reload(failed);
+        assertThat(reloaded.getStatus()).isEqualTo(TaskStatus.QUEUED);
+        assertThat(reloaded.getQueuePosition()).isGreaterThan(existing.getQueuePosition());
+        assertThat(reloaded.getCompletedAt()).isNull();
+        verify(events).emitQueueReordered(eq(da), eq(city));
+    }
+
+    @Test
+    void reattemptRejectsATaskThatIsNotFailed() {
+        DispatchQueue task = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
+        assertThatThrownBy(() -> service.reattempt(da, task.getId()))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409");
+    }
+
+    @Test
     void hubCollectMovesDeliveryToInProgressAndEmitsScanSeam() {
         DispatchQueue task = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
         service.recordHubCollect(da, task.getId());

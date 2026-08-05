@@ -80,6 +80,17 @@ class RecoveryServiceImpl implements RecoveryService {
 
     @Override
     @Transactional
+    public void reportBreakdown(UUID vanId, UUID cityId, LocalDate date, Double lat, Double lon) {
+        List<VanManifest> manifests = manifestRepository.findByVanIdAndValidDate(vanId, date);
+        UUID routePlanId = manifests.isEmpty() ? null : manifests.get(0).getRoutePlanId();
+        // No manifest move — ops picks a recovery van and calls recoverVan. This just raises the alert.
+        cronEventProducer.emitVanBreakdown(vanId, cityId, routePlanId,
+                lat != null ? lat : 0.0, lon != null ? lon : 0.0, Instant.now(clock));
+        log.info("Breakdown reported by driver for van {} ({}) at {},{}", vanId, date, lat, lon);
+    }
+
+    @Override
+    @Transactional
     public int carryNoShow(UUID vanId, int loopIndex, LocalDate date, int stopSeq, UUID daId) {
         VanManifest manifest = manifestRepository.findByVanIdAndLoopIndexAndValidDate(vanId, loopIndex, date)
                 .orElse(null);
