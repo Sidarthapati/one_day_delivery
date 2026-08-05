@@ -15,6 +15,8 @@ import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
 import com.oneday.dispatch.service.model.DaQueue;
+import com.oneday.common.port.ShipmentContactPort;
+import com.oneday.common.port.ShipmentContactPort.ShipmentContact;
 import com.oneday.common.port.ShipmentRefPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +52,7 @@ class DaTaskServiceImpl implements DaTaskService {
     private final DispatchProperties props;
     private final HubScanSeamProducer hubScanSeamProducer;
     private final ShipmentRefPort shipmentRefPort;
+    private final ShipmentContactPort shipmentContactPort;
 
     DaTaskServiceImpl(DispatchQueueRepository queueRepository,
                       DaCronAssignmentRepository cronRepository,
@@ -57,7 +60,8 @@ class DaTaskServiceImpl implements DaTaskService {
                       DaEventProducer daEventProducer,
                       DispatchProperties props,
                       HubScanSeamProducer hubScanSeamProducer,
-                      ShipmentRefPort shipmentRefPort) {
+                      ShipmentRefPort shipmentRefPort,
+                      ShipmentContactPort shipmentContactPort) {
         this.queueRepository = queueRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
@@ -65,6 +69,7 @@ class DaTaskServiceImpl implements DaTaskService {
         this.props = props;
         this.hubScanSeamProducer = hubScanSeamProducer;
         this.shipmentRefPort = shipmentRefPort;
+        this.shipmentContactPort = shipmentContactPort;
     }
 
     @Override
@@ -72,8 +77,12 @@ class DaTaskServiceImpl implements DaTaskService {
     public List<DaTaskView> listTasks(UUID daId, LocalDate date) {
         LocalDate day = date != null ? date : LocalDate.now(ZoneId.of(props.getShift().getZone()));
         List<DispatchQueue> rows = queueRepository.findByDaIdAndOperatingDateOrderByQueuePosition(daId, day);
-        Map<UUID, String> refs = shipmentRefPort.refsFor(rows.stream().map(DispatchQueue::getShipmentId).toList());
-        return rows.stream().map(r -> DaTaskView.of(r, refs.get(r.getShipmentId()))).toList();
+        List<UUID> shipmentIds = rows.stream().map(DispatchQueue::getShipmentId).toList();
+        Map<UUID, String> refs = shipmentRefPort.refsFor(shipmentIds);
+        Map<UUID, ShipmentContact> contacts = shipmentContactPort.contactsFor(shipmentIds);
+        return rows.stream()
+                .map(r -> DaTaskView.of(r, refs.get(r.getShipmentId()), contacts.get(r.getShipmentId())))
+                .toList();
     }
 
     @Override
