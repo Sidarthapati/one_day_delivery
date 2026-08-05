@@ -38,6 +38,13 @@ public interface DaTaskService {
     /** Any active task → FAILED; emits PICKUP_FAILED or DROP_FAILED by task type. */
     DaTaskView markFailed(UUID daId, UUID taskId, String reason);
 
+    /**
+     * DA-initiated re-attempt: a FAILED task (e.g. "customer not home") → QUEUED, re-queued at the end
+     * of the DA's own list so it's retried after current work this shift. Clears the terminal
+     * timestamps and emits QUEUE_REORDERED. Only a FAILED task the DA owns is eligible (409 otherwise).
+     */
+    DaTaskView reattempt(UUID daId, UUID taskId);
+
     /** VAN_MEETING city: DELIVERY task QUEUED → IN_PROGRESS (collected from the van); emits DROP_COLLECTED. */
     DaTaskView markDropCollected(UUID daId, UUID taskId);
 
