@@ -133,6 +133,14 @@ public class DaDispatchController {
         return daTaskService.markFailed(daId, taskId, reason);
     }
 
+    /** DA-initiated re-attempt of a FAILED task: re-queue it at the end of the DA's list this shift. */
+    @PostMapping("/tasks/{taskId}/reattempt")
+    public DaTaskView reattempt(@PathVariable UUID daId, @PathVariable UUID taskId,
+                                @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        return daTaskService.reattempt(daId, taskId);
+    }
+
     @PostMapping("/tasks/{taskId}/drop-collected")
     public DaTaskView dropCollected(@PathVariable UUID daId, @PathVariable UUID taskId,
                                     @AuthenticationPrincipal AuthUserDetails principal) {

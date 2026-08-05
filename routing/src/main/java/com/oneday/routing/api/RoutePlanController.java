@@ -11,6 +11,7 @@ import com.oneday.routing.dto.OverrideRequest;
 import com.oneday.routing.dto.RoutePlanResponse;
 import com.oneday.routing.dto.RoutePlanStopResponse;
 import com.oneday.routing.dto.ShuttleTimetableResponse;
+import com.oneday.routing.service.GridDataAdapter;
 import com.oneday.routing.service.RoutePlanLifecycleService;
 import com.oneday.routing.service.ShuttleScheduleService;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -46,15 +48,18 @@ public class RoutePlanController {
 
     private final RoutePlanLifecycleService lifecycleService;
     private final ShuttleScheduleService shuttleScheduleService;
+    private final GridDataAdapter gridDataAdapter;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
     RoutePlanController(RoutePlanLifecycleService lifecycleService,
                         ShuttleScheduleService shuttleScheduleService,
+                        GridDataAdapter gridDataAdapter,
                         ObjectMapper objectMapper,
                         Clock clock) {
         this.lifecycleService = lifecycleService;
         this.shuttleScheduleService = shuttleScheduleService;
+        this.gridDataAdapter = gridDataAdapter;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -81,8 +86,9 @@ public class RoutePlanController {
         RoutePlan plan = lifecycleService.activePlan(cityId, d)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "No active route plan for cityId=" + cityId + " date=" + d));
+        Map<UUID, double[]> coords = gridDataAdapter.vertexCoords(cityId);
         return lifecycleService.stops(plan.getId(), vanId).stream()
-                .map(RoutePlanStopResponse::from)
+                .map(s -> RoutePlanStopResponse.from(s, coords))
                 .toList();
     }
 

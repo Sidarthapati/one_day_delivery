@@ -14,6 +14,10 @@ public interface RecoveryService {
     RecoverySummary recoverVan(UUID brokenVanId, UUID recoveryVanId, UUID cityId, LocalDate date,
                                double lastLat, double lastLon);
 
+    // Driver-initiated breakdown report: emit VAN_BREAKDOWN so ops/M11 are alerted and can dispatch a
+    // recovery van (via recoverVan). No manifest move here — the driver can't pick the recovery van.
+    void reportBreakdown(UUID vanId, UUID cityId, LocalDate date, Double lat, Double lon);
+
     // DA no-show at a stop: carry that DA's still-undelivered parcels to their next loop; collections
     // are deferred (the next pickup event re-binds them).
     int carryNoShow(UUID vanId, int loopIndex, LocalDate date, int stopSeq, UUID daId);
