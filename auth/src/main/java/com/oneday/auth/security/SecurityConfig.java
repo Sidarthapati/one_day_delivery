@@ -52,7 +52,10 @@ public class SecurityConfig {
                         .authenticationEntryPoint(
                                 (req, res, ex) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")))
                 .authorizeHttpRequests(auth -> auth
-                        // CORS preflight carries no credentials — never gate it behind auth.
+                        // CORS preflight never carries the Authorization header, so a protected route
+                        // would otherwise 401 the OPTIONS request itself before the browser ever sends
+                        // the real one. Permitting OPTIONS doesn't loosen anything — the actual request
+                        // still goes through full authentication/authorization right below.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/auth/login", "/auth/register", "/auth/health", "/auth/request-onboarding").permitAll()
                         // Business self-signup — public, like /auth/request-onboarding (runs KYC, files a PENDING request).

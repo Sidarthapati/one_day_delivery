@@ -215,6 +215,14 @@ class FlightBagServiceImpl implements FlightBagService {
         return flightBagRepository.findByHubIdAndFlightDate(hubId, date);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<BagParcelInfo> parcelsFor(UUID bagId) {
+        return flightBagItemRepository.findByBagIdAndStatus(bagId, FlightBagItemStatus.IN_BAG).stream()
+                .map(i -> new BagParcelInfo(i.getParcelId(), i.getShipmentRef(), i.getWeightGrams()))
+                .toList();
+    }
+
     private FlightBag requireBag(UUID bagId) {
         return flightBagRepository.findById(bagId).orElseThrow(() -> new BagNotFoundException(bagId));
     }
