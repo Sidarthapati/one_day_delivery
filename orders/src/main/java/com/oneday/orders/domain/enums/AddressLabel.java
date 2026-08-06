@@ -7,5 +7,7 @@ package com.oneday.orders.domain.enums;
 public enum AddressLabel {
     HOME,
     OFFICE,
-    OTHER
+    OTHER,
+    /** A B2B pickup warehouse — a saved origin the seller ships from repeatedly. */
+    WAREHOUSE
 }

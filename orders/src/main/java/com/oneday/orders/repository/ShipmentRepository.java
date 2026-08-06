@@ -28,6 +28,8 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
 
     Optional<Shipment> findByShipmentRef(String shipmentRef);
 
+    Optional<Shipment> findByTrackToken(String trackToken);
+
     /** Unbounded list — use only when result set is known to be small (e.g. admin tooling). */
     List<Shipment> findByState(ShipmentState state);
 

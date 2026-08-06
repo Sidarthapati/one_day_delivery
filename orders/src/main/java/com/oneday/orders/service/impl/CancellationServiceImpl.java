@@ -46,6 +46,7 @@ class CancellationServiceImpl implements CancellationService {
     private final CancellationPolicy cancellationPolicy;
     private final ShipmentStateMachine stateMachine;
     private final PaymentPort paymentPort;
+    private final com.oneday.orders.service.WalletService walletService;
     private final ApplicationEventPublisher events;
 
     CancellationServiceImpl(ShipmentRepository shipmentRepository,
@@ -54,6 +55,7 @@ class CancellationServiceImpl implements CancellationService {
                             CancellationPolicy cancellationPolicy,
                             ShipmentStateMachine stateMachine,
                             PaymentPort paymentPort,
+                            com.oneday.orders.service.WalletService walletService,
                             ApplicationEventPublisher events) {
         this.shipmentRepository = shipmentRepository;
         this.paymentTransactionRepository = paymentTransactionRepository;
@@ -61,6 +63,7 @@ class CancellationServiceImpl implements CancellationService {
         this.cancellationPolicy = cancellationPolicy;
         this.stateMachine = stateMachine;
         this.paymentPort = paymentPort;
+        this.walletService = walletService;
         this.events = events;
     }
 
@@ -140,7 +143,7 @@ class CancellationServiceImpl implements CancellationService {
         return new CancellationResponse(shipmentRef, ShipmentState.CANCELLED, refund);
     }
 
-    /** B2B: decrement the account's outstanding balance by this shipment's total (credit reversal). */
+    /** B2B: reverse the shipping charge — refund the wallet, or decrement outstanding credit. */
     private void reverseB2bCredit(Shipment shipment, String userId, boolean bypassOwnership) {
         B2bAccount account = b2bAccountRepository.findByIdForUpdate(shipment.getB2bAccountId())
                 .orElseThrow(() -> new EntityNotFoundException(
@@ -154,8 +157,13 @@ class CancellationServiceImpl implements CancellationService {
                     "User " + userId + " does not own account " + account.getId());
         }
 
-        long reversed = Math.max(0L, account.getOutstandingBalancePaise() - shipment.getTotalPricePaise());
-        account.setOutstandingBalancePaise(reversed);
+        if (shipment.getFundingSource() == com.oneday.orders.domain.FundingSource.WALLET) {
+            walletService.refundForCancellation(account, shipment.getTotalPricePaise(),
+                    shipment.getShipmentRef(), UserIds.parse(userId));
+        } else {
+            long reversed = Math.max(0L, account.getOutstandingBalancePaise() - shipment.getTotalPricePaise());
+            account.setOutstandingBalancePaise(reversed);
+        }
     }
 
     /**

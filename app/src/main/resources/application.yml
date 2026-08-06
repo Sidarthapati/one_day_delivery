@@ -118,6 +118,29 @@ routing:
     hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
     chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
 
+# M9 (airline). Maps the IATA hub codes flight_schedule/orders.origin_city|dest_city use (see
+# pricing/V2_4's "as M4 sends them" note) to the same fixed cityId UUIDs as grid.cities, so
+# FlightCutoffPortAdapter can resolve routing's UUID cityId back to a hub code.
+airline:
+  cities:
+    DEL: f47ac10b-58cc-4372-a567-0e02b2c3d479
+    BOM: 550e8400-e29b-41d4-a716-446655440000
+    BLR: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+    HYD: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+    MAA: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+
+# M9 freight consolidator (mocked). Read-only access to their schedule/status/rate data lives in a
+# separate schema, consolidator_mock, in the SAME Postgres instance as spring.datasource — reached
+# through its own DataSource + Flyway history (see ConsolidatorDataSourceConfig), never through JPA.
+# CONSOLIDATOR_DATASOURCE_* env vars point at the real consolidator DB in prod; local/shared-dev
+# default to the same host/db/role as spring.datasource, just a different schema.
+consolidator:
+  datasource:
+    url: ${CONSOLIDATOR_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday?currentSchema=consolidator_mock}
+    username: ${CONSOLIDATOR_DATASOURCE_USERNAME:oneday}
+    password: ${CONSOLIDATOR_DATASOURCE_PASSWORD:secret}
+    driver-class-name: org.postgresql.Driver
+
 # Live tracking (M4). Per-city hub + airport coordinates for the static-node fallbacks and the
 # route line; keyed by IATA code (the catalog also accepts DELHI/MUMBAI/... forms). Coordinates are
 # approximate placeholders — confirm the real hub facility locations with ops before the pilot.

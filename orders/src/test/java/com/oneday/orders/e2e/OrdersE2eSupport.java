@@ -209,6 +209,28 @@ abstract class OrdersE2eSupport {
         return json.readTree(body).get("shipment_ref").asText();
     }
 
+    /**
+     * Books a PREPAID B2C shipment with a <b>unique</b> Razorpay order/payment id, so callers that
+     * book more than once in a single (rolled-back) test transaction don't collide on the
+     * payment_transactions unique key. (The fixed-id {@link #b2cRequest} suits single-booking tests
+     * that assert on {@code pay_test_1}.)
+     */
+    protected String bookB2cPrepaidUnique(String token) throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 12);
+        BookingRequest req = b2cRequest(PaymentMode.PREPAID);
+        req.setRazorpayOrderId("order_" + suffix);
+        req.setRazorpayPaymentId("pay_" + suffix);
+        req.setRazorpaySignature("sig_" + suffix);
+        String body = mvc.perform(post("/api/v1/b2c/shipments")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", idemKey())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(req)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return json.readTree(body).get("shipment_ref").asText();
+    }
+
     protected UUID idOf(String shipmentRef) {
         return shipmentRepository.findByShipmentRef(shipmentRef).orElseThrow().getId();
     }

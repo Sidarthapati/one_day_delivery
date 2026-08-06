@@ -52,11 +52,24 @@ public class SecurityConfig {
                         .authenticationEntryPoint(
                                 (req, res, ex) -> res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized")))
                 .authorizeHttpRequests(auth -> auth
-                        // CORS preflight carries no credentials — never gate it behind auth.
+                        // CORS preflight never carries the Authorization header, so a protected route
+                        // would otherwise 401 the OPTIONS request itself before the browser ever sends
+                        // the real one. Permitting OPTIONS doesn't loosen anything — the actual request
+                        // still goes through full authentication/authorization right below.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/auth/login", "/auth/register", "/auth/health", "/auth/request-onboarding").permitAll()
+                        // Business self-signup — public, like /auth/request-onboarding (runs KYC, files a PENDING request).
+                        .requestMatchers("/auth/request-business-onboarding").permitAll()
                         .requestMatchers("/auth/oauth/google", "/auth/otp/request", "/auth/otp/verify").permitAll()
+                        // Public "Talk to sales" capture + white-label shipment tracking (token-scoped).
+                        .requestMatchers(HttpMethod.POST, "/api/sales/leads").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()
                         .requestMatchers("/", "/index.html", "/track.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
+                        // M9 demo's static assets (login page + its JS/CSS) — same reasoning as the
+                        // root-level demo above, just nested under /demo/**. The demo pages carry a
+                        // JWT (from sessionStorage) on every real API call; only the static shell needs
+                        // to be reachable before that token exists.
+                        .requestMatchers("/demo/**").permitAll()
                         // Permit the error dispatch (Spring Boot's default). The JWT filter is skipped
                         // on the ERROR dispatch, so without this any 404/500 on an authenticated
                         // endpoint would be masked as a misleading 401.

@@ -174,6 +174,12 @@ class BookingServiceImpl implements BookingService {
     @Override
     public BookingResponse book(BookingRequest req, String idempotencyKey, String userId,
                                 CustomerType customerType) {
+        // Consumer (B2C/C2C) bookings are prepaid-only. COD as a consumer shipping-payment option
+        // has been withdrawn — the only COD in the platform is the B2B buyer-collect remittance flow.
+        if (PaymentMode.PREPAID != req.getPaymentMode()) {
+            throw new BookingService.InvalidBookingRequestException(
+                    "Cash on delivery is not available — only prepaid bookings are accepted");
+        }
         Priced priced = priceRequest(req, customerType);
         ServiceabilityResult serviceability = priced.serviceability();
         int volumetricWeightGrams = priced.volumetricWeightGrams();

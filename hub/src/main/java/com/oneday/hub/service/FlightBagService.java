@@ -49,6 +49,9 @@ public interface FlightBagService {
     /** Operator console: the day's flight bags at a hub (the live origin directory). */
     java.util.List<FlightBag> bagsForDate(UUID hubId, LocalDate date);
 
+    /** The parcels currently in a bag (IN_BAG only) — M9's seam for per-parcel AWB linkage. */
+    java.util.List<BagParcelInfo> parcelsFor(UUID bagId);
+
     record OpenBagCommand(
             UUID cityId,
             UUID hubId,
@@ -60,5 +63,8 @@ public interface FlightBagService {
     }
 
     record SealResult(FlightBag bag, BagManifest manifest) {
+    }
+
+    record BagParcelInfo(UUID parcelId, String shipmentRef, int weightGrams) {
     }
 }

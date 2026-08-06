@@ -25,9 +25,9 @@ class MyShipmentsAndAdminE2eTest extends OrdersE2eSupport {
         String someoneElse = randomUserId();
         String myToken = tokenFor("B2C_CUSTOMER", mine);
 
-        String refA = bookB2c(myToken, PaymentMode.COD);
-        String refB = bookB2c(myToken, PaymentMode.COD);
-        bookB2c(tokenFor("B2C_CUSTOMER", someoneElse), PaymentMode.COD);
+        String refA = bookB2cPrepaidUnique(myToken);
+        String refB = bookB2cPrepaidUnique(myToken);
+        bookB2cPrepaidUnique(tokenFor("B2C_CUSTOMER", someoneElse));
 
         mvc.perform(get("/api/v1/shipments/mine")
                         .header("Authorization", "Bearer " + myToken))
@@ -57,7 +57,7 @@ class MyShipmentsAndAdminE2eTest extends OrdersE2eSupport {
     // An ADMIN browses the whole orders database across all cities.
     @Test
     void adminList_returnsAllCities() throws Exception {
-        bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
 
         mvc.perform(get("/api/v1/admin/shipments")
                         .header("Authorization", "Bearer " + tokenFor("ADMIN", randomUserId())))
@@ -70,7 +70,7 @@ class MyShipmentsAndAdminE2eTest extends OrdersE2eSupport {
     @Test
     void stationManager_scopedToOwnCity() throws Exception {
         // The default b2c route is DEL → BLR, so a DEL station manager must see it.
-        bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
 
         String body = mvc.perform(get("/api/v1/admin/shipments")
                         .header("Authorization", "Bearer "
