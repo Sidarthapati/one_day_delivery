@@ -1,5 +1,6 @@
 package com.oneday.airline.api;
 
+import com.oneday.airline.consolidator.ConsolidatorFlightRepository;
 import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.domain.FlightInstance;
@@ -10,7 +11,6 @@ import com.oneday.airline.dto.FlightStatusResponse;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.repository.FlightInstanceRepository;
-import com.oneday.airline.repository.FlightScheduleRepository;
 import com.oneday.airline.service.AwbGroundService;
 import com.oneday.airline.service.provider.FlightProviderPort;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -36,17 +36,18 @@ import java.util.UUID;
 @RequestMapping("/airline")
 public class AirlineController {
 
-    private final FlightScheduleRepository flightScheduleRepository;
+    private final ConsolidatorFlightRepository consolidatorFlightRepository;
     private final FlightInstanceRepository flightInstanceRepository;
     private final AwbRepository awbRepository;
     private final AwbParcelRepository awbParcelRepository;
     private final AwbGroundService awbGroundService;
     private final FlightProviderPort flightProviderPort;
 
-    AirlineController(FlightScheduleRepository flightScheduleRepository, FlightInstanceRepository flightInstanceRepository,
+    AirlineController(ConsolidatorFlightRepository consolidatorFlightRepository,
+                       FlightInstanceRepository flightInstanceRepository,
                        AwbRepository awbRepository, AwbParcelRepository awbParcelRepository,
                        AwbGroundService awbGroundService, FlightProviderPort flightProviderPort) {
-        this.flightScheduleRepository = flightScheduleRepository;
+        this.consolidatorFlightRepository = consolidatorFlightRepository;
         this.flightInstanceRepository = flightInstanceRepository;
         this.awbRepository = awbRepository;
         this.awbParcelRepository = awbParcelRepository;
@@ -54,9 +55,12 @@ public class AirlineController {
         this.flightProviderPort = flightProviderPort;
     }
 
+    /** The consolidator's schedule for a lane on a given date — it's a dated calendar now, not a
+     *  recurring pattern, so the date is required. */
     @GetMapping("/lanes/{originHub}/{destHub}/schedule")
-    public List<FlightScheduleResponse> schedule(@PathVariable String originHub, @PathVariable String destHub) {
-        return flightScheduleRepository.findByOriginHubAndDestHubAndActiveTrue(originHub, destHub).stream()
+    public List<FlightScheduleResponse> schedule(@PathVariable String originHub, @PathVariable String destHub,
+                                                 @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return consolidatorFlightRepository.findLegs(originHub, destHub, date).stream()
                 .map(FlightScheduleResponse::from)
                 .toList();
     }
@@ -82,7 +86,7 @@ public class AirlineController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No booking for bag " + bagId));
     }
 
-    /** The (simulated) vendor's current word on a flight — the same call the status poll job makes. */
+    /** The consolidator's current word on a flight — the same call the status poll job makes. */
     @GetMapping("/flights/{flightNo}/{flightDate}/status")
     public FlightStatusResponse flightStatus(@PathVariable String flightNo,
                                              @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate flightDate) {

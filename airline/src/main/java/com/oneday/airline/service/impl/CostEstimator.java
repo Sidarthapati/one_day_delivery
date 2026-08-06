@@ -1,7 +1,7 @@
 package com.oneday.airline.service.impl;
 
 import com.oneday.airline.config.AirlineProperties;
-import com.oneday.airline.domain.LaneRateCard;
+import com.oneday.airline.consolidator.ConsolidatorLaneRate;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,22 +19,22 @@ class CostEstimator {
         this.properties = properties;
     }
 
-    long estimatePaise(LaneRateCard rateCard, int weightGrams, boolean overnight) {
+    long estimatePaise(ConsolidatorLaneRate rateCard, int weightGrams, boolean overnight) {
         double weightKg = weightGrams / 1000.0;
         long perKgPaise = ratePerKg(rateCard, weightKg);
-        long total = Math.round(weightKg * perKgPaise) + rateCard.getTerminalHandlingPaise();
+        long total = Math.round(weightKg * perKgPaise) + rateCard.terminalHandlingPaise();
         if (overnight) {
             total -= total * properties.getOvernightDiscountBps() / 10_000;
         }
-        return Math.max(total, rateCard.getMinChargePaise());
+        return Math.max(total, rateCard.minChargePaise());
     }
 
-    private long ratePerKg(LaneRateCard c, double weightKg) {
-        if (weightKg >= 1000) return c.getRateQ1000PaisePerKg();
-        if (weightKg >= 500) return c.getRateQ500PaisePerKg();
-        if (weightKg >= 300) return c.getRateQ300PaisePerKg();
-        if (weightKg >= 100) return c.getRateQ100PaisePerKg();
-        if (weightKg >= 45) return c.getRateQ45PaisePerKg();
-        return c.getRateBelow45kgPaisePerKg();
+    private long ratePerKg(ConsolidatorLaneRate c, double weightKg) {
+        if (weightKg >= 1000) return c.rateQ1000PaisePerKg();
+        if (weightKg >= 500) return c.rateQ500PaisePerKg();
+        if (weightKg >= 300) return c.rateQ300PaisePerKg();
+        if (weightKg >= 100) return c.rateQ100PaisePerKg();
+        if (weightKg >= 45) return c.rateQ45PaisePerKg();
+        return c.rateBelow45kgPaisePerKg();
     }
 }

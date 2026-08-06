@@ -2,9 +2,9 @@ package com.oneday.airline.service.impl;
 
 import com.oneday.airline.config.AirlineProperties;
 import com.oneday.airline.config.ClockConfig;
-import com.oneday.airline.domain.LaneRateCard;
-import com.oneday.airline.repository.LaneRateCardRepository;
-import com.oneday.airline.service.exception.LaneRateCardNotFoundException;
+import com.oneday.airline.consolidator.ConsolidatorLaneRate;
+import com.oneday.airline.consolidator.ConsolidatorRateRepository;
+import com.oneday.airline.service.exception.ConsolidatorRateNotFoundException;
 import com.oneday.airline.service.exception.NoFlightAvailableException;
 import com.oneday.airline.service.provider.FlightProviderPort;
 import org.junit.jupiter.api.Test;
@@ -16,7 +16,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZonedDateTime;
 import java.util.List;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -28,31 +27,23 @@ import static org.mockito.Mockito.when;
 class FlightSelectionServiceTest {
 
     @Mock FlightProviderPort flightProviderPort;
-    @Mock LaneRateCardRepository laneRateCardRepository;
+    @Mock ConsolidatorRateRepository consolidatorRateRepository;
 
     private final AirlineProperties properties = new AirlineProperties();   // gateCutoffLeadMinutes = 180
     private final CostEstimator costEstimator = new CostEstimator(properties);
 
     private FlightSelectionService service() {
-        return new FlightSelectionService(flightProviderPort, laneRateCardRepository, costEstimator, properties);
+        return new FlightSelectionService(flightProviderPort, consolidatorRateRepository, costEstimator, properties);
     }
 
-    private LaneRateCard rateCard() {
-        LaneRateCard c = new LaneRateCard();
-        c.setMinChargePaise(150_000);
-        c.setTerminalHandlingPaise(38_000);
-        c.setRateBelow45kgPaisePerKg(6_500);
-        c.setRateQ45PaisePerKg(5_800);
-        c.setRateQ100PaisePerKg(5_200);
-        c.setRateQ300PaisePerKg(4_700);
-        c.setRateQ500PaisePerKg(4_300);
-        c.setRateQ1000PaisePerKg(4_000);
-        return c;
+    private ConsolidatorLaneRate rateCard() {
+        return new ConsolidatorLaneRate("DEL", "BOM",
+                150_000, 38_000,
+                6_500, 5_800, 5_200, 4_700, 4_300, 4_000);
     }
 
     private void stubRateCard() {
-        when(laneRateCardRepository.findByOriginHubAndDestHubAndStatus("DEL", "BOM", "ACTIVE"))
-                .thenReturn(Optional.of(rateCard()));
+        when(consolidatorRateRepository.findActiveRate("DEL", "BOM")).thenReturn(rateCard());
     }
 
     @Test
@@ -129,11 +120,11 @@ class FlightSelectionServiceTest {
 
     @Test
     void missingRateCard_throws() {
-        when(laneRateCardRepository.findByOriginHubAndDestHubAndStatus("DEL", "MAA", "ACTIVE"))
-                .thenReturn(Optional.empty());
+        when(consolidatorRateRepository.findActiveRate("DEL", "MAA"))
+                .thenThrow(new ConsolidatorRateNotFoundException("DEL", "MAA"));
 
         assertThatThrownBy(() -> service().select("DEL", "MAA", java.time.Instant.now()))
-                .isInstanceOf(LaneRateCardNotFoundException.class);
+                .isInstanceOf(ConsolidatorRateNotFoundException.class);
     }
 
     @Test

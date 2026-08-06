@@ -1,7 +1,7 @@
 package com.oneday.airline.service.port;
 
 import com.oneday.airline.config.AirlineProperties;
-import com.oneday.airline.service.exception.LaneRateCardNotFoundException;
+import com.oneday.airline.service.exception.ConsolidatorRateNotFoundException;
 import com.oneday.airline.service.impl.FlightSelectionService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -75,7 +75,7 @@ class FlightCutoffPortAdapterTest {
         Instant onlyCutoff = Instant.parse("2026-07-20T05:00:00Z");
         when(flightSelectionService.select(eq("DEL"), eq("BOM"), any())).thenReturn(selectionWithCutoff("BOM", onlyCutoff));
         when(flightSelectionService.select(eq("DEL"), eq("BLR"), any()))
-                .thenThrow(new LaneRateCardNotFoundException("DEL", "BLR"));
+                .thenThrow(new ConsolidatorRateNotFoundException("DEL", "BLR"));
 
         Optional<Instant> result = new FlightCutoffPortAdapter(flightSelectionService, props)
                 .outboundFlightCutoff(delhiId, date);

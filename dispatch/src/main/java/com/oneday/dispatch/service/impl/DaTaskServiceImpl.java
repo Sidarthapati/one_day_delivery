@@ -15,6 +15,7 @@ import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
 import com.oneday.dispatch.service.model.DaQueue;
+import com.oneday.common.port.ShipmentRefPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -29,6 +30,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -47,19 +49,31 @@ class DaTaskServiceImpl implements DaTaskService {
     private final DaEventProducer daEventProducer;
     private final DispatchProperties props;
     private final HubScanSeamProducer hubScanSeamProducer;
+    private final ShipmentRefPort shipmentRefPort;
 
     DaTaskServiceImpl(DispatchQueueRepository queueRepository,
                       DaCronAssignmentRepository cronRepository,
                       DaStatusService daStatusService,
                       DaEventProducer daEventProducer,
                       DispatchProperties props,
-                      HubScanSeamProducer hubScanSeamProducer) {
+                      HubScanSeamProducer hubScanSeamProducer,
+                      ShipmentRefPort shipmentRefPort) {
         this.queueRepository = queueRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
         this.daEventProducer = daEventProducer;
         this.props = props;
         this.hubScanSeamProducer = hubScanSeamProducer;
+        this.shipmentRefPort = shipmentRefPort;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaTaskView> listTasks(UUID daId, LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of(props.getShift().getZone()));
+        List<DispatchQueue> rows = queueRepository.findByDaIdAndOperatingDateOrderByQueuePosition(daId, day);
+        Map<UUID, String> refs = shipmentRefPort.refsFor(rows.stream().map(DispatchQueue::getShipmentId).toList());
+        return rows.stream().map(r -> DaTaskView.of(r, refs.get(r.getShipmentId()))).toList();
     }
 
     @Override

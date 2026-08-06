@@ -1,21 +1,20 @@
 package com.oneday.airline.service.impl;
 
 import com.oneday.airline.config.AirlineProperties;
+import com.oneday.airline.consolidator.ConsolidatorFlightLeg;
+import com.oneday.airline.consolidator.ConsolidatorFlightRepository;
+import com.oneday.airline.consolidator.ConsolidatorLaneRate;
+import com.oneday.airline.consolidator.ConsolidatorRateRepository;
 import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbParcel;
 import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.domain.FlightInstance;
 import com.oneday.airline.domain.FlightInstanceStatus;
-import com.oneday.airline.domain.FlightSchedule;
-import com.oneday.airline.domain.LaneRateCard;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.repository.FlightInstanceRepository;
-import com.oneday.airline.repository.FlightScheduleRepository;
-import com.oneday.airline.repository.LaneRateCardRepository;
 import com.oneday.airline.service.AwbBookingService;
-import com.oneday.airline.service.exception.FlightScheduleNotFoundException;
-import com.oneday.airline.service.provider.FlightProviderPort;
+import com.oneday.airline.service.exception.ConsolidatorLegNotFoundException;
 import com.oneday.hub.service.FlightBagService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,7 +24,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -33,8 +31,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,9 +39,8 @@ class AwbBookingServiceImplTest {
     @Mock AwbRepository awbRepository;
     @Mock AwbParcelRepository awbParcelRepository;
     @Mock FlightInstanceRepository flightInstanceRepository;
-    @Mock FlightScheduleRepository flightScheduleRepository;
-    @Mock LaneRateCardRepository laneRateCardRepository;
-    @Mock FlightProviderPort flightProviderPort;
+    @Mock ConsolidatorFlightRepository consolidatorFlightRepository;
+    @Mock ConsolidatorRateRepository consolidatorRateRepository;
     @Mock FlightBagService flightBagService;
 
     private final AirlineProperties properties = new AirlineProperties();
@@ -53,37 +48,23 @@ class AwbBookingServiceImplTest {
 
     private AwbBookingServiceImpl service() {
         return new AwbBookingServiceImpl(awbRepository, awbParcelRepository, flightInstanceRepository,
-                flightScheduleRepository, laneRateCardRepository, flightProviderPort, flightBagService,
+                consolidatorFlightRepository, consolidatorRateRepository, flightBagService,
                 costEstimator, properties);
     }
 
     private final UUID bagId = UUID.randomUUID();
     private final LocalDate flightDate = LocalDate.of(2026, 7, 20);
 
-    private FlightSchedule schedule() {
-        FlightSchedule s = new FlightSchedule();
-        s.setOriginHub("DEL");
-        s.setDestHub("BOM");
-        s.setCarrier("SIM-CARRIER");
-        s.setFlightNo("ODDELBOM12");
-        s.setDepartureTime(LocalTime.of(12, 0));
-        s.setArrivalTime(LocalTime.of(14, 0));
-        s.setCapacityKg(2000);
-        s.setActive(true);
-        return s;
+    private ConsolidatorFlightLeg leg() {
+        return new ConsolidatorFlightLeg("ODDELBOM12", "SIM-CONSOLIDATOR", "DEL", "BOM", flightDate,
+                Instant.parse("2026-07-20T06:30:00Z"), Instant.parse("2026-07-20T08:30:00Z"),
+                2000, "SCHEDULED", null, null);
     }
 
-    private LaneRateCard rateCard() {
-        LaneRateCard c = new LaneRateCard();
-        c.setMinChargePaise(150_000);
-        c.setTerminalHandlingPaise(38_000);
-        c.setRateBelow45kgPaisePerKg(6_500);
-        c.setRateQ45PaisePerKg(5_800);
-        c.setRateQ100PaisePerKg(5_200);
-        c.setRateQ300PaisePerKg(4_700);
-        c.setRateQ500PaisePerKg(4_300);
-        c.setRateQ1000PaisePerKg(4_000);
-        return c;
+    private ConsolidatorLaneRate rateCard() {
+        return new ConsolidatorLaneRate("DEL", "BOM",
+                150_000, 38_000,
+                6_500, 5_800, 5_200, 4_700, 4_300, 4_000);
     }
 
     @Test
@@ -91,12 +72,9 @@ class AwbBookingServiceImplTest {
         when(awbRepository.findByBagIdAndStatus(bagId, AwbStatus.BOOKED)).thenReturn(Optional.empty());
         when(flightInstanceRepository.findByFlightNoAndFlightDateForUpdate("ODDELBOM12", flightDate))
                 .thenReturn(Optional.empty());
-        when(flightScheduleRepository.findByFlightNo("ODDELBOM12")).thenReturn(Optional.of(schedule()));
+        when(consolidatorFlightRepository.findLeg("ODDELBOM12", flightDate)).thenReturn(leg());
         when(flightInstanceRepository.save(any(FlightInstance.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(laneRateCardRepository.findByOriginHubAndDestHubAndStatus("DEL", "BOM", "ACTIVE"))
-                .thenReturn(Optional.of(rateCard()));
-        when(flightProviderPort.book(anyString(), any(), anyString(), anyString(), anyInt(), anyInt()))
-                .thenReturn(new FlightProviderPort.BookingConfirmation("SIM-REF-123"));
+        when(consolidatorRateRepository.findActiveRate("DEL", "BOM")).thenReturn(rateCard());
         when(awbRepository.save(any(Awb.class))).thenAnswer(inv -> inv.getArgument(0));
         UUID parcelA = UUID.randomUUID();
         UUID parcelB = UUID.randomUUID();
@@ -113,7 +91,9 @@ class AwbBookingServiceImplTest {
         assertThat(result.getDestHub()).isEqualTo("BOM");
         assertThat(result.getTotalWeightGrams()).isEqualTo(45_000);
         assertThat(result.getParcelCount()).isEqualTo(12);
-        assertThat(result.getProviderRef()).isEqualTo("SIM-REF-123");
+        // No real vendor booking exists anymore (read-only consolidator access) — providerRef is a
+        // purely local placeholder, never a vendor confirmation.
+        assertThat(result.getProviderRef()).isEqualTo("NO-VENDOR-" + bagId.toString().substring(0, 8));
         assertThat(result.getStatus()).isEqualTo(AwbStatus.BOOKED);
 
         ArgumentCaptor<FlightInstance> instanceCaptor = ArgumentCaptor.forClass(FlightInstance.class);
@@ -141,12 +121,9 @@ class AwbBookingServiceImplTest {
         when(awbRepository.findByBagIdAndStatus(bagId, AwbStatus.BOOKED)).thenReturn(Optional.empty());
         when(flightInstanceRepository.findByFlightNoAndFlightDateForUpdate("ODDELBOM12", flightDate))
                 .thenReturn(Optional.empty());
-        when(flightScheduleRepository.findByFlightNo("ODDELBOM12")).thenReturn(Optional.of(schedule()));
+        when(consolidatorFlightRepository.findLeg("ODDELBOM12", flightDate)).thenReturn(leg());
         when(flightInstanceRepository.save(any(FlightInstance.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(laneRateCardRepository.findByOriginHubAndDestHubAndStatus("DEL", "BOM", "ACTIVE"))
-                .thenReturn(Optional.of(rateCard()));
-        when(flightProviderPort.book(anyString(), any(), anyString(), anyString(), anyInt(), anyInt()))
-                .thenReturn(new FlightProviderPort.BookingConfirmation("SIM-REF-789"));
+        when(consolidatorRateRepository.findActiveRate("DEL", "BOM")).thenReturn(rateCard());
         when(awbRepository.save(any(Awb.class))).thenAnswer(inv -> inv.getArgument(0));
         when(flightBagService.parcelsFor(bagId)).thenReturn(List.of());
 
@@ -172,16 +149,13 @@ class AwbBookingServiceImplTest {
         when(flightInstanceRepository.findByFlightNoAndFlightDateForUpdate("ODDELBOM12", flightDate))
                 .thenReturn(Optional.of(existing));
         when(flightInstanceRepository.save(any(FlightInstance.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(laneRateCardRepository.findByOriginHubAndDestHubAndStatus("DEL", "BOM", "ACTIVE"))
-                .thenReturn(Optional.of(rateCard()));
-        when(flightProviderPort.book(anyString(), any(), anyString(), anyString(), anyInt(), anyInt()))
-                .thenReturn(new FlightProviderPort.BookingConfirmation("SIM-REF-456"));
+        when(consolidatorRateRepository.findActiveRate("DEL", "BOM")).thenReturn(rateCard());
         when(awbRepository.save(any(Awb.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service().book(new AwbBookingService.BookBagCommand(bagId, "ODDELBOM12", flightDate, 8, 20_000));
 
-        verify(flightScheduleRepository, never()).findByFlightNo(any());   // no new instance created
-        assertThat(existing.getBookedWeightGrams()).isEqualTo(65_000);     // 45kg + 20kg
+        verify(consolidatorFlightRepository, never()).findLeg(any(), any());   // no new instance created
+        assertThat(existing.getBookedWeightGrams()).isEqualTo(65_000);        // 45kg + 20kg
     }
 
     @Test
@@ -194,7 +168,7 @@ class AwbBookingServiceImplTest {
         Awb result = service().book(new AwbBookingService.BookBagCommand(bagId, "ODDELBOM12", flightDate, 12, 45_000));
 
         assertThat(result).isSameAs(alreadyBooked);
-        verifyNoInteractions(flightProviderPort, flightInstanceRepository, flightScheduleRepository,
+        verifyNoInteractions(flightInstanceRepository, consolidatorFlightRepository, consolidatorRateRepository,
                 flightBagService, awbParcelRepository);
     }
 
@@ -203,10 +177,11 @@ class AwbBookingServiceImplTest {
         when(awbRepository.findByBagIdAndStatus(bagId, AwbStatus.BOOKED)).thenReturn(Optional.empty());
         when(flightInstanceRepository.findByFlightNoAndFlightDateForUpdate("GHOST99", flightDate))
                 .thenReturn(Optional.empty());
-        when(flightScheduleRepository.findByFlightNo("GHOST99")).thenReturn(Optional.empty());
+        when(consolidatorFlightRepository.findLeg("GHOST99", flightDate))
+                .thenThrow(new ConsolidatorLegNotFoundException("GHOST99", flightDate));
 
         assertThatThrownBy(() -> service().book(
                 new AwbBookingService.BookBagCommand(bagId, "GHOST99", flightDate, 1, 1000)))
-                .isInstanceOf(FlightScheduleNotFoundException.class);
+                .isInstanceOf(ConsolidatorLegNotFoundException.class);
     }
 }

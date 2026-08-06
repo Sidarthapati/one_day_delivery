@@ -16,7 +16,7 @@ class AuthzE2eTest extends OrdersE2eSupport {
         mvc.perform(post("/api/v1/b2c/shipments")
                         .header("Idempotency-Key", idemKey())
                         .contentType("application/json")
-                        .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
+                        .content(json.writeValueAsString(b2cRequest(PaymentMode.PREPAID))))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -28,7 +28,7 @@ class AuthzE2eTest extends OrdersE2eSupport {
                         .header("Authorization", "Bearer " + tokenFor("ADMIN", randomUserId()))
                         .header("Idempotency-Key", idemKey())
                         .contentType("application/json")
-                        .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
+                        .content(json.writeValueAsString(b2cRequest(PaymentMode.PREPAID))))
                 .andExpect(status().isForbidden());
     }
 
@@ -39,7 +39,7 @@ class AuthzE2eTest extends OrdersE2eSupport {
                         .header("Authorization", "Bearer " + tokenFor("DELIVERY_ASSOCIATE", randomUserId()))
                         .header("Idempotency-Key", idemKey())
                         .contentType("application/json")
-                        .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
+                        .content(json.writeValueAsString(b2cRequest(PaymentMode.PREPAID))))
                 .andExpect(status().isForbidden());
     }
 }

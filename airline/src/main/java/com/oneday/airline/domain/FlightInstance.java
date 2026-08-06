@@ -14,8 +14,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 
 /**
- * A specific date's occurrence of a {@link FlightSchedule} slot, created the first time it's needed
- * to carry a bag. {@code bookedKg} is the running per-flight weight commitment (§3) — a live estimate
+ * A specific date's occurrence of a consolidator flight leg, created the first time it's needed to
+ * carry a bag. {@code bookedKg} is the running per-flight weight commitment (§3) — a live estimate
  * while a bag is still filling, incremented for real once a bag books (§5's "honest limitation").
  */
 @Entity

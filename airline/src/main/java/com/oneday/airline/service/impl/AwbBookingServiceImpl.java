@@ -2,22 +2,19 @@ package com.oneday.airline.service.impl;
 
 import com.oneday.airline.config.AirlineProperties;
 import com.oneday.airline.config.ClockConfig;
+import com.oneday.airline.consolidator.ConsolidatorFlightLeg;
+import com.oneday.airline.consolidator.ConsolidatorFlightRepository;
+import com.oneday.airline.consolidator.ConsolidatorLaneRate;
+import com.oneday.airline.consolidator.ConsolidatorRateRepository;
 import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbParcel;
 import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.domain.FlightInstance;
 import com.oneday.airline.domain.FlightInstanceStatus;
-import com.oneday.airline.domain.FlightSchedule;
-import com.oneday.airline.domain.LaneRateCard;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.repository.FlightInstanceRepository;
-import com.oneday.airline.repository.FlightScheduleRepository;
-import com.oneday.airline.repository.LaneRateCardRepository;
 import com.oneday.airline.service.AwbBookingService;
-import com.oneday.airline.service.exception.FlightScheduleNotFoundException;
-import com.oneday.airline.service.exception.LaneRateCardNotFoundException;
-import com.oneday.airline.service.provider.FlightProviderPort;
 import com.oneday.hub.service.FlightBagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZonedDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -45,23 +41,22 @@ class AwbBookingServiceImpl implements AwbBookingService {
     private final AwbRepository awbRepository;
     private final AwbParcelRepository awbParcelRepository;
     private final FlightInstanceRepository flightInstanceRepository;
-    private final FlightScheduleRepository flightScheduleRepository;
-    private final LaneRateCardRepository laneRateCardRepository;
-    private final FlightProviderPort flightProviderPort;
+    private final ConsolidatorFlightRepository consolidatorFlightRepository;
+    private final ConsolidatorRateRepository consolidatorRateRepository;
     private final FlightBagService flightBagService;
     private final CostEstimator costEstimator;
     private final AirlineProperties properties;
 
     AwbBookingServiceImpl(AwbRepository awbRepository, AwbParcelRepository awbParcelRepository,
-                           FlightInstanceRepository flightInstanceRepository, FlightScheduleRepository flightScheduleRepository,
-                           LaneRateCardRepository laneRateCardRepository, FlightProviderPort flightProviderPort,
+                           FlightInstanceRepository flightInstanceRepository,
+                           ConsolidatorFlightRepository consolidatorFlightRepository,
+                           ConsolidatorRateRepository consolidatorRateRepository,
                            FlightBagService flightBagService, CostEstimator costEstimator, AirlineProperties properties) {
         this.awbRepository = awbRepository;
         this.awbParcelRepository = awbParcelRepository;
         this.flightInstanceRepository = flightInstanceRepository;
-        this.flightScheduleRepository = flightScheduleRepository;
-        this.laneRateCardRepository = laneRateCardRepository;
-        this.flightProviderPort = flightProviderPort;
+        this.consolidatorFlightRepository = consolidatorFlightRepository;
+        this.consolidatorRateRepository = consolidatorRateRepository;
         this.flightBagService = flightBagService;
         this.costEstimator = costEstimator;
         this.properties = properties;
@@ -79,15 +74,10 @@ class AwbBookingServiceImpl implements AwbBookingService {
         instance.setBookedWeightGrams(instance.getBookedWeightGrams() + command.weightGrams());
         flightInstanceRepository.save(instance);
 
-        LaneRateCard rateCard = laneRateCardRepository
-                .findByOriginHubAndDestHubAndStatus(instance.getOriginHub(), instance.getDestHub(), "ACTIVE")
-                .orElseThrow(() -> new LaneRateCardNotFoundException(instance.getOriginHub(), instance.getDestHub()));
+        ConsolidatorLaneRate rateCard = consolidatorRateRepository
+                .findActiveRate(instance.getOriginHub(), instance.getDestHub());
         boolean overnight = properties.isOvernight(instance.getDeparture().atZone(ClockConfig.IST).toLocalTime());
         long costPaise = costEstimator.estimatePaise(rateCard, command.weightGrams(), overnight);
-
-        FlightProviderPort.BookingConfirmation confirmation = flightProviderPort.book(
-                instance.getFlightNo(), instance.getFlightDate(), instance.getOriginHub(), instance.getDestHub(),
-                command.weightGrams(), command.parcelCount());
 
         Awb awb = new Awb();
         awb.setAwbNo(generateAwbNo(instance, command.bagId()));
@@ -99,7 +89,10 @@ class AwbBookingServiceImpl implements AwbBookingService {
         awb.setTotalWeightGrams(command.weightGrams());
         awb.setParcelCount(command.parcelCount());
         awb.setCostPaise(costPaise);
-        awb.setProviderRef(confirmation.providerRef());
+        // Access to the consolidator is read-only DB, not a booking API — there's no vendor
+        // confirmation to record. Real capacity reservation happens out-of-band; this is a purely
+        // local placeholder distinguishing "no vendor call was ever made" from a real providerRef.
+        awb.setProviderRef(generateLocalProviderRef(command.bagId()));
         awb.setStatus(AwbStatus.BOOKED);
         Awb saved = awbRepository.save(awb);
         writeParcelLines(saved, command.bagId());
@@ -145,25 +138,18 @@ class AwbBookingServiceImpl implements AwbBookingService {
     }
 
     private FlightInstance createInstance(String flightNo, LocalDate flightDate) {
-        FlightSchedule schedule = flightScheduleRepository.findByFlightNo(flightNo)
-                .orElseThrow(() -> new FlightScheduleNotFoundException(flightNo));
-
-        ZonedDateTime departure = flightDate.atTime(schedule.getDepartureTime()).atZone(ClockConfig.IST);
-        ZonedDateTime arrival = flightDate.atTime(schedule.getArrivalTime()).atZone(ClockConfig.IST);
-        if (!schedule.getArrivalTime().isAfter(schedule.getDepartureTime())) {
-            arrival = arrival.plusDays(1);   // overnight-spanning flight
-        }
-        Instant cutoff = departure.minusMinutes(properties.getGateCutoffLeadMinutes()).toInstant();
+        ConsolidatorFlightLeg leg = consolidatorFlightRepository.findLeg(flightNo, flightDate);
+        Instant cutoff = leg.departureAt().minusSeconds(properties.getGateCutoffLeadMinutes() * 60L);
 
         FlightInstance instance = new FlightInstance();
         instance.setFlightNo(flightNo);
         instance.setFlightDate(flightDate);
-        instance.setOriginHub(schedule.getOriginHub());
-        instance.setDestHub(schedule.getDestHub());
-        instance.setDeparture(departure.toInstant());
-        instance.setArrival(arrival.toInstant());
+        instance.setOriginHub(leg.originHub());
+        instance.setDestHub(leg.destHub());
+        instance.setDeparture(leg.departureAt());
+        instance.setArrival(leg.arrivalAt());
         instance.setCutoff(cutoff);
-        instance.setCapacityKg(schedule.getCapacityKg());
+        instance.setCapacityKg(leg.capacityKg());
         instance.setBookedWeightGrams(0);
         instance.setStatus(FlightInstanceStatus.SCHEDULED);
         return instance;   // unsaved — createBooking's single save persists it once, weight already added
@@ -173,5 +159,11 @@ class AwbBookingServiceImpl implements AwbBookingService {
     private String generateAwbNo(FlightInstance instance, UUID bagId) {
         return "AWB-%s-%s-%s".formatted(instance.getFlightNo(), instance.getFlightDate(),
                 bagId.toString().substring(0, 8));
+    }
+
+    /** No real vendor booking call exists (read-only consolidator access) — this just needs to be a
+     *  short, clearly-non-vendor value distinct from a real PNR/AWB confirmation. */
+    private String generateLocalProviderRef(UUID bagId) {
+        return "NO-VENDOR-" + bagId.toString().substring(0, 8);
     }
 }

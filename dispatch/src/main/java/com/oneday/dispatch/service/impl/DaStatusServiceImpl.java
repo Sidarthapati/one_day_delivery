@@ -2,17 +2,22 @@ package com.oneday.dispatch.service.impl;
 
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DaCronAssignment;
+import com.oneday.dispatch.domain.DaGpsPing;
 import com.oneday.dispatch.domain.DaStatus;
 import com.oneday.dispatch.domain.DaStatusEnum;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.service.DaStatusService;
+import com.oneday.dispatch.service.GpsFixView;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.dispatch.service.model.DaQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -45,10 +50,13 @@ class DaStatusServiceImpl implements DaStatusService {
     private final Set<UUID> dirty = ConcurrentHashMap.newKeySet();
 
     private final DaStatusRepository daStatusRepository;
+    private final DaGpsPingRepository daGpsPingRepository;
     private final DispatchProperties props;
 
-    DaStatusServiceImpl(DaStatusRepository daStatusRepository, DispatchProperties props) {
+    DaStatusServiceImpl(DaStatusRepository daStatusRepository, DaGpsPingRepository daGpsPingRepository,
+                        DispatchProperties props) {
         this.daStatusRepository = daStatusRepository;
+        this.daGpsPingRepository = daGpsPingRepository;
         this.props = props;
     }
 
@@ -86,9 +94,14 @@ class DaStatusServiceImpl implements DaStatusService {
 
     @Override
     public void updateGps(UUID daId, double lat, double lon, Instant timestamp) {
+        // Append-only breadcrumb FIRST, unconditionally — the route trail must capture every ping even
+        // when the DA has no shift loaded in memory (ad-hoc tracking / route replay). ponytail: one insert
+        // per ping, fine at current DA volume; batch-buffer if ping QPS ever climbs.
+        daGpsPingRepository.save(new DaGpsPing(daId, lat, lon, timestamp));
+
         DaLiveStatus live = liveStatus.get(daId);
         if (live == null) {
-            log.debug("GPS ping for unloaded DA {} ignored", daId);
+            log.debug("GPS ping for unloaded DA {} recorded to trail; live status skipped", daId);
             return;
         }
         live.setLat(lat);
@@ -100,18 +113,18 @@ class DaStatusServiceImpl implements DaStatusService {
         // Heartbeat resumes a silent DA back to IDLE (absent-recovery, design §12.4).
         if (status == DaStatusEnum.OFFLINE || status == DaStatusEnum.ABSENT) {
             updateStatus(daId, DaStatusEnum.IDLE);
-            return;
         }
-        // Proximity to the cron vertex closes the CRON_LOCKED → AT_CRON transition.
-        if (status == DaStatusEnum.CRON_LOCKED) {
-            DaQueue q = queues.get(daId);
-            DaCronAssignment cron = q != null ? q.getCron() : null;
-            if (cron != null
-                    && GeoDistance.meters(lat, lon, cron.getMeetingLat(), cron.getMeetingLon())
-                       <= props.getCron().getProximityMeters()) {
-                updateStatus(daId, DaStatusEnum.AT_CRON);
-            }
-        }
+        // Jul-20: the 200 m geofence is removed. CRON_LOCKED → AT_CRON is now a manual
+        // "Mark arrived" (see markArrivedAtCron) — GPS is display/tracking only, not a gate.
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<GpsFixView> listTrack(UUID daId, Instant from, Instant to) {
+        return daGpsPingRepository.findByDaIdAndRecordedAtBetweenOrderByRecordedAtAsc(daId, from, to)
+                .stream()
+                .map(p -> new GpsFixView(p.getLat(), p.getLon(), p.getRecordedAt()))
+                .toList();
     }
 
     @Override
@@ -140,6 +153,22 @@ class DaStatusServiceImpl implements DaStatusService {
     public DaStatusEnum getStatus(UUID daId) {
         DaLiveStatus live = liveStatus.get(daId);
         return live != null ? live.getStatus() : null;
+    }
+
+    @Override
+    public void markArrivedAtCron(UUID daId) {
+        withDaLock(daId, () -> {
+            DaStatusEnum status = getStatus(daId);
+            if (status == DaStatusEnum.AT_CRON) {
+                return null; // already arrived — idempotent
+            }
+            if (status != DaStatusEnum.CRON_LOCKED) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "DA must be at the meeting (CRON_LOCKED) to mark arrived; was " + status);
+            }
+            updateStatus(daId, DaStatusEnum.AT_CRON);
+            return null;
+        });
     }
 
     @Override

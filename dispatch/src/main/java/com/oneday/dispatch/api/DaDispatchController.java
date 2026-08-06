@@ -12,19 +12,25 @@ import com.oneday.dispatch.dto.request.VanHandoffRequest;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
+import com.oneday.dispatch.service.GpsFixView;
 import com.oneday.dispatch.service.OtpVerificationService;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -51,6 +57,15 @@ public class DaDispatchController {
         this.meetingModePort = meetingModePort;
     }
 
+    /** The DA's task queue for the day (the app's home list). Each item carries taskLat/taskLon for Open-in-Maps. */
+    @GetMapping("/tasks")
+    public List<DaTaskView> tasks(@PathVariable UUID daId,
+                                  @AuthenticationPrincipal AuthUserDetails principal,
+                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        Authz.requireDaSelf(principal, daId);
+        return daTaskService.listTasks(daId, date);
+    }
+
     @PostMapping("/gps")
     public ResponseEntity<Void> gps(@PathVariable UUID daId,
                                     @AuthenticationPrincipal AuthUserDetails principal,
@@ -58,6 +73,30 @@ public class DaDispatchController {
         Authz.requireDaSelf(principal, daId);
         Instant ts = request.timestamp() != null ? request.timestamp() : Instant.now();
         daStatusService.updateGps(daId, request.lat(), request.lon(), ts);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * The DA's GPS breadcrumb trail (route replay / ops "where has this DA been"). Defaults to the
+     * last 24h when {@code from}/{@code to} are omitted. DA-self or ADMIN. Points are oldest-first.
+     */
+    @GetMapping("/track")
+    public List<GpsFixView> track(@PathVariable UUID daId,
+                                  @AuthenticationPrincipal AuthUserDetails principal,
+                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        Authz.requireDaSelf(principal, daId);
+        Instant end = to != null ? to : Instant.now();
+        Instant start = from != null ? from : end.minus(java.time.Duration.ofHours(24));
+        return daStatusService.listTrack(daId, start, end);
+    }
+
+    /** Manual "Mark arrived" at the van meeting vertex (replaces the removed geofence). */
+    @PostMapping("/arrived")
+    public ResponseEntity<Void> arrived(@PathVariable UUID daId,
+                                        @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        daStatusService.markArrivedAtCron(daId);
         return ResponseEntity.noContent().build();
     }
 

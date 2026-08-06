@@ -137,4 +137,13 @@ class GlobalExceptionHandler {
         pd.setDetail(ex.getMessage());
         return pd;
     }
+
+    @ExceptionHandler(com.oneday.orders.service.WalletService.InsufficientWalletBalanceException.class)
+    ProblemDetail handleInsufficientWallet(
+            com.oneday.orders.service.WalletService.InsufficientWalletBalanceException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYMENT_REQUIRED);
+        pd.setTitle("Insufficient wallet balance");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
 }

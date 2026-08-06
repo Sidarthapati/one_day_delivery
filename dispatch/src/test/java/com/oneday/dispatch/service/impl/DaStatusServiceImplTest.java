@@ -4,6 +4,7 @@ import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DaCronAssignment;
 import com.oneday.dispatch.domain.DaStatus;
 import com.oneday.dispatch.domain.DaStatusEnum;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.service.DaStatusService;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +55,7 @@ class DaStatusServiceImplTest {
         });
 
         DispatchProperties props = new DispatchProperties();   // defaults: 200m proximity
-        service = new DaStatusServiceImpl(repo, props);
+        service = new DaStatusServiceImpl(repo, mock(DaGpsPingRepository.class), props);
     }
 
     @Test
@@ -110,7 +111,7 @@ class DaStatusServiceImplTest {
     }
 
     @Test
-    void gpsWithinProximityWhileCronLockedFlipsToAtCron() {
+    void markArrivedFlipsCronLockedToAtCron() {
         UUID da = UUID.randomUUID();
         UUID city = UUID.randomUUID();
         LocalDate today = LocalDate.now();
@@ -119,8 +120,12 @@ class DaStatusServiceImplTest {
         service.initShift(da, city, today, "A", cron);
         service.updateStatus(da, DaStatusEnum.CRON_LOCKED);
 
-        // ~30 m away (well inside the 200 m default) → AT_CRON.
+        // Geofence removed (Jul-20): a GPS ping near the vertex no longer flips status.
         service.updateGps(da, 12.97187, 77.5946, Instant.now());
+        assertThat(service.getStatus(da)).isEqualTo(DaStatusEnum.CRON_LOCKED);
+
+        // Manual "Mark arrived" makes the CRON_LOCKED → AT_CRON transition.
+        service.markArrivedAtCron(da);
         assertThat(service.getStatus(da)).isEqualTo(DaStatusEnum.AT_CRON);
     }
 

@@ -2,9 +2,8 @@ package com.oneday.airline.service.impl;
 
 import com.oneday.airline.config.AirlineProperties;
 import com.oneday.airline.config.ClockConfig;
-import com.oneday.airline.domain.LaneRateCard;
-import com.oneday.airline.repository.LaneRateCardRepository;
-import com.oneday.airline.service.exception.LaneRateCardNotFoundException;
+import com.oneday.airline.consolidator.ConsolidatorLaneRate;
+import com.oneday.airline.consolidator.ConsolidatorRateRepository;
 import com.oneday.airline.service.exception.NoFlightAvailableException;
 import com.oneday.airline.service.provider.FlightProviderPort;
 import org.springframework.stereotype.Component;
@@ -29,23 +28,21 @@ public class FlightSelectionService {
     private static final int MAX_LOOKAHEAD_DAYS = 7;
 
     private final FlightProviderPort flightProviderPort;
-    private final LaneRateCardRepository laneRateCardRepository;
+    private final ConsolidatorRateRepository consolidatorRateRepository;
     private final CostEstimator costEstimator;
     private final AirlineProperties properties;
 
-    FlightSelectionService(FlightProviderPort flightProviderPort, LaneRateCardRepository laneRateCardRepository,
+    FlightSelectionService(FlightProviderPort flightProviderPort, ConsolidatorRateRepository consolidatorRateRepository,
                             CostEstimator costEstimator, AirlineProperties properties) {
         this.flightProviderPort = flightProviderPort;
-        this.laneRateCardRepository = laneRateCardRepository;
+        this.consolidatorRateRepository = consolidatorRateRepository;
         this.costEstimator = costEstimator;
         this.properties = properties;
     }
 
     /** The cheapest flight from {@code originHub} to {@code destHub} that a parcel ready at {@code readyAt} can make. */
     public Selection select(String originHub, String destHub, Instant readyAt) {
-        LaneRateCard rateCard = laneRateCardRepository
-                .findByOriginHubAndDestHubAndStatus(originHub, destHub, "ACTIVE")
-                .orElseThrow(() -> new LaneRateCardNotFoundException(originHub, destHub));
+        ConsolidatorLaneRate rateCard = consolidatorRateRepository.findActiveRate(originHub, destHub);
 
         ZonedDateTime ready = readyAt.atZone(ClockConfig.IST);
         LocalDate date = ready.toLocalDate();
@@ -73,7 +70,7 @@ public class FlightSelectionService {
         throw new NoFlightAvailableException(originHub, destHub);
     }
 
-    private Priced price(FlightProviderPort.FlightCandidate candidate, LocalDate date, LaneRateCard rateCard) {
+    private Priced price(FlightProviderPort.FlightCandidate candidate, LocalDate date, ConsolidatorLaneRate rateCard) {
         ZonedDateTime departure = date.atTime(candidate.departureTime()).atZone(ClockConfig.IST);
         ZonedDateTime arrival = date.atTime(candidate.arrivalTime()).atZone(ClockConfig.IST);
         if (!candidate.arrivalTime().isAfter(candidate.departureTime())) {

@@ -12,5 +12,17 @@ public record OnboardingRequestResponse(
         String rejectionReason,
         UUID reviewedBy,
         Instant reviewedAt,
-        Instant createdAt
+        Instant createdAt,
+        // Business (B2B) onboarding fields — null for non-business requests.
+        String companyName,
+        String businessType,
+        String gstin,
+        String pan,
+        String billingEmail,
+        String cityId,
+        String expectedMonthlyOrders,
+        Boolean gstinVerified,
+        Boolean panVerified,
+        String gstinLegalName,
+        String kycMessage
 ) {}

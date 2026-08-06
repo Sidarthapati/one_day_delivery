@@ -29,6 +29,9 @@ public final class EventStreams {
     // ── Produced by M4 (Orders) → consumed by M3 (grid) ───────────────────
     public static final String TILE_QUEUE_DEPTH   = "orders.tile_queue_depth";
 
+    // ── Produced by M10 (SLA) → consumed by M11, ops/notification service ─
+    public static final String SLA_EVENTS         = "oneday.sla.events";        // M10
+
     // ── Notification fan-out (consumed by the notification service) ──────
     public static final String NOTIFICATIONS_EVENTS = "oneday.notifications.events";
 }

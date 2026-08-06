@@ -4,6 +4,9 @@ import com.oneday.auth.exception.ApiKeyCapExceededException;
 import com.oneday.auth.exception.BadCredentialsException;
 import com.oneday.auth.exception.EmailAlreadyExistsException;
 import com.oneday.auth.exception.ForbiddenException;
+import com.oneday.auth.exception.GoogleAuthNotConfiguredException;
+import com.oneday.auth.exception.InvalidGoogleTokenException;
+import com.oneday.auth.exception.InvalidOtpException;
 import com.oneday.auth.exception.OnboardingRequestAlreadyProcessedException;
 import com.oneday.auth.exception.OnboardingRequestNotFoundException;
 import com.oneday.auth.exception.RoleInUseException;
@@ -26,6 +29,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UserNotFoundException.class)
     public ProblemDetail handleNotFound(UserNotFoundException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler({InvalidGoogleTokenException.class, InvalidOtpException.class})
+    public ProblemDetail handleAuthFailed(RuntimeException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
+    }
+
+    @ExceptionHandler(GoogleAuthNotConfiguredException.class)
+    public ProblemDetail handleNotConfigured(GoogleAuthNotConfiguredException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 
     @ExceptionHandler(EmailAlreadyExistsException.class)

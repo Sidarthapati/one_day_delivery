@@ -3,6 +3,7 @@ package com.oneday.orders.dto;
 import com.oneday.common.domain.enums.DropType;
 import com.oneday.common.domain.enums.PickupType;
 import com.oneday.orders.domain.Address;
+import com.oneday.orders.domain.FundingSource;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
@@ -53,10 +54,21 @@ public class B2bBookingRequest {
 
     @NotNull @PositiveOrZero private Long declaredValuePaise;  // required for B2B insurance/valuation
 
+    // COD: goods' value to collect from the buyer on delivery, remitted to the vendor. Null/0 ⇒
+    // ordinary shipment. Shipping is still credit-billed — COD is orthogonal to the shipping fee.
+    @PositiveOrZero private Long codAmountToCollectPaise;
+
     @NotNull private PickupType pickupType;
     @NotNull private DropType   dropType;
 
-    // No paymentMode — B2B is always credit. No Razorpay fields.
+    // Funding: WALLET debits the prepaid balance, CREDIT draws down the credit limit. Null ⇒
+    // resolved server-side as creditLimit>0 ? CREDIT : WALLET.
+    private FundingSource fundingSource;
+
+    // Optional e-way bill (GST): interstate goods > ₹50k. Advisory-only for now (no NIC validation).
+    @Size(max = 20) private String ewayBillNumber;
+
+    // No paymentMode — B2B shipping is billed to credit or wallet, never a per-parcel gateway charge.
 
     // ── Getters / setters ─────────────────────────────────────────────────────
 
@@ -117,9 +129,18 @@ public class B2bBookingRequest {
     public Long getDeclaredValuePaise()        { return declaredValuePaise; }
     public void setDeclaredValuePaise(Long v)  { this.declaredValuePaise = v; }
 
+    public Long getCodAmountToCollectPaise()        { return codAmountToCollectPaise; }
+    public void setCodAmountToCollectPaise(Long v)  { this.codAmountToCollectPaise = v; }
+
     public PickupType getPickupType()          { return pickupType; }
     public void setPickupType(PickupType v)    { this.pickupType = v; }
 
     public DropType getDropType()              { return dropType; }
     public void setDropType(DropType v)        { this.dropType = v; }
+
+    public FundingSource getFundingSource()        { return fundingSource; }
+    public void setFundingSource(FundingSource v)  { this.fundingSource = v; }
+
+    public String getEwayBillNumber()          { return ewayBillNumber; }
+    public void setEwayBillNumber(String v)    { this.ewayBillNumber = v; }
 }
