@@ -59,11 +59,22 @@ async function createBooking() {
     height_cm: Number(val('height-cm')),
     pickup_type: 'SELF_DROP',
     drop_type: 'HUB_COLLECT',
-    payment_mode: 'COD',
+    payment_mode: 'PREPAID',
   };
 
   setLoading(btn, true);
   try {
+    // COD is no longer accepted (B2B portal work disabled it) — PREPAID needs a captured payment
+    // before the booking call succeeds: mint a gateway order, "pay" it via the mock gateway
+    // (test-mode only, MockPaymentController), then hand the resulting payment id + signature to
+    // the booking call, exactly like a real Razorpay checkout would.
+    const order = await api('POST', '/api/v1/payments/order', request, { 'Idempotency-Key': uuid() });
+    const payment = await api('POST', '/api/v1/payments/mock/pay', { order_id: order.order_id },
+      { 'Idempotency-Key': uuid() });
+    request.razorpay_order_id = payment.razorpay_order_id;
+    request.razorpay_payment_id = payment.razorpay_payment_id;
+    request.razorpay_signature = payment.razorpay_signature;
+
     const data = await api('POST', '/api/v1/b2c/shipments', request, { 'Idempotency-Key': uuid() });
     const ref = data.shipment_ref;
     sessionStorage.setItem('m9demo_shipmentRef', ref);

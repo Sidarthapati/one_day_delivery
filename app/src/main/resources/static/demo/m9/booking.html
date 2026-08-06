@@ -22,9 +22,11 @@
 <main>
   <h1 class="page-title">Step 1 — Book a shipment</h1>
   <p class="page-hint">
-    Creates a real booking (self-drop pickup, hub-collect delivery, cash on delivery — the
-    fastest path through the state machine, no DA/payment-gateway simulation needed). The
-    returned shipment reference carries into the hub step next.
+    Creates a real booking (self-drop pickup, hub-collect delivery, prepaid — cash on delivery
+    is no longer accepted). Behind the scenes this mints a payment order, "pays" it via the mock
+    Razorpay gateway, then submits the booking with the resulting payment credentials — the same
+    sequence a real checkout would follow. The returned shipment reference carries into the hub
+    step next.
   </p>
 
   <div class="card">
@@ -63,7 +65,7 @@
       <div class="field"><label>Width (cm)</label><input id="width-cm" type="number" value="15"></div>
       <div class="field"><label>Height (cm)</label><input id="height-cm" type="number" value="10"></div>
     </div>
-    <p class="page-hint">Pickup: self-drop · Delivery: hub-collect · Payment: cash on delivery (fixed, so this demo needs no DA or payment-gateway steps).</p>
+    <p class="page-hint">Pickup: self-drop · Delivery: hub-collect · Payment: prepaid via the mock gateway (fixed, so this demo needs no DA simulation).</p>
     <button class="btn btn-accent" id="book-btn">Create booking</button>
     <div class="response" id="book-response"></div>
   </div>

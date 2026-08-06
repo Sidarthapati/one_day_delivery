@@ -64,7 +64,12 @@ public class SecurityConfig {
                         // Public "Talk to sales" capture + white-label shipment tracking (token-scoped).
                         .requestMatchers(HttpMethod.POST, "/api/sales/leads").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()
-                        .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
+                        .requestMatchers("/", "/index.html", "/track.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
+                        // M9 demo's static assets (login page + its JS/CSS) — same reasoning as the
+                        // root-level demo above, just nested under /demo/**. The demo pages carry a
+                        // JWT (from sessionStorage) on every real API call; only the static shell needs
+                        // to be reachable before that token exists.
+                        .requestMatchers("/demo/**").permitAll()
                         // Permit the error dispatch (Spring Boot's default). The JWT filter is skipped
                         // on the ERROR dispatch, so without this any 404/500 on an authenticated
                         // endpoint would be masked as a misleading 401.

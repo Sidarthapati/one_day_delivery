@@ -1,6 +1,8 @@
-// airline.js — Steps 6–7: browse a lane's timetable + each flight's simulated status, then look up
-// the AWB M9 booked for a sealed bag and record the two ground-crew confirmations. All response
-// fields are snake_case (backend Jackson config) — confirmed live.
+// airline.js — Steps 6–7: browse the freight consolidator's dated schedule for a lane + each
+// flight's status, then look up the AWB M9 booked for a sealed bag and record the two ground-crew
+// confirmations. The schedule is now a concrete per-date calendar (not a recurring weekly pattern),
+// so the endpoint requires a date. All response fields are snake_case (backend Jackson config) —
+// confirmed live.
 
 document.addEventListener('DOMContentLoaded', () => {
   if (!requireSession()) return;
@@ -28,16 +30,17 @@ async function loadSchedule() {
   const date = val('lane-date');
   container.innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
   try {
-    const flights = await api('GET', `/airline/lanes/${origin}/${dest}/schedule`);
-    if (!flights.length) { container.innerHTML = '<div class="empty-state">No flights on this lane</div>'; return; }
+    const flights = await api('GET', `/airline/lanes/${origin}/${dest}/schedule?date=${date}`);
+    if (!flights.length) { container.innerHTML = '<div class="empty-state">No flights on this lane for that date</div>'; return; }
 
-    // Ask each flight's simulated status in parallel — the same call the real poll job makes.
+    // Ask each flight's status in parallel via the dedicated status endpoint — the same call the
+    // real poll job makes (distinct from the status already on the schedule row above).
     const statuses = await Promise.all(flights.map(f =>
       api('GET', `/airline/flights/${f.flight_no}/${date}/status`).catch(() => null)));
 
     container.innerHTML = `
       <table class="data-table">
-        <thead><tr><th>Flight</th><th>Carrier</th><th>Departs</th><th>Arrives</th><th>Simulated status</th></tr></thead>
+        <thead><tr><th>Flight</th><th>Carrier</th><th>Departs</th><th>Arrives</th><th>Status</th></tr></thead>
         <tbody>
           ${flights.map((f, i) => {
             const s = statuses[i];
@@ -46,8 +49,8 @@ async function loadSchedule() {
               <tr>
                 <td>${esc(f.flight_no)}</td>
                 <td>${esc(f.carrier)}</td>
-                <td>${esc(f.departure_time)}</td>
-                <td>${esc(f.arrival_time)}</td>
+                <td>${fmtTs(f.departure_at)}</td>
+                <td>${fmtTs(f.arrival_at)}</td>
                 <td>${s ? `<span class="badge ${badgeClass}">${esc(s.status)}</span>` : '—'}</td>
               </tr>`;
           }).join('')}
