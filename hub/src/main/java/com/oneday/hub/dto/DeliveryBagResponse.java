@@ -15,13 +15,15 @@ public record DeliveryBagResponse(
         UUID daTerritoryId,
         UUID zoneId,
         UUID standId,
+        /** Null iff standId is null — resolved by the caller, the entity doesn't join to Stand. */
+        String standNo,
         String status,
         int parcelCount,
         int weightGrams) {
 
-    public static DeliveryBagResponse from(DeliveryBag b) {
+    public static DeliveryBagResponse from(DeliveryBag b, String standNo) {
         return new DeliveryBagResponse(b.getId(), b.getBagKind().name(), b.getBagDate(),
                 b.getRoutePlanId(), b.getVanId(), b.getDaTerritoryId(), b.getZoneId(),
-                b.getCurrentStandId(), b.getStatus().name(), b.getParcelCount(), b.getWeightGrams());
+                b.getCurrentStandId(), standNo, b.getStatus().name(), b.getParcelCount(), b.getWeightGrams());
     }
 }
