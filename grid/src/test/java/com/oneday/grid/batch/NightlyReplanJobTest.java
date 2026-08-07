@@ -106,7 +106,9 @@ class NightlyReplanJobTest {
     void applyFallbackIfNeeded_noApprovedProposal_copiesYesterdayAssignments() {
         UUID cityId = UUID.randomUUID();
         UUID yesterdayProposalId = UUID.randomUUID();
-        LocalDate today = LocalDate.now();
+        // Match the job: it reads today/yesterday in IST, so the stubs must too
+        // (otherwise a run near the UTC/IST midnight boundary shifts the dates apart).
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
         Grid g = gridFor(cityId);
         when(gridRepository.findAll()).thenReturn(List.of(g));
 
