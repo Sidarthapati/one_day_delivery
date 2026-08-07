@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>M9 Demo — Login</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<nav>
+  <div class="logo">1DD <span>M9 Demo</span></div>
+</nav>
+<main style="max-width:480px">
+  <h1 class="page-title">Testing the airline module end to end</h1>
+  <p class="page-hint">
+    One account drives the whole flow: booking a shipment, receiving/bagging/sealing it at a hub,
+    and viewing M9's booking, tracking, and ground-crew actions. Register once (creates a plain
+    customer account) or log back in with one you already made.
+  </p>
+
+  <div class="card">
+    <h2><span class="step">1</span> Register</h2>
+    <div class="form-row">
+      <div class="field"><label>Name</label><input id="reg-name" placeholder="Test Customer"></div>
+      <div class="field"><label>Phone</label><input id="reg-phone" placeholder="+919876543210"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>Email</label><input id="reg-email" type="email" placeholder="you@example.com"></div>
+      <div class="field"><label>Password</label><input id="reg-password" type="password" placeholder="min 8 chars"></div>
+    </div>
+    <button class="btn btn-accent" id="register-btn">Register &amp; continue</button>
+    <div class="response" id="register-response"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="step">2</span> Or log in</h2>
+    <div class="form-row">
+      <div class="field"><label>Email</label><input id="login-email" type="email"></div>
+      <div class="field"><label>Password</label><input id="login-password" type="password"></div>
+    </div>
+    <button class="btn btn-primary" id="login-btn">Log in</button>
+    <div class="response" id="login-response"></div>
+  </div>
+</main>
+<script src="js/core.js"></script>
+<script src="js/auth.js"></script>
+</body>
+</html>

@@ -1,10 +1,12 @@
 package com.oneday.routing.api;
 
+import com.oneday.routing.dto.BreakdownReportRequest;
 import com.oneday.routing.dto.RecoveryRequest;
 import com.oneday.routing.service.RecoveryService;
 import com.oneday.routing.service.model.RecoverySummary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -41,5 +43,14 @@ public class RecoveryController {
         log.info("Recovery requested for van {} → recovery van {} ({})", vanId, request.recoveryVanId(), date);
         return recoveryService.recoverVan(vanId, request.recoveryVanId(), request.cityId(), date,
                 request.lastLat(), request.lastLon());
+    }
+
+    /** Van driver reports their own breakdown — raises the alert; ops dispatches recovery via /recovery. */
+    @PostMapping("/vans/{vanId}/breakdown")
+    public ResponseEntity<Void> breakdown(@PathVariable UUID vanId, @RequestBody BreakdownReportRequest request) {
+        LocalDate date = request.dateOrToday(LocalDate.now(clock));
+        log.info("Breakdown reported by driver for van {} ({})", vanId, date);
+        recoveryService.reportBreakdown(vanId, request.cityId(), date, request.lat(), request.lon());
+        return ResponseEntity.accepted().build();
     }
 }

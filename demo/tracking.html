@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>M9 Demo — Tracking</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<nav>
+  <div class="logo">1DD <span>M9 Demo</span></div>
+  <div class="links">
+    <a href="booking.html">1. Book</a>
+    <a href="hub.html">2–5. Hub</a>
+    <a href="airline.html">6–7. Airline</a>
+    <a href="tracking.html">8. Tracking</a>
+  </div>
+  <div style="display:flex;align-items:center;gap:1rem">
+    <span id="user-badge"></span>
+    <button id="logout-btn">Log out</button>
+  </div>
+</nav>
+<main>
+  <h1 class="page-title">Step 8 — Live tracking</h1>
+  <p class="page-hint">
+    Polls the customer tracking endpoint every few seconds. The state label always updates
+    (BOOKED → ... → DEPARTED/LANDED as the real 5-minute status job notices the flight's timing).
+    Once the parcel is airborne, a simulated position appears and the plane marker below moves.
+  </p>
+
+  <div class="card">
+    <div class="form-row">
+      <div class="field"><label>Shipment ref</label><input id="track-ref"></div>
+    </div>
+    <button class="btn btn-accent" id="track-btn">Start tracking</button>
+    <button class="btn btn-ghost" id="stop-btn" style="display:none">Stop</button>
+    <div style="margin-top:1rem">
+      <span class="badge badge-blue" id="state-badge" style="display:none"></span>
+      <span id="position-status" style="margin-left:.5rem;color:#666;font-size:.85rem"></span>
+    </div>
+    <div id="map"></div>
+    <div class="response" id="track-response"></div>
+  </div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="js/core.js"></script>
+<script src="js/tracking.js"></script>
+</body>
+</html>

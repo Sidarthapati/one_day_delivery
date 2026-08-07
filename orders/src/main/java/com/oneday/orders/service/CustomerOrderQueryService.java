@@ -2,6 +2,7 @@ package com.oneday.orders.service;
 
 import com.oneday.orders.dto.MyShipmentDetailResponse;
 import com.oneday.orders.dto.MyShipmentSummaryResponse;
+import com.oneday.orders.dto.ShipmentLabelResponse;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,4 +30,15 @@ public interface CustomerOrderQueryService {
      * @return the detail, or empty if no such ref exists for this caller
      */
     Optional<MyShipmentDetailResponse> myShipmentDetail(String userId, String shipmentRef);
+
+    /**
+     * Print-ready shipping-label data for one of the caller's shipments (Model A: the merchant
+     * prints and affixes it). Scoped to the caller — a shipment they did not book is not found.
+     * The seller block is populated from the caller's B2B account when applicable.
+     *
+     * @param userId      the authenticated caller's id (M1 user UUID, as a string)
+     * @param shipmentRef the shipment reference
+     * @return the label data, or empty if no such ref exists for this caller
+     */
+    Optional<ShipmentLabelResponse> shipmentLabel(String userId, String shipmentRef);
 }

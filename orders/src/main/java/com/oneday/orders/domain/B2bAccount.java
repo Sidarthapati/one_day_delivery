@@ -3,11 +3,14 @@ package com.oneday.orders.domain;
 import com.oneday.common.domain.MutableBaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Entity
@@ -50,7 +53,87 @@ public class B2bAccount extends MutableBaseEntity {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 
+    // Prepaid wallet balance (V4_28). Recharge-then-ship funding source; credit stays separate.
+    @Column(name = "wallet_balance_paise", nullable = false)
+    private Long walletBalancePaise = 0L;
+
     // M1 user authorized to book against this account's credit (nullable = unrestricted).
     @Column(name = "owner_user_id")
     private UUID ownerUserId;
+
+    // ── KYC / verification state (V4_23) ───────────────────────────────────────
+    @Enumerated(EnumType.STRING)
+    @Column(name = "verification_status", length = 20, nullable = false)
+    private B2bVerificationStatus verificationStatus = B2bVerificationStatus.UNVERIFIED;
+
+    @Column(name = "business_type", length = 30)
+    private String businessType;
+
+    @Column(name = "pan", length = 10)
+    private String pan;
+
+    @Column(name = "gstin_verified")
+    private Boolean gstinVerified;
+
+    @Column(name = "pan_verified")
+    private Boolean panVerified;
+
+    @Column(name = "bank_account_masked", length = 30)
+    private String bankAccountMasked;
+
+    @Column(name = "bank_ifsc", length = 15)
+    private String bankIfsc;
+
+    @Column(name = "bank_verified")
+    private Boolean bankVerified;
+
+    // ── Payout bank account (V4_26) — how COD is remitted to the merchant ──────────
+    @Column(name = "bank_account_number", length = 30)
+    private String bankAccountNumber;
+
+    @Column(name = "bank_beneficiary_name", length = 200)
+    private String bankBeneficiaryName;
+
+    @Column(name = "bank_name", length = 120)
+    private String bankName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "bank_verification_state", length = 20, nullable = false)
+    private BankVerificationState bankVerificationState = BankVerificationState.NONE;
+
+    // Provider reference for the penny-drop / fund-account validation (RazorpayX etc).
+    @Column(name = "bank_penny_drop_ref", length = 80)
+    private String bankPennyDropRef;
+
+    @Column(name = "bank_verified_at")
+    private Instant bankVerifiedAt;
+
+    // Comma-separated emails notified when a COD payout is made (Delhivery-parity).
+    @Column(name = "cod_notify_emails", length = 500)
+    private String codNotifyEmails;
+
+    // ── White-label branding for the public tracking page (V4_31) ─────────────────
+    @Column(name = "brand_name", length = 120)
+    private String brandName;
+
+    @Column(name = "brand_logo_url", length = 500)
+    private String brandLogoUrl;
+
+    @Column(name = "brand_color", length = 20)
+    private String brandColor;
+
+    @Column(name = "support_email", length = 254)
+    private String supportEmail;
+
+    @Column(name = "support_phone", length = 20)
+    private String supportPhone;
+
+    @Column(name = "kyc_submitted_at")
+    private Instant kycSubmittedAt;
+
+    @Column(name = "activated_at")
+    private Instant activatedAt;
+
+    @Column(name = "rejection_reason", length = 500)
+    private String rejectionReason;
 }

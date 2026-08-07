@@ -53,10 +53,9 @@ class BookingE2eTest extends OrdersE2eSupport {
         assertThat(shipmentRepository.findByShipmentRef(ref)).isPresent();
     }
 
-    // A B2C customer pays cash on delivery (COD): no gateway interaction, the shipment books and
-    // the payment summary mode is COD.
+    // COD has been withdrawn for consumers — a COD booking is rejected with 422, nothing persists.
     @Test
-    void b2cCod_booksWithoutGateway() throws Exception {
+    void b2cCod_isRejected() throws Exception {
         String token = tokenFor("B2C_CUSTOMER", randomUserId());
 
         mvc.perform(post("/api/v1/b2c/shipments")
@@ -64,9 +63,7 @@ class BookingE2eTest extends OrdersE2eSupport {
                         .header("Idempotency-Key", idemKey())
                         .contentType("application/json")
                         .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.payment.mode").value("COD"))
-                .andExpect(jsonPath("$.shipment_ref").exists());
+                .andExpect(status().isUnprocessableEntity());
     }
 
     // A peer-to-peer (C2C) customer books on the same retail endpoint: the persisted customer_type
@@ -79,7 +76,7 @@ class BookingE2eTest extends OrdersE2eSupport {
                         .header("Authorization", "Bearer " + token)
                         .header("Idempotency-Key", idemKey())
                         .contentType("application/json")
-                        .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
+                        .content(json.writeValueAsString(b2cRequest(PaymentMode.PREPAID))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.customer_type").value("C2C"));
     }
@@ -95,7 +92,7 @@ class BookingE2eTest extends OrdersE2eSupport {
                         .header("Authorization", "Bearer " + token)
                         .header("Idempotency-Key", idemKey())
                         .contentType("application/json")
-                        .content(json.writeValueAsString(b2cRequest(PaymentMode.COD))))
+                        .content(json.writeValueAsString(b2cRequest(PaymentMode.PREPAID))))
                 .andExpect(status().isUnprocessableEntity());
     }
 

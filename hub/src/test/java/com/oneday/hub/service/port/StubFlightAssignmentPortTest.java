@@ -20,7 +20,7 @@ class StubFlightAssignmentPortTest {
 
         // Ready at IST midnight → catches the 06:00 departure; cutoff = 06:00 − 5h = 01:00 IST.
         ZonedDateTime readyIst = ZonedDateTime.of(2026, 7, 3, 0, 0, 0, 0, ClockConfig.IST);
-        var assignment = port.assignFlight("MUMBAI", readyIst.toInstant());
+        var assignment = port.assignFlight("DELHI", "MUMBAI", readyIst.toInstant());
 
         ZonedDateTime departure = ZonedDateTime.of(2026, 7, 3, 6, 0, 0, 0, ClockConfig.IST);
         ZonedDateTime cutoff = assignment.bagCutoff().atZone(ClockConfig.IST);

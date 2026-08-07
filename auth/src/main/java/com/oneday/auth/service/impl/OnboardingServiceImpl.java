@@ -3,7 +3,9 @@ package com.oneday.auth.service.impl;
 import com.oneday.auth.domain.OnboardingRequest;
 import com.oneday.auth.domain.RoleAuditLog;
 import com.oneday.auth.domain.User;
+import com.oneday.auth.dto.request.BusinessOnboardingRequest;
 import com.oneday.auth.dto.request.OnboardingSubmitRequest;
+import com.oneday.auth.dto.response.BusinessOnboardingResponse;
 import com.oneday.auth.dto.response.OnboardingRequestResponse;
 import com.oneday.auth.exception.EmailAlreadyExistsException;
 import com.oneday.auth.exception.OnboardingRequestAlreadyProcessedException;
@@ -13,7 +15,16 @@ import com.oneday.auth.repository.OnboardingRequestRepository;
 import com.oneday.auth.repository.RoleAuditLogRepository;
 import com.oneday.auth.repository.RoleRepository;
 import com.oneday.auth.repository.UserRepository;
+import com.oneday.auth.config.OnboardingProperties;
 import com.oneday.auth.service.OnboardingService;
+import com.oneday.common.port.B2bProvisioningPort;
+import com.oneday.common.port.KycPort;
+import com.oneday.common.port.dto.B2bProvisioningRequest;
+import com.oneday.common.port.dto.kyc.GstinResult;
+import com.oneday.common.port.dto.kyc.PanResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,22 +36,37 @@ import java.util.UUID;
 @Service
 class OnboardingServiceImpl implements OnboardingService {
 
+    private static final Logger LOG = LoggerFactory.getLogger(OnboardingServiceImpl.class);
+    private static final String B2B_ROLE = "B2B_USER";
+    /** Sentinel actor for auto-approvals (no admin performed the action). */
+    private static final UUID SYSTEM_ACTOR = new UUID(0L, 0L);
+
     private final OnboardingRequestRepository onboardingRepository;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
     private final RoleAuditLogRepository auditLogRepository;
+    private final KycPort kycPort;
+    private final OnboardingProperties onboardingProps;
+    // Optional: implemented by orders (M4). Absent in an auth-only context → provisioning is skipped.
+    private final ObjectProvider<B2bProvisioningPort> provisioningPort;
 
     OnboardingServiceImpl(OnboardingRequestRepository onboardingRepository,
                           UserRepository userRepository,
                           RoleRepository roleRepository,
                           PasswordEncoder passwordEncoder,
-                          RoleAuditLogRepository auditLogRepository) {
+                          RoleAuditLogRepository auditLogRepository,
+                          KycPort kycPort,
+                          OnboardingProperties onboardingProps,
+                          ObjectProvider<B2bProvisioningPort> provisioningPort) {
         this.onboardingRepository = onboardingRepository;
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.auditLogRepository = auditLogRepository;
+        this.kycPort = kycPort;
+        this.onboardingProps = onboardingProps;
+        this.provisioningPort = provisioningPort;
     }
 
     @Override
@@ -66,6 +92,94 @@ class OnboardingServiceImpl implements OnboardingService {
     }
 
     @Override
+    @Transactional
+    public BusinessOnboardingResponse submitBusiness(BusinessOnboardingRequest request) {
+        if (userRepository.existsByEmail(request.email()) || onboardingRepository.existsByEmail(request.email())) {
+            throw new EmailAlreadyExistsException(request.email());
+        }
+
+        // Run KYC now so the verdicts drive auto-approval / the ADMIN queue. For a business the
+        // PAN is embedded in the GSTIN, so a verified/active GSTIN validates it — and the individual
+        // PAN-verify API needs a date of birth we don't collect for a company. Derive PAN from GSTIN.
+        GstinResult gstin = kycPort.verifyGstin(request.gstin());
+        boolean panMatches = gstin.verified() && gstinEmbeddedPanMatches(request.gstin(), request.pan());
+        PanResult pan = panMatches
+                ? new PanResult(true, request.pan(), request.name(), true, "Verified via GSTIN")
+                : PanResult.failed(request.pan(),
+                        gstin.verified() ? "PAN does not match the GSTIN" : "Pending GSTIN verification");
+        boolean needsReview = !gstin.verified() || !pan.verified();
+
+        var r = new OnboardingRequest();
+        r.setEmail(request.email());
+        r.setName(request.name());
+        r.setPhone(request.phone());
+        r.setRequestedRole(B2B_ROLE);
+        r.setPasswordHash(passwordEncoder.encode(request.password()));
+        r.setStatus("PENDING");
+        r.setCompanyName(request.companyName());
+        r.setBusinessType(request.businessType());
+        r.setGstin(request.gstin());
+        r.setPan(request.pan());
+        r.setBillingEmail(request.billingEmail());
+        r.setCityId(request.cityId());
+        r.setExpectedMonthlyOrders(request.expectedMonthlyOrders());
+        r.setGstinVerified(gstin.verified());
+        r.setGstinLegalName(gstin.legalName());
+        r.setPanVerified(pan.verified());
+        r.setKycMessage(needsReview ? kycMessage(gstin, pan) : "All checks passed");
+        r = onboardingRepository.save(r);
+
+        // Auto-approve the common case: clean KYC + a small merchant → instant activation, no
+        // admin queue. Only KYC failures (or a flagged business type) fall through to review.
+        boolean autoApproved = false;
+        if (autoApproveEligible(needsReview, request.businessType(), request.expectedMonthlyOrders())) {
+            activate(r, SYSTEM_ACTOR);
+            autoApproved = true;
+        }
+
+        return new BusinessOnboardingResponse(
+                r.getId(), r.getStatus(), gstin.verified(), gstin.legalName(),
+                pan.verified(), needsReview, autoApproved, r.getKycMessage());
+    }
+
+    /** True when a business onboarding can skip the ADMIN queue and activate immediately. */
+    private boolean autoApproveEligible(boolean needsReview, String businessType, String monthlyBand) {
+        var cfg = onboardingProps.getAutoApprove();
+        if (!cfg.isEnabled() || needsReview) return false;
+        if (businessType != null && cfg.getReviewBusinessTypes().contains(businessType)) return false;
+        // Large merchants (declared volume at/above the threshold) always get a human look.
+        if (monthlyOrdersFloor(monthlyBand) >= cfg.getMaxMonthlyOrders()) return false;
+        // Self-signup is prepaid (credit 0) today; the credit gate bites once signup collects a
+        // requested line. 0 <= maxCreditPaise is always true, so prepaid onboardings pass.
+        return 0L <= cfg.getMaxCreditPaise();
+    }
+
+    /** Lower bound of a declared volume band; 0 when the band is null/unknown (never large). */
+    private static int monthlyOrdersFloor(String band) {
+        if (band == null) return 0;
+        return switch (band.trim()) {
+            case "200-500" -> 200;
+            case "500-1000" -> 500;
+            case "1000-2000" -> 1000;
+            case "2000+" -> 2000;
+            default -> 0; // "0-200" and anything unrecognised
+        };
+    }
+
+    /** A GSTIN embeds its holder's PAN at positions 3–12; check the submitted PAN matches. */
+    private static boolean gstinEmbeddedPanMatches(String gstin, String pan) {
+        if (gstin == null || pan == null || gstin.length() < 12) return false;
+        return gstin.substring(2, 12).equalsIgnoreCase(pan.trim());
+    }
+
+    private static String kycMessage(GstinResult gstin, PanResult pan) {
+        StringBuilder sb = new StringBuilder();
+        if (!gstin.verified()) sb.append("GSTIN: ").append(gstin.message());
+        if (!pan.verified()) sb.append(sb.length() > 0 ? " · " : "").append("PAN: ").append(pan.message());
+        return sb.toString();
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public List<OnboardingRequestResponse> listAll() {
         return onboardingRepository.findAllByOrderByCreatedAtDesc().stream()
@@ -82,7 +196,12 @@ class OnboardingServiceImpl implements OnboardingService {
         if (!"PENDING".equals(onboardingRequest.getStatus())) {
             throw new OnboardingRequestAlreadyProcessedException();
         }
+        activate(onboardingRequest, actorId);
+    }
 
+    /** Creates the user, audits the role grant, provisions a B2B account (if applicable), and
+     *  marks the request APPROVED. Shared by ADMIN approval and auto-approval (actor = SYSTEM). */
+    private void activate(OnboardingRequest onboardingRequest, UUID actorId) {
         if (userRepository.existsByEmail(onboardingRequest.getEmail())) {
             throw new EmailAlreadyExistsException(onboardingRequest.getEmail());
         }
@@ -98,18 +217,44 @@ class OnboardingServiceImpl implements OnboardingService {
         user.setPasswordHash(onboardingRequest.getPasswordHash());
         user.setRole(role);
         user.setActive(true);
-        user.setMustChangePassword(true);
+        // The applicant set their own password during signup, so no forced change on first login.
+        user.setMustChangePassword(false);
         user = userRepository.save(user);
 
-        var log = new RoleAuditLog();
-        log.setActorId(actorId);
-        log.setTargetUserId(user.getId());
-        log.setAction("CREATE");
-        log.setNewRole(role.getName());
-        auditLogRepository.save(log);
+        var auditLog = new RoleAuditLog();
+        auditLog.setActorId(actorId);
+        auditLog.setTargetUserId(user.getId());
+        auditLog.setAction("CREATE");
+        auditLog.setNewRole(role.getName());
+        auditLogRepository.save(auditLog);
+
+        // Business onboarding: provision the B2B account in orders (M4) via the port.
+        if (B2B_ROLE.equals(onboardingRequest.getRequestedRole())) {
+            B2bProvisioningPort port = provisioningPort.getIfAvailable();
+            if (port != null) {
+                port.provisionAccount(new B2bProvisioningRequest(
+                        user.getId(),
+                        onboardingRequest.getCompanyName(),
+                        onboardingRequest.getBusinessType(),
+                        onboardingRequest.getGstin(),
+                        onboardingRequest.getPan(),
+                        onboardingRequest.getBillingEmail(),
+                        onboardingRequest.getCityId(),
+                        Boolean.TRUE.equals(onboardingRequest.getGstinVerified()),
+                        Boolean.TRUE.equals(onboardingRequest.getPanVerified()),
+                        0L,       // credit limit — prepaid until a credit line is approved
+                        (short) 0 // payment terms days
+                ));
+            } else {
+                LOG.warn("B2bProvisioningPort unavailable — B2B account for user {} not provisioned",
+                        user.getId());
+            }
+        }
 
         onboardingRequest.setStatus("APPROVED");
-        onboardingRequest.setReviewedBy(actorId);
+        // Auto-approval has no human reviewer: reviewed_by has an FK to users(id), so the SYSTEM
+        // sentinel (all-zeros UUID) would violate it. Record NULL — reviewedAt still marks when.
+        onboardingRequest.setReviewedBy(SYSTEM_ACTOR.equals(actorId) ? null : actorId);
         onboardingRequest.setReviewedAt(Instant.now());
         onboardingRepository.save(onboardingRequest);
     }
@@ -135,6 +280,10 @@ class OnboardingServiceImpl implements OnboardingService {
         return new OnboardingRequestResponse(
                 r.getId(), r.getEmail(), r.getName(), r.getRequestedRole(),
                 r.getStatus(), r.getRejectionReason(), r.getReviewedBy(),
-                r.getReviewedAt(), r.getCreatedAt());
+                r.getReviewedAt(), r.getCreatedAt(),
+                r.getCompanyName(), r.getBusinessType(), r.getGstin(), r.getPan(),
+                r.getBillingEmail(), r.getCityId(), r.getExpectedMonthlyOrders(),
+                r.getGstinVerified(), r.getPanVerified(),
+                r.getGstinLegalName(), r.getKycMessage());
     }
 }

@@ -12,6 +12,7 @@ import com.oneday.dispatch.dto.request.VanHandoffRequest;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
+import com.oneday.dispatch.service.GpsFixView;
 import com.oneday.dispatch.service.OtpVerificationService;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -75,6 +76,21 @@ public class DaDispatchController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * The DA's GPS breadcrumb trail (route replay / ops "where has this DA been"). Defaults to the
+     * last 24h when {@code from}/{@code to} are omitted. DA-self or ADMIN. Points are oldest-first.
+     */
+    @GetMapping("/track")
+    public List<GpsFixView> track(@PathVariable UUID daId,
+                                  @AuthenticationPrincipal AuthUserDetails principal,
+                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        Authz.requireDaSelf(principal, daId);
+        Instant end = to != null ? to : Instant.now();
+        Instant start = from != null ? from : end.minus(java.time.Duration.ofHours(24));
+        return daStatusService.listTrack(daId, start, end);
+    }
+
     /** Manual "Mark arrived" at the van meeting vertex (replaces the removed geofence). */
     @PostMapping("/arrived")
     public ResponseEntity<Void> arrived(@PathVariable UUID daId,
@@ -115,6 +131,14 @@ public class DaDispatchController {
         Authz.requireDaSelf(principal, daId);
         String reason = request != null ? request.reason() : null;
         return daTaskService.markFailed(daId, taskId, reason);
+    }
+
+    /** DA-initiated re-attempt of a FAILED task: re-queue it at the end of the DA's list this shift. */
+    @PostMapping("/tasks/{taskId}/reattempt")
+    public DaTaskView reattempt(@PathVariable UUID daId, @PathVariable UUID taskId,
+                                @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        return daTaskService.reattempt(daId, taskId);
     }
 
     @PostMapping("/tasks/{taskId}/drop-collected")

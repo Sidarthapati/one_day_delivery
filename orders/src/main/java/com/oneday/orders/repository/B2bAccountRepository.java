@@ -19,6 +19,8 @@ public interface B2bAccountRepository extends JpaRepository<B2bAccount, UUID> {
 
     Optional<B2bAccount> findByBillingEmail(String billingEmail);
 
+    Optional<B2bAccount> findByOwnerUserId(UUID ownerUserId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM B2bAccount a WHERE a.id = :id")
     Optional<B2bAccount> findByIdForUpdate(@Param("id") UUID id);

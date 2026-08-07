@@ -114,6 +114,10 @@ public class DispatchProperties {
         private int heartbeatIntervalSeconds = 30;
         /** How often dirty in-memory status rows are batch-flushed to {@code da_status}. */
         private int flushIntervalSeconds = 120;
+        /** Append-only {@code da_gps_ping} trail rows older than this many days are purged daily. */
+        private int trailRetentionDays = 30;
+        /** Cron for the trail purge (evaluated in {@code dispatch.shift.zone}); default 03:30 daily. */
+        private String trailPurgeCron = "0 30 3 * * *";
 
         public int getHeartbeatIntervalSeconds() { return heartbeatIntervalSeconds; }
         public void setHeartbeatIntervalSeconds(int heartbeatIntervalSeconds) {
@@ -123,6 +127,12 @@ public class DispatchProperties {
         public void setFlushIntervalSeconds(int flushIntervalSeconds) {
             this.flushIntervalSeconds = flushIntervalSeconds;
         }
+        public int getTrailRetentionDays() { return trailRetentionDays; }
+        public void setTrailRetentionDays(int trailRetentionDays) {
+            this.trailRetentionDays = trailRetentionDays;
+        }
+        public String getTrailPurgeCron() { return trailPurgeCron; }
+        public void setTrailPurgeCron(String trailPurgeCron) { this.trailPurgeCron = trailPurgeCron; }
     }
 
     public static class Osrm {

@@ -21,7 +21,7 @@ class PickupOtpE2eTest extends OrdersE2eSupport {
     // shipment PICKUP_ASSIGNED → PICKED_UP.
     @Test
     void verifyOtp_transitionsToPickedUp() throws Exception {
-        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
         drive(ref, ShipmentState.PICKUP_ASSIGNED);
         String otp = pickupOtpService.generate(idOf(ref));   // the SMS the sender would receive
 
@@ -39,7 +39,7 @@ class PickupOtpE2eTest extends OrdersE2eSupport {
     // A wrong OTP is rejected with 422 and the shipment stays in PICKUP_ASSIGNED.
     @Test
     void verifyWrongOtp_returns422() throws Exception {
-        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
         drive(ref, ShipmentState.PICKUP_ASSIGNED);
         String real = pickupOtpService.generate(idOf(ref));
         String wrong = real.equals("000000") ? "111111" : "000000";
@@ -58,7 +58,7 @@ class PickupOtpE2eTest extends OrdersE2eSupport {
     // The DA can request a fresh OTP when the sender didn't receive the first one.
     @Test
     void resendOtp_returnsNewCode() throws Exception {
-        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
         drive(ref, ShipmentState.PICKUP_ASSIGNED);
         pickupOtpService.generate(idOf(ref));
 
@@ -72,7 +72,7 @@ class PickupOtpE2eTest extends OrdersE2eSupport {
     // Only a delivery associate may verify a pickup OTP — a customer is refused with 403.
     @Test
     void verifyWrongRole_returns403() throws Exception {
-        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
         drive(ref, ShipmentState.PICKUP_ASSIGNED);
 
         mvc.perform(post("/internal/v1/shipments/{ref}/pickup-otp/verify", ref)

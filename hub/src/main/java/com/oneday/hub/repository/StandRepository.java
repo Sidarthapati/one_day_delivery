@@ -32,4 +32,7 @@ public interface StandRepository extends JpaRepository<Stand, UUID> {
 
     /** Total physical stands at a hub (the occupancy denominator, §11). */
     long countByHubId(UUID hubId);
+
+    /** Every stand at a hub, for the floor directory (console) — ordered by zone, stand_no. */
+    List<Stand> findByHubIdOrderByZoneAscStandNoAsc(UUID hubId);
 }
