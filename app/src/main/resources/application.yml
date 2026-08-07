@@ -75,15 +75,19 @@ airline:
     MAA: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
 
 # M9 freight consolidator (mocked). Read-only access to their schedule/status/rate data lives in a
-# separate schema, consolidator_mock, in the SAME Postgres instance as spring.datasource — reached
-# through its own DataSource + Flyway history (see ConsolidatorDataSourceConfig), never through JPA.
-# CONSOLIDATOR_DATASOURCE_* env vars point at the real consolidator DB in prod; local/shared-dev
-# default to the same host/db/role as spring.datasource, just a different schema.
+# separate schema, consolidator_mock, reached through its own DataSource + Flyway history (see
+# ConsolidatorDataSourceConfig), never through JPA. This DB is REQUIRED wherever M9/airline runs
+# (the flight provider + AWB booking hard-depend on it — there is no stub fallback).
+#
+# NO localhost fallback here on purpose: a cloud env that forgets CONSOLIDATOR_DATASOURCE_* must
+# fail fast at boot ("Could not resolve placeholder CONSOLIDATOR_DATASOURCE_URL") instead of
+# silently dialing localhost and dying with a confusing "connection refused". Local dev's localhost
+# default lives in application-dev.yml, so `SPRING_PROFILES_ACTIVE=dev` still just works.
 consolidator:
   datasource:
-    url: ${CONSOLIDATOR_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday?currentSchema=consolidator_mock}
-    username: ${CONSOLIDATOR_DATASOURCE_USERNAME:oneday}
-    password: ${CONSOLIDATOR_DATASOURCE_PASSWORD:secret}
+    url: ${CONSOLIDATOR_DATASOURCE_URL}
+    username: ${CONSOLIDATOR_DATASOURCE_USERNAME}
+    password: ${CONSOLIDATOR_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
 # Live tracking (M4). Per-city hub + airport coordinates for the static-node fallbacks and the

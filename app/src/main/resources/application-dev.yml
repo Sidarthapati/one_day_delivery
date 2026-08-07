@@ -10,3 +10,12 @@
 spring:
   rabbitmq:
     addresses: ${CLOUDAMQP_URL}
+
+# M9 freight consolidator — local dev reads a consolidator_mock schema in the same local Postgres
+# as spring.datasource (a dev convenience). The base application.yml deliberately has NO fallback,
+# so cloud envs must set CONSOLIDATOR_DATASOURCE_* explicitly. Override here via env if desired.
+consolidator:
+  datasource:
+    url: ${CONSOLIDATOR_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday?currentSchema=consolidator_mock}
+    username: ${CONSOLIDATOR_DATASOURCE_USERNAME:oneday}
+    password: ${CONSOLIDATOR_DATASOURCE_PASSWORD:secret}
