@@ -61,66 +61,73 @@ class NightlyReplanJobTest {
 
     // ---- A3 tests ----------------------------------------------------------
 
+    // The nightly plan runs once per shift, so per-city counts double (2 shifts).
+
     @Test
-    void run_iteratesAllConfiguredCities_callsReplanOnce() {
+    void run_iteratesAllConfiguredCities_callsReplanPerShift() {
         UUID c1 = UUID.randomUUID(), c2 = UUID.randomUUID(), c3 = UUID.randomUUID();
-        // Pre-create grids before passing to thenReturn to avoid nested-stubbing errors
         Grid g1 = gridFor(c1), g2 = gridFor(c2), g3 = gridFor(c3);
         when(gridRepository.findAll()).thenReturn(List.of(g1, g2, g3));
-        when(daRosterPort.getAvailableDaIds(any(), any())).thenReturn(List.of(UUID.randomUUID()));
+        when(daRosterPort.getAvailableDaIds(any(), any(), any())).thenReturn(List.of(UUID.randomUUID()));
 
         job.run();
 
-        verify(gridReplanService, times(3)).replan(any(), any(), anyList());
+        // 3 cities × 2 shifts
+        verify(gridReplanService, times(6)).replan(any(), any(), any(), anyList());
     }
 
     @Test
-    void run_noDasFromRoster_stillCallsReplanWithEmptyList() {
+    void run_noDasFromRoster_stillCallsReplanWithEmptyList_perShift() {
         UUID cityId = UUID.randomUUID();
         Grid g = gridFor(cityId);
         when(gridRepository.findAll()).thenReturn(List.of(g));
-        when(daRosterPort.getAvailableDaIds(eq(cityId), any())).thenReturn(List.of());
+        when(daRosterPort.getAvailableDaIds(eq(cityId), any(), any())).thenReturn(List.of());
 
         job.run();
 
-        verify(gridReplanService).replan(eq(cityId), any(), eq(List.of()));
+        verify(gridReplanService, times(2)).replan(eq(cityId), any(), any(), eq(List.of()));
     }
 
     @Test
-    void checkEscalation_noApprovedProposal_queriesProposalRepository() {
+    void checkEscalation_noApprovedProposal_queriesProposalRepositoryPerShift() {
         UUID cityId = UUID.randomUUID();
         Grid g = gridFor(cityId);
         when(gridRepository.findAll()).thenReturn(List.of(g));
-        when(proposalRepository.findByCityIdAndValidForDateAndStatus(eq(cityId), any(), eq(ProposalStatus.APPROVED)))
+        when(proposalRepository.findByCityIdAndValidForDateAndShiftAndStatus(eq(cityId), any(), any(), eq(ProposalStatus.APPROVED)))
                 .thenReturn(Optional.empty());
 
         job.checkEscalation();
 
-        verify(proposalRepository).findByCityIdAndValidForDateAndStatus(eq(cityId), any(), eq(ProposalStatus.APPROVED));
+        verify(proposalRepository, times(2))
+                .findByCityIdAndValidForDateAndShiftAndStatus(eq(cityId), any(), any(), eq(ProposalStatus.APPROVED));
     }
 
     @Test
     void applyFallbackIfNeeded_noApprovedProposal_copiesYesterdayAssignments() {
         UUID cityId = UUID.randomUUID();
         UUID yesterdayProposalId = UUID.randomUUID();
+        LocalDate today = LocalDate.now();
         Grid g = gridFor(cityId);
         when(gridRepository.findAll()).thenReturn(List.of(g));
 
         AssignmentProposal yesterdayProposal = AssignmentProposal.builder()
-                .cityId(cityId).validForDate(LocalDate.now().minusDays(1))
+                .cityId(cityId).validForDate(today.minusDays(1))
                 .status(ProposalStatus.APPROVED).proposalType(ProposalType.NIGHTLY)
                 .solverType(SolverType.CP_SAT).adjacencySource(AdjacencySource.OSRM)
                 .totalDas(1).build();
         yesterdayProposal.setId(yesterdayProposalId);
 
-        // First call = today's APPROVED (absent), second call = yesterday's APPROVED (present)
-        when(proposalRepository.findByCityIdAndValidForDateAndStatus(any(), any(), eq(ProposalStatus.APPROVED)))
-                .thenReturn(Optional.empty())
+        // today's APPROVED absent (both shifts) → yesterday's APPROVED present (both shifts)
+        lenient().when(proposalRepository.findByCityIdAndValidForDateAndShiftAndStatus(
+                        eq(cityId), eq(today), any(), eq(ProposalStatus.APPROVED)))
+                .thenReturn(Optional.empty());
+        lenient().when(proposalRepository.findByCityIdAndValidForDateAndShiftAndStatus(
+                        eq(cityId), eq(today.minusDays(1)), any(), eq(ProposalStatus.APPROVED)))
                 .thenReturn(Optional.of(yesterdayProposal));
 
         DaHexAssignment activeAssignment = DaHexAssignment.builder()
                 .proposalId(yesterdayProposalId).daId(UUID.randomUUID()).hexId(UUID.randomUUID())
-                .validDate(LocalDate.now().minusDays(1)).status(AssignmentStatus.APPROVED).build();
+                .validDate(today.minusDays(1)).status(AssignmentStatus.APPROVED).build();
         when(assignmentRepository.findByProposalId(yesterdayProposalId))
                 .thenReturn(List.of(activeAssignment));
         when(proposalRegionRepository.findByProposalId(yesterdayProposalId))
@@ -129,7 +136,7 @@ class NightlyReplanJobTest {
                         .estimatedDemandMin(100.0).estimatedUtilPct(0.7).build()));
 
         AssignmentProposal savedFallback = AssignmentProposal.builder()
-                .cityId(cityId).validForDate(LocalDate.now())
+                .cityId(cityId).validForDate(today)
                 .status(ProposalStatus.APPROVED).proposalType(ProposalType.NIGHTLY)
                 .solverType(SolverType.MANUAL).adjacencySource(AdjacencySource.OSRM)
                 .totalDas(1).build();
@@ -138,8 +145,9 @@ class NightlyReplanJobTest {
 
         job.applyFallbackIfNeeded();
 
-        verify(assignmentRepository).saveAll(anyList());
-        verify(proposalRegionRepository).saveAll(anyList());
+        // Once per shift.
+        verify(assignmentRepository, times(2)).saveAll(anyList());
+        verify(proposalRegionRepository, times(2)).saveAll(anyList());
     }
 
     @Test
@@ -154,7 +162,7 @@ class NightlyReplanJobTest {
                 .solverType(SolverType.CP_SAT).adjacencySource(AdjacencySource.OSRM)
                 .totalDas(2).build();
         approved.setId(UUID.randomUUID());
-        when(proposalRepository.findByCityIdAndValidForDateAndStatus(any(), any(), eq(ProposalStatus.APPROVED)))
+        when(proposalRepository.findByCityIdAndValidForDateAndShiftAndStatus(any(), any(), any(), eq(ProposalStatus.APPROVED)))
                 .thenReturn(Optional.of(approved));
 
         job.applyFallbackIfNeeded();

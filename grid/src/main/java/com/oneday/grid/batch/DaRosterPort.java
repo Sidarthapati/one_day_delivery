@@ -1,12 +1,13 @@
 package com.oneday.grid.batch;
 
+import com.oneday.common.domain.Shift;
+
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
-// Sourced from M1 (auth) once that module is implemented.
-// The NightlyReplanJob uses this to determine how many DAs are available per city per day.
-// When M1 provides a real implementation, annotate it @Primary to override NoOpDaRosterPort.
+// The day's DA roster for a city + date + shift. The real impl (DirectoryDaRosterPort) reads M1
+// (auth) via the common DaDirectoryPort. NightlyReplanJob uses it to plan a territory per shift.
 public interface DaRosterPort {
-    List<UUID> getAvailableDaIds(UUID cityId, LocalDate date);
+    List<UUID> getAvailableDaIds(UUID cityId, LocalDate date, Shift shift);
 }

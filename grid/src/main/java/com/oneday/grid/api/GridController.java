@@ -1,5 +1,7 @@
 package com.oneday.grid.api;
 
+import com.oneday.common.domain.Shift;
+import com.oneday.grid.batch.DaRosterPort;
 import com.oneday.grid.dto.request.ReplanRequest;
 import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
@@ -35,13 +37,16 @@ public class GridController {
     private final GridService gridService;
     private final GridReplanService gridReplanService;
     private final IntradayLoadScoreService loadScoreService;
+    private final DaRosterPort daRosterPort;
 
     GridController(GridService gridService,
                    GridReplanService gridReplanService,
-                   IntradayLoadScoreService loadScoreService) {
+                   IntradayLoadScoreService loadScoreService,
+                   DaRosterPort daRosterPort) {
         this.gridService = gridService;
         this.gridReplanService = gridReplanService;
         this.loadScoreService = loadScoreService;
+        this.daRosterPort = daRosterPort;
     }
 
     // ── Tiles ──────────────────────────────────────────────────────────────────
@@ -128,8 +133,13 @@ public class GridController {
             @RequestBody ReplanRequest request) {
         UUID cityId = gridService.resolveCityId(cityCode);
         LocalDate date = request.date() != null ? request.date() : LocalDate.now().plusDays(1);
-        List<UUID> daIds = request.daIds() != null ? request.daIds() : List.of();
-        return gridReplanService.replan(cityId, date, daIds);
+        Shift shift = request.shift() != null ? request.shift() : Shift.SHIFT_1;
+        // No explicit daIds → pull the real shift roster (same source the nightly job uses), so the
+        // admin "generate today's plan" action is roster-driven without enumerating DAs client-side.
+        List<UUID> daIds = (request.daIds() != null && !request.daIds().isEmpty())
+                ? request.daIds()
+                : daRosterPort.getAvailableDaIds(cityId, date, shift);
+        return gridReplanService.replan(cityId, date, shift, daIds);
     }
 
     // ── Admin ─────────────────────────────────────────────────────────────────

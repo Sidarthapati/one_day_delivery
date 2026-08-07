@@ -173,6 +173,11 @@ public class GridServiceImpl implements GridService {
             "maa", "chennai");
 
     @Override
+    public String resolveCityCode(UUID cityId) {
+        return cityCodeForCity(cityId);
+    }
+
+    @Override
     public UUID resolveCityId(String cityCode) {
         String key = cityCode.toLowerCase();
         UUID cityId = gridProperties.getCities().get(key);

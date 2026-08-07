@@ -29,6 +29,9 @@ public interface GridService {
     // Resolves cityCode (e.g. "delhi") to the fixed UUID from grid.cities config.
     UUID resolveCityId(String cityCode);
 
+    // Reverse of resolveCityId: the grid.cities code (e.g. "delhi") for a city UUID, or null.
+    String resolveCityCode(UUID cityId);
+
     // All tiles for the city with pre-computed lat/lng bounds and today's demand snapshot.
     List<TileDetailResponse> getTileDetails(UUID cityId, LocalDate date);
 

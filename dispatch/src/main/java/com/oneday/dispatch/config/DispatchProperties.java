@@ -58,6 +58,10 @@ public class DispatchProperties {
     private CrossTerritory crossTerritory = new CrossTerritory();
     @NestedConfigurationProperty
     private Deferred deferred = new Deferred();
+
+    private Pickup pickup = new Pickup();
+
+    private Reorder reorder = new Reorder();
     @NestedConfigurationProperty
     private Dlq dlq = new Dlq();
 
@@ -82,6 +86,10 @@ public class DispatchProperties {
     public CrossTerritory getCrossTerritory() { return crossTerritory; }
     public void setCrossTerritory(CrossTerritory crossTerritory) { this.crossTerritory = crossTerritory; }
     public Deferred getDeferred() { return deferred; }
+
+    public Pickup getPickup() { return pickup; }
+
+    public Reorder getReorder() { return reorder; }
     public void setDeferred(Deferred deferred) { this.deferred = deferred; }
     public Dlq getDlq() { return dlq; }
     public void setDlq(Dlq dlq) { this.dlq = dlq; }
@@ -192,6 +200,46 @@ public class DispatchProperties {
     }
 
     /** Cadence of the always-on monitor jobs (cron-lock + absent detection). */
+    public static class Reorder {
+        /** Master switch for distance+aging queue reordering. */
+        private boolean enabled = true;
+        /** Weight on proximity to where the DA is headed (0..1). */
+        private double distanceWeight = 0.6;
+        /** Weight on how long a task has waited (0..1). */
+        private double ageWeight = 0.4;
+        /** Distance (km) at/above which the proximity score bottoms out. */
+        private double maxDistanceKm = 15.0;
+        /** Wait (min) at which aging saturates — past this an isolated task outranks near-but-fresh ones. */
+        private int ageSaturationMinutes = 120;
+        /** Periodic re-score cadence so aging keeps promoting stale tasks with no new inserts. */
+        private int tickSeconds = 180;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean v) { this.enabled = v; }
+        public double getDistanceWeight() { return distanceWeight; }
+        public void setDistanceWeight(double v) { this.distanceWeight = v; }
+        public double getAgeWeight() { return ageWeight; }
+        public void setAgeWeight(double v) { this.ageWeight = v; }
+        public double getMaxDistanceKm() { return maxDistanceKm; }
+        public void setMaxDistanceKm(double v) { this.maxDistanceKm = v; }
+        public int getAgeSaturationMinutes() { return ageSaturationMinutes; }
+        public void setAgeSaturationMinutes(int v) { this.ageSaturationMinutes = v; }
+        public int getTickSeconds() { return tickSeconds; }
+        public void setTickSeconds(int v) { this.tickSeconds = v; }
+    }
+
+    public static class Pickup {
+        /** Minutes before a slot start to release a held order into the DA queue. */
+        private int releaseLeadMinutes = 60;
+        /** How often the release job scans for due holds. */
+        private int releaseScanSeconds = 900;
+
+        public int getReleaseLeadMinutes() { return releaseLeadMinutes; }
+        public void setReleaseLeadMinutes(int v) { this.releaseLeadMinutes = v; }
+        public int getReleaseScanSeconds() { return releaseScanSeconds; }
+        public void setReleaseScanSeconds(int v) { this.releaseScanSeconds = v; }
+    }
+
     public static class Monitor {
         /** How often CronMonitorJob and AbsentDaDetectionJob run. Default: 5 minutes. */
         private int intervalSeconds = 300;

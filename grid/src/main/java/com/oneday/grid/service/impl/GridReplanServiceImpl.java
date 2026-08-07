@@ -1,5 +1,6 @@
 package com.oneday.grid.service.impl;
 
+import com.oneday.common.domain.Shift;
 import com.oneday.grid.config.GridProperties;
 import com.oneday.grid.domain.AdjacencySource;
 import com.oneday.grid.domain.AssignmentProposal;
@@ -72,8 +73,9 @@ class GridReplanServiceImpl implements GridReplanService {
     }
 
     @Override
-    public ProposalResponse replan(UUID cityId, LocalDate validForDate, List<UUID> daIds) {
-        log.info("GridReplanService.replan cityId={} date={} daCount={}", cityId, validForDate, daIds.size());
+    public ProposalResponse replan(UUID cityId, LocalDate validForDate, Shift shift, List<UUID> daIds) {
+        log.info("GridReplanService.replan cityId={} date={} shift={} daCount={}",
+                cityId, validForDate, shift, daIds.size());
 
         List<HexDemandSnapshot> demand = demandScoringService.computeAndPersistDemand(cityId, validForDate);
         if (demand.isEmpty()) {
@@ -96,11 +98,13 @@ class GridReplanServiceImpl implements GridReplanService {
         AssignmentProposal proposal = assignmentService.computeProposal(
                 cityId, validForDate, demand, adjacencyGraph, daIds);
 
+        // Stamp the shift on the proposal — the solvers are shift-agnostic; the plan is per shift.
+        proposal.setShift(shift);
         if (adjacencySource == AdjacencySource.GEOMETRIC_FALLBACK
                 && proposal.getAdjacencySource() != AdjacencySource.GEOMETRIC_FALLBACK) {
             proposal.setAdjacencySource(AdjacencySource.GEOMETRIC_FALLBACK);
-            proposalRepository.save(proposal);
         }
+        proposalRepository.save(proposal);
 
         log.info("PROPOSAL_READY cityId={} date={} proposalId={} solver={} das={}",
                 cityId, validForDate, proposal.getId(), proposal.getSolverType(), proposal.getTotalDas());

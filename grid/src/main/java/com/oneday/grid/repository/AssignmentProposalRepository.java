@@ -1,5 +1,6 @@
 package com.oneday.grid.repository;
 
+import com.oneday.common.domain.Shift;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.ProposalStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,4 +19,8 @@ public interface AssignmentProposalRepository extends JpaRepository<AssignmentPr
 
     // Convenience for auto-fallback: check if any approved proposal exists for today.
     Optional<AssignmentProposal> findByCityIdAndValidForDateAndStatus(UUID cityId, LocalDate validForDate, ProposalStatus status);
+
+    // Shift-scoped variant — the nightly plan/escalation/fallback run once per shift.
+    Optional<AssignmentProposal> findByCityIdAndValidForDateAndShiftAndStatus(
+            UUID cityId, LocalDate validForDate, Shift shift, ProposalStatus status);
 }

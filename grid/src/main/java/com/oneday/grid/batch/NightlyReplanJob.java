@@ -1,5 +1,6 @@
 package com.oneday.grid.batch;
 
+import com.oneday.common.domain.Shift;
 import com.oneday.grid.domain.AssignmentProposal;
 import com.oneday.grid.domain.AssignmentProposalRegion;
 import com.oneday.grid.domain.AssignmentStatus;
@@ -60,10 +61,12 @@ public class NightlyReplanJob {
         LocalDate tomorrow = LocalDate.now(IST).plusDays(1);
         log.info("NightlyReplanJob starting for date={}", tomorrow);
         for (Grid grid : gridRepository.findAll()) {
-            try {
-                replanForCity(grid.getCityId(), tomorrow);
-            } catch (Exception e) {
-                log.error("NightlyReplanJob failed for cityId={}", grid.getCityId(), e);
+            for (Shift shift : Shift.values()) {
+                try {
+                    replanForCity(grid.getCityId(), tomorrow, shift);
+                } catch (Exception e) {
+                    log.error("NightlyReplanJob failed for cityId={} shift={}", grid.getCityId(), shift, e);
+                }
             }
         }
         log.info("NightlyReplanJob complete for date={}", tomorrow);
@@ -75,10 +78,12 @@ public class NightlyReplanJob {
         LocalDate today = LocalDate.now(IST);
         for (Grid grid : gridRepository.findAll()) {
             UUID cityId = grid.getCityId();
-            Optional<AssignmentProposal> approved = proposalRepository
-                    .findByCityIdAndValidForDateAndStatus(cityId, today, ProposalStatus.APPROVED);
-            if (approved.isEmpty()) {
-                log.warn("ESCALATION_ALERT cityId={} date={}: no approved proposal by 06:00; station manager action required", cityId, today);
+            for (Shift shift : Shift.values()) {
+                Optional<AssignmentProposal> approved = proposalRepository
+                        .findByCityIdAndValidForDateAndShiftAndStatus(cityId, today, shift, ProposalStatus.APPROVED);
+                if (approved.isEmpty()) {
+                    log.warn("ESCALATION_ALERT cityId={} date={} shift={}: no approved proposal by 06:00; station manager action required", cityId, today, shift);
+                }
             }
         }
     }
@@ -91,29 +96,31 @@ public class NightlyReplanJob {
         LocalDate yesterday = today.minusDays(1);
         for (Grid grid : gridRepository.findAll()) {
             UUID cityId = grid.getCityId();
-            Optional<AssignmentProposal> approved = proposalRepository
-                    .findByCityIdAndValidForDateAndStatus(cityId, today, ProposalStatus.APPROVED);
-            if (approved.isPresent()) continue;
+            for (Shift shift : Shift.values()) {
+                Optional<AssignmentProposal> approved = proposalRepository
+                        .findByCityIdAndValidForDateAndShiftAndStatus(cityId, today, shift, ProposalStatus.APPROVED);
+                if (approved.isPresent()) continue;
 
-            Optional<AssignmentProposal> yesterdayProposal = proposalRepository
-                    .findByCityIdAndValidForDateAndStatus(cityId, yesterday, ProposalStatus.APPROVED);
-            if (yesterdayProposal.isEmpty()) {
-                log.warn("AUTO_FALLBACK_FAILED cityId={}: no approved proposal for yesterday {} either; city has no coverage", cityId, yesterday);
-                continue;
+                Optional<AssignmentProposal> yesterdayProposal = proposalRepository
+                        .findByCityIdAndValidForDateAndShiftAndStatus(cityId, yesterday, shift, ProposalStatus.APPROVED);
+                if (yesterdayProposal.isEmpty()) {
+                    log.warn("AUTO_FALLBACK_FAILED cityId={} shift={}: no approved proposal for yesterday {} either; no coverage", cityId, shift, yesterday);
+                    continue;
+                }
+
+                applyFallback(cityId, today, shift, yesterdayProposal.get());
             }
-
-            applyFallback(cityId, today, yesterdayProposal.get());
         }
     }
 
-    private void replanForCity(UUID cityId, LocalDate validForDate) {
-        List<UUID> daIds = daRosterPort.getAvailableDaIds(cityId, validForDate);
-        log.info("NightlyReplanJob replanForCity cityId={} date={} daCount={}", cityId, validForDate, daIds.size());
-        gridReplanService.replan(cityId, validForDate, daIds);
+    private void replanForCity(UUID cityId, LocalDate validForDate, Shift shift) {
+        List<UUID> daIds = daRosterPort.getAvailableDaIds(cityId, validForDate, shift);
+        log.info("NightlyReplanJob replanForCity cityId={} date={} shift={} daCount={}", cityId, validForDate, shift, daIds.size());
+        gridReplanService.replan(cityId, validForDate, shift, daIds);
     }
 
     @Transactional
-    void applyFallback(UUID cityId, LocalDate today, AssignmentProposal yesterdayProposal) {
+    void applyFallback(UUID cityId, LocalDate today, Shift shift, AssignmentProposal yesterdayProposal) {
         List<DaHexAssignment> yesterdayActive = assignmentRepository
                 .findByProposalId(yesterdayProposal.getId())
                 .stream().filter(a -> a.getStatus() == AssignmentStatus.APPROVED).toList();
@@ -123,6 +130,7 @@ public class NightlyReplanJob {
         AssignmentProposal fallback = AssignmentProposal.builder()
                 .cityId(cityId)
                 .validForDate(today)
+                .shift(shift)
                 .status(ProposalStatus.APPROVED)
                 .proposalType(ProposalType.NIGHTLY)
                 .solverType(SolverType.MANUAL)

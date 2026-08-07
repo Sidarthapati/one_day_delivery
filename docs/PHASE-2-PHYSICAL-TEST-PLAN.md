@@ -13,6 +13,16 @@ Three-phase field-test program for the one-day delivery platform:
 
 Target: Phase 2 green by **Aug 8** so a full week remains for Phase 3.
 
+> **Update (2026-08-07):** `main` has advanced — the branch was merged up to date. **M9 (airline)
+> now exists on `main`** (real `AirlineController`, AWB booking/tracking, a read-only
+> freight-consolidator integration, `V9_*` migrations), plus hub/station console parity fixes and a
+> new dispatch **deferred/station-console** manual-assignment path (`StationDispatchController`).
+> Phase 2 still stops at the **origin-hub flight-bag assignment** (we don't exercise the flight/AWB
+> leg here), but the "M9 is empty" framing below is historical — M9 is no longer a blank.
+> **G1 was redesigned** from a throwaway dev endpoint into a real feature (admin DA registration +
+> shift-aware roster) — see G1 below. The van-driver handoff scan was **verified already built** (not
+> a gap) — see the "already complete" table.
+
 **The chain we must prove (Phase-2 finish line = origin-hub flight-bag assignment):**
 customer places an intercity order → label (Code128) → DA sees pickup task → DA travels, scans, verifies
 sender OTP → **[Phase 2a] DA carries to hub (HUB_RETURN)** / **[Phase 2b] DA hands to van at meeting point →
@@ -47,6 +57,7 @@ Backend module map (all in one Spring Boot app): `orders`=M4, `grid`=M3, `dispat
 | Hub console UI (receive, bags, staging) | ✅ (on branch) | `oneday-web` `feat/hub_console` `apps/hub/app/(console)/*` |
 | Live tracking (12s poll, live dot + milestones) | ✅ | `orders` `GET /shipments/mine/{ref}/track`; web `apps/customer/.../track/[ref]/page.tsx` |
 | Driver app: task list, camera scan, en-route/arrived, OTP, hub-handoff | ✅ | `oneday-driver-app` `src/screens/pickups/PickupDetailScreen.tsx`, `WorkScreen.tsx` |
+| **Van-driver scan of the DA→van handoff** (records DA→van custody) — *verified 2026-08-07, not a gap* | ✅ | van side: `oneday-driver-app` `src/screens/van/VanStopConfirmScreen.tsx` → `vanConfirmStop` → `POST /routing/vans/{vanId}/stops/confirm` (`collect_scanned` + a `COLLECT` telemetry ping per parcel, reusing `BarcodeScanner`); DA side: `vanHandoff` in `PickupDetailScreen.tsx` |
 
 ---
 
@@ -54,21 +65,33 @@ Backend module map (all in one Spring Boot app): `orders`=M4, `grid`=M3, `dispat
 
 All small.
 
-### G1 — DA roster is empty → **0 DAs ever assigned** (the root blocker)
-`grid` `NoOpDaRosterPort` is still the only `DaRosterPort` impl → no proposal DAs → no ACTIVE
-`da_hex_assignment` → `ShiftLoadJob` registers 0 DAs → every pickup defers `NO_DA_AVAILABLE`.
-`ShiftLoadJob.loadShiftsForDate` has **no REST trigger** (cron `0 45 5,13 * * *` IST only).
+### G1 — DA roster is empty → **0 DAs ever assigned** (the root blocker) — **BUILT 2026-08-07**
+Historically `grid` `NoOpDaRosterPort` returned empty → no proposal DAs → no `APPROVED
+da_hex_assignment` → `ShiftLoadJob` registered 0 DAs → every pickup deferred `NO_DA_AVAILABLE`.
 
-**Fix — a dev-only "prime the day" endpoint** (`@Profile("!prod")`; `!prod` is active on staging — same
-guard `MockPaymentController` already uses). One `POST /internal/dev/prime-day` that, for a given
-`cityId` + `daId` (+ optional `vanId` for 2b):
-1. upserts an **ACTIVE `da_hex_assignment`** for that DA over the origin tile(s) (`grid` `da_hex_assignment`, `V3_8`);
-2. sets the city **meeting mode** (HUB_RETURN for 2a / VAN_MEETING for 2b) via `CityMeetingModeAdapter` (`routing` `V6_15`);
-3. calls `ShiftLoadJob.loadShiftsForDate(today)` so `dasForTile` is populated;
-4. **(2b only)** ensures fleet config (`routing` `city_fleet_config` `V6_2`; seed `V6_11` exists) and generates+approves a route plan so a `da_cron_schedule` row **with a `van_id`** exists for the DA.
+**Fix (shipped, not a dev shortcut): admin DA registration + a real shift-aware roster.** A DA is a
+`DELIVERY_ASSOCIATE` user plus an HR profile carrying a **contract window** and a **shift**; the roster
+for a shift on a day = every DA whose contract covers the date and who is on that shift. The territory
+plan now runs **once per shift** (SHIFT_1 06–14, SHIFT_2 14–22 IST). What landed:
 
-Place it in `app` (can see dispatch/grid/routing beans) or `dispatch`. Makes each test day **repeatable**.
-The DA account must be created first — the login JWT `sub` **must equal** the `daId` seeded here.
+- **auth** — `Shift` enum (`common`), `da_profile` table (`app` `db/migration/auth/V1_14`), `DaProfile`
+  entity/repo, `POST /das` (admin/station-manager registration, reusing `UserServiceImpl.register` +
+  returning a one-time temp password), `GET /das`, `PUT /das/{id}`; the roster query
+  `DaDirectoryPortAdapter` (implements the new `common` `DaDirectoryPort`: active DELIVERY_ASSOCIATE in
+  the city, on the shift, contract not expired).
+- **grid** — `DaRosterPort` gains `Shift`; real `DirectoryDaRosterPort` replaces the no-op; `shift` on
+  `assignment_proposal` (`V3_10`) scopes approve-supersede so SHIFT_2's approval doesn't clobber
+  SHIFT_1; `NightlyReplanJob` loops cities × shifts; `POST /api/grid/{cityCode}/replan` takes a `shift`.
+- **dispatch (M5)** — `ShiftLoadJob` loads only the firing shift's roster and populates
+  `da_status.shift_type`; `ShiftEndJob` ends **only** the shift that's ending (fixes the prior bug where
+  the 13:45 SHIFT_2 load was wiped by the 14:05 SHIFT_1 teardown).
+
+**Enablement for a test "today"** (production-grade, no `!prod` hack): the admin **registers the DA(s)**
+in the admin console, then triggers **"generate & approve today's plan"** per city+shift — the real
+`POST /api/grid/{cityCode}/replan` (with `shift` + the roster) followed by
+`POST /api/proposals/{id}/approve`. The nightly cron does the same at 01:00 for the next day.
+**City code must match** `users.city_id` (grid keys: `delhi`/`mumbai`/`bangalore`/`hyderabad`/`chennai`).
+The DA's login JWT `sub` is the `daId` returned by `POST /das`.
 
 ### G2 — Pickup OTP is never delivered (SMS = log sink) → DA can't complete pickup
 OTP is generated on `PICKUP_ASSIGNED` but `SmsSender` defaults to log; pickup `resend-otp` returns void
@@ -102,10 +125,11 @@ at origin-hub flight-bag assignment (our finish line). Pure test-data discipline
 
 | # | Deliverable | Repo / path | Size |
 |---|---|---|---|
-| E1 | `POST /internal/dev/prime-day` (`!prod`) — seed roster + meeting mode + run ShiftLoadJob (+fleet/route-plan for 2b) | backend `app` or `dispatch` (new controller) | ~half day |
-| E2 | `GET /internal/dev/shipments/{ref}/pickup-otp` (`!prod`) | backend `orders` (reads `PickupOtp`) | ~1 hr |
+| E1 | **DONE 2026-08-07** — admin DA registration + shift-aware roster (replaces the old prime-day dev endpoint): `POST /das`, `DaDirectoryPort`/`DirectoryDaRosterPort`, per-shift `NightlyReplanJob`, shift-scoped `ShiftLoadJob`/`ShiftEndJob`. Same-day: admin registers DAs → "generate & approve today's plan" (`/replan` + `/proposals/{id}/approve`). | backend `auth`/`grid`/`dispatch` + `oneday-web apps/admin` (E4a) | shipped |
+| E2 | `GET /internal/dev/shipments/{ref}/pickup-otp` (`!prod`) — still needed (SMS is a log sink) | backend `orders` (reads `PickupOtp`) | ~1 hr |
 | E3 | Verify/patch HUB_RETURN handoff→receive arrival-mode mapping (G3) | backend `hub` `HubReceivingServiceImpl` / `ArrivalMode` | verify; ≤half day if needed |
 | E4 | Deploy hub console → staging; confirm base URL | `oneday-web` `feat/hub_console` → Vercel | ~1 hr |
+| E4a | Admin "Delivery Associates" page (register form + list) + "generate & approve today's plan" action | `oneday-web` `apps/admin` + `packages/api` | ~half day |
 | E5 | EAS preview APK + install on DA phone | `oneday-driver-app` | ~2 hr (build queue) |
 | E6 | Pre-flight: confirm staging=`main`, correct DB; create DA (2a) + van (2b) accounts | ops | ~1 hr |
 
@@ -117,10 +141,15 @@ at origin-hub flight-bag assignment (our finish line). Pure test-data discipline
 van driver (second driver-app login). *Tester B* = DA (driver app on phone). Two people cover both phases.
 
 ### Phase 2a — HUB_RETURN spine (do this first)
-Pre-flight: E1–E6 done; city set to **HUB_RETURN**; DA account primed; DA phone has APK pointing at staging.
+Pre-flight: E1–E6 done; city set to **HUB_RETURN**; **DA registered** (admin console `POST /das`, SHIFT_1,
+contract covering today, city = grid code) and **today's plan generated + approved** for that city+shift;
+DA phone has the APK pointing at staging; the DA's login uses the email + temp password from registration
+(clear `mustChangePassword` for the pilot DA if the app doesn't yet handle the forced change).
 
-1. **DA on shift** — Tester B logs into driver app (DA account) → app auto-starts GPS heartbeat
-   (`/dispatch/da/{daId}/gps`) → DA flips OFFLINE→IDLE (assignable). Confirm one ping landed.
+1. **DA on shift** — Tester B logs into driver app (the registered DA account) → app auto-starts GPS
+   heartbeat (`/dispatch/da/{daId}/gps`) → DA flips OFFLINE→IDLE (assignable). Confirm one ping landed.
+   *(If no task ever arrives: confirm the DA is in the approved plan for today's shift and that the current
+   time is inside the shift window — SHIFT_1 06–14, SHIFT_2 14–22 IST.)*
 2. **Book** — Tester A books an **intercity B2B** shipment (`apps/business` `ship`, wallet-funded — no gateway)
    DEL→BOM with a real pickup pin near the DA. Shipment → BOOKED, `ShipmentCreated` fires.
 3. **Auto-assign** — M5 assigns the pickup to the DA; a **PICKUP task appears** in the driver app

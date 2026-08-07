@@ -63,7 +63,9 @@ public class DeferredDispatch extends MutableBaseEntity {
     @Column(name = "retry_count", nullable = false)
     private int retryCount;
 
-    @Column(name = "operating_date", nullable = false, updatable = false)
+    // Mutable: a SHIFT_2 leftover is rolled to the next day (operating_date bumped to tomorrow) so the
+    // date-scoped station view + retry engine treat it as tomorrow's SHIFT_1 work.
+    @Column(name = "operating_date", nullable = false)
     private LocalDate operatingDate;
 
     @PrePersist

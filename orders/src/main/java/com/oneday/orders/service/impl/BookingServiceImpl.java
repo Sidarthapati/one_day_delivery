@@ -1,5 +1,6 @@
 package com.oneday.orders.service.impl;
 
+import com.oneday.common.domain.PickupSlots;
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.ShipmentState;
@@ -230,6 +231,20 @@ class BookingServiceImpl implements BookingService {
         }
     }
 
+    /** Resolve an optional pickup slot (date + IST start hour) to absolute instants on the shipment. */
+    private static void applyScheduledPickup(Shipment shipment, java.time.LocalDate slotDate, Integer startHour) {
+        if (slotDate == null && startHour == null) {
+            return;   // ASAP
+        }
+        if (slotDate == null || startHour == null || !PickupSlots.isValidStartHour(startHour)) {
+            throw new BookingService.InvalidBookingRequestException(
+                    "pickupSlotDate and a valid pickupSlotStartHour (7/9/11/13/15/17/19) are both required");
+        }
+        PickupSlots.Window w = PickupSlots.resolve(slotDate, startHour);
+        shipment.setScheduledPickupStart(w.start());
+        shipment.setScheduledPickupEnd(w.end());
+    }
+
     private BookingResponse persist(BookingRequest req, String idempotencyKey, String userId,
                                     CustomerType customerType, ServiceabilityResult serviceability,
                                     int volumetricWeightGrams, int chargeableWeightGrams,
@@ -266,6 +281,7 @@ class BookingServiceImpl implements BookingService {
         shipment.setRateCardVersion(quote.rateCardVersion());
         shipment.setPickupType(req.getPickupType());
         shipment.setDropType(req.getDropType());
+        applyScheduledPickup(shipment, req.getPickupSlotDate(), req.getPickupSlotStartHour());
         shipment.setState(ShipmentState.BOOKED);
         shipment.setOriginTileId(serviceability.originTileId());
         shipment.setDestTileId(serviceability.destTileId());

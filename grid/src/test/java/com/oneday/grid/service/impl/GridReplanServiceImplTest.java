@@ -127,7 +127,7 @@ class GridReplanServiceImplTest {
                 .thenReturn(p);
         when(proposalService.getProposal(p.getId())).thenReturn(responseFor(p));
 
-        ProposalResponse result = service.replan(cityId, date, List.of(UUID.randomUUID()));
+        ProposalResponse result = service.replan(cityId, date, com.oneday.common.domain.Shift.SHIFT_1, List.of(UUID.randomUUID()));
 
         assertThat(result).isNotNull();
         verify(hexRepository).findByH3GridIdAndActiveTrue(gridId);
@@ -148,14 +148,14 @@ class GridReplanServiceImplTest {
                 .thenReturn(p);
         when(proposalService.getProposal(p.getId())).thenReturn(responseFor(p));
 
-        service.replan(cityId, date, List.of(UUID.randomUUID()));
+        service.replan(cityId, date, com.oneday.common.domain.Shift.SHIFT_1, List.of(UUID.randomUUID()));
 
         assertThat(p.getAdjacencySource()).isEqualTo(AdjacencySource.GEOMETRIC_FALLBACK);
         verify(proposalRepository).save(p);
     }
 
     @Test
-    void replan_doesNotSaveProposal_whenAdjacencyAlreadyGeometric() {
+    void replan_stampsShiftAndSavesProposal() {
         UUID hexId = UUID.randomUUID();
         Hex hex = Hex.builder().h3GridId(gridId).h3Index(0L).active(true).build();
         hex.setId(hexId);
@@ -169,9 +169,11 @@ class GridReplanServiceImplTest {
                 .thenReturn(p);
         when(proposalService.getProposal(p.getId())).thenReturn(responseFor(p));
 
-        service.replan(cityId, date, List.of(UUID.randomUUID()));
+        service.replan(cityId, date, com.oneday.common.domain.Shift.SHIFT_1, List.of(UUID.randomUUID()));
 
-        verify(proposalRepository, never()).save(any());
+        // The proposal is always persisted now — it carries the shift stamp.
+        assertThat(p.getShift()).isEqualTo(com.oneday.common.domain.Shift.SHIFT_1);
+        verify(proposalRepository).save(p);
     }
 
     @Test
@@ -190,7 +192,7 @@ class GridReplanServiceImplTest {
                 .thenReturn(p);
         when(proposalService.getProposal(p.getId())).thenReturn(responseFor(p));
 
-        ProposalResponse result = service.replan(cityId, date, List.of());
+        ProposalResponse result = service.replan(cityId, date, com.oneday.common.domain.Shift.SHIFT_1, List.of());
 
         verify(assignmentService).computeProposal(eq(cityId), eq(date), anyList(), anyMap(), eq(List.of()));
         assertThat(result).isNotNull();
@@ -213,7 +215,7 @@ class GridReplanServiceImplTest {
         ProposalResponse expected = responseFor(p);
         when(proposalService.getProposal(p.getId())).thenReturn(expected);
 
-        ProposalResponse actual = service.replan(cityId, date, List.of(UUID.randomUUID()));
+        ProposalResponse actual = service.replan(cityId, date, com.oneday.common.domain.Shift.SHIFT_1, List.of(UUID.randomUUID()));
 
         assertThat(actual).isSameAs(expected);
     }

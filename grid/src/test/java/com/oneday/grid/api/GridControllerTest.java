@@ -52,6 +52,7 @@ class GridControllerTest {
     @MockBean GridService gridService;
     @MockBean GridReplanService gridReplanService;
     @MockBean IntradayLoadScoreService loadScoreService;
+    @MockBean com.oneday.grid.batch.DaRosterPort daRosterPort;
 
     final UUID cityId = UUID.randomUUID();
     final UUID tileId = UUID.randomUUID();
@@ -160,10 +161,11 @@ class GridControllerTest {
         UUID proposalId = UUID.randomUUID();
         UUID daId = UUID.randomUUID();
         when(gridService.resolveCityId("delhi")).thenReturn(cityId);
-        when(gridReplanService.replan(eq(cityId), any(LocalDate.class), anyList()))
+        when(gridReplanService.replan(eq(cityId), any(LocalDate.class), any(), anyList()))
                 .thenReturn(proposalResponse(proposalId));
 
-        String body = objectMapper.writeValueAsString(new ReplanRequest(List.of(daId), LocalDate.of(2026, 5, 21)));
+        String body = objectMapper.writeValueAsString(
+                new ReplanRequest(List.of(daId), LocalDate.of(2026, 5, 21), com.oneday.common.domain.Shift.SHIFT_1));
 
         mvc.perform(post("/api/grid/delhi/replan")
                         .contentType(MediaType.APPLICATION_JSON)
