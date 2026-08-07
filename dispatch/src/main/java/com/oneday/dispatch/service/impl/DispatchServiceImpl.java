@@ -216,7 +216,7 @@ class DispatchServiceImpl implements DispatchService {
                 .orElseThrow();
 
         Optional<AssignmentResult> assigned = daStatusService.withDaLock(primary,
-                () -> attemptOnDa(primary, req, tileId, date, false));
+                () -> attemptOnDa(primary, req, tileId, date, false, false));
         if (assigned.isPresent()) {
             return assigned.get();
         }
@@ -235,7 +235,7 @@ class DispatchServiceImpl implements DispatchService {
      * active cron the task cannot make at any insertion position (no DB writes on empty).
      */
     private Optional<AssignmentResult> attemptOnDa(UUID daId, Request req, UUID tileId,
-                                                   LocalDate date, boolean crossTerritory) {
+                                                   LocalDate date, boolean crossTerritory, boolean manual) {
         List<DispatchQueue> activeRows = sortedActive(daId, date);
         List<DispatchQueue> inProgress = activeRows.stream()
                 .filter(r -> r.getStatus() == TaskStatus.IN_PROGRESS).toList();
@@ -280,7 +280,8 @@ class DispatchServiceImpl implements DispatchService {
         }
 
         AssignmentDecision decision = crossTerritory
-                ? AssignmentDecision.CROSS_TERRITORY_ASSIGNED : AssignmentDecision.ASSIGNED;
+                ? AssignmentDecision.CROSS_TERRITORY_ASSIGNED
+                : manual ? AssignmentDecision.MANUAL_ASSIGNED : AssignmentDecision.ASSIGNED;
         writeAudit(req, tileId, daId, decision, queuedInsertIndex, feasibility);
         log.debug("Assigned {} of shipment {} to DA {} at position {} (cross={})",
                 req.taskType(), req.shipmentId(), daId, absolutePosition, crossTerritory);
@@ -310,7 +311,7 @@ class DispatchServiceImpl implements DispatchService {
                     continue;   // neighbour not sparse enough to receive
                 }
                 Optional<AssignmentResult> r = daStatusService.withDaLock(cand.daId(),
-                        () -> attemptOnDa(cand.daId(), req, originTileId, date, true));
+                        () -> attemptOnDa(cand.daId(), req, originTileId, date, true, false));
                 if (r.isPresent()) {
                     return r;
                 }
@@ -342,6 +343,53 @@ class DispatchServiceImpl implements DispatchService {
         writeAudit(req, tileId, null, decision, null, null);
         log.debug("Deferred {} of shipment {} ({})", req.taskType(), req.shipmentId(), reason);
         return AssignmentResult.deferred(deferredId, reason);
+    }
+
+    @Override
+    @Transactional
+    public AssignmentResult assignDeferredToDa(UUID deferredId, UUID daId) {
+        DeferredDispatch deferred = deferredRepository.findById(deferredId)
+                .orElseThrow(() -> new IllegalArgumentException("No deferred dispatch " + deferredId));
+        if (!"PENDING".equals(deferred.getStatus())) {
+            return AssignmentResult.deferred(deferredId, deferred.getDeferReason());
+        }
+        if (!isAssignable(daId)) {
+            throw new IllegalStateException("DA " + daId + " is not currently assignable");
+        }
+
+        Request req = new Request(deferred.getShipmentId(), deferred.getCityId(), deferred.getTaskType(),
+                deferred.getTaskLat(), deferred.getTaskLon(), deferred.getTileId(), null);
+        Optional<AssignmentResult> result = daStatusService.withDaLock(daId,
+                () -> attemptOnDa(daId, req, deferred.getTileId(), deferred.getOperatingDate(), false, true));
+
+        if (result.isEmpty()) {
+            // Still cron-infeasible on the manually chosen DA — leave PENDING; the caller sees this
+            // as a rejection (matches the wireframe's "cron infeasible before cutoff" case).
+            metrics.assignment(com.oneday.dispatch.service.AssignmentOutcome.DEFERRED, deferred.getCityId());
+            return AssignmentResult.deferred(deferredId, DeferReason.CRON_INFEASIBLE);
+        }
+
+        deferred.setStatus("ASSIGNED");
+        deferred.setAssignedAt(Instant.now());
+        deferredRepository.save(deferred);
+        metrics.assignment(result.get().outcome(), deferred.getCityId());
+        return result.get();
+    }
+
+    @Override
+    @Transactional
+    public void escalateDeferred(UUID deferredId) {
+        DeferredDispatch deferred = deferredRepository.findById(deferredId)
+                .orElseThrow(() -> new IllegalArgumentException("No deferred dispatch " + deferredId));
+        if (!"PENDING".equals(deferred.getStatus())) {
+            return;   // already resolved one way or another — idempotent
+        }
+        Instant now = Instant.now();
+        deferred.setStatus("ESCALATED");
+        deferred.setEscalatedAt(now);
+        deferredRepository.save(deferred);
+        daEventProducer.emitTaskDeferredManuallyEscalated(deferred.getCityId(), deferred.getShipmentId());
+        log.info("Deferred dispatch {} manually escalated by a station manager", deferredId);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────

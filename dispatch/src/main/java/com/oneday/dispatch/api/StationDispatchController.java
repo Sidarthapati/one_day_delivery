@@ -1,14 +1,20 @@
 package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.dispatch.dto.request.AssignDeferredRequest;
+import com.oneday.dispatch.dto.response.DeferredAssignResponse;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
 import com.oneday.dispatch.service.StationDispatchService;
 import com.oneday.grid.service.GridService;
+import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -38,6 +44,31 @@ public class StationDispatchController {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
         return stationDispatchService.tileQueue(tileId, date, scopeCityId);
+    }
+
+    /**
+     * Manually assign a PENDING deferred pickup/delivery to a chosen DA — the station manager's
+     * override of the automatic cheapest-least-loaded pick. Still cron-feasibility gated: a rejection
+     * comes back as {@code outcome: "DEFERRED"}, not an HTTP error, since the row itself is unchanged.
+     */
+    @PostMapping("/dispatch/tiles/{tileId}/deferred/{deferredId}/assign")
+    public DeferredAssignResponse assignDeferred(@PathVariable UUID tileId, @PathVariable UUID deferredId,
+                                                 @Valid @RequestBody AssignDeferredRequest request,
+                                                 @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return DeferredAssignResponse.from(
+                stationDispatchService.assignDeferred(tileId, deferredId, request.daId(), scopeCityId));
+    }
+
+    /** Manually escalate a PENDING deferred task to M11, instead of waiting for the retry job's cap. */
+    @PostMapping("/dispatch/tiles/{tileId}/deferred/{deferredId}/escalate")
+    public ResponseEntity<Void> escalateDeferred(@PathVariable UUID tileId, @PathVariable UUID deferredId,
+                                                 @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        stationDispatchService.escalateDeferred(tileId, deferredId, scopeCityId);
+        return ResponseEntity.noContent().build();
     }
 
     /** The station manager's city as a UUID (accepts a UUID or a city code in {@code User.cityId}). */

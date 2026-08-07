@@ -17,6 +17,8 @@ public record BagResponse(
         String originHub,
         String destHub,
         UUID currentStandId,
+        /** Null iff currentStandId is null — resolved by the caller, the entity doesn't join to Stand. */
+        String standNo,
         FlightBagStatus status,
         int parcelCount,
         int weightGrams,
@@ -25,9 +27,9 @@ public record BagResponse(
         Instant sealedAt,
         Instant dispatchedAt) {
 
-    public static BagResponse from(FlightBag b) {
+    public static BagResponse from(FlightBag b, String standNo) {
         return new BagResponse(b.getId(), b.getCityId(), b.getHubId(), b.getFlightNo(), b.getFlightDate(),
-                b.getOriginHub(), b.getDestHub(), b.getCurrentStandId(), b.getStatus(),
+                b.getOriginHub(), b.getDestHub(), b.getCurrentStandId(), standNo, b.getStatus(),
                 b.getParcelCount(), b.getWeightGrams(), b.getBagCutoff(), b.getManifestId(),
                 b.getSealedAt(), b.getDispatchedAt());
     }

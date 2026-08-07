@@ -14,6 +14,8 @@ import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
+import com.oneday.dispatch.service.AssignmentResult;
+import com.oneday.dispatch.service.DispatchService;
 import com.oneday.dispatch.service.StationDispatchService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -31,6 +33,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Real-Postgres tests of the station view: today (in-memory DAs) vs historical (DB), and city scope. */
 @Tag("e2e")
@@ -49,13 +55,15 @@ class StationDispatchServiceImplTest {
     private final UUID tile = UUID.randomUUID();
 
     private DaStatusServiceImpl daStatus;
+    private DispatchService dispatchService;
     private StationDispatchService service;
 
     @BeforeEach
     void setUp() {
         DispatchProperties props = new DispatchProperties();
         daStatus = new DaStatusServiceImpl(daStatusRepo, daGpsPingRepo, props);
-        service = new StationDispatchServiceImpl(queueRepo, deferredRepo, cronRepo, daStatus, props);
+        dispatchService = mock(DispatchService.class);
+        service = new StationDispatchServiceImpl(queueRepo, deferredRepo, cronRepo, daStatus, dispatchService, props);
     }
 
     @Test
@@ -77,6 +85,8 @@ class StationDispatchServiceImplTest {
         assertThat(view.queue()).hasSize(2);
         assertThat(view.cronSlackMinutes()).isBetween(118L, 120L);
         assertThat(resp.deferredCount()).isEqualTo(1);
+        assertThat(resp.deferredTasks()).hasSize(1);
+        assertThat(resp.deferredTasks().get(0).deferReason()).isEqualTo("CRON_INFEASIBLE");
     }
 
     @Test
@@ -114,6 +124,59 @@ class StationDispatchServiceImplTest {
         assertThat(resp.das().get(0).daId()).isEqualTo(da);
         assertThat(resp.das().get(0).status()).isNull();     // no per-date live status retained
         assertThat(resp.das().get(0).queue()).hasSize(1);    // historical shows all statuses
+    }
+
+    @Test
+    void assignDeferred_delegatesToDispatchServiceWhenDaServesTile() {
+        UUID da = serveTile(city);
+        UUID deferredId = persistDeferred(today);
+        when(dispatchService.assignDeferredToDa(deferredId, da)).thenReturn(AssignmentResult.assigned(da, 0));
+
+        AssignmentResult result = service.assignDeferred(tile, deferredId, da, city);
+
+        assertThat(result.daId()).isEqualTo(da);
+        verify(dispatchService).assignDeferredToDa(deferredId, da);
+    }
+
+    @Test
+    void assignDeferred_rejectsDaNotServingTile() {
+        serveTile(city);
+        UUID deferredId = persistDeferred(today);
+        UUID strangerDa = UUID.randomUUID();
+
+        assertThatThrownBy(() -> service.assignDeferred(tile, deferredId, strangerDa, city))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("400");
+    }
+
+    @Test
+    void assignDeferred_rejectsForeignCity() {
+        serveTile(city);
+        UUID da = UUID.randomUUID();
+        UUID deferredId = persistDeferred(today);
+
+        assertThatThrownBy(() -> service.assignDeferred(tile, deferredId, da, UUID.randomUUID()))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("403");
+    }
+
+    @Test
+    void assignDeferred_rejectsMismatchedTile() {
+        UUID da = serveTile(city);
+        UUID deferredId = persistDeferred(today);
+
+        assertThatThrownBy(() -> service.assignDeferred(UUID.randomUUID(), deferredId, da, city))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("404");
+    }
+
+    @Test
+    void escalateDeferred_delegatesToDispatchService() {
+        UUID deferredId = persistDeferred(today);
+
+        service.escalateDeferred(tile, deferredId, city);
+
+        verify(dispatchService).escalateDeferred(deferredId);
     }
 
     // ── helpers ──
@@ -155,7 +218,7 @@ class StationDispatchServiceImplTest {
         cronRepo.saveAndFlush(c);
     }
 
-    private void persistDeferred(LocalDate date) {
+    private UUID persistDeferred(LocalDate date) {
         DeferredDispatch d = new DeferredDispatch();
         d.setCityId(city);
         d.setShipmentId(UUID.randomUUID());
@@ -166,6 +229,6 @@ class StationDispatchServiceImplTest {
         d.setDeferReason(DeferReason.CRON_INFEASIBLE);
         d.setStatus("PENDING");
         d.setOperatingDate(date);
-        deferredRepo.saveAndFlush(d);
+        return deferredRepo.saveAndFlush(d).getId();
     }
 }

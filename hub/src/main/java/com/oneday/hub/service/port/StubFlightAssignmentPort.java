@@ -31,7 +31,7 @@ class StubFlightAssignmentPort implements FlightAssignmentPort {
     }
 
     @Override
-    public FlightAssignment assignFlight(String destHub, Instant readyAt) {
+    public FlightAssignment assignFlight(String originHub, String destHub, Instant readyAt) {
         ZonedDateTime ready = readyAt.atZone(ClockConfig.IST);
         for (LocalTime departure : DEPARTURES) {
             ZonedDateTime cutoff = cutoff(ready.toLocalDate(), departure);

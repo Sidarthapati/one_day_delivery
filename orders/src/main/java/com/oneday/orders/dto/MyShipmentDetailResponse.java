@@ -57,6 +57,11 @@ public record MyShipmentDetailResponse(
         // lifecycle
         Instant createdAt,
         Instant cancelledAt,
+        // live flight position — present only while the parcel's flight is airborne (M9, §8)
+        Double currentLat,
+        Double currentLon,
+        Instant positionAsOf,
+        String positionStatus,
         // how the shipping fee was funded (B2B only): CREDIT or WALLET; null for B2C/C2C
         FundingSource fundingSource,
         // white-label public tracking token (B2B only; null otherwise)

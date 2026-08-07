@@ -13,7 +13,8 @@ public record TileQueueResponse(
         UUID tileId,
         LocalDate operatingDate,
         List<DaQueueView> das,
-        int deferredCount) {
+        int deferredCount,
+        List<DeferredTaskView> deferredTasks) {
 
     public record DaQueueView(
             UUID daId,
@@ -31,5 +32,16 @@ public record TileQueueResponse(
             Instant expectedEta,
             boolean crossTerritory,
             String taskType) {
+    }
+
+    /** A PENDING deferral on this tile — the station board's "unassigned pickups" list. */
+    public record DeferredTaskView(
+            UUID deferredId,
+            UUID shipmentId,
+            String taskType,
+            String deferReason,
+            Instant deferredAt,
+            Instant retryAfter,
+            int retryCount) {
     }
 }
