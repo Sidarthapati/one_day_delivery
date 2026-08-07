@@ -73,7 +73,7 @@ class AbsentDaDetectionJobTest {
     private void stubDa(UUID da, UUID city, DaStatusEnum status, Instant lastHeartbeat) {
         when(svc.loadedDaIds()).thenReturn(Set.of(da));
         when(svc.getStatus(da)).thenReturn(status);
-        DaLiveStatus live = new DaLiveStatus(da, city, 12.9, 77.6, lastHeartbeat, status);
+        DaLiveStatus live = new DaLiveStatus(da, city, 12.9, 77.6, lastHeartbeat, status, "SHIFT_1");
         when(svc.getLiveStatus(da)).thenReturn(live);
     }
 }

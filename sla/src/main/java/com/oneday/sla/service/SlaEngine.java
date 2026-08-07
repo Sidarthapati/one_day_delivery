@@ -46,6 +46,21 @@ public class SlaEngine {
         }
         Instant now = Instant.now();
         List<SlaLeg> legs = legRepo.findByShipmentIdOrderBySeqAsc(ss.getShipmentId());
+
+        // Clock not started yet (pickup not completed) — no target, no running legs, so nothing to
+        // colour or breach. Stay GREEN and just track the current leg.
+        if (ss.getInternalTargetAt() == null) {
+            SlaLegType pendingLeg = legs.stream()
+                    .filter(l -> l.getCompletedAt() == null)
+                    .map(SlaLeg::getLeg)
+                    .findFirst()
+                    .orElse(null);
+            ss.setCurrentLeg(pendingLeg);
+            ss.setOverallState(SlaState.GREEN);
+            shipmentRepo.save(ss);
+            return;
+        }
+
         ProjectionCalculator.Projection p = projection.evaluate(legs, ss.getInternalTargetAt(), now);
         legRepo.saveAll(legs);
 

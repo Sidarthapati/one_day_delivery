@@ -21,6 +21,9 @@ public interface DeferredDispatchRepository extends JpaRepository<DeferredDispat
     /** All deferrals for a city on a date (demo state + reset). */
     List<DeferredDispatch> findByCityIdAndOperatingDate(UUID cityId, LocalDate operatingDate);
 
+    /** Deferrals in a given state for a city (used to reset the retry budget when a new shift loads). */
+    List<DeferredDispatch> findByCityIdAndStatus(UUID cityId, String status);
+
     /**
      * PENDING deferrals for a city that are due for retry (retry_after null or already past).
      * Hits the partial index idx_deferred_retry (WHERE status = 'PENDING').

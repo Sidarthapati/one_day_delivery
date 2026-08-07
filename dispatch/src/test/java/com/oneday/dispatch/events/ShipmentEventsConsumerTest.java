@@ -40,6 +40,7 @@ class ShipmentEventsConsumerTest {
     private DispatchService dispatchService;
     private DispatchQueueRepository queueRepository;
     private GridService gridService;
+    private com.oneday.dispatch.service.ScheduledPickupService scheduledPickupService;
     private ShipmentEventsConsumer consumer;
 
     private final UUID cityId = UUID.randomUUID();
@@ -51,7 +52,8 @@ class ShipmentEventsConsumerTest {
         dispatchService = mock(DispatchService.class);
         queueRepository = mock(DispatchQueueRepository.class);
         gridService = mock(GridService.class);
-        consumer = new ShipmentEventsConsumer(dispatchService, queueRepository, gridService);
+        scheduledPickupService = mock(com.oneday.dispatch.service.ScheduledPickupService.class);
+        consumer = new ShipmentEventsConsumer(dispatchService, queueRepository, gridService, scheduledPickupService);
 
         lenient().when(queueRepository.findActiveByShipmentIdAndTaskType(any(), eq(TaskType.PICKUP)))
                 .thenReturn(Optional.empty());
@@ -67,6 +69,18 @@ class ShipmentEventsConsumerTest {
         consumer.onShipmentEvent(created(shipment, PickupType.DA_PICKUP, 12.97, 77.61, tileId, PaymentMode.PREPAID));
 
         verify(dispatchService).assignPickup(eq(shipment), eq(cityId), eq(12.97), eq(77.61), eq(tileId), eq("PREPAID"));
+    }
+
+    @Test
+    void scheduledPickupIsHeldNotAssigned() {
+        UUID shipment = UUID.randomUUID();
+        // The hold service parks it (not yet due) → the consumer must NOT assign.
+        when(scheduledPickupService.holdIfNotDue(eq(shipment), any(), any(), anyDouble(), anyDouble(), any(), any(), any()))
+                .thenReturn(true);
+
+        consumer.onShipmentEvent(created(shipment, PickupType.DA_PICKUP, 12.97, 77.61, tileId, PaymentMode.PREPAID));
+
+        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any());
     }
 
     @Test

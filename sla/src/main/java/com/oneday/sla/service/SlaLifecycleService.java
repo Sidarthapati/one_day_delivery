@@ -73,8 +73,8 @@ public class SlaLifecycleService {
         ss.setLane(lane(e.getOriginCity(), e.getDestCity()));
         ss.setDeliveryType(dt);
         ss.setBookedAt(booked);
-        ss.setInternalTargetAt(booked.plus(Duration.ofHours(props.getInternalTargetHours())));
-        ss.setPublicPromiseAt(booked.plus(Duration.ofHours(props.getPublicPromiseHours())));
+        // No clock yet — internal/public targets are anchored at pickup-complete (startClocks), so a
+        // scheduled/held order accrues no SLA while it waits for its slot.
         ss.setEtaPromised(e.getEtaPromised());
         ss.setOverallState(SlaState.GREEN);
         shipmentRepo.save(ss);
@@ -87,14 +87,45 @@ public class SlaLifecycleService {
             leg.setLeg(lt);
             leg.setSeq(i);
             leg.setBudgetMinutes(catalog.budgetMinutes(lt));
-            if (i == 0) { // first mile is live from booking (M10-D-006)
-                leg.setStartedAt(booked);
-                leg.setDeadlineAt(booked.plus(Duration.ofMinutes(leg.getBudgetMinutes())));
-            }
+            // The first-mile leg is NOT started here — it starts at pickup-complete.
             legRepo.save(leg);
         }
         engine.recompute(ss);
-        log.debug("Opened SLA for {} ({} legs, target {})", e.getShipmentRef(), plan.size(), ss.getInternalTargetAt());
+        log.debug("Opened SLA for {} ({} legs, clock pending pickup)", e.getShipmentRef(), plan.size());
+    }
+
+    /**
+     * Start the SLA clock at pickup-complete (M10 pickup-anchored): anchor the internal/public targets
+     * off the pickup instant and start the first-mile leg. Idempotent — a shipment whose clock is
+     * already running (target set) or is closed is left untouched.
+     */
+    @Transactional
+    public void startClocks(UUID shipmentId, Instant pickupAt) {
+        if (shipmentId == null) {
+            return;
+        }
+        shipmentRepo.findByShipmentId(shipmentId).ifPresent(ss -> {
+            if (ss.getClosedAt() != null || ss.getInternalTargetAt() != null) {
+                return; // closed or already started
+            }
+            Instant at = pickupAt != null ? pickupAt : Instant.now();
+            ss.setInternalTargetAt(at.plus(Duration.ofHours(props.getInternalTargetHours())));
+            ss.setPublicPromiseAt(at.plus(Duration.ofHours(props.getPublicPromiseHours())));
+            shipmentRepo.save(ss);
+
+            // First-mile (pickup DA → origin hub) runs from pickup-complete.
+            legRepo.findByShipmentIdOrderBySeqAsc(shipmentId).stream()
+                    .filter(l -> l.getSeq() == 0 && l.getCompletedAt() == null)
+                    .findFirst()
+                    .ifPresent(leg0 -> {
+                        leg0.setStartedAt(at);
+                        leg0.setDeadlineAt(at.plus(Duration.ofMinutes(leg0.getBudgetMinutes())));
+                        legRepo.save(leg0);
+                    });
+            engine.recompute(ss);
+            log.debug("Started SLA clock for {} at pickup {} (target {})",
+                    shipmentId, at, ss.getInternalTargetAt());
+        });
     }
 
     @Transactional
@@ -215,7 +246,7 @@ public class SlaLifecycleService {
         ss.setDeliveredAt(at);
         ss.setClosedAt(at);
         ss.setCurrentLeg(null);
-        boolean late = at.isAfter(ss.getInternalTargetAt());
+        boolean late = ss.getInternalTargetAt() != null && at.isAfter(ss.getInternalTargetAt());
         ss.setBreached(late);
         ss.setOverallState(late ? SlaState.BREACHED : SlaState.CLOSED);
         shipmentRepo.save(ss);

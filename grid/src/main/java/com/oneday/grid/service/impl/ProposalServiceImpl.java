@@ -97,10 +97,12 @@ class ProposalServiceImpl implements ProposalService {
 
         Instant now = Instant.now();
 
-        // Supersede any previously APPROVED proposal + its assignments for the same city+date
+        // Supersede any previously APPROVED proposal + its assignments for the same city+date+shift.
+        // Scoping by shift is what keeps approving SHIFT_2 from clobbering the standing SHIFT_1 plan.
         proposalRepository.findByCityIdAndValidForDate(proposal.getCityId(), proposal.getValidForDate())
                 .stream()
-                .filter(p -> !p.getId().equals(proposalId) && p.getStatus() == ProposalStatus.APPROVED)
+                .filter(p -> !p.getId().equals(proposalId) && p.getStatus() == ProposalStatus.APPROVED
+                        && java.util.Objects.equals(p.getShift(), proposal.getShift()))
                 .forEach(existing -> {
                     supersedeAssignments(existing.getId());
                     existing.setStatus(ProposalStatus.SUPERSEDED);

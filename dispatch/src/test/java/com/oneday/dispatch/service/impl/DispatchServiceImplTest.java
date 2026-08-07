@@ -91,8 +91,9 @@ class DispatchServiceImplTest {
         DaEventProducer daEventProducer = new DaEventProducer(mock(com.oneday.common.kafka.EventPublisher.class), props);
         com.oneday.dispatch.metrics.DispatchMetrics metrics =
                 new com.oneday.dispatch.metrics.DispatchMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        QueueReorderService queueReorder = mock(QueueReorderService.class);
         service = new DispatchServiceImpl(queueRepo, deferredRepo, auditRepo, cronRepo,
-                daStatus, feasibility, loadScore, adjacent, grid, daEventProducer, metrics, props);
+                daStatus, feasibility, loadScore, adjacent, grid, daEventProducer, metrics, queueReorder, props);
     }
 
     private UUID readyDa(int existingQueued) {

@@ -86,7 +86,7 @@ class DaStatusServiceImpl implements DaStatusService {
         daStatusRepository.save(row);
 
         DaLiveStatus live = new DaLiveStatus(daId, cityId, row.getLastGpsLat(), row.getLastGpsLon(),
-                row.getLastHeartbeat(), row.getStatus());
+                row.getLastHeartbeat(), row.getStatus(), row.getShiftType());
         liveStatus.put(daId, live);
         queues.put(daId, new DaQueue(daId, cronAssignment));
         locks.computeIfAbsent(daId, k -> new ReentrantLock());
@@ -231,6 +231,16 @@ class DaStatusServiceImpl implements DaStatusService {
         dasByTile.clear();
         tilesByDa.clear();
         dirty.clear();
+    }
+
+    @Override
+    public void clear(UUID daId) {
+        setTerritory(daId, List.of()); // withdraw from the tile → DA reverse index
+        liveStatus.remove(daId);
+        queues.remove(daId);
+        locks.remove(daId);
+        tilesByDa.remove(daId);
+        dirty.remove(daId);
     }
 
     @Override

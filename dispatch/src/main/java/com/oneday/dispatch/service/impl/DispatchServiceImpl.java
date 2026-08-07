@@ -72,6 +72,7 @@ class DispatchServiceImpl implements DispatchService {
     private final GridService gridService;
     private final DaEventProducer daEventProducer;
     private final DispatchMetrics metrics;
+    private final QueueReorderService queueReorderService;
     private final DispatchProperties props;
 
     DispatchServiceImpl(DispatchQueueRepository queueRepository,
@@ -85,6 +86,7 @@ class DispatchServiceImpl implements DispatchService {
                         GridService gridService,
                         DaEventProducer daEventProducer,
                         DispatchMetrics metrics,
+                        QueueReorderService queueReorderService,
                         DispatchProperties props) {
         this.queueRepository = queueRepository;
         this.deferredRepository = deferredRepository;
@@ -97,6 +99,7 @@ class DispatchServiceImpl implements DispatchService {
         this.gridService = gridService;
         this.daEventProducer = daEventProducer;
         this.metrics = metrics;
+        this.queueReorderService = queueReorderService;
         this.props = props;
     }
 
@@ -269,6 +272,11 @@ class DispatchServiceImpl implements DispatchService {
         queueRepository.saveAll(activeRows);
         queueRepository.save(newRow(daId, req, tileId, date, absolutePosition, crossTerritory, cronActive));
         rebuildMemQueue(daId, date);
+        // Re-score the QUEUED tail by distance + aging (no-op for cron DAs — cron order is the hard
+        // constraint). Runs under the DA lock already held by assign(...).
+        if (!cronActive) {
+            queueReorderService.reorder(daId, date);
+        }
 
         // Push the assignment to M4 (event-driven) — this fires exactly once per NEW task (the
         // idempotency short-circuit returns before here), so M4 transitions BOOKED→PICKUP_ASSIGNED /

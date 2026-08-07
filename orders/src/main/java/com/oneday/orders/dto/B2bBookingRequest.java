@@ -61,6 +61,10 @@ public class B2bBookingRequest {
     @NotNull private PickupType pickupType;
     @NotNull private DropType   dropType;
 
+    // Optional scheduled pickup (both null = ASAP). Date + IST slot start hour (7/9/11/13/15/17/19).
+    private java.time.LocalDate pickupSlotDate;
+    private Integer pickupSlotStartHour;
+
     // Funding: WALLET debits the prepaid balance, CREDIT draws down the credit limit. Null ⇒
     // resolved server-side as creditLimit>0 ? CREDIT : WALLET.
     private FundingSource fundingSource;
@@ -137,6 +141,12 @@ public class B2bBookingRequest {
 
     public DropType getDropType()              { return dropType; }
     public void setDropType(DropType v)        { this.dropType = v; }
+
+    public java.time.LocalDate getPickupSlotDate()       { return pickupSlotDate; }
+    public void setPickupSlotDate(java.time.LocalDate v) { this.pickupSlotDate = v; }
+
+    public Integer getPickupSlotStartHour()       { return pickupSlotStartHour; }
+    public void setPickupSlotStartHour(Integer v) { this.pickupSlotStartHour = v; }
 
     public FundingSource getFundingSource()        { return fundingSource; }
     public void setFundingSource(FundingSource v)  { this.fundingSource = v; }

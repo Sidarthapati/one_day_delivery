@@ -1,5 +1,6 @@
 package com.oneday.grid.domain;
 
+import com.oneday.common.domain.Shift;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -36,6 +37,11 @@ public class AssignmentProposal {
 
     @Column(name = "valid_for_date", nullable = false)
     private LocalDate validForDate;
+
+    // The shift this plan is for. NULL for shift-agnostic proposals (intraday overrides/shares, legacy).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "shift", length = 10)
+    private Shift shift;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)

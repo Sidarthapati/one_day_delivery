@@ -158,6 +158,13 @@ public class Shipment extends MutableBaseEntity {
     @Column(name = "eta_updated")
     private Instant etaUpdated;
 
+    // ── Scheduled pickup (nullable = ASAP) ────────────────────────────────
+    @Column(name = "scheduled_pickup_start")
+    private Instant scheduledPickupStart;
+
+    @Column(name = "scheduled_pickup_end")
+    private Instant scheduledPickupEnd;
+
     // ── Cross-module references (not DB foreign keys) ─────────────────────
 
     // Set by M9 once a flight is assigned

@@ -46,10 +46,11 @@ public class SlaShipment extends MutableBaseEntity {
     @Column(name = "booked_at", nullable = false)
     private Instant bookedAt;
 
-    @Column(name = "internal_target_at", nullable = false)
+    // Null until pickup-complete — the SLA clock starts at PICKUP_COMPLETED, not booking.
+    @Column(name = "internal_target_at")
     private Instant internalTargetAt;
 
-    @Column(name = "public_promise_at", nullable = false)
+    @Column(name = "public_promise_at")
     private Instant publicPromiseAt;
 
     @Column(name = "eta_promised")

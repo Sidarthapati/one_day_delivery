@@ -45,4 +45,7 @@ public class ShipmentCreatedEvent extends BaseShipmentEvent {
     private String senderName;
     private String senderAddressLine;
     private String receiverAddressLine;
+    // Scheduled pickup window (null = ASAP). M5 holds the order until ~60 min before the start.
+    private Instant scheduledPickupStart;
+    private Instant scheduledPickupEnd;
 }

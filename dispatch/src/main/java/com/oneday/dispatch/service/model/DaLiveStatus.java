@@ -24,4 +24,6 @@ public class DaLiveStatus {
     private Double lon;
     private Instant lastHeartbeat;
     private DaStatusEnum status;
+    // Which shift this DA is on (SHIFT_1/SHIFT_2), so shift-end can tear down only the ending shift.
+    private String shiftType;
 }

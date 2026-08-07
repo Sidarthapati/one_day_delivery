@@ -45,13 +45,16 @@ public class ShipmentEventsConsumer {
     private final DispatchService dispatchService;
     private final DispatchQueueRepository queueRepository;
     private final GridService gridService;
+    private final com.oneday.dispatch.service.ScheduledPickupService scheduledPickupService;
 
     public ShipmentEventsConsumer(DispatchService dispatchService,
                                   DispatchQueueRepository queueRepository,
-                                  GridService gridService) {
+                                  GridService gridService,
+                                  com.oneday.dispatch.service.ScheduledPickupService scheduledPickupService) {
         this.dispatchService = dispatchService;
         this.queueRepository = queueRepository;
         this.gridService = gridService;
+        this.scheduledPickupService = scheduledPickupService;
     }
 
     @RabbitListener(queues = DispatchMessagingTopology.SHIPMENTS_QUEUE)
@@ -117,6 +120,15 @@ public class ShipmentEventsConsumer {
         }
 
         String paymentMode = event.getPaymentMode() != null ? event.getPaymentMode().name() : null;
+
+        // Scheduled / off-hours pickups wait out of the queue until ~60 min before their slot; the
+        // release job then assigns them. Only assign now if the order is already due.
+        if (scheduledPickupService.holdIfNotDue(shipmentId, loc.cityId(), tileId, lat, lon, paymentMode,
+                event.getScheduledPickupStart(), event.getScheduledPickupEnd())) {
+            log.debug("Shipment {} held for scheduled pickup (not yet due)", shipmentId);
+            return;
+        }
+
         AssignmentResult result = dispatchService.assignPickup(
                 shipmentId, loc.cityId(), lat, lon, tileId, paymentMode);
         log.debug("Pickup assignment for shipment {}: {}", shipmentId, result.outcome());
@@ -164,6 +176,8 @@ public class ShipmentEventsConsumer {
      * for ops and acked (M11 resolves it).
      */
     private void handleCancelled(ShipmentCancelledEvent event) {
+        // Drop any live scheduled-pickup hold (the order never reached a DA queue).
+        scheduledPickupService.cancel(event.getShipmentId());
         TaskType taskType = DELIVERY_PHASE.contains(event.getCancelledAtState())
                 ? TaskType.DELIVERY : TaskType.PICKUP;
         // cancelTask removes the task from the DA's active load whether it was QUEUED or IN_PROGRESS

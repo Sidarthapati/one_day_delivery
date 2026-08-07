@@ -1,7 +1,9 @@
 package com.oneday.orders.service.impl;
 
+import com.oneday.common.domain.PickupSlots;
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.orders.service.BookingService;
 import com.oneday.common.port.EtaPort;
 import com.oneday.common.port.PricingPort;
 import com.oneday.common.port.ServiceabilityPort;
@@ -155,6 +157,21 @@ class B2bBookingServiceImpl implements B2bBookingService {
                         finalVolumetric, finalChargeable, quote));
     }
 
+    /** Resolve an optional pickup slot (date + IST start hour) to absolute instants on the shipment. */
+    private static void applyScheduledPickup(com.oneday.orders.domain.Shipment shipment,
+                                             java.time.LocalDate slotDate, Integer startHour) {
+        if (slotDate == null && startHour == null) {
+            return;
+        }
+        if (slotDate == null || startHour == null || !PickupSlots.isValidStartHour(startHour)) {
+            throw new BookingService.InvalidBookingRequestException(
+                    "pickupSlotDate and a valid pickupSlotStartHour (7/9/11/13/15/17/19) are both required");
+        }
+        PickupSlots.Window w = PickupSlots.resolve(slotDate, startHour);
+        shipment.setScheduledPickupStart(w.start());
+        shipment.setScheduledPickupEnd(w.end());
+    }
+
     private BookingResponse persistB2b(B2bBookingRequest req, String idempotencyKey, String userId,
                                        B2bAccount accountSnapshot, ServiceabilityResult serviceability,
                                        int volumetricWeightGrams, int chargeableWeightGrams,
@@ -219,6 +236,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         shipment.setRateCardVersion(quote.rateCardVersion());
         shipment.setPickupType(req.getPickupType());
         shipment.setDropType(req.getDropType());
+        applyScheduledPickup(shipment, req.getPickupSlotDate(), req.getPickupSlotStartHour());
         shipment.setState(ShipmentState.BOOKED);
         shipment.setOriginTileId(serviceability.originTileId());
         shipment.setDestTileId(serviceability.destTileId());

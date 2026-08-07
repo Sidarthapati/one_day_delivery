@@ -83,4 +83,7 @@ public interface DaStatusService {
 
     /** Drop all in-memory state (called at shift end, after a final flush). */
     void clearAll();
+
+    /** Drop one DA's in-memory state (shift end for a single shift, after a final flush). */
+    void clear(UUID daId);
 }

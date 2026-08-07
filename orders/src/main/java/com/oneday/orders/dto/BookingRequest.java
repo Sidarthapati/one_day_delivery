@@ -50,6 +50,12 @@ public class BookingRequest {
     @NotNull private PickupType pickupType;
     @NotNull private DropType   dropType;
 
+    // ── Scheduled pickup (optional; both null = ASAP) ─────────────────────────
+    // Date of the chosen slot + its IST start hour (7/9/11/13/15/17/19). The server resolves these to
+    // absolute instants (PickupSlots) and holds the order until ~60 min before the slot.
+    private java.time.LocalDate pickupSlotDate;
+    private Integer pickupSlotStartHour;
+
     // ── Payment ───────────────────────────────────────────────────────────────
 
     @NotNull private PaymentMode paymentMode;
@@ -117,6 +123,12 @@ public class BookingRequest {
 
     public DropType getDropType()       { return dropType; }
     public void setDropType(DropType v) { this.dropType = v; }
+
+    public java.time.LocalDate getPickupSlotDate()       { return pickupSlotDate; }
+    public void setPickupSlotDate(java.time.LocalDate v) { this.pickupSlotDate = v; }
+
+    public Integer getPickupSlotStartHour()       { return pickupSlotStartHour; }
+    public void setPickupSlotStartHour(Integer v) { this.pickupSlotStartHour = v; }
 
     public PaymentMode getPaymentMode()           { return paymentMode; }
     public void setPaymentMode(PaymentMode v)     { this.paymentMode = v; }

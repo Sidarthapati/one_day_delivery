@@ -29,7 +29,9 @@ public class SlaDaEventsConsumer {
             return;
         }
         switch (event.eventType()) {
-            case PICKUP_COMPLETED, CRON_MISSED -> lifecycle.touch(event.shipmentId());
+            // Pickup-complete starts the SLA clock (M10 pickup-anchored); occurredAt is the pickup time.
+            case PICKUP_COMPLETED -> lifecycle.startClocks(event.shipmentId(), event.occurredAt());
+            case CRON_MISSED -> lifecycle.touch(event.shipmentId());
             case DA_ABSENT -> log.debug("DA_ABSENT for da {} — city-level risk, not attributed", event.daId());
             default -> { /* other DA events don't affect SLA accounting */ }
         }

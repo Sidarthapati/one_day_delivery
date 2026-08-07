@@ -1,9 +1,10 @@
 package com.oneday.dispatch.batch;
 
+import com.oneday.common.domain.Shift;
+import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
-import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaStatusService;
@@ -32,8 +33,10 @@ import static org.mockito.Mockito.when;
 class ShiftLoadJobTest {
 
     private GridService gridService;
+    private DaDirectoryPort daDirectoryPort;
     private DaCronAssignmentRepository cronRepo;
     private DispatchQueueRepository queueRepo;
+    private com.oneday.dispatch.repository.DeferredDispatchRepository deferredRepo;
     private DaStatusService daStatusService;
     private ShiftLoadJob job;
 
@@ -43,8 +46,10 @@ class ShiftLoadJobTest {
     @BeforeEach
     void setUp() {
         gridService = mock(GridService.class);
+        daDirectoryPort = mock(DaDirectoryPort.class);
         cronRepo = mock(DaCronAssignmentRepository.class);
         queueRepo = mock(DispatchQueueRepository.class);
+        deferredRepo = mock(com.oneday.dispatch.repository.DeferredDispatchRepository.class);
         daStatusService = mock(DaStatusService.class);
 
         DispatchProperties props = new DispatchProperties();
@@ -53,7 +58,7 @@ class ShiftLoadJobTest {
         when(gridService.resolveCityId("bengaluru")).thenReturn(cityId);
         when(cronRepo.findByOperatingDateAndCityId(any(), any())).thenReturn(List.of());
 
-        job = new ShiftLoadJob(gridService, cronRepo, queueRepo, daStatusService, props);
+        job = new ShiftLoadJob(gridService, daDirectoryPort, cronRepo, queueRepo, deferredRepo, daStatusService, props);
     }
 
     @Test
@@ -65,13 +70,31 @@ class ShiftLoadJobTest {
                 assignment(da1, UUID.randomUUID()),
                 assignment(da1, UUID.randomUUID()),
                 assignment(da2, UUID.randomUUID())));
+        when(daDirectoryPort.availableDaIds("bengaluru", today, Shift.SHIFT_1)).thenReturn(List.of(da1, da2));
         when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(any(), any(), any())).thenReturn(List.of());
 
-        job.loadShiftsForDate(today);
+        job.loadShiftsForDate(today, Shift.SHIFT_1);
 
-        verify(daStatusService).initShift(eq(da1), eq(cityId), eq(today), any(), any());
-        verify(daStatusService).initShift(eq(da2), eq(cityId), eq(today), any(), any());
+        verify(daStatusService).initShift(eq(da1), eq(cityId), eq(today), eq("SHIFT_1"), any());
+        verify(daStatusService).initShift(eq(da2), eq(cityId), eq(today), eq("SHIFT_1"), any());
         verify(daStatusService, times(2)).initShift(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void daNotOnThisShiftIsFilteredOut() {
+        UUID onShift = UUID.randomUUID();
+        UUID otherShift = UUID.randomUUID();
+        when(gridService.getActiveAssignments(cityId, today)).thenReturn(List.of(
+                assignment(onShift, UUID.randomUUID()),
+                assignment(otherShift, UUID.randomUUID())));
+        // Only onShift is on SHIFT_1's roster; otherShift belongs to SHIFT_2.
+        when(daDirectoryPort.availableDaIds("bengaluru", today, Shift.SHIFT_1)).thenReturn(List.of(onShift));
+        when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(any(), any(), any())).thenReturn(List.of());
+
+        job.loadShiftsForDate(today, Shift.SHIFT_1);
+
+        verify(daStatusService).initShift(eq(onShift), eq(cityId), eq(today), eq("SHIFT_1"), any());
+        verify(daStatusService, times(1)).initShift(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -79,6 +102,7 @@ class ShiftLoadJobTest {
         UUID da = UUID.randomUUID();
         when(gridService.getActiveAssignments(cityId, today))
                 .thenReturn(List.of(assignment(da, UUID.randomUUID())));
+        when(daDirectoryPort.availableDaIds("bengaluru", today, Shift.SHIFT_1)).thenReturn(List.of(da));
 
         DispatchQueue stale = new DispatchQueue();
         stale.setExpectedEta(Instant.now().minusSeconds(3600));   // an hour overdue
@@ -88,7 +112,7 @@ class ShiftLoadJobTest {
                 .thenReturn(List.of(stale, future));
 
         Instant before = Instant.now();
-        job.loadShiftsForDate(today);
+        job.loadShiftsForDate(today, Shift.SHIFT_1);
 
         ArgumentCaptor<List<DispatchQueue>> saved = ArgumentCaptor.forClass(List.class);
         verify(queueRepo).saveAll(saved.capture());
@@ -100,16 +124,18 @@ class ShiftLoadJobTest {
 
     @Test
     void cityFailureDoesNotAbortOtherCities() {
+        UUID gda = UUID.randomUUID();
         DispatchProperties props = new DispatchProperties();
         props.getShift().setCities(List.of("bad", "bengaluru"));
         when(gridService.resolveCityId("bad")).thenThrow(new IllegalArgumentException("unknown city"));
         when(gridService.getActiveAssignments(cityId, today))
-                .thenReturn(List.of(assignment(UUID.randomUUID(), UUID.randomUUID())));
+                .thenReturn(List.of(assignment(gda, UUID.randomUUID())));
+        when(daDirectoryPort.availableDaIds("bengaluru", today, Shift.SHIFT_1)).thenReturn(List.of(gda));
         when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(any(), any(), any())).thenReturn(List.of());
 
         ShiftLoadJob twoCityJob =
-                new ShiftLoadJob(gridService, cronRepo, queueRepo, daStatusService, props);
-        twoCityJob.loadShiftsForDate(today);
+                new ShiftLoadJob(gridService, daDirectoryPort, cronRepo, queueRepo, deferredRepo, daStatusService, props);
+        twoCityJob.loadShiftsForDate(today, Shift.SHIFT_1);
 
         // The good city still loaded its single DA despite "bad" throwing.
         verify(daStatusService, times(1)).initShift(any(), eq(cityId), eq(today), any(), any());
@@ -120,11 +146,29 @@ class ShiftLoadJobTest {
         UUID da = UUID.randomUUID();
         when(gridService.getActiveAssignments(cityId, today))
                 .thenReturn(List.of(assignment(da, UUID.randomUUID())));
+        when(daDirectoryPort.availableDaIds("bengaluru", today, Shift.SHIFT_1)).thenReturn(List.of(da));
         when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(any(), any(), any())).thenReturn(List.of());
 
-        job.loadShiftsForDate(today);
+        job.loadShiftsForDate(today, Shift.SHIFT_1);
 
         verify(queueRepo, never()).saveAll(any());
+    }
+
+    @Test
+    void shiftLoadResetsPendingRetryBudget() {
+        com.oneday.dispatch.domain.DeferredDispatch d = new com.oneday.dispatch.domain.DeferredDispatch();
+        d.setRetryCount(2);
+        d.setRetryAfter(Instant.now().plusSeconds(600));
+        when(deferredRepo.findByCityIdAndStatus(cityId, "PENDING")).thenReturn(List.of(d));
+        when(gridService.getActiveAssignments(cityId, today)).thenReturn(List.of());
+        when(daDirectoryPort.availableDaIds("bengaluru", today, Shift.SHIFT_1)).thenReturn(List.of());
+
+        job.loadShiftsForDate(today, Shift.SHIFT_1);
+
+        // The incoming shift gets a clean retry budget so carry-overs aren't escalated prematurely.
+        assertThat(d.getRetryCount()).isEqualTo(0);
+        assertThat(d.getRetryAfter()).isNull();
+        verify(deferredRepo).saveAll(List.of(d));
     }
 
     private AssignmentResponse assignment(UUID daId, UUID hexId) {

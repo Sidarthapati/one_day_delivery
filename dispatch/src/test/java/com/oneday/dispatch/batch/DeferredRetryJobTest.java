@@ -54,7 +54,7 @@ class DeferredRetryJobTest {
     private void shiftLoaded() {
         when(daStatusService.loadedDaIds()).thenReturn(Set.of(da));
         when(daStatusService.getLiveStatus(da))
-                .thenReturn(new DaLiveStatus(da, city, 12.9, 77.6, Instant.now(), DaStatusEnum.IDLE));
+                .thenReturn(new DaLiveStatus(da, city, 12.9, 77.6, Instant.now(), DaStatusEnum.IDLE, "SHIFT_1"));
     }
 
     private DeferredDispatch pending(int retryCount) {

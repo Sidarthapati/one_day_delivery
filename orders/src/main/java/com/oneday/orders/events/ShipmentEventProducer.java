@@ -117,6 +117,8 @@ public class ShipmentEventProducer {
         event.setSenderName(s.getSenderName());
         event.setSenderAddressLine(s.getOriginAddress() != null ? s.getOriginAddress().getLine1() : null);
         event.setReceiverAddressLine(s.getDestAddress() != null ? s.getDestAddress().getLine1() : null);
+        event.setScheduledPickupStart(s.getScheduledPickupStart());
+        event.setScheduledPickupEnd(s.getScheduledPickupEnd());
 
         log.debug("Publishing CREATED shipmentId={} ref={}", s.getId(), s.getShipmentRef());
         eventPublisher.publish(EventStreams.SHIPMENTS_EVENTS, event);
