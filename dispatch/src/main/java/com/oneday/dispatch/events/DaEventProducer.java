@@ -47,6 +47,13 @@ public class DaEventProducer {
         emit(DaEventType.TASK_DEFERRED_SHIFT_ENDED, daId, cityId, shipmentId, null, "SHIFT_ENDED");
     }
 
+    /** A station manager manually escalated a deferred task instead of waiting for the automated
+     *  retry job's max-retries cap. Same event type as {@link #emitTaskDeferredShiftEnded}, distinct
+     *  reason code — M11 branches on {@code reasonCode} for call-center triage either way. → M11. */
+    public void emitTaskDeferredManuallyEscalated(UUID cityId, UUID shipmentId) {
+        emit(DaEventType.TASK_DEFERRED_SHIFT_ENDED, null, cityId, shipmentId, null, "STATION_MANAGER_MANUAL");
+    }
+
     /** A DA's queue order changed (a task was cancelled/removed and the rest resequenced). → ops/UI. */
     public void emitQueueReordered(UUID daId, UUID cityId) {
         emit(DaEventType.QUEUE_REORDERED, daId, cityId, null, null, null);

@@ -32,4 +32,26 @@ public interface DispatchService {
 
     /** Re-attempt a previously deferred dispatch; flips it to ASSIGNED on success, leaves it PENDING otherwise. */
     AssignmentResult reassignDeferred(UUID deferredId);
+
+    /**
+     * Manually assign a PENDING deferred pickup/delivery to a specific DA — a station manager's
+     * override of the automatic cheapest-least-loaded pick. The cron-meeting hard constraint still
+     * applies exactly as it does for an automated assignment: if {@code daId} can't make it, the
+     * task stays PENDING and the result comes back {@code DEFERRED}, not an error — a rejection the
+     * caller can show, not a silent no-op. Recorded in {@code da_assignment_audit} as
+     * {@code MANUAL_ASSIGNED} so it's distinguishable from an algorithmic pick.
+     *
+     * @throws IllegalArgumentException if {@code deferredId} doesn't exist
+     * @throws IllegalStateException    if {@code daId} isn't currently assignable (off-shift/absent)
+     */
+    AssignmentResult assignDeferredToDa(UUID deferredId, UUID daId);
+
+    /**
+     * Manually escalate a PENDING deferred task to M11 right now, instead of waiting for
+     * {@code DeferredRetryJob}'s max-retries cap. No-op if the row is no longer PENDING (already
+     * assigned or previously escalated).
+     *
+     * @throws IllegalArgumentException if {@code deferredId} doesn't exist
+     */
+    void escalateDeferred(UUID deferredId);
 }
