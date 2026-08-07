@@ -38,10 +38,12 @@ class RazorpayPaymentAdapter implements PaymentPort {
     public PaymentOrder createOrder(long amountPaise, String receipt) {
         if (props.isLive()) {
             try {
+                // Razorpay rejects receipts longer than 40 chars; truncate defensively.
+                String safeReceipt = receipt.length() > 40 ? receipt.substring(0, 40) : receipt;
                 JSONObject req = new JSONObject()
                         .put("amount", amountPaise)
                         .put("currency", "INR")
-                        .put("receipt", receipt)
+                        .put("receipt", safeReceipt)
                         .put("payment_capture", true);  // auto-capture on successful payment
                 Order order = liveClient().orders.create(req);
                 String orderId = order.get("id");

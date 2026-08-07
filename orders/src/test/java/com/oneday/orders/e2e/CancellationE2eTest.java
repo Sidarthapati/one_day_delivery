@@ -40,24 +40,11 @@ class CancellationE2eTest extends OrdersE2eSupport {
                 .isEqualTo(ShipmentState.CANCELLED);
     }
 
-    // Cancelling a COD booking needs no refund — it just transitions to CANCELLED.
-    @Test
-    void cancelCod_cancelsWithoutRefund() throws Exception {
-        String token = tokenFor("B2C_CUSTOMER", randomUserId());
-        String ref = bookB2c(token, PaymentMode.COD);
-
-        mvc.perform(delete("/api/v1/b2c/shipments/{ref}", ref)
-                        .header("Authorization", "Bearer " + token)
-                        .header("Idempotency-Key", idemKey()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.state").value("CANCELLED"));
-    }
-
     // Past the cancellation cutoff (parcel already on the pickup van) the request is refused with 409.
     @Test
     void cancelPastCutoff_returns409() throws Exception {
         String token = tokenFor("B2C_CUSTOMER", randomUserId());
-        String ref = bookB2c(token, PaymentMode.COD);
+        String ref = bookB2c(token, PaymentMode.PREPAID);
         drive(ref, ShipmentState.PICKUP_ASSIGNED, ShipmentState.PICKED_UP, ShipmentState.HANDED_TO_PICKUP_VAN);
 
         mvc.perform(delete("/api/v1/b2c/shipments/{ref}", ref)

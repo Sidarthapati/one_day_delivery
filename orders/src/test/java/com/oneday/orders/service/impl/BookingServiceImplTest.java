@@ -327,27 +327,16 @@ class BookingServiceImplTest {
 
     // ── COD tests ──────────────────────────────────────────────────────────
 
+    // COD has been withdrawn for consumers — the booking is rejected up-front, before any
+    // serviceability / pricing / payment work, and nothing is persisted.
     @Test
-    void book_cod_succeeds_withoutPaymentPortCalls() {
-        stubServiceability(true, DeliveryType.INTERCITY);
-        stubPricing(4000L, 720L, 4720L);
-        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
-        when(shipmentRepository.save(any())).thenAnswer(inv -> {
-            Shipment s = inv.getArgument(0);
-            ReflectionTestUtils.setField(s, "id", SHIPMENT_ID);
-            return s;
-        });
-        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(etaPort.fetchEta(any())).thenThrow(new RuntimeException("skip"));
-
-        BookingResponse resp = service.book(codBookingRequest(), IDEMPOTENCY_KEY, USER_ID);
+    void book_cod_isRejected() {
+        assertThatThrownBy(() -> service.book(codBookingRequest(), IDEMPOTENCY_KEY, USER_ID))
+                .isInstanceOf(BookingService.InvalidBookingRequestException.class)
+                .hasMessageContaining("Cash on delivery");
 
         verify(paymentPort, never()).verifySignature(any(), any(), any());
-        verify(paymentPort, never()).capture(any(), anyLong());
-        verify(paymentTransactionRepository, never()).save(any());
-        assertThat(resp.getPayment().getMode()).isEqualTo(PaymentMode.COD);
-        assertThat(resp.getPayment().getStatus()).isEqualTo("COD_PENDING");
-        assertThat(resp.getPayment().getRazorpayPaymentId()).isNull();
+        verify(shipmentRepository, never()).save(any());
     }
 
     @Test
@@ -380,19 +369,6 @@ class BookingServiceImplTest {
 
         verify(paymentPort, never()).verifySignature(any(), any(), any());
         verify(shipmentRepository, never()).save(any());
-    }
-
-    @Test
-    void book_cod_dbWriteFails_doesNotInitiateRefund() {
-        stubServiceability(true, DeliveryType.INTERCITY);
-        stubPricing(4000L, 720L, 4720L);
-        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
-        when(shipmentRepository.save(any())).thenThrow(new RuntimeException("DB down"));
-
-        assertThatThrownBy(() -> service.book(codBookingRequest(), IDEMPOTENCY_KEY, USER_ID))
-                .isInstanceOf(RuntimeException.class);
-
-        verify(paymentPort, never()).initiateRefund(any(), anyLong());
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

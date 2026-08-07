@@ -8,6 +8,7 @@ import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
+import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaTaskService;
@@ -41,6 +42,7 @@ class DaTaskServiceImplTest {
     @Autowired DispatchQueueRepository queueRepo;
     @Autowired DaCronAssignmentRepository cronRepo;
     @Autowired DaStatusRepository daStatusRepo;
+    @Autowired DaGpsPingRepository daGpsPingRepo;
 
     private final UUID da = UUID.randomUUID();
     private final UUID city = UUID.randomUUID();
@@ -54,12 +56,12 @@ class DaTaskServiceImplTest {
     @BeforeEach
     void setUp() {
         DispatchProperties props = new DispatchProperties();
-        DaStatusServiceImpl daStatus = new DaStatusServiceImpl(daStatusRepo, props);
+        DaStatusServiceImpl daStatus = new DaStatusServiceImpl(daStatusRepo, daGpsPingRepo, props);
         daStatus.initShift(da, city, today, "MORNING", null);
         events = mock(DaEventProducer.class);
         scanSeam = mock(com.oneday.dispatch.events.HubScanSeamProducer.class);
         service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam,
-                ids -> java.util.Map.of());
+                ids -> java.util.Map.of(), ids -> java.util.Map.of());
     }
 
     @Test
@@ -158,6 +160,29 @@ class DaTaskServiceImplTest {
 
         DaCronAssignment cron = cronRepo.findByDaIdAndOperatingDate(da, today).orElseThrow();
         assertThat(cron.getStatus()).isEqualTo(CronAssignmentStatus.COMPLETED);
+    }
+
+    @Test
+    void reattemptRequeuesAFailedTaskAtTheEndOfTheList() {
+        DispatchQueue existing = persist(TaskType.DELIVERY, TaskStatus.QUEUED); // queue pos 0
+        DispatchQueue failed = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+        service.markFailed(da, failed.getId(), "customer not home");
+
+        service.reattempt(da, failed.getId());
+
+        DispatchQueue reloaded = reload(failed);
+        assertThat(reloaded.getStatus()).isEqualTo(TaskStatus.QUEUED);
+        assertThat(reloaded.getQueuePosition()).isGreaterThan(existing.getQueuePosition());
+        assertThat(reloaded.getCompletedAt()).isNull();
+        verify(events).emitQueueReordered(eq(da), eq(city));
+    }
+
+    @Test
+    void reattemptRejectsATaskThatIsNotFailed() {
+        DispatchQueue task = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
+        assertThatThrownBy(() -> service.reattempt(da, task.getId()))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409");
     }
 
     @Test

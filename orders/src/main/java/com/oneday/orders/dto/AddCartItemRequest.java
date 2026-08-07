@@ -44,6 +44,8 @@ public class AddCartItemRequest {
     @Positive @Max(150) private short widthCm;
     @Positive @Max(150) private short heightCm;
     @PositiveOrZero private Long declaredValuePaise;
+    // >0 ⇒ COD: collect this goods value from the buyer on delivery (B2B checkout only).
+    @PositiveOrZero private Long codAmountToCollectPaise;
 
     @NotNull private PickupType pickupType;
     @NotNull private DropType dropType;
@@ -82,6 +84,8 @@ public class AddCartItemRequest {
     public void setHeightCm(short v) { this.heightCm = v; }
     public Long getDeclaredValuePaise() { return declaredValuePaise; }
     public void setDeclaredValuePaise(Long v) { this.declaredValuePaise = v; }
+    public Long getCodAmountToCollectPaise() { return codAmountToCollectPaise; }
+    public void setCodAmountToCollectPaise(Long v) { this.codAmountToCollectPaise = v; }
     public PickupType getPickupType() { return pickupType; }
     public void setPickupType(PickupType v) { this.pickupType = v; }
     public DropType getDropType() { return dropType; }

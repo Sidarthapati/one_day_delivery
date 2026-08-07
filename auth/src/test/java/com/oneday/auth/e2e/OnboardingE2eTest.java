@@ -1,5 +1,6 @@
 package com.oneday.auth.e2e;
 
+import com.oneday.auth.dto.request.BusinessOnboardingRequest;
 import com.oneday.auth.dto.request.LoginRequest;
 import com.oneday.auth.dto.request.OnboardingSubmitRequest;
 import org.junit.jupiter.api.DisplayName;
@@ -65,6 +66,30 @@ class OnboardingE2eTest extends AuthE2eSupport {
 
         mvc.perform(asJson(post("/auth/login"), new LoginRequest(email, "Signup123!")))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // Business self-signup with clean KYC (valid GSTIN whose embedded PAN matches) + a small
+    // volume band auto-approves instantly: the applicant becomes a B2B_USER and can log in right
+    // away — no admin queue. Regression guard: auto-approval must NOT write the all-zeros SYSTEM
+    // sentinel into onboarding_requests.reviewed_by (it has an FK to users(id), so the sentinel
+    // used to violate the constraint and roll the whole request back with a 409).
+    @Test
+    void businessOnboarding_cleanKyc_autoApprovesAndUserCanLogin() throws Exception {
+        String email = uniqueEmail();
+        var req = new BusinessOnboardingRequest(
+                email, "Demo Merchant", "Signup123!", "+919000000021",
+                "Godspeed Demo Traders Pvt Ltd", "PRIVATE_LIMITED",
+                "27AABCU9603R1ZM", "AABCU9603R", email, "DEL", "0-200");
+
+        mvc.perform(asJson(post("/auth/request-business-onboarding"), req))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.autoApproved").value(true))
+                .andExpect(jsonPath("$.needsReview").value(false));
+
+        mvc.perform(asJson(post("/auth/login"), new LoginRequest(email, "Signup123!")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("B2B_USER"));
     }
 
     // Reviewing onboarding requests is admin-only — a customer is refused → 403.

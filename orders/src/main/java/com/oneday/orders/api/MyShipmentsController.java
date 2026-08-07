@@ -3,6 +3,7 @@ package com.oneday.orders.api;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.MyShipmentDetailResponse;
 import com.oneday.orders.dto.MyShipmentSummaryResponse;
+import com.oneday.orders.dto.ShipmentLabelResponse;
 import com.oneday.orders.service.CustomerOrderQueryService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -47,6 +48,16 @@ class MyShipmentsController {
         Authz.requireCustomerRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER", "B2B_USER");
         return customerOrderQueryService
                 .myShipmentDetail(Authz.requireUserId(principal), ref)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such shipment: " + ref));
+    }
+
+    @GetMapping("/mine/{ref}/label")
+    public ShipmentLabelResponse shipmentLabel(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("ref") String ref) {
+        Authz.requireCustomerRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER", "B2B_USER");
+        return customerOrderQueryService
+                .shipmentLabel(Authz.requireUserId(principal), ref)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such shipment: " + ref));
     }
 }

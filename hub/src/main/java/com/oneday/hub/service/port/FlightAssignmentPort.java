@@ -12,8 +12,8 @@ import java.time.LocalDate;
  */
 public interface FlightAssignmentPort {
 
-    /** The earliest flight to {@code destHub} that a parcel ready at {@code readyAt} can make. */
-    FlightAssignment assignFlight(String destHub, Instant readyAt);
+    /** The earliest flight from {@code originHub} to {@code destHub} that a parcel ready at {@code readyAt} can make. */
+    FlightAssignment assignFlight(String originHub, String destHub, Instant readyAt);
 
     /** An assigned flight + its bag cutoff. {@code destHub} is the destination city code. */
     record FlightAssignment(
