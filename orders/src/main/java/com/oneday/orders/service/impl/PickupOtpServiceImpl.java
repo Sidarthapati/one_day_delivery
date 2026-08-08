@@ -5,9 +5,11 @@ import com.oneday.orders.domain.PickupOtp;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.repository.PickupOtpRepository;
 import com.oneday.orders.repository.ShipmentRepository;
+import com.oneday.orders.service.DevOtpRegistry;
 import com.oneday.orders.service.PickupOtpService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,13 +40,17 @@ class PickupOtpServiceImpl implements PickupOtpService {
     private final PickupOtpRepository otpRepository;
     private final ShipmentRepository shipmentRepository;
     private final PickupOtpProperties properties;
+    // Absent in prod (the bean is @Profile("!prod")) — the peek is a field-test aid only.
+    private final ObjectProvider<DevOtpRegistry> devOtpRegistry;
 
     PickupOtpServiceImpl(PickupOtpRepository otpRepository,
                          ShipmentRepository shipmentRepository,
-                         PickupOtpProperties properties) {
+                         PickupOtpProperties properties,
+                         ObjectProvider<DevOtpRegistry> devOtpRegistry) {
         this.otpRepository      = otpRepository;
         this.shipmentRepository = shipmentRepository;
         this.properties         = properties;
+        this.devOtpRegistry     = devOtpRegistry;
     }
 
     @Override
@@ -67,6 +73,7 @@ class PickupOtpServiceImpl implements PickupOtpService {
         record.setUsed(false);
         otpRepository.save(record);
 
+        devOtpRegistry.ifAvailable(r -> r.put(shipmentId, otp));   // no-op in prod (bean absent)
         log.debug("OTP generated for shipmentId={}", shipmentId);
         return otp;
     }
@@ -125,6 +132,7 @@ class PickupOtpServiceImpl implements PickupOtpService {
         record.setUsed(false);
         otpRepository.save(record);
 
+        devOtpRegistry.ifAvailable(r -> r.put(shipmentId, otp));   // no-op in prod (bean absent)
         log.debug("OTP resent (attempt {}/{}) for shipmentId={}",
                 newResendCount, properties.getMaxResendCount(), shipmentId);
         return otp;
