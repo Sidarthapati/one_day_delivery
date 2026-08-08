@@ -161,6 +161,8 @@ class DispatchServiceImpl implements DispatchService {
             queueRepository.save(row);
             resequence(daId, date);
             rebuildMemQueue(daId, date);
+            // A drop changes the queue — re-score the remaining tail (cron-aware).
+            queueReorderService.reorder(daId, date);
             return null;
         });
         // Queue order changed → notify downstream (gated; no-op until the producer flag is on).
@@ -272,11 +274,10 @@ class DispatchServiceImpl implements DispatchService {
         queueRepository.saveAll(activeRows);
         queueRepository.save(newRow(daId, req, tileId, date, absolutePosition, crossTerritory, cronActive));
         rebuildMemQueue(daId, date);
-        // Re-score the QUEUED tail by distance + aging (no-op for cron DAs — cron order is the hard
-        // constraint). Runs under the DA lock already held by assign(...).
-        if (!cronActive) {
-            queueReorderService.reorder(daId, date);
-        }
+        // Re-score the QUEUED tail by distance + aging for every DA. For cron DAs the reorder keeps the
+        // cron cutoff feasible (tasks that don't fit are parked beyond_cron), so it is safe to run here.
+        // Runs under the DA lock already held by assign(...).
+        queueReorderService.reorder(daId, date);
 
         // Push the assignment to M4 (event-driven) — this fires exactly once per NEW task (the
         // idempotency short-circuit returns before here), so M4 transitions BOOKED→PICKUP_ASSIGNED /
@@ -419,13 +420,18 @@ class DispatchServiceImpl implements DispatchService {
             current = new LatLon(live.getLat(), live.getLon());
             currentTime = Instant.now();
         }
+        // Only tasks committed *before* the cron count against pre-cron slack. Tasks already parked
+        // "after van meeting" (beyond_cron) by the reorder are excluded, so a new task isn't wrongly
+        // rejected by load the DA won't actually do before the cron.
         List<FeasibilityStop> existing = queued.stream()
+                .filter(r -> !r.isBeyondCron())
                 .map(r -> new FeasibilityStop(new LatLon(r.getTaskLat(), r.getTaskLon()), serviceSeconds))
                 .toList();
         FeasibilityStop newTask = new FeasibilityStop(new LatLon(req.lat(), req.lon()), serviceSeconds);
         LatLon cronVertex = new LatLon(cron.getMeetingLat(), cron.getMeetingLon());
         return new FeasibilityRequest(current, currentTime, existing, newTask, cronVertex,
-                activeMeetingTime(cron, currentTime));
+                activeMeetingTime(cron, currentTime),
+                req.cityId() != null ? req.cityId().toString() : null);
     }
 
     /**
@@ -438,13 +444,7 @@ class DispatchServiceImpl implements DispatchService {
      * genuinely over (→ correctly infeasible).
      */
     private Instant activeMeetingTime(DaCronAssignment cron, Instant now) {
-        ZoneId zone = ZoneId.of(props.getShift().getZone());
-        return cron.getMeetingTimes().stream()
-                .map(LocalTime::parse)
-                .map(t -> LocalDateTime.of(cron.getOperatingDate(), t).atZone(zone).toInstant())
-                .filter(i -> i.isAfter(now))
-                .min(Comparator.naturalOrder())
-                .orElse(cron.getScheduledMeetingTime());
+        return CronMeetings.activeMeetingTime(cron, now, ZoneId.of(props.getShift().getZone()));
     }
 
     private DispatchQueue newRow(UUID daId, Request req, UUID tileId, LocalDate date,

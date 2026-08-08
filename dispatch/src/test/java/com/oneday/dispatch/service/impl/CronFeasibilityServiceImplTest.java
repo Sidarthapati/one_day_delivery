@@ -152,7 +152,7 @@ class CronFeasibilityServiceImplTest {
         // The DA is already 4 km out with only 1008 s of slack; reaching the cron 20 km out (≈3226 s)
         // busts it. Anchoring at the in-progress position is what makes this infeasible.
         FeasibilityRequest fromInProgress = new FeasibilityRequest(
-                north(4), BASE, List.of(), task(4), north(20), BASE.plusSeconds(1008));
+                north(4), BASE, List.of(), task(4), north(20), BASE.plusSeconds(1008), null);
 
         FeasibilityResult r = service.checkFeasibility(fromInProgress);
 
@@ -201,6 +201,6 @@ class CronFeasibilityServiceImplTest {
     private static FeasibilityRequest req(LatLon current, List<FeasibilityStop> existing,
                                           FeasibilityStop newTask, LatLon cron, long slackSeconds) {
         return new FeasibilityRequest(current, BASE, existing, newTask, cron,
-                BASE.plusSeconds(slackSeconds));
+                BASE.plusSeconds(slackSeconds), null);
     }
 }

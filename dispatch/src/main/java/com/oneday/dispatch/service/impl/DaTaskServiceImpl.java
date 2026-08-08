@@ -53,6 +53,7 @@ class DaTaskServiceImpl implements DaTaskService {
     private final HubScanSeamProducer hubScanSeamProducer;
     private final ShipmentRefPort shipmentRefPort;
     private final ShipmentContactPort shipmentContactPort;
+    private final QueueReorderService queueReorderService;
 
     DaTaskServiceImpl(DispatchQueueRepository queueRepository,
                       DaCronAssignmentRepository cronRepository,
@@ -61,13 +62,15 @@ class DaTaskServiceImpl implements DaTaskService {
                       DispatchProperties props,
                       HubScanSeamProducer hubScanSeamProducer,
                       ShipmentRefPort shipmentRefPort,
-                      ShipmentContactPort shipmentContactPort) {
+                      ShipmentContactPort shipmentContactPort,
+                      QueueReorderService queueReorderService) {
         this.queueRepository = queueRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
         this.daEventProducer = daEventProducer;
         this.props = props;
         this.hubScanSeamProducer = hubScanSeamProducer;
+        this.queueReorderService = queueReorderService;
         this.shipmentRefPort = shipmentRefPort;
         this.shipmentContactPort = shipmentContactPort;
     }
@@ -138,6 +141,8 @@ class DaTaskServiceImpl implements DaTaskService {
             DaTaskView view = save(task);
             recordCronHandoff(daId, task.getOperatingDate(), parcelScans.size());
             onComplete.accept(task);
+            // Head removed → re-rank the remaining tail against the new head (cron-aware).
+            queueReorderService.reorder(daId, task.getOperatingDate());
             return view;
         });
     }
@@ -228,6 +233,8 @@ class DaTaskServiceImpl implements DaTaskService {
             if (codCollected) {
                 daEventProducer.emitCodCollected(daId, task.getCityId(), task.getShipmentId());
             }
+            // Head removed → re-rank the remaining tail against the new head (cron-aware).
+            queueReorderService.reorder(daId, task.getOperatingDate());
             return view;
         });
     }

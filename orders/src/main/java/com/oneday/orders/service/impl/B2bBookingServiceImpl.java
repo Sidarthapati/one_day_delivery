@@ -35,9 +35,11 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiter;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
+import com.oneday.orders.events.ShipmentBooked;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -64,6 +66,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private final CustomerVisibleStateMapper stateMapper;
     private final WalletService walletService;
     private final TransactionTemplate tx;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     private final CircuitBreaker serviceabilityCb;
     private final CircuitBreaker pricingCb;
@@ -84,6 +87,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
                           CustomerVisibleStateMapper stateMapper,
                           WalletService walletService,
                           TransactionTemplate transactionTemplate,
+                          ApplicationEventPublisher applicationEventPublisher,
                           CircuitBreakerRegistry circuitBreakerRegistry,
                           TimeLimiterRegistry timeLimiterRegistry,
                           @Qualifier("resilienceScheduler") ScheduledExecutorService resilienceScheduler) {
@@ -98,6 +102,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         this.stateMapper          = stateMapper;
         this.walletService        = walletService;
         this.tx                   = transactionTemplate;
+        this.applicationEventPublisher = applicationEventPublisher;
         this.serviceabilityCb     = circuitBreakerRegistry.circuitBreaker("serviceability");
         this.pricingCb            = circuitBreakerRegistry.circuitBreaker("pricing");
         this.serviceabilityTl     = timeLimiterRegistry.timeLimiter("serviceability");
@@ -300,6 +305,11 @@ class B2bBookingServiceImpl implements B2bBookingService {
             log.warn("ETA fetch failed for B2B shipment {}; booking proceeds without ETA: {}",
                     shipment.getId(), e.getMessage());
         }
+
+        // ── Emit CREATED — in-process; ShipmentEventProducer publishes AFTER_COMMIT, so a rolled-back
+        //    booking never produces a phantom event. This is what starts the B2B lifecycle: M5 pickup
+        //    assignment, M10 SLA, and (via delivery) COD collection — same as the B2C path. ──────────
+        applicationEventPublisher.publishEvent(new ShipmentBooked(shipment));
 
         // ── 6. Build response (payment = null for B2B) ─────────────────────────
         BookingResponse.PricingDetails pricing = new BookingResponse.PricingDetails();

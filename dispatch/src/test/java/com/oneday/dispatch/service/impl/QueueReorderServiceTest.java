@@ -1,6 +1,8 @@
 package com.oneday.dispatch.service.impl;
 
 import com.oneday.dispatch.config.DispatchProperties;
+import com.oneday.dispatch.domain.CronAssignmentStatus;
+import com.oneday.dispatch.domain.DaCronAssignment;
 import com.oneday.dispatch.domain.DaStatusEnum;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
@@ -8,7 +10,9 @@ import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
+import com.oneday.dispatch.service.CronFeasibilityService;
 import com.oneday.dispatch.service.DaStatusService;
+import com.oneday.dispatch.service.FeasibilityStop;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +37,7 @@ class QueueReorderServiceTest {
     private DaCronAssignmentRepository cronRepo;
     private DaStatusService daStatus;
     private DaEventProducer events;
+    private CronFeasibilityService feasibility;
     private QueueReorderService service;
 
     private final UUID daId = UUID.randomUUID();
@@ -45,12 +50,15 @@ class QueueReorderServiceTest {
         cronRepo = mock(DaCronAssignmentRepository.class);
         daStatus = mock(DaStatusService.class);
         events = mock(DaEventProducer.class);
-        service = new QueueReorderService(queueRepo, cronRepo, daStatus, events, new DispatchProperties());
-        when(cronRepo.findByDaIdAndOperatingDate(daId, date)).thenReturn(Optional.empty()); // no cron
+        feasibility = mock(CronFeasibilityService.class);
+        service = new QueueReorderService(queueRepo, cronRepo, daStatus, events, feasibility, new DispatchProperties());
+        when(cronRepo.findByDaIdAndOperatingDate(daId, date)).thenReturn(Optional.empty()); // no cron by default
         // Anchor at (0,0) — the DA's GPS (no in-progress task).
         when(daStatus.getLiveStatus(daId))
                 .thenReturn(new DaLiveStatus(daId, city, 0.0, 0.0, null, DaStatusEnum.IDLE, "SHIFT_1"));
     }
+
+    // ── non-cron reorder ─────────────────────────────────────────────────────
 
     @Test
     void agedFarTaskOvertakesFreshNearTask() {
@@ -80,6 +88,74 @@ class QueueReorderServiceTest {
         assertThat(head.getQueuePosition()).isEqualTo(0);      // pinned
         assertThat(farOld.getQueuePosition()).isEqualTo(1);    // reordered tail starts after the head
         assertThat(nearFresh.getQueuePosition()).isEqualTo(2);
+    }
+
+    // ── cron-aware reorder ───────────────────────────────────────────────────
+
+    @Test
+    void cronRiskyTaskIsDemotedBeyondCron() {
+        // Two queued tasks under a cron. The near/high-priority one fits before the cron; adding the
+        // far one busts it → the far one is kept but parked "after van meeting".
+        DispatchQueue near = queued(0, 0.01, 0.01, Instant.now());
+        DispatchQueue far = queued(1, 0.3, 0.3, Instant.now());
+        when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(eq(daId), eq(date), any()))
+                .thenReturn(List.of(near, far));
+        withCron();
+        // Accepting one stop is feasible; accepting two would miss the cron.
+        when(feasibility.cronSlackSeconds(any(), any(), any(), any(), any(), any()))
+                .thenAnswer(inv -> ((List<FeasibilityStop>) inv.getArgument(2)).size() == 1 ? 100_000L : -1L);
+
+        service.reorder(daId, date);
+
+        assertThat(near.getQueuePosition()).isEqualTo(0);
+        assertThat(near.isBeyondCron()).isFalse();
+        assertThat(far.getQueuePosition()).isEqualTo(1);
+        assertThat(far.isBeyondCron()).isTrue();               // demoted, kept on the DA
+        verify(events).emitQueueReordered(daId, city);
+    }
+
+    @Test
+    void whenNothingFitsAllTasksAreBeyondCron() {
+        // Near the cutoff no queued task fits → all beyond-cron, so the DA's next move is the cron itself.
+        DispatchQueue a = queued(0, 0.01, 0.01, Instant.now());
+        DispatchQueue b = queued(1, 0.3, 0.3, Instant.now());
+        when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(eq(daId), eq(date), any()))
+                .thenReturn(List.of(a, b));
+        withCron();
+        when(feasibility.cronSlackSeconds(any(), any(), any(), any(), any(), any())).thenReturn(-1L);
+
+        service.reorder(daId, date);
+
+        assertThat(a.isBeyondCron()).isTrue();
+        assertThat(b.isBeyondCron()).isTrue();
+    }
+
+    @Test
+    void beyondCronTaskPromotesWhenReachableAgain() {
+        // A task parked beyond the cron becomes feasible again (e.g. after the meeting rolls forward).
+        DispatchQueue parked = queued(0, 0.01, 0.01, Instant.now());
+        parked.setBeyondCron(true);
+        when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(eq(daId), eq(date), any()))
+                .thenReturn(List.of(parked));
+        withCron();
+        when(feasibility.cronSlackSeconds(any(), any(), any(), any(), any(), any())).thenReturn(100_000L);
+
+        service.reorder(daId, date);
+
+        assertThat(parked.isBeyondCron()).isFalse();           // promoted back into the pre-cron queue
+        verify(events).emitQueueReordered(daId, city);
+    }
+
+    private void withCron() {
+        DaCronAssignment cron = new DaCronAssignment();
+        cron.setDaId(daId);
+        cron.setCityId(city);
+        cron.setOperatingDate(date);
+        cron.setMeetingLat(1.0);
+        cron.setMeetingLon(1.0);
+        cron.setScheduledMeetingTime(Instant.now().plus(2, ChronoUnit.HOURS));
+        cron.setStatus(CronAssignmentStatus.SCHEDULED);
+        when(cronRepo.findByDaIdAndOperatingDate(daId, date)).thenReturn(Optional.of(cron));
     }
 
     private DispatchQueue queued(int pos, double lat, double lon, Instant assignedAt) {

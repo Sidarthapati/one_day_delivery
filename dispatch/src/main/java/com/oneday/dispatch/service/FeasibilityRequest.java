@@ -27,7 +27,8 @@ public record FeasibilityRequest(
         List<FeasibilityStop> existingQueue,
         FeasibilityStop newTask,
         LatLon cronVertex,
-        Instant scheduledMeetingTime) {
+        Instant scheduledMeetingTime,
+        String cityId) {
 
     public FeasibilityRequest {
         Objects.requireNonNull(currentPosition, "currentPosition");
@@ -36,5 +37,6 @@ public record FeasibilityRequest(
         Objects.requireNonNull(cronVertex, "cronVertex");
         Objects.requireNonNull(scheduledMeetingTime, "scheduledMeetingTime");
         existingQueue = existingQueue == null ? List.of() : List.copyOf(existingQueue);
+        // cityId is optional — null selects the global travel estimate (per-city overrides fall back to it).
     }
 }
