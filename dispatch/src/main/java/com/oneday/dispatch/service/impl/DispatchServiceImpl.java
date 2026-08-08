@@ -1,5 +1,7 @@
 package com.oneday.dispatch.service.impl;
 
+import com.oneday.common.log.AuditLog;
+import com.oneday.common.log.LogContext;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.AssignmentDecision;
 import com.oneday.dispatch.domain.CronAssignmentStatus;
@@ -32,7 +34,6 @@ import com.oneday.grid.service.GridService;
 import com.oneday.grid.service.IntradayLoadScoreService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -118,17 +119,19 @@ class DispatchServiceImpl implements DispatchService {
                 () -> assign(new Request(shipmentId, cityId, TaskType.DELIVERY, lat, lon, destTileId, null), true));
     }
 
-    /** Wrap an assignment in MDC (shipment/city correlation) + record its outcome metric. */
+    /** Wrap an assignment in MDC (shipment/city correlation) + record its outcome (metric + audit line). */
     private AssignmentResult tracked(UUID shipmentId, UUID cityId, java.util.function.Supplier<AssignmentResult> work) {
-        MDC.put("shipment_id", String.valueOf(shipmentId));
-        MDC.put("city_id", String.valueOf(cityId));
-        try {
+        try (var ignored = LogContext.of()
+                .put("shipmentId", String.valueOf(shipmentId))
+                .put("cityId", String.valueOf(cityId))) {
             AssignmentResult result = work.get();
             metrics.assignment(result.outcome(), cityId);
+            AuditLog.event("da.assignment")
+                    .kv("shipmentId", shipmentId)
+                    .kv("cityId", cityId)
+                    .kv("outcome", result.outcome())
+                    .log();
             return result;
-        } finally {
-            MDC.remove("shipment_id");
-            MDC.remove("city_id");
         }
     }
 

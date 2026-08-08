@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logging config for the assembled app.
+
+  - Local dev (no staging/prod profile): human-readable console, with the correlation MDC keys
+    (requestId / shipmentRef / shipmentId / parcelId) appended so a developer can see them.
+  - staging / prod: one JSON object per line via LogstashEncoder — MDC keys become top-level JSON
+    fields, so a log platform (Axiom) can query shipmentRef="1DD-…" / audit_event="…" directly.
+    Emitted to stdout; Render captures stdout and a log drain forwards it to Axiom (no app↔Axiom
+    coupling, so logging never blocks the request path and the platform can be swapped freely).
+
+  The dedicated `com.oneday.audit` logger carries the business-seam audit lines (shipment.booked,
+  shipment.transition, scan.recorded, event.published/consumed, …); it stays at INFO in every profile.
+-->
+<configuration>
+
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="oneday-api"/>
+
+    <!-- Plain console for local dev. %X{key} renders the MDC correlation keys. -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} [req=%X{requestId:-} ref=%X{shipmentRef:-} sid=%X{shipmentId:-} pid=%X{parcelId:-}] - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- One JSON line per event for staging/prod. MDC + StructuredArguments become JSON fields. -->
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp/>
+                <version/>
+                <logLevel/>
+                <loggerName/>
+                <threadName/>
+                <message/>
+                <mdc/>                <!-- requestId, shipmentId, shipmentRef, parcelId, … -->
+                <arguments/>          <!-- StructuredArguments.kv(...) from AuditLog -->
+                <stackTrace/>
+                <pattern>
+                    <pattern>{"service":"${appName}"}</pattern>
+                </pattern>
+            </providers>
+        </encoder>
+    </appender>
+
+    <!-- Default (local dev) → plain console. -->
+    <springProfile name="!staging &amp; !prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!-- staging / prod → JSON to stdout for the Axiom drain. -->
+    <springProfile name="staging | prod">
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+    </springProfile>
+
+    <!-- Business audit trail — always on, regardless of profile. -->
+    <logger name="com.oneday.audit" level="INFO"/>
+    <logger name="com.oneday" level="INFO"/>
+
+</configuration>

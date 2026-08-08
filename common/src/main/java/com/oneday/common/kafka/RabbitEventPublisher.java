@@ -1,5 +1,7 @@
 package com.oneday.common.kafka;
 
+import com.oneday.common.log.AuditLog;
+import com.oneday.common.log.CorrelationKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -28,6 +30,17 @@ public class RabbitEventPublisher implements EventPublisher {
             // exchange = stream; routing key = event type; payload converted to JSON by the
             // shared Jackson2JsonMessageConverter (MessagingConfig).
             rabbitTemplate.convertAndSend(stream, event.eventTypeName(), event);
+
+            // Audit the emit — the counterpart to event.consumed (RabbitConsumerMdcAspect); together
+            // they make the otherwise-invisible RabbitMQ hop queryable by shipment/parcel.
+            CorrelationKeys keys = CorrelationKeys.from(event);
+            AuditLog.event("event.published")
+                    .kv("stream", stream)
+                    .kv("eventType", event.eventTypeName())
+                    .kv("shipmentId", keys.shipmentId())
+                    .kv("shipmentRef", keys.shipmentRef())
+                    .kv("parcelId", keys.parcelId())
+                    .log();
         } catch (Exception e) {
             log.warn("Rabbit publish failed — exchange={} type={} key={}: {}",
                     stream, event.eventTypeName(), event.partitionKey(), e.getMessage());

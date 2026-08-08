@@ -3,6 +3,7 @@ package com.oneday.orders.service.impl;
 import com.oneday.common.domain.PickupSlots;
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.common.log.AuditLog;
 import com.oneday.orders.service.BookingService;
 import com.oneday.common.port.EtaPort;
 import com.oneday.common.port.PricingPort;
@@ -309,6 +310,18 @@ class B2bBookingServiceImpl implements B2bBookingService {
         // ── Emit CREATED — in-process; ShipmentEventProducer publishes AFTER_COMMIT, so a rolled-back
         //    booking never produces a phantom event. This is what starts the B2B lifecycle: M5 pickup
         //    assignment, M10 SLA, and (via delivery) COD collection — same as the B2C path. ──────────
+        AuditLog.event("shipment.booked")
+                .kv("shipmentId", shipment.getId())
+                .kv("shipmentRef", shipment.getShipmentRef())
+                .kv("customerType", CustomerType.B2B)
+                .kv("b2bAccountId", req.getB2bAccountId())
+                .kv("lane", shipment.getOriginCity() + "->" + shipment.getDestCity())
+                .kv("deliveryType", serviceability.deliveryType())
+                .kv("chargeableWeightGrams", chargeableWeightGrams)
+                .kv("totalPricePaise", quote.totalPricePaise())
+                .kv("fundingSource", funding)
+                .log();
+
         applicationEventPublisher.publishEvent(new ShipmentBooked(shipment));
 
         // ── 6. Build response (payment = null for B2B) ─────────────────────────
