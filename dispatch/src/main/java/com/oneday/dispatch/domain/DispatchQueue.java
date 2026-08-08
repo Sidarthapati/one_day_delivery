@@ -67,6 +67,12 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "cron_safe", nullable = false, updatable = false)
     private boolean cronSafe;
 
+    // Cron-aware reorder: true when this task can't be reached before the cron/van-meeting cutoff, so it
+    // is parked at the queue tail ("after van meeting") and excluded from pre-cron feasibility. Mutable —
+    // it flips as the DA moves, tasks arrive/complete, and the cutoff nears; auto-clears once reachable.
+    @Column(name = "beyond_cron", nullable = false)
+    private boolean beyondCron;
+
     @Column(name = "assigned_at", nullable = false, updatable = false)
     private Instant assignedAt;
 

@@ -10,8 +10,10 @@ import java.time.ZoneId;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Periodic re-score so aging keeps promoting stale tasks even when no new order arrives. No-op outside
- * shift hours (no DAs loaded). Reorder itself skips cron DAs.
+ * Slow safety tick: reorder normally runs on queue-changing events (insert / drop / task completion);
+ * this periodic re-score exists only for the time-based effects no event triggers — the ≥ aging-
+ * saturation starvation promotion and cron-slack shrinking as the cutoff nears. No-op outside shift
+ * hours (no DAs loaded). Runs for cron DAs too (reorder keeps the cron cutoff feasible).
  */
 @Component
 public class QueueReorderJob {
@@ -26,7 +28,7 @@ public class QueueReorderJob {
         this.queueReorderService = queueReorderService;
     }
 
-    @Scheduled(fixedDelayString = "${dispatch.reorder.tick-seconds:180}", timeUnit = TimeUnit.SECONDS)
+    @Scheduled(fixedDelayString = "${dispatch.reorder.tick-seconds:300}", timeUnit = TimeUnit.SECONDS)
     public void tick() {
         LocalDate today = LocalDate.now(IST);
         for (var daId : daStatusService.loadedDaIds()) {

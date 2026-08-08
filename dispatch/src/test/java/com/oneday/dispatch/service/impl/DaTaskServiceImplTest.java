@@ -60,8 +60,9 @@ class DaTaskServiceImplTest {
         daStatus.initShift(da, city, today, "MORNING", null);
         events = mock(DaEventProducer.class);
         scanSeam = mock(com.oneday.dispatch.events.HubScanSeamProducer.class);
+        QueueReorderService reorder = mock(QueueReorderService.class);
         service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam,
-                ids -> java.util.Map.of(), ids -> java.util.Map.of());
+                ids -> java.util.Map.of(), ids -> java.util.Map.of(), reorder);
     }
 
     @Test

@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
@@ -43,7 +44,9 @@ class CronFeasibilityServiceImpl implements CronFeasibilityService {
     @Override
     public FeasibilityResult checkFeasibility(FeasibilityRequest req) {
         DispatchProperties.Travel travel = props.getTravel();
-        double fastFactor = travel.getRoadFactor();
+        String cityId = req.cityId();
+        double fastFactor = travel.roadFactor(cityId);
+        double avgSpeed = travel.avgSpeedKmph(cityId);
         long confirmThresholdSeconds = props.getOsrm().getConfirmThresholdMinutes() * 60L;
 
         // Seconds available between "now" (or the IN_PROGRESS task's expected completion) and the cutoff.
@@ -55,7 +58,7 @@ class CronFeasibilityServiceImpl implements CronFeasibilityService {
 
         // Service time is constant across insertion positions, so it never affects which slot is cheapest.
         long fixedService = totalServiceSeconds(req) + req.newTask().serviceSeconds();
-        long baseTravelFast = routeTravelSeconds(nodes, fastFactor);
+        long baseTravelFast = routeTravelSeconds(nodes, fastFactor, avgSpeed);
 
         // Cheapest insertion == earliest cron arrival (the only k-dependent term is extra travel),
         // so the single cheapest slot is also the most likely to be feasible — find it once.
@@ -63,7 +66,7 @@ class CronFeasibilityServiceImpl implements CronFeasibilityService {
         long bestExtra = Long.MAX_VALUE;
         for (int k = 0; k <= n; k++) {
             long extra = extraTravelSeconds(nodes.get(k), nodes.get(k + 1),
-                    req.newTask().location(), fastFactor);
+                    req.newTask().location(), fastFactor, avgSpeed);
             if (extra < bestExtra) {
                 bestExtra = extra;
                 bestK = k;
@@ -88,13 +91,35 @@ class CronFeasibilityServiceImpl implements CronFeasibilityService {
         }
 
         // OSRM unavailable (breaker open) → conservative haversine so we never optimistically accept.
-        double consFactor = fastFactor * travel.getBreakerFallbackMultiplier();
-        long baseTravelCons = routeTravelSeconds(nodes, consFactor);
+        double consFactor = fastFactor * travel.breakerFallbackMultiplier(cityId);
+        long baseTravelCons = routeTravelSeconds(nodes, consFactor, avgSpeed);
         long extraCons = extraTravelSeconds(nodes.get(bestK), nodes.get(bestK + 1),
-                req.newTask().location(), consFactor);
+                req.newTask().location(), consFactor, avgSpeed);
         long arrivalCons = baseTravelCons + extraCons + fixedService;
         log.debug("OSRM unavailable; conservative arrival {}s vs slack {}s", arrivalCons, slackSeconds);
         return result(arrivalCons <= slackSeconds, bestK, slackSeconds - arrivalCons, extraCons, false);
+    }
+
+    @Override
+    public long cronSlackSeconds(LatLon current, Instant currentTime, List<FeasibilityStop> orderedStops,
+                                 LatLon cronVertex, Instant meetingTime, String cityId) {
+        DispatchProperties.Travel travel = props.getTravel();
+        double factor = travel.roadFactor(cityId);
+        double avgSpeed = travel.avgSpeedKmph(cityId);
+
+        // Route: current → each ordered stop (in the given order) → cron vertex.
+        List<LatLon> nodes = new ArrayList<>(orderedStops.size() + 2);
+        nodes.add(current);
+        long service = 0;
+        for (FeasibilityStop stop : orderedStops) {
+            nodes.add(stop.location());
+            service += stop.serviceSeconds();
+        }
+        nodes.add(cronVertex);
+
+        long arrival = routeTravelSeconds(nodes, factor, avgSpeed) + service;
+        long available = Duration.between(currentTime, meetingTime).getSeconds();
+        return available - arrival;
     }
 
     private static List<LatLon> routeNodes(FeasibilityRequest req) {
@@ -116,25 +141,25 @@ class CronFeasibilityServiceImpl implements CronFeasibilityService {
     }
 
     /** Sum of leg travel times along the node list, in seconds. */
-    private long routeTravelSeconds(List<LatLon> nodes, double factor) {
+    private long routeTravelSeconds(List<LatLon> nodes, double factor, double avgSpeedKmph) {
         long total = 0;
         for (int i = 0; i < nodes.size() - 1; i++) {
-            total += travelSeconds(nodes.get(i), nodes.get(i + 1), factor);
+            total += travelSeconds(nodes.get(i), nodes.get(i + 1), factor, avgSpeedKmph);
         }
         return total;
     }
 
     /** Added travel from splicing {@code via} between {@code left} and {@code right}. */
-    private long extraTravelSeconds(LatLon left, LatLon right, LatLon via, double factor) {
-        return travelSeconds(left, via, factor)
-                + travelSeconds(via, right, factor)
-                - travelSeconds(left, right, factor);
+    private long extraTravelSeconds(LatLon left, LatLon right, LatLon via, double factor, double avgSpeedKmph) {
+        return travelSeconds(left, via, factor, avgSpeedKmph)
+                + travelSeconds(via, right, factor, avgSpeedKmph)
+                - travelSeconds(left, right, factor, avgSpeedKmph);
     }
 
     /** Haversine distance scaled to road seconds: km × roadFactor ÷ km/h × 3600 (hours → seconds). */
-    private long travelSeconds(LatLon from, LatLon to, double factor) {
+    private long travelSeconds(LatLon from, LatLon to, double factor, double avgSpeedKmph) {
         double km = GeoDistance.km(from.lat(), from.lon(), to.lat(), to.lon());
-        return Math.round((km * factor / props.getTravel().getAvgSpeedKmph()) * 3600);
+        return Math.round((km * factor / avgSpeedKmph) * 3600);
     }
 
     private static List<LatLon> insert(List<LatLon> nodes, int index, LatLon point) {

@@ -66,6 +66,7 @@ class B2bBookingServiceImplTest {
     @Mock private ShipmentStateHistoryRepository historyRepository;
     @Mock private com.oneday.orders.repository.CodCollectionRepository codCollectionRepository;
     @Mock private com.oneday.orders.service.WalletService walletService;
+    @Mock private org.springframework.context.ApplicationEventPublisher applicationEventPublisher;
 
     private static final AbstractPlatformTransactionManager NO_OP_TX =
             new AbstractPlatformTransactionManager() {
@@ -94,6 +95,7 @@ class B2bBookingServiceImplTest {
                 b2bAccountRepository, serviceabilityPort, pricingPort, etaPort,
                 shipmentRefService, shipmentRepository, historyRepository,
                 codCollectionRepository, stateMapper, walletService, new TransactionTemplate(NO_OP_TX),
+                applicationEventPublisher,
                 CircuitBreakerRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),
                 scheduler);
@@ -145,6 +147,13 @@ class B2bBookingServiceImplTest {
         assertThat(resp.getPayment()).isNull();
         assertThat(resp.getEtaPromised()).isNotNull();
         assertThat(resp.getSlaCommitmentMinutes()).isEqualTo(1440);
+
+        // CREATED is emitted so M5 (pickup), M10 (SLA) and COD collection actually run for B2B —
+        // this is the fix that starts the B2B lifecycle (previously only the B2C path published it).
+        ArgumentCaptor<com.oneday.orders.events.ShipmentBooked> bookedCaptor =
+                ArgumentCaptor.forClass(com.oneday.orders.events.ShipmentBooked.class);
+        verify(applicationEventPublisher).publishEvent(bookedCaptor.capture());
+        assertThat(bookedCaptor.getValue().shipment().getShipmentRef()).isEqualTo(SHIPMENT_REF);
     }
 
     // ── account not found ──────────────────────────────────────────────────

@@ -4,7 +4,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Every tunable threshold in M5 lives here — there are NO hardcoded literals anywhere else in the
@@ -165,6 +167,14 @@ public class DispatchProperties {
          */
         private double breakerFallbackMultiplier = 1.2;
 
+        /**
+         * Per-city overrides of the haversine travel estimate, keyed by the dispatch city id (as a
+         * string). Any unset field on an override, or a city with no entry, falls back to the global
+         * defaults above — so an empty map means "use the global values everywhere" (no behaviour
+         * change). Lets dense/irregular cities carry a higher road factor or lower speed.
+         */
+        private Map<String, CityTravel> cities = new HashMap<>();
+
         public double getRoadFactor() { return roadFactor; }
         public void setRoadFactor(double roadFactor) { this.roadFactor = roadFactor; }
         public double getAvgSpeedKmph() { return avgSpeedKmph; }
@@ -172,6 +182,37 @@ public class DispatchProperties {
         public double getBreakerFallbackMultiplier() { return breakerFallbackMultiplier; }
         public void setBreakerFallbackMultiplier(double breakerFallbackMultiplier) {
             this.breakerFallbackMultiplier = breakerFallbackMultiplier;
+        }
+        public Map<String, CityTravel> getCities() { return cities; }
+        public void setCities(Map<String, CityTravel> cities) { this.cities = cities; }
+
+        // ── Per-city resolvers (null cityId or no override → global default) ──
+        public double roadFactor(String cityId) {
+            CityTravel c = cityId == null ? null : cities.get(cityId);
+            return c != null && c.roadFactor != null ? c.roadFactor : roadFactor;
+        }
+        public double avgSpeedKmph(String cityId) {
+            CityTravel c = cityId == null ? null : cities.get(cityId);
+            return c != null && c.avgSpeedKmph != null ? c.avgSpeedKmph : avgSpeedKmph;
+        }
+        public double breakerFallbackMultiplier(String cityId) {
+            CityTravel c = cityId == null ? null : cities.get(cityId);
+            return c != null && c.breakerFallbackMultiplier != null
+                    ? c.breakerFallbackMultiplier : breakerFallbackMultiplier;
+        }
+
+        /** Optional per-city travel override; any null field inherits the global {@link Travel} default. */
+        public static class CityTravel {
+            private Double roadFactor;
+            private Double avgSpeedKmph;
+            private Double breakerFallbackMultiplier;
+
+            public Double getRoadFactor() { return roadFactor; }
+            public void setRoadFactor(Double roadFactor) { this.roadFactor = roadFactor; }
+            public Double getAvgSpeedKmph() { return avgSpeedKmph; }
+            public void setAvgSpeedKmph(Double avgSpeedKmph) { this.avgSpeedKmph = avgSpeedKmph; }
+            public Double getBreakerFallbackMultiplier() { return breakerFallbackMultiplier; }
+            public void setBreakerFallbackMultiplier(Double v) { this.breakerFallbackMultiplier = v; }
         }
     }
 
@@ -211,8 +252,14 @@ public class DispatchProperties {
         private double maxDistanceKm = 15.0;
         /** Wait (min) at which aging saturates — past this an isolated task outranks near-but-fresh ones. */
         private int ageSaturationMinutes = 120;
-        /** Periodic re-score cadence so aging keeps promoting stale tasks with no new inserts. */
-        private int tickSeconds = 180;
+        /** Slow safety-tick cadence: re-scores aging + cron slack when no insert/drop/complete event fires. */
+        private int tickSeconds = 300;
+        /**
+         * Slack (min) a cron DA must still have at the van-meeting cutoff for a task to count as
+         * pre-cron feasible during reorder. Tasks that would leave less than this are demoted to the
+         * "after van meeting" tail so the cron is never cut fine.
+         */
+        private int cronSafetyMarginMinutes = 10;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean v) { this.enabled = v; }
@@ -226,6 +273,8 @@ public class DispatchProperties {
         public void setAgeSaturationMinutes(int v) { this.ageSaturationMinutes = v; }
         public int getTickSeconds() { return tickSeconds; }
         public void setTickSeconds(int v) { this.tickSeconds = v; }
+        public int getCronSafetyMarginMinutes() { return cronSafetyMarginMinutes; }
+        public void setCronSafetyMarginMinutes(int v) { this.cronSafetyMarginMinutes = v; }
     }
 
     public static class Pickup {

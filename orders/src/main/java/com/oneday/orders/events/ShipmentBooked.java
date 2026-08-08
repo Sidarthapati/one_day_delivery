@@ -3,8 +3,9 @@ package com.oneday.orders.events;
 import com.oneday.orders.domain.Shipment;
 
 /**
- * In-process (NOT Kafka) Spring {@code ApplicationEvent}, published by
- * {@code BookingServiceImpl} after a shipment is persisted in {@code BOOKED} state.
+ * In-process (NOT Kafka) Spring {@code ApplicationEvent}, published by the booking services
+ * ({@code BookingServiceImpl} for B2C, {@code B2bBookingServiceImpl} for B2B) after a shipment is
+ * persisted in {@code BOOKED} state.
  *
  * <p>{@link ShipmentEventProducer} maps it to the outbound Kafka {@code ShipmentCreatedEvent}
  * after the booking transaction commits (AFTER_COMMIT).</p>
