@@ -28,6 +28,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
+        <!-- @Aspect support for the RabbitListener MDC/audit advice (brings aspectjweaver;
+             Spring Boot auto-enables AspectJ auto-proxying when it's on the classpath). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <!-- Structured JSON logging: the encoder (used by app/logback-spring.xml) AND the
+             StructuredArguments API used by AuditLog. Not managed by the Boot BOM, so pin here;
+             7.4 targets Logback 1.4.x (Spring Boot 3.2). -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

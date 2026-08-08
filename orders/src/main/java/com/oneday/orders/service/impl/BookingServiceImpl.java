@@ -4,6 +4,7 @@ import com.oneday.common.domain.PickupSlots;
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.common.log.AuditLog;
 import com.oneday.common.port.EtaPort;
 import com.oneday.common.port.PricingPort;
 import com.oneday.common.port.ServiceabilityPort;
@@ -333,6 +334,17 @@ class BookingServiceImpl implements BookingService {
             log.warn("ETA fetch failed for shipment {}; booking proceeds without ETA: {}",
                     shipment.getId(), e.getMessage());
         }
+
+        AuditLog.event("shipment.booked")
+                .kv("shipmentId", shipment.getId())
+                .kv("shipmentRef", shipment.getShipmentRef())
+                .kv("customerType", customerType)
+                .kv("lane", shipment.getOriginCity() + "->" + shipment.getDestCity())
+                .kv("deliveryType", serviceability.deliveryType())
+                .kv("chargeableWeightGrams", chargeableWeightGrams)
+                .kv("totalPricePaise", quote.totalPricePaise())
+                .kv("paymentMode", req.getPaymentMode())
+                .log();
 
         // ── Emit CREATED — in-process; ShipmentEventProducer publishes to Kafka AFTER_COMMIT,
         //    so a rolled-back booking never produces a phantom CREATED event. ──────────────

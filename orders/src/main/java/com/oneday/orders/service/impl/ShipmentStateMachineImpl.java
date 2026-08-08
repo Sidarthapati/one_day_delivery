@@ -4,6 +4,7 @@ import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.DropType;
 import com.oneday.common.domain.enums.PickupType;
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.common.log.AuditLog;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.domain.ShipmentStateHistory;
 import com.oneday.orders.repository.ShipmentRepository;
@@ -60,6 +61,15 @@ class ShipmentStateMachineImpl implements ShipmentStateMachine {
         // and flushes the UPDATE automatically when the transaction commits.
 
         historyRepo.save(ShipmentStateHistory.of(shipmentId, current, target, ctx));
+
+        AuditLog.event("shipment.transition")
+                .kv("shipmentId", shipmentId)
+                .kv("shipmentRef", shipment.getShipmentRef())
+                .kv("from", current)
+                .kv("to", target)
+                .kv("triggeredBy", ctx.getTriggeredBy())
+                .kv("source", ctx.getTriggerSource())
+                .log();
 
         // In-process announcement — ShipmentEventProducer turns this into the outbound Kafka
         // STATE_CHANGED event after this transaction commits (AFTER_COMMIT). The state machine

@@ -3,6 +3,7 @@ package com.oneday.barcode.service;
 import com.oneday.barcode.domain.ScanLedgerEntry;
 import com.oneday.barcode.events.ScanRecorded;
 import com.oneday.barcode.repository.ScanLedgerRepository;
+import com.oneday.common.log.AuditLog;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +43,15 @@ class ScanLedgerServiceImpl implements ScanLedgerService {
                 .scannedAt(cmd.scannedAt())
                 .clientScanId(cmd.clientScanId())
                 .build());
+
+        AuditLog.event("scan.recorded")
+                .kv("shipmentId", entry.getShipmentId())
+                .kv("parcelId", entry.getParcelId())
+                .kv("scanType", entry.getScanType())
+                .kv("locationType", entry.getLocationType())
+                .kv("locationId", entry.getLocationId())
+                .kv("actorId", entry.getActorId())
+                .log();
 
         // In-process signal; the outbound ScanEvent is published only AFTER this tx commits.
         events.publishEvent(new ScanRecorded(

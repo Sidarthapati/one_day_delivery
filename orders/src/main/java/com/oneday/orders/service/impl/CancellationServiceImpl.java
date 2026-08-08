@@ -3,6 +3,7 @@ package com.oneday.orders.service.impl;
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.common.log.AuditLog;
 import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.PaymentTransaction;
 import com.oneday.orders.domain.Shipment;
@@ -157,6 +158,15 @@ class CancellationServiceImpl implements CancellationService {
         events.publishEvent(new ShipmentCancelled(
                 shipment.getId(), shipmentRef, cancelledAtState, reason,
                 refundInitiated, refundAmountPaise, Instant.now()));
+
+        AuditLog.event("shipment.cancelled")
+                .kv("shipmentId", shipment.getId())
+                .kv("shipmentRef", shipmentRef)
+                .kv("cancelledAtState", cancelledAtState)
+                .kv("lane", isB2b ? "B2B" : "B2C")
+                .kv("refundInitiated", refundInitiated)
+                .kv("refundAmountPaise", refundAmountPaise)
+                .log();
 
         log.info("Cancelled shipment {} at state {} (refundInitiated={})",
                 shipmentRef, cancelledAtState, refundInitiated);
