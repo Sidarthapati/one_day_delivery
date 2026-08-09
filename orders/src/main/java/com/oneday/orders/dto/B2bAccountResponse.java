@@ -19,5 +19,6 @@ public record B2bAccountResponse(
         long outstandingBalancePaise,
         long availableCreditPaise,
         short paymentTermsDays,
-        String rejectionReason
+        String rejectionReason,
+        UUID rateCardId
 ) {}

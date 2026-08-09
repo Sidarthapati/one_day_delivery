@@ -43,6 +43,7 @@ class B2bAccountServiceImpl implements B2bAccountService {
                 a.getOutstandingBalancePaise(),
                 available,
                 a.getPaymentTermsDays(),
-                a.getRejectionReason());
+                a.getRejectionReason(),
+                a.getRateCardId());
     }
 }

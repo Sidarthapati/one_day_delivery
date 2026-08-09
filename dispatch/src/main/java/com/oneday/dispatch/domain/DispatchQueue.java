@@ -87,6 +87,10 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "started_at")
     private Instant startedAt;
 
+    // Set when the DA taps "Mark arrived" at the stop; arrived→picked_up/completed = dwell time.
+    @Column(name = "arrived_at")
+    private Instant arrivedAt;
+
     @Column(name = "completed_at")
     private Instant completedAt;
 

@@ -15,6 +15,7 @@ import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
 import com.oneday.dispatch.service.model.DaQueue;
+import com.oneday.common.log.AuditLog;
 import com.oneday.common.port.ShipmentContactPort;
 import com.oneday.common.port.ShipmentContactPort.ShipmentContact;
 import com.oneday.common.port.ShipmentRefPort;
@@ -98,6 +99,27 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStatus(TaskStatus.IN_PROGRESS);
             task.setStartedAt(Instant.now());
             return save(task);
+        });
+    }
+
+    @Override
+    @Transactional
+    public DaTaskView markArrivedAtStop(UUID daId, UUID taskId) {
+        return daStatusService.withDaLock(daId, () -> {
+            DispatchQueue task = ownedTask(daId, taskId);
+            // Stamp once — a resumed screen re-tapping "Mark arrived" must not overwrite the first arrival.
+            if (task.getArrivedAt() == null) {
+                task.setArrivedAt(Instant.now());
+                DaTaskView view = save(task);
+                AuditLog.event("da.arrived_at_stop")
+                        .kv("taskId", taskId)
+                        .kv("shipmentId", task.getShipmentId())
+                        .kv("taskType", task.getTaskType())
+                        .kv("daId", daId)
+                        .log();
+                return view;
+            }
+            return DaTaskView.of(task);
         });
     }
 
