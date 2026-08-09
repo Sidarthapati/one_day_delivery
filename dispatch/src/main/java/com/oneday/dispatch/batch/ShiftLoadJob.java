@@ -15,6 +15,8 @@ import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.service.GridService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -73,6 +75,19 @@ public class ShiftLoadJob {
     @Scheduled(cron = "${dispatch.shift.load-cron:0 45 5,13 * * *}", zone = "${dispatch.shift.zone:Asia/Kolkata}")
     public void onSchedule() {
         loadShiftsForDate(LocalDate.now(IST), currentLoadingShift());
+    }
+
+    /**
+     * On boot, load the current shift's roster so a restart mid-day (deploy, crash, scale event)
+     * rehydrates the in-memory roster instead of leaving it empty until the next scheduled load.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void onStartup() {
+        try {
+            loadShiftsForDate(LocalDate.now(IST), currentLoadingShift());
+        } catch (RuntimeException e) {
+            log.error("Startup shift load failed", e);
+        }
     }
 
     /** Which shift the current fire time is loading (before noon = SHIFT_1, else SHIFT_2). */

@@ -99,7 +99,7 @@ tracking:
     DEL: { hub-lat: 28.5000, hub-lon: 77.1500, airport-lat: 28.5562, airport-lon: 77.1000 }
     BOM: { hub-lat: 19.0760, hub-lon: 72.8777, airport-lat: 19.0896, airport-lon: 72.8656 }
     BLR: { hub-lat: 12.9716, hub-lon: 77.5946, airport-lat: 13.1986, airport-lon: 77.7066 }
-    HYD: { hub-lat: 17.3850, hub-lon: 78.4867, airport-lat: 17.2403, airport-lon: 78.4294 }
+    HYD: { hub-lat: 17.41397, hub-lon: 78.34436, airport-lat: 17.2403, airport-lon: 78.4294 }  # hub = Vajra Jasmine County, Financial District (Phase 2 field test)
     MAA: { hub-lat: 13.0827, hub-lon: 80.2707, airport-lat: 12.9941, airport-lon: 80.1709 }
 
 # M10 SLA monitoring. Per-leg budgets (minutes) sum to 13.5h, leaving a 2.5h internal cushion under
