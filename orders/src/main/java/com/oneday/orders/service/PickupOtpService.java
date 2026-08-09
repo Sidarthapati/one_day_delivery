@@ -1,5 +1,6 @@
 package com.oneday.orders.service;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -56,6 +57,24 @@ public interface PickupOtpService {
      * @throws ResendLimitExceededException if {@code resend_count >= 3}
      */
     String resend(UUID shipmentId);
+
+    /**
+     * Owner-facing peek: returns the current cleartext OTP for the shipment, but only if {@code userId}
+     * booked it. Reads the in-memory cache (populated at generate/resend), so it's empty if none has been
+     * generated yet or the cache was cleared by a restart.
+     *
+     * @return the cleartext OTP, or empty if not found / not owned / not cached
+     */
+    Optional<String> peekForOwner(String userId, String shipmentRef);
+
+    /**
+     * Owner-facing regenerate: mints a fresh OTP for the shipment (resetting its TTL) and returns the
+     * cleartext, only if {@code userId} booked it. No resend cap (uses {@link #generate}).
+     *
+     * @return the fresh cleartext OTP, or empty if the shipment isn't found / not owned
+     * @throws IllegalStateException if the shipment is not awaiting pickup ({@code PICKUP_ASSIGNED})
+     */
+    Optional<String> regenerateForOwner(String userId, String shipmentRef);
 
     // -------------------------------------------------------------------------
     // Exceptions

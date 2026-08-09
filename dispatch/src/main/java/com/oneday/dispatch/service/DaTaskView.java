@@ -32,7 +32,8 @@ public record DaTaskView(
         String contactName,
         String contactPhone,
         String addressText,
-        Long codAmountPaise) {
+        Long codAmountPaise,
+        boolean pickedUp) {
 
     /** Mutation responses don't need the ref/contact (the app already holds them from listTasks). */
     public static DaTaskView of(DispatchQueue row) {
@@ -43,7 +44,7 @@ public record DaTaskView(
         return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef, row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
-                null, null, null, null);
+                null, null, null, null, row.isPickedUp());
     }
 
     /** List rows carry the field contact — sender end for a PICKUP, receiver end for a DELIVERY. */
@@ -56,6 +57,6 @@ public record DaTaskView(
         return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef, row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
-                name, phone, addr, cod);
+                name, phone, addr, cod, row.isPickedUp());
     }
 }

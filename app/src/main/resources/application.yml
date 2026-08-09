@@ -90,6 +90,12 @@ consolidator:
     password: ${CONSOLIDATOR_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
+# Pickup OTP (M4). Merchants read the OTP off the business portal and tell it to the pickup associate,
+# so it must stay valid across the pickup window (not the old 10-min SMS default).
+orders:
+  otp:
+    ttl-minutes: 120
+
 # Live tracking (M4). Per-city hub + airport coordinates for the static-node fallbacks and the
 # route line; keyed by IATA code (the catalog also accepts DELHI/MUMBAI/... forms). Coordinates are
 # approximate placeholders — confirm the real hub facility locations with ops before the pilot.

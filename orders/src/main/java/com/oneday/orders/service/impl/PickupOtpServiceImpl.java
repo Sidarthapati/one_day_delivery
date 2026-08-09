@@ -14,9 +14,12 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.oneday.common.domain.enums.ShipmentState;
+
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -136,6 +139,40 @@ class PickupOtpServiceImpl implements PickupOtpService {
         log.debug("OTP resent (attempt {}/{}) for shipmentId={}",
                 newResendCount, properties.getMaxResendCount(), shipmentId);
         return otp;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<String> peekForOwner(String userId, String shipmentRef) {
+        UUID uid = UserIds.parse(userId);
+        if (uid == null) {
+            return Optional.empty();
+        }
+        DevOtpRegistry cache = devOtpRegistry.getIfAvailable();
+        if (cache == null) {
+            return Optional.empty();
+        }
+        return shipmentRepository.findByShipmentRef(shipmentRef)
+                .filter(s -> uid.equals(s.getBookedByUserId()))   // owner scope: not yours → empty
+                .map(s -> cache.get(s.getId()));                  // cache miss → empty
+    }
+
+    @Override
+    @Transactional
+    public Optional<String> regenerateForOwner(String userId, String shipmentRef) {
+        UUID uid = UserIds.parse(userId);
+        if (uid == null) {
+            return Optional.empty();
+        }
+        Optional<Shipment> owned = shipmentRepository.findByShipmentRef(shipmentRef)
+                .filter(s -> uid.equals(s.getBookedByUserId()));
+        if (owned.isEmpty()) {
+            return Optional.empty();
+        }
+        if (owned.get().getState() != ShipmentState.PICKUP_ASSIGNED) {
+            throw new IllegalStateException("Shipment " + shipmentRef + " is not awaiting pickup");
+        }
+        return Optional.of(generate(owned.get().getId()));   // fresh code, cached, TTL reset (no resend cap)
     }
 
     // -------------------------------------------------------------------------

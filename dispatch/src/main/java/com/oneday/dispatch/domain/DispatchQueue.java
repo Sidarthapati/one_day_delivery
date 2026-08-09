@@ -73,6 +73,11 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "beyond_cron", nullable = false)
     private boolean beyondCron;
 
+    // True once the sender OTP is verified (shipment PICKED_UP) but the task hasn't yet been handed off
+    // (still IN_PROGRESS). Lets the DA app resume on the hand-off step instead of "en route".
+    @Column(name = "picked_up", nullable = false)
+    private boolean pickedUp;
+
     @Column(name = "assigned_at", nullable = false, updatable = false)
     private Instant assignedAt;
 

@@ -66,6 +66,8 @@ class OtpVerificationServiceImpl implements OtpVerificationService {
             metrics.otpVerify("ERROR");
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
         }
+        task.setPickedUp(true);           // task stays IN_PROGRESS until handoff; flag lets the app resume there
+        queueRepository.save(task);
         daEventProducer.emitPickupCompleted(daId, task.getCityId(), shipmentId);
         metrics.otpVerify("SUCCESS");
         log.debug("Pickup OTP verified for shipment {} (task {})", shipmentId, taskId);

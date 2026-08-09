@@ -5,10 +5,12 @@ import com.oneday.orders.dto.MyShipmentDetailResponse;
 import com.oneday.orders.dto.MyShipmentSummaryResponse;
 import com.oneday.orders.dto.ShipmentLabelResponse;
 import com.oneday.orders.service.CustomerOrderQueryService;
+import com.oneday.orders.service.PickupOtpService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,9 +28,12 @@ import java.util.List;
 class MyShipmentsController {
 
     private final CustomerOrderQueryService customerOrderQueryService;
+    private final PickupOtpService pickupOtpService;
 
-    MyShipmentsController(CustomerOrderQueryService customerOrderQueryService) {
+    MyShipmentsController(CustomerOrderQueryService customerOrderQueryService,
+                         PickupOtpService pickupOtpService) {
         this.customerOrderQueryService = customerOrderQueryService;
+        this.pickupOtpService = pickupOtpService;
     }
 
     @GetMapping("/mine")
@@ -60,4 +65,34 @@ class MyShipmentsController {
                 .shipmentLabel(Authz.requireUserId(principal), ref)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such shipment: " + ref));
     }
+
+    /** The pickup OTP for the caller's own shipment, so the merchant can read it to the pickup associate. */
+    @GetMapping("/mine/{ref}/pickup-otp")
+    public PickupOtpView pickupOtp(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("ref") String ref) {
+        Authz.requireCustomerRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER", "B2B_USER");
+        String otp = pickupOtpService.peekForOwner(Authz.requireUserId(principal), ref)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "No pickup OTP available yet for " + ref));
+        return new PickupOtpView(ref, otp);
+    }
+
+    /** Mint a fresh pickup OTP (e.g. the previous one expired). Only while awaiting pickup. */
+    @PostMapping("/mine/{ref}/pickup-otp/regenerate")
+    public PickupOtpView regeneratePickupOtp(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("ref") String ref) {
+        Authz.requireCustomerRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER", "B2B_USER");
+        String otp;
+        try {
+            otp = pickupOtpService.regenerateForOwner(Authz.requireUserId(principal), ref)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such shipment: " + ref));
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
+        return new PickupOtpView(ref, otp);
+    }
+
+    record PickupOtpView(String shipmentRef, String otp) {}
 }
