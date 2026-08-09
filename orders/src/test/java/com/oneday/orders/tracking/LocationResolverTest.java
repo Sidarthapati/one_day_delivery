@@ -90,14 +90,16 @@ class LocationResolverTest {
     }
 
     @Test
-    void pickedUpWithStaleDaFixFallsBackToOrigin() {
+    void pickedUpWithStaleDaFixHoldsLastKnownPositionAsIdle() {
+        // A stale fix keeps the DA's last-known coordinate as an idle (non-live) dot — it must NOT
+        // teleport back to the pickup/origin pin (that caused the hub↔pickup flip in the field test).
         when(daPort.forShipment(any())).thenReturn(Optional.of(
                 new LivePosition(28.61, 77.21, Instant.now().minus(30, ChronoUnit.MINUTES), null, null)));
         ResolvedLocation r = resolver(true, true).resolve(shipment(ShipmentState.PICKED_UP));
         assertThat(r.kind()).isEqualTo(LocationKind.MOVING_DA);
-        assertThat(r.live()).isFalse();
-        assertThat(r.moving()).isFalse();
-        assertThat(r.lat()).isEqualTo(28.60);   // origin address fallback
+        assertThat(r.live()).isFalse();     // stale → idle styling
+        assertThat(r.moving()).isTrue();    // still a DA-carried leg
+        assertThat(r.lat()).isEqualTo(28.61);   // last-known DA position, not the origin fallback
     }
 
     @Test

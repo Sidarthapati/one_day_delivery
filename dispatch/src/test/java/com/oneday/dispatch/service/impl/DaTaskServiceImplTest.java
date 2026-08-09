@@ -27,11 +27,16 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
+import com.oneday.common.domain.MeetingMode;
+import com.oneday.common.port.CityMeetingModePort;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Real-Postgres tests of the DA task-lifecycle transitions, guards, and (gated) event emission. */
 @Tag("e2e")
@@ -51,6 +56,7 @@ class DaTaskServiceImplTest {
 
     private DaEventProducer events;
     private com.oneday.dispatch.events.HubScanSeamProducer scanSeam;
+    private CityMeetingModePort meetingModePort;
     private DaTaskService service;
 
     @BeforeEach
@@ -61,8 +67,11 @@ class DaTaskServiceImplTest {
         events = mock(DaEventProducer.class);
         scanSeam = mock(com.oneday.dispatch.events.HubScanSeamProducer.class);
         QueueReorderService reorder = mock(QueueReorderService.class);
+        meetingModePort = mock(CityMeetingModePort.class);
+        // This test's city is a HUB_RETURN city (hub-handoff/collect paths exercised below).
+        when(meetingModePort.modeFor(any())).thenReturn(MeetingMode.HUB_RETURN);
         service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam,
-                ids -> java.util.Map.of(), ids -> java.util.Map.of(), reorder);
+                ids -> java.util.Map.of(), ids -> java.util.Map.of(), reorder, meetingModePort);
     }
 
     @Test
@@ -161,6 +170,16 @@ class DaTaskServiceImplTest {
 
         DaCronAssignment cron = cronRepo.findByDaIdAndOperatingDate(da, today).orElseThrow();
         assertThat(cron.getStatus()).isEqualTo(CronAssignmentStatus.COMPLETED);
+    }
+
+    @Test
+    void hubHandoffRejectedWithConflictInVanCity() {
+        // The mode guard now resolves from the task's city (not the in-memory live status).
+        when(meetingModePort.modeFor(any())).thenReturn(MeetingMode.VAN_MEETING);
+        DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.IN_PROGRESS);
+        assertThatThrownBy(() -> service.recordHubHandoff(da, task.getId(), java.util.List.of("P-1")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409");
     }
 
     @Test

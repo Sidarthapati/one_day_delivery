@@ -77,11 +77,14 @@ public class LocationResolver {
     // ── moving legs ─────────────────────────────────────────────────────────
     private ResolvedLocation moving(LocationKind kind, Shipment s, Optional<Coord> fallback) {
         Optional<LivePosition> fix = livePosition(kind, s.getId());
-        if (fix.isPresent() && isFresh(fix.get().lastSeenAt())) {
+        if (fix.isPresent()) {
+            // A fix exists — plot the DA/van's real position. If it's gone stale, keep it as an idle
+            // (non-live) dot at that last-known spot rather than teleporting to the pickup/dest pin.
             LivePosition p = fix.get();
-            return new ResolvedLocation(kind, p.lat(), p.lon(), true, true, p.lastSeenAt(), p.minutesLate());
+            boolean fresh = isFresh(p.lastSeenAt());
+            return new ResolvedLocation(kind, p.lat(), p.lon(), fresh, true, p.lastSeenAt(), p.minutesLate());
         }
-        // No fresh fix — show the nearest static node, not a stale dot.
+        // No fix ever reported — show the nearest static node.
         Coord c = fallback.orElse(null);
         return new ResolvedLocation(kind, latOf(c), lonOf(c), false, false, null, null);
     }

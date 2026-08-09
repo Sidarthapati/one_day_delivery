@@ -15,7 +15,9 @@ import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
 import com.oneday.dispatch.service.model.DaQueue;
+import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.log.AuditLog;
+import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.common.port.ShipmentContactPort;
 import com.oneday.common.port.ShipmentContactPort.ShipmentContact;
 import com.oneday.common.port.ShipmentRefPort;
@@ -55,6 +57,7 @@ class DaTaskServiceImpl implements DaTaskService {
     private final ShipmentRefPort shipmentRefPort;
     private final ShipmentContactPort shipmentContactPort;
     private final QueueReorderService queueReorderService;
+    private final CityMeetingModePort meetingModePort;
 
     DaTaskServiceImpl(DispatchQueueRepository queueRepository,
                       DaCronAssignmentRepository cronRepository,
@@ -64,7 +67,8 @@ class DaTaskServiceImpl implements DaTaskService {
                       HubScanSeamProducer hubScanSeamProducer,
                       ShipmentRefPort shipmentRefPort,
                       ShipmentContactPort shipmentContactPort,
-                      QueueReorderService queueReorderService) {
+                      QueueReorderService queueReorderService,
+                      CityMeetingModePort meetingModePort) {
         this.queueRepository = queueRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
@@ -74,6 +78,7 @@ class DaTaskServiceImpl implements DaTaskService {
         this.queueReorderService = queueReorderService;
         this.shipmentRefPort = shipmentRefPort;
         this.shipmentContactPort = shipmentContactPort;
+        this.meetingModePort = meetingModePort;
     }
 
     @Override
@@ -137,6 +142,7 @@ class DaTaskServiceImpl implements DaTaskService {
     public DaTaskView recordHubHandoff(UUID daId, UUID taskId, List<String> parcelScans) {
         // HUB_RETURN city (no van): the DA drops the collected pickups AT the hub. Same pickup-handoff
         // lifecycle as the van path, but a neutral event (not VAN_HANDOFF_COMPLETED) + the origin-hub scan.
+        requireHubReturnCity(daId, taskId);
         return completePickupHandoff(daId, taskId, parcelScans, task -> {
             daEventProducer.emitHubReturnHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
             // M8-SEAM: the hub drop is the origin-hub inbound scan (advances to AT_ORIGIN_HUB → M7/M9).
@@ -217,6 +223,7 @@ class DaTaskServiceImpl implements DaTaskService {
     @Transactional
     public DaTaskView recordHubCollect(UUID daId, UUID taskId) {
         // HUB_RETURN city (no van): the DA collects the delivery FROM the hub for last-mile.
+        requireHubReturnCity(daId, taskId);
         return collectDelivery(daId, taskId, task ->
                 // M8-SEAM: hub-dest custody scan (ledger only — the DA's later DROP_* events drive state).
                 hubScanSeamProducer.emitHubDestOut(task.getShipmentId()));
@@ -325,6 +332,19 @@ class DaTaskServiceImpl implements DaTaskService {
         if (q != null && q.getCron() != null) {
             q.getCron().setScheduledMeetingTime(nextMeeting);
             q.getCron().setStatus(CronAssignmentStatus.SCHEDULED);
+        }
+    }
+
+    /**
+     * The hub-handoff / hub-collect ops are only valid in a HUB_RETURN city. Resolve the mode from the
+     * TASK's city (authoritative, always present) — not the in-memory DA live status, which can be null
+     * after a restart and previously NPE'd here (→ 500). A non-HUB_RETURN city → 409.
+     */
+    private void requireHubReturnCity(UUID daId, UUID taskId) {
+        DispatchQueue task = ownedTask(daId, taskId);
+        if (meetingModePort.modeFor(task.getCityId()) != MeetingMode.HUB_RETURN) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Hub handoff/collect is only valid in a HUB_RETURN city");
         }
     }
 
