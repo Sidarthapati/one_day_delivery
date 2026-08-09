@@ -1,8 +1,6 @@
 package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
-import com.oneday.common.domain.MeetingMode;
-import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.dispatch.dto.request.DropCompletedRequest;
 import com.oneday.dispatch.dto.request.GpsPingRequest;
 import com.oneday.dispatch.dto.request.HubHandoffRequest;
@@ -16,7 +14,6 @@ import com.oneday.dispatch.service.GpsFixView;
 import com.oneday.dispatch.service.OtpVerificationService;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,7 +23,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -46,15 +42,12 @@ public class DaDispatchController {
     private final DaStatusService daStatusService;
     private final DaTaskService daTaskService;
     private final OtpVerificationService otpVerificationService;
-    private final CityMeetingModePort meetingModePort;
 
     public DaDispatchController(DaStatusService daStatusService, DaTaskService daTaskService,
-                               OtpVerificationService otpVerificationService,
-                               CityMeetingModePort meetingModePort) {
+                               OtpVerificationService otpVerificationService) {
         this.daStatusService = daStatusService;
         this.daTaskService = daTaskService;
         this.otpVerificationService = otpVerificationService;
-        this.meetingModePort = meetingModePort;
     }
 
     /** The DA's task queue for the day (the app's home list). Each item carries taskLat/taskLon for Open-in-Maps. */
@@ -129,7 +122,6 @@ public class DaDispatchController {
                                  @AuthenticationPrincipal AuthUserDetails principal,
                                  @RequestBody HubHandoffRequest request) {
         Authz.requireDaSelf(principal, daId);
-        requireHubReturnCity(daId);
         return daTaskService.recordHubHandoff(daId, taskId, request.parcelScans());
     }
 
@@ -161,7 +153,6 @@ public class DaDispatchController {
     public DaTaskView hubCollect(@PathVariable UUID daId, @PathVariable UUID taskId,
                                  @AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireDaSelf(principal, daId);
-        requireHubReturnCity(daId);
         return daTaskService.recordHubCollect(daId, taskId);
     }
 
@@ -191,16 +182,4 @@ public class DaDispatchController {
         return ResponseEntity.noContent().build();
     }
 
-    /**
-     * Cheap edge guard: the hub-handoff / hub-collect endpoints are only valid in a HUB_RETURN city.
-     * The DA's city (from their live status) resolves the mode; a VAN_MEETING city → 409 so a misrouted
-     * client can't emit hub events where a van rendezvous is expected. The service itself stays mode-agnostic.
-     */
-    private void requireHubReturnCity(UUID daId) {
-        UUID cityId = daStatusService.getLiveStatus(daId).getCityId();
-        if (meetingModePort.modeFor(cityId) != MeetingMode.HUB_RETURN) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Hub handoff/collect is only valid in a HUB_RETURN city");
-        }
-    }
 }

@@ -17,6 +17,10 @@ public interface DaGpsPingRepository extends JpaRepository<DaGpsPing, UUID> {
     List<DaGpsPing> findByDaIdAndRecordedAtBetweenOrderByRecordedAtAsc(
             UUID daId, Instant from, Instant to);
 
+    /** The DA's most recent fix — the live-tracking source of truth (written on every ping, unlike the
+     *  da_status snapshot which only updates while the DA is loaded in memory). */
+    DaGpsPing findTopByDaIdOrderByRecordedAtDesc(UUID daId);
+
     /** Bulk-delete trail rows older than {@code cutoff} (retention purge). Returns rows removed. */
     @Modifying
     @Transactional
