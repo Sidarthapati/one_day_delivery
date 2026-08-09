@@ -22,6 +22,13 @@ public interface DaTaskService {
     DaTaskView markEnRoute(UUID daId, UUID taskId);
 
     /**
+     * Record the DA arriving at the stop (pickup or delivery). Stamps {@code arrived_at} once
+     * (idempotent — a resumed screen re-tap is a no-op) and writes an audit line; does not change
+     * task status. Best-effort from the app's side.
+     */
+    DaTaskView markArrivedAtStop(UUID daId, UUID taskId);
+
+    /**
      * VAN_MEETING city: PICKUP task IN_PROGRESS → COMPLETED at the cron van. Records the cron handoff
      * and emits VAN_HANDOFF_COMPLETED. {@code parcelScans} must be non-empty (full M8 scan-ledger
      * validation lands with barcode integration).

@@ -107,6 +107,15 @@ public class DaDispatchController {
         return daTaskService.markEnRoute(daId, taskId);
     }
 
+    /** DA tapped "Mark arrived" at the pickup/delivery stop — stamps arrival time for dwell analysis. */
+    @PostMapping("/tasks/{taskId}/arrived")
+    public ResponseEntity<Void> arrivedAtStop(@PathVariable UUID daId, @PathVariable UUID taskId,
+                                              @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        daTaskService.markArrivedAtStop(daId, taskId);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/tasks/{taskId}/van-handoff")
     public DaTaskView vanHandoff(@PathVariable UUID daId, @PathVariable UUID taskId,
                                  @AuthenticationPrincipal AuthUserDetails principal,
