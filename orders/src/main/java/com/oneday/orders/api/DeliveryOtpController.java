@@ -25,7 +25,9 @@ import java.util.Map;
 /**
  * Internal endpoints for last-mile <em>delivery</em> OTP verification — drop-side mirror of
  * {@link PickupOtpController}. Called by the DA mobile app at the recipient's door. The delivery OTP
- * gates {@code DROP_COLLECTED → DROPPED} (the verification step left open as OD-8).
+ * gates the final hop to {@code DROPPED} from whichever "out for delivery" state the parcel is in:
+ * {@code DROP_COLLECTED} (VAN_MEETING city — received off the drop van) or {@code COLLECTED_FROM_HUB}
+ * (HUB_RETURN city — collected from the destination hub). Both are valid predecessors of {@code DROPPED}.
  */
 @RestController
 @RequestMapping("/internal/v1/shipments")
@@ -44,15 +46,15 @@ public class DeliveryOtpController {
     }
 
     /**
-     * DA submits the OTP read out by the recipient. On success the shipment transitions
-     * {@code DROP_COLLECTED → DROPPED}.
+     * DA submits the OTP read out by the recipient. On success the shipment transitions to
+     * {@code DROPPED} from its "out for delivery" state ({@code DROP_COLLECTED} or {@code COLLECTED_FROM_HUB}).
      *
      * <pre>
      * POST /internal/v1/shipments/{ref}/delivery-otp/verify
      * Body: { "otp": "4821" }
      *
      * 204 No Content          — OTP correct; state transitioned to DROPPED
-     * 409 Conflict            — shipment is not in DROP_COLLECTED state
+     * 409 Conflict            — shipment is not out for delivery (DROP_COLLECTED / COLLECTED_FROM_HUB)
      * 422 Unprocessable Entity — OTP wrong / expired / already used
      * 404 Not Found           — shipment ref does not exist
      * </pre>
@@ -66,10 +68,7 @@ public class DeliveryOtpController {
         String daUserId = Authz.requireUserId(principal);
         Shipment shipment = resolveShipment(ref);
 
-        if (shipment.getState() != ShipmentState.DROP_COLLECTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Shipment is not in DROP_COLLECTED state");
-        }
+        requireOutForDelivery(shipment);
 
         try {
             deliveryOtpService.verify(shipment.getId(), request.getOtp());
@@ -90,7 +89,7 @@ public class DeliveryOtpController {
      * <pre>
      * POST /internal/v1/shipments/{ref}/delivery-otp/resend
      * 200 OK  — { "otp": "3902" }
-     * 409 Conflict          — shipment is not in DROP_COLLECTED state
+     * 409 Conflict          — shipment is not out for delivery (DROP_COLLECTED / COLLECTED_FROM_HUB)
      * 429 Too Many Requests — resend limit reached
      * 404 Not Found         — shipment ref does not exist
      * </pre>
@@ -102,10 +101,7 @@ public class DeliveryOtpController {
         Authz.requireRole(principal, "DELIVERY_ASSOCIATE");
         Shipment shipment = resolveShipment(ref);
 
-        if (shipment.getState() != ShipmentState.DROP_COLLECTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "Shipment is not in DROP_COLLECTED state");
-        }
+        requireOutForDelivery(shipment);
 
         try {
             String newOtp = deliveryOtpService.resend(shipment.getId());
@@ -121,5 +117,18 @@ public class DeliveryOtpController {
         return shipmentRepository.findByShipmentRef(ref)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Shipment not found: " + ref));
+    }
+
+    /**
+     * The delivery OTP is only meaningful once the parcel is "out for delivery": received off the drop
+     * van ({@code DROP_COLLECTED}) in a VAN_MEETING city, or collected from the destination hub
+     * ({@code COLLECTED_FROM_HUB}) in a HUB_RETURN city. Both transition to {@code DROPPED} on verify.
+     */
+    private void requireOutForDelivery(Shipment shipment) {
+        ShipmentState state = shipment.getState();
+        if (state != ShipmentState.DROP_COLLECTED && state != ShipmentState.COLLECTED_FROM_HUB) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Shipment is not out for delivery (DROP_COLLECTED / COLLECTED_FROM_HUB)");
+        }
     }
 }

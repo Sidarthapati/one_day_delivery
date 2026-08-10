@@ -4,6 +4,7 @@ import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.kafka.events.DaLifecycleEvent;
 import com.oneday.common.port.CityMeetingModePort;
+import com.oneday.orders.service.DeliveryOtpService;
 import com.oneday.orders.service.PickupOtpService;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
@@ -26,6 +27,11 @@ import org.springframework.stereotype.Component;
  * via the notification service — until that service exists (separate {@code oneday.notifications.events}
  * fan-out) the OTP is logged at DEBUG only. Generation runs <em>after</em> the transition commits,
  * so the shipment is firmly in {@code PICKUP_ASSIGNED} before an OTP is minted.</p>
+ *
+ * <p><b>Delivery-OTP side-effect:</b> symmetrically, when a shipment becomes "out for delivery" — the DA
+ * receives it off the drop van ({@code DROP_COLLECTED}) or collects it from the destination hub
+ * ({@code COLLECTED_FROM_HUB}) — a fresh delivery OTP is minted for the recipient. This is the moment
+ * closest to the door, so the OTP's TTL comfortably covers the last-mile drive.</p>
  */
 @Component
 public class DaEventsConsumer {
@@ -35,12 +41,14 @@ public class DaEventsConsumer {
 
     private final ShipmentStateMachine stateMachine;
     private final PickupOtpService pickupOtpService;
+    private final DeliveryOtpService deliveryOtpService;
     private final CityMeetingModePort meetingModePort;
 
     DaEventsConsumer(ShipmentStateMachine stateMachine, PickupOtpService pickupOtpService,
-                     CityMeetingModePort meetingModePort) {
+                     DeliveryOtpService deliveryOtpService, CityMeetingModePort meetingModePort) {
         this.stateMachine = stateMachine;
         this.pickupOtpService = pickupOtpService;
+        this.deliveryOtpService = deliveryOtpService;
         this.meetingModePort = meetingModePort;
     }
 
@@ -87,6 +95,8 @@ public class DaEventsConsumer {
 
         if (target == ShipmentState.PICKUP_ASSIGNED) {
             generatePickupOtp(event);   // only on a real BOOKED→PICKUP_ASSIGNED, never a redelivery
+        } else if (target == ShipmentState.DROP_COLLECTED || target == ShipmentState.COLLECTED_FROM_HUB) {
+            generateDeliveryOtp(event);   // parcel is out for delivery — mint the recipient's OTP
         }
     }
 
@@ -99,6 +109,19 @@ public class DaEventsConsumer {
                     event.shipmentId(), otp);
         } catch (RuntimeException e) {
             log.error("Failed to generate pickup OTP for shipment {}: {}",
+                    event.shipmentId(), e.getMessage());
+        }
+    }
+
+    /** Mint a delivery OTP for the recipient. Best-effort: a failure here never undoes the transition. */
+    private void generateDeliveryOtp(DaLifecycleEvent event) {
+        try {
+            String otp = deliveryOtpService.generate(event.shipmentId());
+            // TODO: dispatch to recipient via the notification service (oneday.notifications.events).
+            log.debug("Generated delivery OTP for shipment {} (cleartext suppressed in prod): {}",
+                    event.shipmentId(), otp);
+        } catch (RuntimeException e) {
+            log.error("Failed to generate delivery OTP for shipment {}: {}",
                     event.shipmentId(), e.getMessage());
         }
     }
