@@ -20,9 +20,13 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 public class DeliveryOtpProperties {
 
-    /** How long a generated delivery OTP is valid. Default: 10 minutes. */
+    /**
+     * How long a generated delivery OTP is valid. Default: 30 minutes — longer than the pickup OTP
+     * because the last-mile drive from the drop van / destination hub to the recipient's door is
+     * longer than a pickup verification. {@code resend} mints a fresh code if it still lapses.
+     */
     @Positive
-    private int ttlMinutes = 10;
+    private int ttlMinutes = 30;
 
     /** Maximum number of resend attempts before the endpoint returns 429. Default: 3. */
     @Positive

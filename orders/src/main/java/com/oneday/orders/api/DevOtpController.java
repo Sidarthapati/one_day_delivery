@@ -41,5 +41,19 @@ class DevOtpController {
         return new PickupOtpPeek(ref, otp);
     }
 
+    @GetMapping("/shipments/{ref}/delivery-otp")
+    public DeliveryOtpPeek peekDelivery(@PathVariable String ref) {
+        Shipment shipment = shipments.findByShipmentRef(ref)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Shipment not found: " + ref));
+        String otp = registry.getDelivery(shipment.getId());
+        if (otp == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "No delivery OTP yet for " + ref + " — the parcel must be out for delivery first");
+        }
+        return new DeliveryOtpPeek(ref, otp);
+    }
+
     record PickupOtpPeek(String shipmentRef, String otp) {}
+
+    record DeliveryOtpPeek(String shipmentRef, String otp) {}
 }
