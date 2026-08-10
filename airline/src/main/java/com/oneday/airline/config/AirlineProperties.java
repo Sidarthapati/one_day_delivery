@@ -25,14 +25,27 @@ public class AirlineProperties {
      */
     private int gateCutoffLeadMinutes = 180;
 
-    /** A flight departing at/after this hour (IST) is in the discounted overnight window. */
-    private int overnightWindowStartHour = 22;
+    /**
+     * Start hour (IST, inclusive) of the <b>prime</b> air-cargo window — the expensive overnight rate
+     * the consolidator charges. A flight departing in {@code [primeWindowStartHour, primeWindowEndHour)}
+     * carries the {@link #primeSurchargeBps} surcharge, so cheapest-first selection avoids it unless it's
+     * the only flight that meets the promise. Default window 00:00–09:00.
+     */
+    private int primeWindowStartHour = 0;
 
-    /** A flight departing before this hour (IST) is still in the overnight window (wraps past midnight). */
-    private int overnightWindowEndHour = 6;
+    /** End hour (IST, exclusive) of the prime window. Default 09:00 (so 09:00–23:59 is the cheap rate). */
+    private int primeWindowEndHour = 9;
 
-    /** Discount applied to the overnight-window rate when comparing candidates (basis points off). */
-    private int overnightDiscountBps = 1000;
+    /** Surcharge applied to a prime-window flight's rate when comparing candidates (basis points on top). Default 35%. */
+    private int primeSurchargeBps = 3500;
+
+    /**
+     * The internal delivery-promise horizon (hours from a parcel being hub-ready) used as the flight
+     * cutoff for <b>leeway batching</b>: any flight arriving within this window is eligible, and among
+     * those the fullest (latest-departing) is preferred so parcels consolidate onto one AWB per plane.
+     * Default 16h.
+     */
+    private int slaHours = 16;
 
     /**
      * Typical bag weight (grams) used to rank candidate flights by cost during selection, before a
@@ -58,9 +71,10 @@ public class AirlineProperties {
      */
     private int delayReassignThresholdMinutes = 60;
 
-    public boolean isOvernight(LocalTime departure) {
-        LocalTime start = LocalTime.of(overnightWindowStartHour, 0);
-        LocalTime end = LocalTime.of(overnightWindowEndHour, 0);
+    /** True if a flight departing at this IST time falls in the expensive prime window (§ prime-rate avoidance). */
+    public boolean isPrime(LocalTime departure) {
+        LocalTime start = LocalTime.of(primeWindowStartHour, 0);
+        LocalTime end = LocalTime.of(primeWindowEndHour, 0);
         return start.isAfter(end)
                 ? !departure.isBefore(start) || departure.isBefore(end)   // window wraps midnight
                 : !departure.isBefore(start) && departure.isBefore(end);

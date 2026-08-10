@@ -47,10 +47,11 @@ class FlightSelectionServiceTest {
     }
 
     @Test
-    void picksTheCheapestCandidateWhoseCutoffIsStillAhead() {
+    void consolidatesOntoTheLatestFlightThatStillMeetsTheSla() {
         stubRateCard();
         LocalDate date = LocalDate.of(2026, 7, 20);
-        // Ready at 05:00 IST: both slots' cutoffs (departure - 3h) are still ahead.
+        // Ready 05:00 IST → SLA deadline 21:00. Both non-prime slots meet it at equal cost; the LATER
+        // one wins so parcels pile onto the fullest flight (one AWB per plane).
         var readyAt = ZonedDateTime.of(date, LocalTime.of(5, 0), ClockConfig.IST).toInstant();
         when(flightProviderPort.search("DEL", "BOM", date)).thenReturn(List.of(
                 new FlightProviderPort.FlightCandidate("ODDELBOM12", "SIM-CARRIER",
@@ -60,8 +61,7 @@ class FlightSelectionServiceTest {
 
         var selection = service().select("DEL", "BOM", readyAt);
 
-        // Same lane/rate card, no overnight discount on either → identical cost; earliest departure wins the tie.
-        assertThat(selection.flightNo()).isEqualTo("ODDELBOM12");
+        assertThat(selection.flightNo()).isEqualTo("ODDELBOM18");
         assertThat(selection.flightDate()).isEqualTo(date);
     }
 
@@ -83,19 +83,60 @@ class FlightSelectionServiceTest {
     }
 
     @Test
-    void prefersTheGenuinelyCheaperOvernightSlotWhenBothAreCatchable() {
+    void avoidsThePrimeWindowFlightWhenACheaperNonPrimeMeetsTheSla() {
         stubRateCard();
         LocalDate date = LocalDate.of(2026, 7, 20);
+        // Ready 02:00 IST → SLA deadline 18:00. The 06:00 slot is in the prime window (00:00–09:00, +35%);
+        // the 12:00 non-prime is cheaper, so it wins even though 06:00 is earlier and also catchable.
+        var readyAt = ZonedDateTime.of(date, LocalTime.of(2, 0), ClockConfig.IST).toInstant();
+        when(flightProviderPort.search("DEL", "BOM", date)).thenReturn(List.of(
+                new FlightProviderPort.FlightCandidate("ODDELBOM06", "SIM-CARRIER",
+                        LocalTime.of(6, 0), LocalTime.of(8, 0), 2000),    // prime, +35%
+                new FlightProviderPort.FlightCandidate("ODDELBOM12", "SIM-CARRIER",
+                        LocalTime.of(12, 0), LocalTime.of(14, 0), 2000)));
+
+        var selection = service().select("DEL", "BOM", readyAt);
+
+        assertThat(selection.flightNo()).isEqualTo("ODDELBOM12");
+    }
+
+    @Test
+    void takesThePrimeFlightWhenItIsTheOnlyOneMeetingTheSla() {
+        stubRateCard();
+        LocalDate today = LocalDate.of(2026, 7, 20);
+        LocalDate tomorrow = today.plusDays(1);
+        // Ready 23:00 → deadline 15:00 tomorrow; today's cutoffs all passed. Tomorrow a 06:00 prime flight
+        // arrives 08:00 (meets SLA) while a 22:00 non-prime arrives 00:00 the day after (misses it) — so the
+        // pricey prime slot is taken because it's the only one that keeps the promise (avoid-unless-only).
+        var readyAt = ZonedDateTime.of(today, LocalTime.of(23, 0), ClockConfig.IST).toInstant();
+        when(flightProviderPort.search("DEL", "BOM", today)).thenReturn(List.of());
+        when(flightProviderPort.search("DEL", "BOM", tomorrow)).thenReturn(List.of(
+                new FlightProviderPort.FlightCandidate("ODDELBOM06", "SIM-CARRIER",
+                        LocalTime.of(6, 0), LocalTime.of(8, 0), 2000),     // prime, meets SLA
+                new FlightProviderPort.FlightCandidate("ODDELBOM22", "SIM-CARRIER",
+                        LocalTime.of(22, 0), LocalTime.of(0, 0), 2000)));  // non-prime, arrives past deadline
+
+        var selection = service().select("DEL", "BOM", readyAt);
+
+        assertThat(selection.flightDate()).isEqualTo(tomorrow);
+        assertThat(selection.flightNo()).isEqualTo("ODDELBOM06");
+    }
+
+    @Test
+    void shipsTheSoonestFlightWhenNoFlightCanMeetTheSla() {
+        stubRateCard();
+        LocalDate date = LocalDate.of(2026, 7, 20);
+        // Ready 05:00 → deadline 21:00. The only catchable flight departs 22:00 and arrives 00:00 next day,
+        // past the SLA. It still ships (best effort, minimise lateness) rather than failing outright.
         var readyAt = ZonedDateTime.of(date, LocalTime.of(5, 0), ClockConfig.IST).toInstant();
         when(flightProviderPort.search("DEL", "BOM", date)).thenReturn(List.of(
-                new FlightProviderPort.FlightCandidate("ODDELBOM12", "SIM-CARRIER",
-                        LocalTime.of(12, 0), LocalTime.of(14, 0), 2000),
                 new FlightProviderPort.FlightCandidate("ODDELBOM22", "SIM-CARRIER",
-                        LocalTime.of(22, 0), LocalTime.of(0, 0), 2000)));   // overnight window (default 22:00-06:00)
+                        LocalTime.of(22, 0), LocalTime.of(0, 0), 2000)));
 
         var selection = service().select("DEL", "BOM", readyAt);
 
         assertThat(selection.flightNo()).isEqualTo("ODDELBOM22");
+        assertThat(selection.flightDate()).isEqualTo(date);
     }
 
     @Test

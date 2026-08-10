@@ -76,8 +76,8 @@ class AwbBookingServiceImpl implements AwbBookingService {
 
         ConsolidatorLaneRate rateCard = consolidatorRateRepository
                 .findActiveRate(instance.getOriginHub(), instance.getDestHub());
-        boolean overnight = properties.isOvernight(instance.getDeparture().atZone(ClockConfig.IST).toLocalTime());
-        long costPaise = costEstimator.estimatePaise(rateCard, command.weightGrams(), overnight);
+        boolean prime = properties.isPrime(instance.getDeparture().atZone(ClockConfig.IST).toLocalTime());
+        long costPaise = costEstimator.estimatePaise(rateCard, command.weightGrams(), prime);
 
         Awb awb = new Awb();
         awb.setAwbNo(generateAwbNo(instance, command.bagId()));

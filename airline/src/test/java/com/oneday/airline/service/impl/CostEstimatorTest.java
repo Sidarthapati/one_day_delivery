@@ -43,12 +43,12 @@ class CostEstimatorTest {
     }
 
     @Test
-    void overnightFlight_getsTheConfiguredDiscountOffTheTotal() {
+    void primeFlight_getsTheConfiguredSurchargeOnTopOfTheTotal() {
         long dayCost = estimator.estimatePaise(rateCard(), 100_000, false);
-        long nightCost = estimator.estimatePaise(rateCard(), 100_000, true);
+        long primeCost = estimator.estimatePaise(rateCard(), 100_000, true);
 
-        // Default overnightDiscountBps = 1000 (10%).
-        assertThat(nightCost).isEqualTo(dayCost - dayCost / 10);
-        assertThat(nightCost).isLessThan(dayCost);
+        // Default primeSurchargeBps = 3500 (35%) — the expensive overnight window costs MORE.
+        assertThat(primeCost).isEqualTo(dayCost + dayCost * 35 / 100);
+        assertThat(primeCost).isGreaterThan(dayCost);
     }
 }
