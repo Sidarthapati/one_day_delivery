@@ -77,16 +77,14 @@ class FlightStatusPollJobTest {
         parcel.setParcelId(parcelId);
         when(awbRepository.findByFlightNoAndFlightDate("ODDELBOM06", fi.getFlightDate())).thenReturn(List.of(awb));
         when(awbParcelRepository.findByAwbId(any())).thenReturn(List.of(parcel));
-        when(flightProviderPort.status("ODDELBOM06", fi.getFlightDate())).thenReturn(
-                new FlightProviderPort.FlightStatusResult(FlightProviderPort.FlightRealWorldStatus.ON_TIME,
-                        departure, arrival));
 
-        job(departure.plusSeconds(60)).processInstance(fi);
+        job(departure.plusSeconds(60)).advanceProgress(fi);
 
         assertThat(fi.getStatus()).isEqualTo(FlightInstanceStatus.DEPARTED);
         verify(flightInstanceRepository).save(fi);
         verify(flightEventProducer).emitDeparted(parcelId);
         verify(flightEventProducer, never()).emitLanded(any());
+        verifyNoInteractions(flightProviderPort);   // progress is clock-only — never asks the vendor
     }
 
     @Test
@@ -99,7 +97,7 @@ class FlightStatusPollJobTest {
         when(awbRepository.findByFlightNoAndFlightDate("ODDELBOM06", fi.getFlightDate())).thenReturn(List.of(awb));
         when(awbParcelRepository.findByAwbId(any())).thenReturn(List.of(parcel));
 
-        job(arrival.plusSeconds(60)).processInstance(fi);
+        job(arrival.plusSeconds(60)).advanceProgress(fi);
 
         assertThat(fi.getStatus()).isEqualTo(FlightInstanceStatus.LANDED);
         verify(flightEventProducer).emitLanded(parcelId);
@@ -116,7 +114,7 @@ class FlightStatusPollJobTest {
                         departure, arrival));
 
         // Ready well before departure so the SCHEDULED→DEPARTED time-transition doesn't also fire.
-        job(departure.minusSeconds(3600)).processInstance(fi);
+        job(departure.minusSeconds(3600)).checkDisruption(fi);
 
         verify(flightReassignmentService).reassign(awb, FlightReassignReason.CANCELLATION);
         assertThat(fi.getStatus()).isEqualTo(FlightInstanceStatus.CANCELLED);
@@ -132,7 +130,7 @@ class FlightStatusPollJobTest {
                 new FlightProviderPort.FlightStatusResult(FlightProviderPort.FlightRealWorldStatus.DELAYED,
                         delayedDeparture, arrival.plusSeconds(90 * 60)));
 
-        job(departure.minusSeconds(3600)).processInstance(fi);
+        job(departure.minusSeconds(3600)).checkDisruption(fi);
 
         verify(flightReassignmentService).reassign(awb, FlightReassignReason.DELAY);
         verify(flightEventProducer, never()).emitTimeChanged(any());
@@ -147,7 +145,7 @@ class FlightStatusPollJobTest {
                 new FlightProviderPort.FlightStatusResult(FlightProviderPort.FlightRealWorldStatus.DELAYED,
                         delayedDeparture, delayedArrival));
 
-        job(departure.minusSeconds(3600)).processInstance(fi);
+        job(departure.minusSeconds(3600)).checkDisruption(fi);
 
         verifyNoInteractions(flightReassignmentService);
         assertThat(fi.getDeparture()).isEqualTo(delayedDeparture);
