@@ -4,6 +4,7 @@ import com.oneday.airline.consolidator.ConsolidatorFlightRepository;
 import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.domain.FlightInstance;
+import com.oneday.airline.dto.AwbIntakeRequest;
 import com.oneday.airline.dto.AwbParcelResponse;
 import com.oneday.airline.dto.AwbResponse;
 import com.oneday.airline.dto.FlightScheduleResponse;
@@ -12,12 +13,15 @@ import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.repository.FlightInstanceRepository;
 import com.oneday.airline.service.AwbGroundService;
+import com.oneday.airline.service.AwbIntakeService;
 import com.oneday.airline.service.provider.FlightProviderPort;
+import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,6 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -41,17 +46,20 @@ public class AirlineController {
     private final AwbRepository awbRepository;
     private final AwbParcelRepository awbParcelRepository;
     private final AwbGroundService awbGroundService;
+    private final AwbIntakeService awbIntakeService;
     private final FlightProviderPort flightProviderPort;
 
     AirlineController(ConsolidatorFlightRepository consolidatorFlightRepository,
                        FlightInstanceRepository flightInstanceRepository,
                        AwbRepository awbRepository, AwbParcelRepository awbParcelRepository,
-                       AwbGroundService awbGroundService, FlightProviderPort flightProviderPort) {
+                       AwbGroundService awbGroundService, AwbIntakeService awbIntakeService,
+                       FlightProviderPort flightProviderPort) {
         this.consolidatorFlightRepository = consolidatorFlightRepository;
         this.flightInstanceRepository = flightInstanceRepository;
         this.awbRepository = awbRepository;
         this.awbParcelRepository = awbParcelRepository;
         this.awbGroundService = awbGroundService;
+        this.awbIntakeService = awbIntakeService;
         this.flightProviderPort = flightProviderPort;
     }
 
@@ -110,11 +118,31 @@ public class AirlineController {
                 .toList();
     }
 
+    /**
+     * The real AWB Bhagwati hands us for a flight (admin entry now; a WhatsApp form later — see
+     * {@code WhatsAppAwbWebhookController}). Stamps it on every booked bag on that plane. 404 if the
+     * flight has no booked AWB yet.
+     */
+    @PostMapping("/flights/{flightNo}/{flightDate}/awb")
+    public Map<String, Object> assignAwb(@PathVariable String flightNo,
+                                         @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate flightDate,
+                                         @Valid @RequestBody AwbIntakeRequest request) {
+        int updated = awbIntakeService.assignRealAwb(flightNo, flightDate, request.awbNo());
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "No booked AWB for flight " + flightNo + " (" + flightDate + ")");
+        }
+        return Map.of("status", "ok", "flightNo", flightNo, "flightDate", flightDate.toString(),
+                "awbNo", request.awbNo(), "bagsUpdated", updated);
+    }
+
+    /** Bhagwati warehouse handoff: our goods have been physically handed to the consolidator's dock. */
     @PostMapping("/awb/{awbId}/handed-over")
     public AwbResponse handedOver(@PathVariable UUID awbId) {
         return toResponse(awbGroundService.handOver(awbId));
     }
 
+    /** Loaded onto the aircraft (consolidator confirmation). Both are timestamps for later reporting. */
     @PostMapping("/awb/{awbId}/loaded")
     public AwbResponse loaded(@PathVariable UUID awbId) {
         return toResponse(awbGroundService.markLoaded(awbId));

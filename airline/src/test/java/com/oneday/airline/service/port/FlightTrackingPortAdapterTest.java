@@ -92,6 +92,32 @@ class FlightTrackingPortAdapterTest {
     }
 
     @Test
+    void scheduledNotYetDeparted_returnsEmptyEvenInsideTheWindow() {
+        AwbParcel parcel = new AwbParcel();
+        parcel.setParcelId(shipmentId);
+        parcel.setAwbId(awbId);
+        when(awbParcelRepository.findFirstByParcelIdOrderByCreatedAtDesc(shipmentId)).thenReturn(Optional.of(parcel));
+        Awb awb = new Awb();
+        awb.setFlightNo("ODDELBOM06");
+        awb.setFlightDate(LocalDate.of(2026, 7, 20));
+        when(awbRepository.findById(awbId)).thenReturn(Optional.of(awb));
+        FlightInstance instance = new FlightInstance();
+        instance.setFlightNo("ODDELBOM06");
+        instance.setFlightDate(LocalDate.of(2026, 7, 20));
+        instance.setOriginHub("DEL");
+        instance.setDestHub("BOM");
+        instance.setDeparture(departure);
+        instance.setArrival(arrival);
+        instance.setStatus(FlightInstanceStatus.SCHEDULED);   // not yet flipped airborne
+        when(flightInstanceRepository.findByFlightNoAndFlightDate("ODDELBOM06", LocalDate.of(2026, 7, 20)))
+                .thenReturn(Optional.of(instance));
+
+        var result = adapter(departure.plusSeconds(3600)).currentPosition(shipmentId);
+
+        assertThat(result).isEmpty();   // clock says mid-window, but status isn't DEPARTED → no dot
+    }
+
+    @Test
     void noAwbParcelForShipment_returnsEmpty() {
         when(awbParcelRepository.findFirstByParcelIdOrderByCreatedAtDesc(shipmentId)).thenReturn(Optional.empty());
         var result = adapter(departure.plusSeconds(3600)).currentPosition(shipmentId);
