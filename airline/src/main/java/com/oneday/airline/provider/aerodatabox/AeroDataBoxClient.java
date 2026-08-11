@@ -39,6 +39,8 @@ public class AeroDataBoxClient {
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final RestClient http;
+    private final long minRequestIntervalMs;
+    private long lastRequestAt = 0L;
 
     public AeroDataBoxClient(AeroDataBoxProperties properties) {
         RestClient.Builder b = RestClient.builder().baseUrl(properties.getBaseUrl());
@@ -49,10 +51,28 @@ public class AeroDataBoxClient {
             b = b.defaultHeader("x-rapidapi-host", properties.getRapidApiHost());
         }
         this.http = b.build();
+        this.minRequestIntervalMs = properties.getMinRequestIntervalMs();
+    }
+
+    /**
+     * Serialises all outbound calls to at most one per {@code minRequestIntervalMs} so neither the ingest
+     * nor the status poll can breach the plan's ~2 req/s cap. Synchronized → safe if the two jobs overlap.
+     */
+    private synchronized void rateLimit() {
+        long wait = minRequestIntervalMs - (System.currentTimeMillis() - lastRequestAt);
+        if (wait > 0) {
+            try {
+                Thread.sleep(wait);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        lastRequestAt = System.currentTimeMillis();
     }
 
     /** FIDS departures from {@code iata} within a ≤12h window (API limit). One row per scheduled departure. */
     public List<DepartureRow> departures(String iata, LocalDateTime fromLocal, LocalDateTime toLocal) {
+        rateLimit();
         try {
             String body = http.get()
                     .uri("/flights/airports/iata/{iata}/{from}/{to}?direction=Departure&withLeg=true&withCancelled=false",
@@ -68,6 +88,7 @@ public class AeroDataBoxClient {
 
     /** Live status for one flight on a date — feeds the daily disruption poll. */
     public Optional<StatusRow> flightStatus(String flightNo, LocalDate date) {
+        rateLimit();
         try {
             String body = http.get()
                     .uri("/flights/number/{number}/{date}", flightNo, date.toString())

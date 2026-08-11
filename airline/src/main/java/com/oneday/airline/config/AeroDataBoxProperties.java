@@ -37,6 +37,13 @@ public class AeroDataBoxProperties {
     private int scheduleHorizonDays = 30;
 
     /**
+     * Minimum gap between <em>any</em> two AeroDataBox HTTP calls (schedule ingest AND status poll),
+     * enforced inside the client so no caller can exceed the plan's requests/second cap — RapidAPI
+     * throttles all AeroDataBox tiers at ~2 req/s. Default 550 ms (~1.8/s, with margin).
+     */
+    private long minRequestIntervalMs = 550;
+
+    /**
      * Pause between successive FIDS calls during a schedule ingest, to respect a plan's requests/second
      * cap (RapidAPI's free BASIC tier is ~1 req/s). Default 0 (paid tiers with a high rate limit); set to
      * ~1100 ms when testing on the free tier so the ingest doesn't get 429-throttled.

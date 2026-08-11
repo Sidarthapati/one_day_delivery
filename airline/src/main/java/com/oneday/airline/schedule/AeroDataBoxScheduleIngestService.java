@@ -76,6 +76,12 @@ public class AeroDataBoxScheduleIngestService {
             log.warn("AeroDataBox ingest: no airports configured (airline.cities empty) — nothing to do");
             return 0;
         }
+        // Real mode owns the schedule: clear the synthetic seed first so selection never picks a fake
+        // SIM-CONSOLIDATOR flight alongside the real ones. (Simple delete-then-ingest; fine for v1.)
+        int removed = consolidatorJdbcTemplate.update("DELETE FROM flight_leg WHERE carrier = 'SIM-CONSOLIDATOR'");
+        if (removed > 0) {
+            log.info("Cleared {} synthetic seed legs before the real AeroDataBox ingest", removed);
+        }
         int written = 0;
         LocalDate today = LocalDate.now(ClockConfig.IST);
         for (String origin : airports) {
