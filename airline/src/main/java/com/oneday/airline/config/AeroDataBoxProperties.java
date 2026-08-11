@@ -35,4 +35,11 @@ public class AeroDataBoxProperties {
 
     /** How many days of forward schedule the monthly ingest projects. Default 1 month (less speculative booking). */
     private int scheduleHorizonDays = 30;
+
+    /**
+     * Pause between successive FIDS calls during a schedule ingest, to respect a plan's requests/second
+     * cap (RapidAPI's free BASIC tier is ~1 req/s). Default 0 (paid tiers with a high rate limit); set to
+     * ~1100 ms when testing on the free tier so the ingest doesn't get 429-throttled.
+     */
+    private long interCallDelayMs = 0;
 }

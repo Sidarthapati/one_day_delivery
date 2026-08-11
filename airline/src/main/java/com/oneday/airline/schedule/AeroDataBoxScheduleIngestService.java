@@ -93,6 +93,7 @@ public class AeroDataBoxScheduleIngestService {
         for (LocalTime windowStart : List.of(LocalTime.MIN, LocalTime.NOON)) {
             LocalDateTime from = date.atTime(windowStart);
             LocalDateTime to = from.plusHours(12);
+            throttle();
             for (AeroDataBoxClient.DepartureRow row : client.departures(origin, from, to)) {
                 // Keep only our own lanes (departures to another serviceable hub).
                 if (origin.equals(row.destIata()) || !serviceableAirports.contains(row.destIata())) {
@@ -106,6 +107,19 @@ public class AeroDataBoxScheduleIngestService {
             }
         }
         return written;
+    }
+
+    /** Respect a plan's requests/second cap between FIDS calls (no-op when the delay is 0). */
+    private void throttle() {
+        long delay = aeroProps.getInterCallDelayMs();
+        if (delay <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** Leading letters of the flight number are the carrier code ("AI806" → "AI"). */
