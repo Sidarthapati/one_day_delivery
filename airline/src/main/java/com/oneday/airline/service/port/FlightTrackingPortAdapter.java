@@ -4,6 +4,7 @@ import com.oneday.airline.config.HubCoordinates;
 import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbParcel;
 import com.oneday.airline.domain.FlightInstance;
+import com.oneday.airline.domain.FlightInstanceStatus;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.repository.FlightInstanceRepository;
@@ -56,6 +57,11 @@ class FlightTrackingPortAdapter implements FlightTrackingPort {
         }
 
         FlightInstance fi = instance.get();
+        // Anchor the moving dot to the REAL airborne signal (the progress poll's DEPARTED flip), not the
+        // clock alone — a delayed-but-not-yet-departed flight stays SCHEDULED and shows no dot.
+        if (fi.getStatus() != FlightInstanceStatus.DEPARTED) {
+            return Optional.empty();
+        }
         Instant now = clock.instant();
         if (now.isBefore(fi.getDeparture()) || !now.isBefore(fi.getArrival())) {
             return Optional.empty();   // not airborne yet, or already landed

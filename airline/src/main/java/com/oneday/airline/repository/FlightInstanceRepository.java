@@ -23,6 +23,10 @@ public interface FlightInstanceRepository extends JpaRepository<FlightInstance, 
     Optional<FlightInstance> findByFlightNoAndFlightDateForUpdate(
             @Param("flightNo") String flightNo, @Param("flightDate") LocalDate flightDate);
 
-    /** Scope for the status poll job (§13): flights not yet landed/cancelled. */
+    /** Scope for the frequent progress poll: flights not yet landed/cancelled. */
     List<FlightInstance> findByStatusIn(List<FlightInstanceStatus> statuses);
+
+    /** Scope for the tiered disruption poll: not-yet-departed flights departing inside a time-to-departure window. */
+    List<FlightInstance> findByStatusInAndDepartureBetween(
+            List<FlightInstanceStatus> statuses, java.time.Instant from, java.time.Instant to);
 }

@@ -6,9 +6,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * GCR-style slab cost math (§10): a per-kg rate that steps down as chargeable weight crosses a
- * break, plus a fixed terminal handling fee, floored at the lane's minimum charge. An overnight
- * flight's total gets the configured discount applied before the floor, so a cheapest-first pick
- * naturally prefers overnight when it's genuinely cheaper (§5).
+ * break, plus a fixed terminal handling fee, floored at the lane's minimum charge. A <b>prime</b>
+ * (overnight, 00:00–09:00) flight's total gets the configured surcharge added before the floor, so a
+ * cheapest-first pick naturally <em>avoids</em> the expensive prime window unless it's the only flight
+ * that meets the promise (§5).
  */
 @Component
 class CostEstimator {
@@ -19,12 +20,12 @@ class CostEstimator {
         this.properties = properties;
     }
 
-    long estimatePaise(ConsolidatorLaneRate rateCard, int weightGrams, boolean overnight) {
+    long estimatePaise(ConsolidatorLaneRate rateCard, int weightGrams, boolean prime) {
         double weightKg = weightGrams / 1000.0;
         long perKgPaise = ratePerKg(rateCard, weightKg);
         long total = Math.round(weightKg * perKgPaise) + rateCard.terminalHandlingPaise();
-        if (overnight) {
-            total -= total * properties.getOvernightDiscountBps() / 10_000;
+        if (prime) {
+            total += total * properties.getPrimeSurchargeBps() / 10_000;   // expensive prime-window rate
         }
         return Math.max(total, rateCard.minChargePaise());
     }

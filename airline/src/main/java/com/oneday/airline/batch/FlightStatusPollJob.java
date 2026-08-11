@@ -26,19 +26,25 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * The heartbeat behind live tracking and the reassignment engine (§8, §9), mirroring {@code
- * routing.NightlyRoutePlanJob}'s scheduled-job idiom. Every {@link AirlineProperties#getStatusPollDelayMs()}
- * (default 5 min), for every booked-but-not-landed flight:
+ * Two scheduled halves, split by cost and cadence (mirroring the user's "two crons" model):
+ *
  * <ul>
- *   <li>flips real DEPARTED/LANDED once the flight's own departure/arrival Instant has passed,
- *       notifying every parcel on it (the first real callers of {@link FlightEventProducer});</li>
- *   <li>asks the (simulated) vendor for its current word on the flight — a delay/cancellation past
- *       {@link AirlineProperties#getDelayReassignThresholdMinutes()} triggers a real reassignment; a
- *       milder delay is just an advisory time-changed notice.</li>
+ *   <li><b>Progress</b> — {@link #pollProgress()} runs frequently (every {@link
+ *       AirlineProperties#getStatusPollDelayMs()}, default 5 min) and only flips real DEPARTED/LANDED
+ *       once the flight's own departure/arrival Instant has passed, notifying every parcel on it. This
+ *       is <em>clock-based</em>: it never calls the flight-data vendor, so it costs nothing and keeps
+ *       live tracking fresh.</li>
+ *   <li><b>Disruption</b> — {@link #pollImminent()} / {@link #pollUpcoming()} ask the vendor for its
+ *       current word (the only calls that spend paid units), on a <em>tiered</em> cadence keyed on
+ *       time-to-departure: flights in the last few hours before departure are swept every ~30 min so a
+ *       cancellation is caught while there's still time to rebook before cutoff; flights further out are
+ *       swept every ~3 h; far-out flights aren't polled at all. A cancellation or a delay past {@link
+ *       AirlineProperties#getDelayReassignThresholdMinutes()} triggers a real reassignment; a milder
+ *       delay is just an advisory time-changed notice.</li>
  * </ul>
  */
 @Component
-class FlightStatusPollJob {
+public class FlightStatusPollJob {
 
     private static final Logger log = LoggerFactory.getLogger(FlightStatusPollJob.class);
 
@@ -65,28 +71,53 @@ class FlightStatusPollJob {
         this.clock = clock;
     }
 
+    /** Frequent, clock-only: advance DEPARTED/LANDED for every in-flight instance. No vendor calls. */
     @Scheduled(fixedDelayString = "${airline.status-poll-delay-ms:300000}")
-    public void run() {
+    public void pollProgress() {
         List<FlightInstance> instances = flightInstanceRepository.findByStatusIn(
                 List.of(FlightInstanceStatus.SCHEDULED, FlightInstanceStatus.DEPARTED));
         for (FlightInstance instance : instances) {
             try {
-                processInstance(instance);
+                advanceProgress(instance);
             } catch (Exception e) {
-                log.error("FlightStatusPollJob failed for flight {} ({})", instance.getFlightNo(),
-                        instance.getFlightDate(), e);
+                log.error("Progress poll failed for flight {} ({})", instance.getFlightNo(), instance.getFlightDate(), e);
             }
         }
     }
 
-    // Not @Transactional: called via self-invocation from run() in the same bean, where Spring's AOP
-    // proxy wouldn't apply anyway. Each repository save() is already atomic on its own (Spring Data
-    // JPA default); the one place multi-step atomicity matters (reassign) is a separate, correctly-
-    // proxied bean, and events are intentionally published best-effort after the DB write commits
-    // (matches RabbitEventPublisher's documented "never break an already-committed flow" rule).
-    void processInstance(FlightInstance instance) {
-        Instant now = clock.instant();
+    /** Imminent tier (paid): flights departing within the next few hours, swept every ~30 min. */
+    @Scheduled(cron = "${airline.disruption-imminent-cron:0 */30 * * * *}", zone = "Asia/Kolkata")
+    public void pollImminent() {
+        pollWindow(0, properties.getDisruptionImminentWindowHours());
+    }
 
+    /** Upcoming tier (paid): flights a bit further out, swept every ~3 h. Disjoint from the imminent window. */
+    @Scheduled(cron = "${airline.disruption-upcoming-cron:0 0 */3 * * *}", zone = "Asia/Kolkata")
+    public void pollUpcoming() {
+        pollWindow(properties.getDisruptionImminentWindowHours(), properties.getDisruptionUpcomingWindowHours());
+    }
+
+    /** Vendor-check every still-scheduled flight departing in [now+fromHours, now+toHours]. */
+    private void pollWindow(int fromHours, int toHours) {
+        Instant now = clock.instant();
+        List<FlightInstance> instances = flightInstanceRepository.findByStatusInAndDepartureBetween(
+                List.of(FlightInstanceStatus.SCHEDULED),
+                now.plus(Duration.ofHours(fromHours)), now.plus(Duration.ofHours(toHours)));
+        for (FlightInstance instance : instances) {
+            try {
+                checkDisruption(instance);
+            } catch (Exception e) {
+                log.error("Disruption poll failed for flight {} ({})", instance.getFlightNo(), instance.getFlightDate(), e);
+            }
+        }
+    }
+
+    // Not @Transactional: each repository save() is atomic on its own; the one place multi-step atomicity
+    // matters (reassign) is a separate, correctly-proxied bean, and events publish best-effort after commit.
+
+    /** Clock-only progress: SCHEDULED→DEPARTED at departure, DEPARTED→LANDED at arrival. Never calls the vendor. */
+    void advanceProgress(FlightInstance instance) {
+        Instant now = clock.instant();
         if (instance.getStatus() == FlightInstanceStatus.SCHEDULED && !now.isBefore(instance.getDeparture())) {
             instance.setStatus(FlightInstanceStatus.DEPARTED);
             flightInstanceRepository.save(instance);
@@ -96,9 +127,14 @@ class FlightStatusPollJob {
             instance.setStatus(FlightInstanceStatus.LANDED);
             flightInstanceRepository.save(instance);
             notifyParcels(instance, flightEventProducer::emitLanded);
-            return;   // landed — nothing left to reassign
         }
+    }
 
+    /** Vendor-backed disruption handling for a still-scheduled flight (cancellation → reassign, delay → reassign/advisory). */
+    void checkDisruption(FlightInstance instance) {
+        if (instance.getStatus() != FlightInstanceStatus.SCHEDULED) {
+            return;   // only a not-yet-departed flight can be reassigned/retimed
+        }
         FlightProviderPort.FlightStatusResult status =
                 flightProviderPort.status(instance.getFlightNo(), instance.getFlightDate());
 
