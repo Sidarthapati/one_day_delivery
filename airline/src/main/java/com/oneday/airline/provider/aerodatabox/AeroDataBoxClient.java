@@ -40,7 +40,8 @@ public class AeroDataBoxClient {
 
     private final RestClient http;
     private final long minRequestIntervalMs;
-    private long lastRequestAt = 0L;
+    private final Object rateGate = new Object();
+    private long nextAllowedAt = 0L;
 
     public AeroDataBoxClient(AeroDataBoxProperties properties) {
         RestClient.Builder b = RestClient.builder().baseUrl(properties.getBaseUrl());
@@ -56,18 +57,23 @@ public class AeroDataBoxClient {
 
     /**
      * Serialises all outbound calls to at most one per {@code minRequestIntervalMs} so neither the ingest
-     * nor the status poll can breach the plan's ~2 req/s cap. Synchronized → safe if the two jobs overlap.
+     * nor the status poll can breach the plan's ~2 req/s cap. Reserves the next send slot under a short
+     * lock, then sleeps to it <em>without</em> holding the lock (concurrent callers queue in order).
      */
-    private synchronized void rateLimit() {
-        long wait = minRequestIntervalMs - (System.currentTimeMillis() - lastRequestAt);
-        if (wait > 0) {
+    private void rateLimit() {
+        long sendAt;
+        synchronized (rateGate) {
+            sendAt = Math.max(System.currentTimeMillis(), nextAllowedAt);
+            nextAllowedAt = sendAt + minRequestIntervalMs;
+        }
+        long sleep = sendAt - System.currentTimeMillis();
+        if (sleep > 0) {
             try {
-                Thread.sleep(wait);
+                Thread.sleep(sleep);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
-        lastRequestAt = System.currentTimeMillis();
     }
 
     /** FIDS departures from {@code iata} within a ≤12h window (API limit). One row per scheduled departure. */

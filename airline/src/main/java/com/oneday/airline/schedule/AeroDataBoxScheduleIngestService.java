@@ -62,8 +62,12 @@ public class AeroDataBoxScheduleIngestService {
         this.consolidatorJdbcTemplate = consolidatorJdbcTemplate;
     }
 
-    /** Monthly refresh of the forward window (03:00 IST on the 1st). Admin can also trigger via the API. */
-    @Scheduled(cron = "${airline.schedule-ingest-cron:0 0 3 1 * *}", zone = "Asia/Kolkata")
+    /**
+     * Weekly refresh of the forward window (Sun 03:00 IST) — rolls the {@code scheduleHorizonDays}
+     * window forward and picks up airline schedule changes, comfortably ahead of a 14-day horizon.
+     * Admin can also trigger it on demand via the API.
+     */
+    @Scheduled(cron = "${airline.schedule-ingest-cron:0 0 3 * * SUN}", zone = "Asia/Kolkata")
     public void scheduledRefresh() {
         int n = refresh();
         log.info("AeroDataBox schedule ingest (scheduled) upserted {} legs", n);

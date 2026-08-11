@@ -33,8 +33,12 @@ public class AeroDataBoxProperties {
     /** RapidAPI host header value (ignored for a direct subscription with an empty value). */
     private String rapidApiHost = "aerodatabox.p.rapidapi.com";
 
-    /** How many days of forward schedule the monthly ingest projects. Default 1 month (less speculative booking). */
-    private int scheduleHorizonDays = 30;
+    /**
+     * How many days of forward schedule to keep in the store. AeroDataBox FIDS actually serves months
+     * ahead, so this is a deliberate choice, not a limit: far-future schedules still change, so a modest
+     * window refreshed weekly stays accurate and cheap. Default 14 days (ample booking runway).
+     */
+    private int scheduleHorizonDays = 14;
 
     /**
      * Minimum gap between <em>any</em> two AeroDataBox HTTP calls (schedule ingest AND status poll),
