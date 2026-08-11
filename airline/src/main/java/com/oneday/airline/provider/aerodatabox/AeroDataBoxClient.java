@@ -12,8 +12,8 @@ import org.springframework.web.client.RestClient;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +36,7 @@ public class AeroDataBoxClient {
     private static final Logger log = LoggerFactory.getLogger(AeroDataBoxClient.class);
     private static final DateTimeFormatter FIDS_WINDOW = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final RestClient http;
 
@@ -88,11 +89,16 @@ public class AeroDataBoxClient {
         }
         List<DepartureRow> rows = new ArrayList<>();
         for (JsonNode d : departures) {
+            // Drop codeshare rows so one physical flight isn't ingested several times under partner numbers.
+            if ("IsCodeshared".equalsIgnoreCase(text(d, "codeshareStatus"))) {
+                continue;
+            }
             String flightNo = normalizeFlightNo(text(d, "number"));
-            String destIata = text(d.path("movement").path("airport"), "iata");
-            LocalTime depTime = localTimeOf(d.path("movement").path("scheduledTime"));
-            if (flightNo != null && destIata != null && depTime != null) {
-                rows.add(new DepartureRow(flightNo, destIata, depTime));
+            String destIata = text(d.path("arrival").path("airport"), "iata");
+            Instant depUtc = instantOf(d.path("departure"));
+            Instant arrUtc = instantOf(d.path("arrival"));
+            if (flightNo != null && destIata != null && depUtc != null && arrUtc != null) {
+                rows.add(new DepartureRow(flightNo, destIata, depUtc.atZone(IST).toLocalDate(), depUtc, arrUtc));
             }
         }
         return rows;
@@ -123,22 +129,6 @@ public class AeroDataBoxClient {
         return v.isValueNode() && !v.asText().isBlank() ? v.asText() : null;
     }
 
-    /** Reads a {revisedTime|scheduledTime}.local time-of-day, tolerating "..HH:mm+05:30" or ISO forms. */
-    private static LocalTime localTimeOf(JsonNode scheduledTime) {
-        String local = text(scheduledTime, "local");
-        if (local == null) return null;
-        String normalized = local.trim().replace(' ', 'T');
-        try {
-            return OffsetDateTime.parse(normalized).toLocalTime();
-        } catch (Exception ignore) {
-            try {
-                return LocalDateTime.parse(normalized).toLocalTime();
-            } catch (Exception ignore2) {
-                return null;
-            }
-        }
-    }
-
     /** Prefers a movement's revised (actual/estimated) UTC instant, falling back to scheduled. */
     private static Instant instantOf(JsonNode movement) {
         Instant revised = utcInstant(movement.path("revisedTime"));
@@ -156,8 +146,9 @@ public class AeroDataBoxClient {
         }
     }
 
-    /** A scheduled departure: flight number, destination airport, and local departure time-of-day. */
-    public record DepartureRow(String flightNo, String destIata, LocalTime departureLocal) {}
+    /** A scheduled departure: flight number, destination, IST flight date, and real UTC departure/arrival instants. */
+    public record DepartureRow(String flightNo, String destIata, LocalDate flightDate,
+                               Instant departureUtc, Instant arrivalUtc) {}
 
     /** A flight's current word: raw status string plus best-known departure/arrival instants. */
     public record StatusRow(String rawStatus, Instant estimatedDeparture, Instant estimatedArrival) {}

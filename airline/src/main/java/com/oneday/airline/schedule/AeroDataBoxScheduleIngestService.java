@@ -13,7 +13,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -99,11 +98,10 @@ public class AeroDataBoxScheduleIngestService {
                 if (origin.equals(row.destIata()) || !serviceableAirports.contains(row.destIata())) {
                     continue;
                 }
-                Instant departure = date.atTime(row.departureLocal()).atZone(ClockConfig.IST).toInstant();
-                Instant arrival = departure.plusSeconds(aeroProps.getDefaultBlockMinutes() * 60L);
+                // Real departure + arrival instants come straight from AeroDataBox — no block estimate.
                 consolidatorJdbcTemplate.update(UPSERT,
-                        row.flightNo(), date, carrierOf(row.flightNo()), origin, row.destIata(),
-                        Timestamp.from(departure), Timestamp.from(arrival), DEFAULT_CAPACITY_KG);
+                        row.flightNo(), row.flightDate(), carrierOf(row.flightNo()), origin, row.destIata(),
+                        Timestamp.from(row.departureUtc()), Timestamp.from(row.arrivalUtc()), DEFAULT_CAPACITY_KG);
                 written++;
             }
         }

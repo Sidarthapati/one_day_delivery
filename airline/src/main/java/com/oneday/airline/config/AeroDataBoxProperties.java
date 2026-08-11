@@ -35,11 +35,4 @@ public class AeroDataBoxProperties {
 
     /** How many days of forward schedule the monthly ingest projects. Default 1 month (less speculative booking). */
     private int scheduleHorizonDays = 30;
-
-    /**
-     * Block-time estimate (minutes) used to derive an arrival time from a FIDS departure row, since a
-     * departures query doesn't carry the arrival time. Corrected by the daily status poll's real
-     * estimated arrival. A single value is fine for the 5 metro lanes (all ~2h); refine per-lane later.
-     */
-    private int defaultBlockMinutes = 150;
 }
