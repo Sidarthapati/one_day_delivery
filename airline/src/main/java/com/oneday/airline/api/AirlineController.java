@@ -12,9 +12,11 @@ import com.oneday.airline.dto.FlightStatusResponse;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.repository.FlightInstanceRepository;
+import com.oneday.airline.service.AirlineCustodyService;
 import com.oneday.airline.service.AwbGroundService;
 import com.oneday.airline.service.AwbIntakeService;
 import com.oneday.airline.service.provider.FlightProviderPort;
+import com.oneday.common.kafka.enums.ScanEventType;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -47,19 +49,21 @@ public class AirlineController {
     private final AwbParcelRepository awbParcelRepository;
     private final AwbGroundService awbGroundService;
     private final AwbIntakeService awbIntakeService;
+    private final AirlineCustodyService airlineCustodyService;
     private final FlightProviderPort flightProviderPort;
 
     AirlineController(ConsolidatorFlightRepository consolidatorFlightRepository,
                        FlightInstanceRepository flightInstanceRepository,
                        AwbRepository awbRepository, AwbParcelRepository awbParcelRepository,
                        AwbGroundService awbGroundService, AwbIntakeService awbIntakeService,
-                       FlightProviderPort flightProviderPort) {
+                       AirlineCustodyService airlineCustodyService, FlightProviderPort flightProviderPort) {
         this.consolidatorFlightRepository = consolidatorFlightRepository;
         this.flightInstanceRepository = flightInstanceRepository;
         this.awbRepository = awbRepository;
         this.awbParcelRepository = awbParcelRepository;
         this.awbGroundService = awbGroundService;
         this.awbIntakeService = awbIntakeService;
+        this.airlineCustodyService = airlineCustodyService;
         this.flightProviderPort = flightProviderPort;
     }
 
@@ -132,8 +136,41 @@ public class AirlineController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,
                     "No booked AWB for flight " + flightNo + " (" + flightDate + ")");
         }
-        return Map.of("status", "ok", "flightNo", flightNo, "flightDate", flightDate.toString(),
-                "awbNo", request.awbNo(), "bagsUpdated", updated);
+        return Map.of("status", "ok", "flight_no", flightNo, "flight_date", flightDate.toString(),
+                "awb_no", request.awbNo(), "bags_updated", updated);
+    }
+
+    // ── Airport custody actions (gap G1): one AWB = one plane, so each fires the scan for every parcel ──
+    /** Handed to Bhagwati / dispatched from origin hub → every parcel advances to DISPATCHED_TO_AIRPORT. */
+    @PostMapping("/awb/{awbId}/dispatched-to-airport")
+    public Map<String, Object> dispatchedToAirport(@PathVariable UUID awbId) {
+        return custody(awbId, ScanEventType.HUB_ORIGIN_OUT);
+    }
+
+    /** Accepted by the ground handler / into the cargo terminal → AT_AIRPORT. */
+    @PostMapping("/awb/{awbId}/gha-accepted")
+    public Map<String, Object> ghaAccepted(@PathVariable UUID awbId) {
+        return custody(awbId, ScanEventType.GHA_ACCEPTANCE);
+    }
+
+    /** Collected at the destination airport / on the shuttle to the dest hub → DISPATCHED_TO_HUB. */
+    @PostMapping("/awb/{awbId}/dest-shuttle-in")
+    public Map<String, Object> destShuttleIn(@PathVariable UUID awbId) {
+        return custody(awbId, ScanEventType.DEST_SHUTTLE_IN);
+    }
+
+    /** Received back at the destination hub → AT_DEST_HUB (dest sort + delivery assignment follow). */
+    @PostMapping("/awb/{awbId}/dest-received")
+    public Map<String, Object> destReceived(@PathVariable UUID awbId) {
+        return custody(awbId, ScanEventType.HUB_DEST_IN);
+    }
+
+    private Map<String, Object> custody(UUID awbId, ScanEventType type) {
+        int parcels = airlineCustodyService.record(awbId, type);
+        if (parcels == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No parcels on AWB " + awbId);
+        }
+        return Map.of("status", "ok", "awb_id", awbId, "scan", type.name(), "parcels", parcels);
     }
 
     /** Bhagwati warehouse handoff: our goods have been physically handed to the consolidator's dock. */
