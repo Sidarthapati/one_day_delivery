@@ -1,7 +1,6 @@
 package com.oneday.airline.batch;
 
 import com.oneday.airline.config.AirlineProperties;
-import com.oneday.airline.config.ClockConfig;
 import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.domain.FlightInstance;
@@ -22,7 +21,6 @@ import org.springframework.stereotype.Component;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -36,9 +34,11 @@ import java.util.function.Consumer;
  *       once the flight's own departure/arrival Instant has passed, notifying every parcel on it. This
  *       is <em>clock-based</em>: it never calls the flight-data vendor, so it costs nothing and keeps
  *       live tracking fresh.</li>
- *   <li><b>Disruption</b> — {@link #pollDisruptions()} runs once daily and, only for booked flights
- *       departing <em>today or tomorrow</em>, asks the vendor for its current word (the only calls that
- *       spend the vendor's paid units). A cancellation or a delay past {@link
+ *   <li><b>Disruption</b> — {@link #pollImminent()} / {@link #pollUpcoming()} ask the vendor for its
+ *       current word (the only calls that spend paid units), on a <em>tiered</em> cadence keyed on
+ *       time-to-departure: flights in the last few hours before departure are swept every ~30 min so a
+ *       cancellation is caught while there's still time to rebook before cutoff; flights further out are
+ *       swept every ~3 h; far-out flights aren't polled at all. A cancellation or a delay past {@link
  *       AirlineProperties#getDelayReassignThresholdMinutes()} triggers a real reassignment; a milder
  *       delay is just an advisory time-changed notice.</li>
  * </ul>
@@ -85,12 +85,24 @@ public class FlightStatusPollJob {
         }
     }
 
-    /** Daily, vendor-backed: check today/tomorrow flights for cancellation/delay and react (the paid calls). */
-    @Scheduled(cron = "${airline.disruption-poll-cron:0 0 6 * * *}", zone = "Asia/Kolkata")
-    public void pollDisruptions() {
-        LocalDate today = LocalDate.now(clock.withZone(ClockConfig.IST));
-        List<FlightInstance> instances = flightInstanceRepository.findByStatusInAndFlightDateIn(
-                List.of(FlightInstanceStatus.SCHEDULED), List.of(today, today.plusDays(1)));
+    /** Imminent tier (paid): flights departing within the next few hours, swept every ~30 min. */
+    @Scheduled(cron = "${airline.disruption-imminent-cron:0 */30 * * * *}", zone = "Asia/Kolkata")
+    public void pollImminent() {
+        pollWindow(0, properties.getDisruptionImminentWindowHours());
+    }
+
+    /** Upcoming tier (paid): flights a bit further out, swept every ~3 h. Disjoint from the imminent window. */
+    @Scheduled(cron = "${airline.disruption-upcoming-cron:0 0 */3 * * *}", zone = "Asia/Kolkata")
+    public void pollUpcoming() {
+        pollWindow(properties.getDisruptionImminentWindowHours(), properties.getDisruptionUpcomingWindowHours());
+    }
+
+    /** Vendor-check every still-scheduled flight departing in [now+fromHours, now+toHours]. */
+    private void pollWindow(int fromHours, int toHours) {
+        Instant now = clock.instant();
+        List<FlightInstance> instances = flightInstanceRepository.findByStatusInAndDepartureBetween(
+                List.of(FlightInstanceStatus.SCHEDULED),
+                now.plus(Duration.ofHours(fromHours)), now.plus(Duration.ofHours(toHours)));
         for (FlightInstance instance : instances) {
             try {
                 checkDisruption(instance);

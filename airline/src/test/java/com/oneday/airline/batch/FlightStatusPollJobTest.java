@@ -156,4 +156,26 @@ class FlightStatusPollJobTest {
         verify(flightEventProducer).emitTimeChanged(captor.capture());
         assertThat(captor.getValue().newDeparture()).isEqualTo(delayedDeparture);
     }
+
+    @Test
+    void pollImminent_sweepsTheNextFewHoursAndReactsToACancellation() {
+        FlightInstance fi = instance(FlightInstanceStatus.SCHEDULED);
+        Awb awb = bookedAwb();
+        Instant now = departure.minusSeconds(2 * 3600);   // 2h before departure → inside the imminent window
+        when(flightInstanceRepository.findByStatusInAndDepartureBetween(
+                eq(List.of(FlightInstanceStatus.SCHEDULED)), any(), any())).thenReturn(List.of(fi));
+        when(awbRepository.findByFlightNoAndFlightDate("ODDELBOM06", fi.getFlightDate())).thenReturn(List.of(awb));
+        when(flightProviderPort.status("ODDELBOM06", fi.getFlightDate())).thenReturn(
+                new FlightProviderPort.FlightStatusResult(FlightProviderPort.FlightRealWorldStatus.CANCELLED,
+                        departure, arrival));
+
+        job(now).pollImminent();
+
+        ArgumentCaptor<Instant> from = ArgumentCaptor.forClass(Instant.class);
+        ArgumentCaptor<Instant> to = ArgumentCaptor.forClass(Instant.class);
+        verify(flightInstanceRepository).findByStatusInAndDepartureBetween(any(), from.capture(), to.capture());
+        assertThat(from.getValue()).isEqualTo(now);                     // window starts now
+        assertThat(to.getValue()).isEqualTo(now.plusSeconds(6 * 3600)); // default 6h imminent window
+        verify(flightReassignmentService).reassign(awb, FlightReassignReason.CANCELLATION);
+    }
 }

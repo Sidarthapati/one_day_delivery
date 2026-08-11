@@ -33,8 +33,8 @@ public class AeroDataBoxProperties {
     /** RapidAPI host header value (ignored for a direct subscription with an empty value). */
     private String rapidApiHost = "aerodatabox.p.rapidapi.com";
 
-    /** How many days of forward schedule the monthly ingest projects. Default ~3 months. */
-    private int scheduleHorizonDays = 90;
+    /** How many days of forward schedule the monthly ingest projects. Default 1 month (less speculative booking). */
+    private int scheduleHorizonDays = 30;
 
     /**
      * Block-time estimate (minutes) used to derive an arrival time from a FIDS departure row, since a

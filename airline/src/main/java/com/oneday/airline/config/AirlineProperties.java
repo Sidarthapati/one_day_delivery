@@ -71,6 +71,19 @@ public class AirlineProperties {
      */
     private int delayReassignThresholdMinutes = 60;
 
+    /**
+     * Tiered disruption polling — poll frequency scales with proximity to departure so a cancellation
+     * is caught while there's still time to rebook before cutoff (correctness), while far-out flights
+     * cost nothing. The two windows are disjoint and each is swept at its own cadence:
+     * <ul>
+     *   <li>0 → {@code disruptionImminentWindowHours} before departure: swept every ~30 min;</li>
+     *   <li>that up to {@code disruptionUpcomingWindowHours}: swept every ~3 h;</li>
+     *   <li>beyond it: not polled — the schedule stands until the flight enters the upcoming window.</li>
+     * </ul>
+     */
+    private int disruptionImminentWindowHours = 6;
+    private int disruptionUpcomingWindowHours = 24;
+
     /** True if a flight departing at this IST time falls in the expensive prime window (§ prime-rate avoidance). */
     public boolean isPrime(LocalTime departure) {
         LocalTime start = LocalTime.of(primeWindowStartHour, 0);
