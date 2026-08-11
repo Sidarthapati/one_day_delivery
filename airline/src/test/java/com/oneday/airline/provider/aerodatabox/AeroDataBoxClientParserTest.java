@@ -6,7 +6,7 @@ import com.oneday.airline.provider.aerodatabox.AeroDataBoxClient.StatusRow;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
-import java.time.LocalTime;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,35 +25,38 @@ class AeroDataBoxClientParserTest {
     }
 
     @Test
-    void parsesDepartures_normalisingFlightNoAndReadingLocalTimeAndDest() throws Exception {
+    void parsesDepartures_realShape_flightNoDestAndUtcInstants() throws Exception {
+        // Captured from the live AeroDataBox FIDS departures response (DEL, Aug 2026).
         List<DepartureRow> rows = AeroDataBoxClient.parseDepartures(json("""
             {
               "departures": [
-                { "number": "AI 806",
-                  "movement": { "airport": { "iata": "BOM", "name": "Mumbai" },
-                                "scheduledTime": { "utc": "2026-08-11 00:30Z", "local": "2026-08-11 06:00+05:30" } } },
-                { "number": "6E 123",
-                  "movement": { "airport": { "iata": "BLR" },
-                                "scheduledTime": { "local": "2026-08-11 09:15+05:30" } } }
+                { "number": "AI 1793", "status": "Expected", "codeshareStatus": "IsOperator",
+                  "departure": { "scheduledTime": { "utc": "2026-08-12 00:30Z", "local": "2026-08-12 06:00+05:30" } },
+                  "arrival":   { "airport": { "iata": "HYD" },
+                                 "scheduledTime": { "utc": "2026-08-12 02:50Z", "local": "2026-08-12 08:20+05:30" } } },
+                { "number": "6E 6084", "codeshareStatus": "IsCodeshared",
+                  "departure": { "scheduledTime": { "utc": "2026-08-12 01:00Z" } },
+                  "arrival":   { "airport": { "iata": "BOM" }, "scheduledTime": { "utc": "2026-08-12 03:10Z" } } }
               ]
             }
             """));
 
-        assertThat(rows).containsExactly(
-                new DepartureRow("AI806", "BOM", LocalTime.of(6, 0)),
-                new DepartureRow("6E123", "BLR", LocalTime.of(9, 15)));
+        // Codeshare row dropped; operator row parsed with real dep/arr instants and IST flight date.
+        assertThat(rows).containsExactly(new DepartureRow("AI1793", "HYD", LocalDate.of(2026, 8, 12),
+                Instant.parse("2026-08-12T00:30:00Z"), Instant.parse("2026-08-12T02:50:00Z")));
     }
 
     @Test
     void skipsDepartureRowsMissingRequiredFields() throws Exception {
         List<DepartureRow> rows = AeroDataBoxClient.parseDepartures(json("""
             { "departures": [
-                { "number": "AI806", "movement": { "airport": { "iata": "BOM" } } },
-                { "movement": { "airport": { "iata": "BOM" }, "scheduledTime": { "local": "2026-08-11 06:00+05:30" } } }
+                { "number": "AI806", "arrival": { "airport": { "iata": "BOM" } } },
+                { "departure": { "scheduledTime": { "utc": "2026-08-11 00:30Z" } },
+                  "arrival": { "airport": { "iata": "BOM" }, "scheduledTime": { "utc": "2026-08-11 02:30Z" } } }
             ] }
             """));
 
-        assertThat(rows).isEmpty();   // first has no time, second has no flight number
+        assertThat(rows).isEmpty();   // first has no times, second has no flight number
     }
 
     @Test

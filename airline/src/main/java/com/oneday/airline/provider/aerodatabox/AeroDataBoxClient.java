@@ -12,8 +12,8 @@ import org.springframework.web.client.RestClient;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,8 +36,12 @@ public class AeroDataBoxClient {
     private static final Logger log = LoggerFactory.getLogger(AeroDataBoxClient.class);
     private static final DateTimeFormatter FIDS_WINDOW = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final RestClient http;
+    private final long minRequestIntervalMs;
+    private final Object rateGate = new Object();
+    private long nextAllowedAt = 0L;
 
     public AeroDataBoxClient(AeroDataBoxProperties properties) {
         RestClient.Builder b = RestClient.builder().baseUrl(properties.getBaseUrl());
@@ -48,10 +52,33 @@ public class AeroDataBoxClient {
             b = b.defaultHeader("x-rapidapi-host", properties.getRapidApiHost());
         }
         this.http = b.build();
+        this.minRequestIntervalMs = properties.getMinRequestIntervalMs();
+    }
+
+    /**
+     * Serialises all outbound calls to at most one per {@code minRequestIntervalMs} so neither the ingest
+     * nor the status poll can breach the plan's ~2 req/s cap. Reserves the next send slot under a short
+     * lock, then sleeps to it <em>without</em> holding the lock (concurrent callers queue in order).
+     */
+    private void rateLimit() {
+        long sendAt;
+        synchronized (rateGate) {
+            sendAt = Math.max(System.currentTimeMillis(), nextAllowedAt);
+            nextAllowedAt = sendAt + minRequestIntervalMs;
+        }
+        long sleep = sendAt - System.currentTimeMillis();
+        if (sleep > 0) {
+            try {
+                Thread.sleep(sleep);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     /** FIDS departures from {@code iata} within a ≤12h window (API limit). One row per scheduled departure. */
     public List<DepartureRow> departures(String iata, LocalDateTime fromLocal, LocalDateTime toLocal) {
+        rateLimit();
         try {
             String body = http.get()
                     .uri("/flights/airports/iata/{iata}/{from}/{to}?direction=Departure&withLeg=true&withCancelled=false",
@@ -67,6 +94,7 @@ public class AeroDataBoxClient {
 
     /** Live status for one flight on a date — feeds the daily disruption poll. */
     public Optional<StatusRow> flightStatus(String flightNo, LocalDate date) {
+        rateLimit();
         try {
             String body = http.get()
                     .uri("/flights/number/{number}/{date}", flightNo, date.toString())
@@ -88,11 +116,16 @@ public class AeroDataBoxClient {
         }
         List<DepartureRow> rows = new ArrayList<>();
         for (JsonNode d : departures) {
+            // Drop codeshare rows so one physical flight isn't ingested several times under partner numbers.
+            if ("IsCodeshared".equalsIgnoreCase(text(d, "codeshareStatus"))) {
+                continue;
+            }
             String flightNo = normalizeFlightNo(text(d, "number"));
-            String destIata = text(d.path("movement").path("airport"), "iata");
-            LocalTime depTime = localTimeOf(d.path("movement").path("scheduledTime"));
-            if (flightNo != null && destIata != null && depTime != null) {
-                rows.add(new DepartureRow(flightNo, destIata, depTime));
+            String destIata = text(d.path("arrival").path("airport"), "iata");
+            Instant depUtc = instantOf(d.path("departure"));
+            Instant arrUtc = instantOf(d.path("arrival"));
+            if (flightNo != null && destIata != null && depUtc != null && arrUtc != null) {
+                rows.add(new DepartureRow(flightNo, destIata, depUtc.atZone(IST).toLocalDate(), depUtc, arrUtc));
             }
         }
         return rows;
@@ -123,22 +156,6 @@ public class AeroDataBoxClient {
         return v.isValueNode() && !v.asText().isBlank() ? v.asText() : null;
     }
 
-    /** Reads a {revisedTime|scheduledTime}.local time-of-day, tolerating "..HH:mm+05:30" or ISO forms. */
-    private static LocalTime localTimeOf(JsonNode scheduledTime) {
-        String local = text(scheduledTime, "local");
-        if (local == null) return null;
-        String normalized = local.trim().replace(' ', 'T');
-        try {
-            return OffsetDateTime.parse(normalized).toLocalTime();
-        } catch (Exception ignore) {
-            try {
-                return LocalDateTime.parse(normalized).toLocalTime();
-            } catch (Exception ignore2) {
-                return null;
-            }
-        }
-    }
-
     /** Prefers a movement's revised (actual/estimated) UTC instant, falling back to scheduled. */
     private static Instant instantOf(JsonNode movement) {
         Instant revised = utcInstant(movement.path("revisedTime"));
@@ -156,8 +173,9 @@ public class AeroDataBoxClient {
         }
     }
 
-    /** A scheduled departure: flight number, destination airport, and local departure time-of-day. */
-    public record DepartureRow(String flightNo, String destIata, LocalTime departureLocal) {}
+    /** A scheduled departure: flight number, destination, IST flight date, and real UTC departure/arrival instants. */
+    public record DepartureRow(String flightNo, String destIata, LocalDate flightDate,
+                               Instant departureUtc, Instant arrivalUtc) {}
 
     /** A flight's current word: raw status string plus best-known departure/arrival instants. */
     public record StatusRow(String rawStatus, Instant estimatedDeparture, Instant estimatedArrival) {}

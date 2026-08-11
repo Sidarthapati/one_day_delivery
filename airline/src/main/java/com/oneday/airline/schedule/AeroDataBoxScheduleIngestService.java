@@ -13,7 +13,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -63,8 +62,12 @@ public class AeroDataBoxScheduleIngestService {
         this.consolidatorJdbcTemplate = consolidatorJdbcTemplate;
     }
 
-    /** Monthly refresh of the forward window (03:00 IST on the 1st). Admin can also trigger via the API. */
-    @Scheduled(cron = "${airline.schedule-ingest-cron:0 0 3 1 * *}", zone = "Asia/Kolkata")
+    /**
+     * Weekly refresh of the forward window (Sun 03:00 IST) — rolls the {@code scheduleHorizonDays}
+     * window forward and picks up airline schedule changes, comfortably ahead of a 14-day horizon.
+     * Admin can also trigger it on demand via the API.
+     */
+    @Scheduled(cron = "${airline.schedule-ingest-cron:0 0 3 * * SUN}", zone = "Asia/Kolkata")
     public void scheduledRefresh() {
         int n = refresh();
         log.info("AeroDataBox schedule ingest (scheduled) upserted {} legs", n);
@@ -76,6 +79,12 @@ public class AeroDataBoxScheduleIngestService {
         if (airports.isEmpty()) {
             log.warn("AeroDataBox ingest: no airports configured (airline.cities empty) — nothing to do");
             return 0;
+        }
+        // Real mode owns the schedule: clear the synthetic seed first so selection never picks a fake
+        // SIM-CONSOLIDATOR flight alongside the real ones. (Simple delete-then-ingest; fine for v1.)
+        int removed = consolidatorJdbcTemplate.update("DELETE FROM flight_leg WHERE carrier = 'SIM-CONSOLIDATOR'");
+        if (removed > 0) {
+            log.info("Cleared {} synthetic seed legs before the real AeroDataBox ingest", removed);
         }
         int written = 0;
         LocalDate today = LocalDate.now(ClockConfig.IST);
@@ -94,20 +103,33 @@ public class AeroDataBoxScheduleIngestService {
         for (LocalTime windowStart : List.of(LocalTime.MIN, LocalTime.NOON)) {
             LocalDateTime from = date.atTime(windowStart);
             LocalDateTime to = from.plusHours(12);
+            throttle();
             for (AeroDataBoxClient.DepartureRow row : client.departures(origin, from, to)) {
                 // Keep only our own lanes (departures to another serviceable hub).
                 if (origin.equals(row.destIata()) || !serviceableAirports.contains(row.destIata())) {
                     continue;
                 }
-                Instant departure = date.atTime(row.departureLocal()).atZone(ClockConfig.IST).toInstant();
-                Instant arrival = departure.plusSeconds(aeroProps.getDefaultBlockMinutes() * 60L);
+                // Real departure + arrival instants come straight from AeroDataBox — no block estimate.
                 consolidatorJdbcTemplate.update(UPSERT,
-                        row.flightNo(), date, carrierOf(row.flightNo()), origin, row.destIata(),
-                        Timestamp.from(departure), Timestamp.from(arrival), DEFAULT_CAPACITY_KG);
+                        row.flightNo(), row.flightDate(), carrierOf(row.flightNo()), origin, row.destIata(),
+                        Timestamp.from(row.departureUtc()), Timestamp.from(row.arrivalUtc()), DEFAULT_CAPACITY_KG);
                 written++;
             }
         }
         return written;
+    }
+
+    /** Respect a plan's requests/second cap between FIDS calls (no-op when the delay is 0). */
+    private void throttle() {
+        long delay = aeroProps.getInterCallDelayMs();
+        if (delay <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** Leading letters of the flight number are the carrier code ("AI806" → "AI"). */

@@ -33,13 +33,24 @@ public class AeroDataBoxProperties {
     /** RapidAPI host header value (ignored for a direct subscription with an empty value). */
     private String rapidApiHost = "aerodatabox.p.rapidapi.com";
 
-    /** How many days of forward schedule the monthly ingest projects. Default 1 month (less speculative booking). */
-    private int scheduleHorizonDays = 30;
+    /**
+     * How many days of forward schedule to keep in the store. AeroDataBox FIDS actually serves months
+     * ahead, so this is a deliberate choice, not a limit: far-future schedules still change, so a modest
+     * window refreshed weekly stays accurate and cheap. Default 14 days (ample booking runway).
+     */
+    private int scheduleHorizonDays = 14;
 
     /**
-     * Block-time estimate (minutes) used to derive an arrival time from a FIDS departure row, since a
-     * departures query doesn't carry the arrival time. Corrected by the daily status poll's real
-     * estimated arrival. A single value is fine for the 5 metro lanes (all ~2h); refine per-lane later.
+     * Minimum gap between <em>any</em> two AeroDataBox HTTP calls (schedule ingest AND status poll),
+     * enforced inside the client so no caller can exceed the plan's requests/second cap — RapidAPI
+     * throttles all AeroDataBox tiers at ~2 req/s. Default 550 ms (~1.8/s, with margin).
      */
-    private int defaultBlockMinutes = 150;
+    private long minRequestIntervalMs = 550;
+
+    /**
+     * Pause between successive FIDS calls during a schedule ingest, to respect a plan's requests/second
+     * cap (RapidAPI's free BASIC tier is ~1 req/s). Default 0 (paid tiers with a high rate limit); set to
+     * ~1100 ms when testing on the free tier so the ingest doesn't get 429-throttled.
+     */
+    private long interCallDelayMs = 0;
 }
