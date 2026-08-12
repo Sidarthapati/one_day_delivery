@@ -18,7 +18,15 @@ public record ShipmentTrackResponse(
         Location location,
         Route route,
         List<Milestone> milestones,
-        Eta eta) {
+        Eta eta,
+        Courier courier) {
+
+    /**
+     * The DA on the ground during the pickup and last-mile legs — name + phone so the customer can reach
+     * them, and a display role. Null whenever no DA is currently on the parcel. Only populated for the
+     * authenticated owner's view, never the public share link.
+     */
+    public record Courier(String name, String phone, String role) {}
 
     /**
      * The current position. {@code lat}/{@code lon} are null for the air leg (draw the arc) or when no

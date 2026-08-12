@@ -1,6 +1,7 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.enums.DeliveryType;
+import com.oneday.common.port.CourierOnShipmentPort;
 import com.oneday.orders.domain.Address;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.dto.ShipmentTrackResponse;
@@ -16,6 +17,7 @@ import com.oneday.orders.tracking.CityNodeCatalog.Coord;
 import com.oneday.orders.tracking.LocationResolver;
 import com.oneday.orders.tracking.LocationResolver.ResolvedLocation;
 import com.oneday.orders.tracking.MilestoneBuilder;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,19 +39,22 @@ class TrackingServiceImpl implements TrackingService {
     private final LocationResolver locationResolver;
     private final MilestoneBuilder milestoneBuilder;
     private final CityNodeCatalog cities;
+    private final ObjectProvider<CourierOnShipmentPort> courierPort;
 
     TrackingServiceImpl(ShipmentRepository shipmentRepository,
                         com.oneday.orders.repository.B2bAccountRepository b2bAccountRepository,
                         CustomerVisibleStateMapper stateMapper,
                         LocationResolver locationResolver,
                         MilestoneBuilder milestoneBuilder,
-                        CityNodeCatalog cities) {
+                        CityNodeCatalog cities,
+                        ObjectProvider<CourierOnShipmentPort> courierPort) {
         this.shipmentRepository = shipmentRepository;
         this.b2bAccountRepository = b2bAccountRepository;
         this.stateMapper = stateMapper;
         this.locationResolver = locationResolver;
         this.milestoneBuilder = milestoneBuilder;
         this.cities = cities;
+        this.courierPort = courierPort;
     }
 
     @Override
@@ -61,7 +66,7 @@ class TrackingServiceImpl implements TrackingService {
         }
         return shipmentRepository.findByShipmentRef(shipmentRef)
                 .filter(s -> id.equals(s.getBookedByUserId()))   // ownership scope: not yours → not found
-                .map(this::toResponse);
+                .map(s -> toResponse(s, courierFor(s)));
     }
 
     @Override
@@ -80,7 +85,12 @@ class TrackingServiceImpl implements TrackingService {
         });
     }
 
+    /** Public/share view — no courier contact (the share link is not the authenticated owner). */
     private ShipmentTrackResponse toResponse(Shipment s) {
+        return toResponse(s, null);
+    }
+
+    private ShipmentTrackResponse toResponse(Shipment s, ShipmentTrackResponse.Courier courier) {
         String stateLabel = stateMapper.labelFor(s.getState());
         ResolvedLocation r = locationResolver.resolve(s);
         Location location = new Location(
@@ -92,7 +102,19 @@ class TrackingServiceImpl implements TrackingService {
 
         return new ShipmentTrackResponse(
                 s.getShipmentRef(), s.getState(), stateLabel, location, route(s), milestones,
-                new Eta(s.getEtaPromised(), s.getEtaUpdated()));
+                new Eta(s.getEtaPromised(), s.getEtaUpdated()), courier);
+    }
+
+    /** The DA on the parcel now (pickup or last-mile), or null. Port is optional — absent until M5 is wired. */
+    private ShipmentTrackResponse.Courier courierFor(Shipment s) {
+        CourierOnShipmentPort port = courierPort.getIfAvailable();
+        if (port == null) {
+            return null;
+        }
+        return port.forShipment(s.getId())
+                .map(c -> new ShipmentTrackResponse.Courier(c.name(), c.phone(),
+                        c.role() == CourierOnShipmentPort.Role.PICKUP ? "Pickup agent" : "Delivery agent"))
+                .orElse(null);
     }
 
     private Route route(Shipment s) {

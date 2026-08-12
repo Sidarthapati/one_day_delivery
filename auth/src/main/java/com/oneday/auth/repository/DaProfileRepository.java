@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -52,6 +53,27 @@ public interface DaProfileRepository extends JpaRepository<DaProfile, UUID> {
     List<DaSummary> findDaSummaries(@Param("cityId") String cityId,
                                     @Param("shift") String shift,
                                     @Param("active") Boolean active);
+
+    /**
+     * Field contact (name + phone) for a set of DA ids — the reciprocal of the customer contact the DA
+     * app already gets. Keyed by {@code users.id} (= the {@code da_id} carried on a dispatch task).
+     */
+    @Query(value = """
+            SELECT u.id AS daId,
+                   (p.first_name || ' ' || p.last_name) AS name,
+                   u.phone AS phone
+              FROM da_profile p
+              JOIN users u ON u.id = p.user_id
+             WHERE u.id IN (:daIds)
+            """, nativeQuery = true)
+    List<DaContactRow> findContactsByDaIds(@Param("daIds") Collection<UUID> daIds);
+
+    /** Native projection for the DA field contact. */
+    interface DaContactRow {
+        UUID getDaId();
+        String getName();
+        String getPhone();
+    }
 
     /** Native projection for the admin list. */
     interface DaSummary {
