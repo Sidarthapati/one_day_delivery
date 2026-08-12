@@ -28,6 +28,7 @@
         <module>routing</module>
         <module>hub</module>
         <module>airline</module>
+        <module>shuttle</module>
         <module>sla</module>
         <module>exceptions</module>
         <module>app</module>
@@ -107,6 +108,11 @@
             <dependency>
                 <groupId>com.oneday</groupId>
                 <artifactId>airline</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.oneday</groupId>
+                <artifactId>shuttle</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

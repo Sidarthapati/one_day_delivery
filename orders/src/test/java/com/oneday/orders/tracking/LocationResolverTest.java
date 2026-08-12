@@ -3,6 +3,7 @@ package com.oneday.orders.tracking;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.port.LiveDaPositionPort;
 import com.oneday.common.port.LivePosition;
+import com.oneday.common.port.LiveShuttlePositionPort;
 import com.oneday.common.port.LiveVanPositionPort;
 import com.oneday.orders.config.TrackingProperties;
 import com.oneday.orders.config.TrackingProperties.CityNode;
@@ -29,6 +30,7 @@ class LocationResolverTest {
 
     private final LiveDaPositionPort daPort = mock(LiveDaPositionPort.class);
     private final LiveVanPositionPort vanPort = mock(LiveVanPositionPort.class);
+    private final LiveShuttlePositionPort shuttlePort = mock(LiveShuttlePositionPort.class);   // empty by default
     private final FlightTrackingPort flightPort = mock(FlightTrackingPort.class);   // empty by default
 
     private LocationResolver resolver(boolean daAvailable, boolean vanAvailable) {
@@ -37,7 +39,7 @@ class LocationResolverTest {
         props.setCityNodes(Map.of("DEL", node(28.50, 77.15, 28.5562, 77.10)));
         CityNodeCatalog cities = new CityNodeCatalog(props);
         return new LocationResolver(cities, provider(daAvailable ? daPort : null),
-                provider(vanAvailable ? vanPort : null), provider(flightPort), props);
+                provider(vanAvailable ? vanPort : null), provider(shuttlePort), provider(flightPort), props);
     }
 
     @Test

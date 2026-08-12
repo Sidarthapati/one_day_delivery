@@ -54,6 +54,10 @@
         </dependency>
         <dependency>
             <groupId>com.oneday</groupId>
+            <artifactId>shuttle</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.oneday</groupId>
             <artifactId>sla</artifactId>
         </dependency>
         <dependency>
