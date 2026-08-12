@@ -3,7 +3,9 @@ package com.oneday.common.port;
 import com.oneday.common.domain.Shift;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -21,4 +23,13 @@ import java.util.UUID;
 public interface DaDirectoryPort {
 
     List<UUID> availableDaIds(String cityId, LocalDate date, Shift shift);
+
+    /**
+     * Name + phone for each DA id — the field contact a customer needs to reach the DA on their
+     * shipment (the reciprocal of {@link ShipmentContactPort}, which hands the DA the customer's).
+     * Batch to avoid an N+1; ids without a DA are simply absent from the map.
+     */
+    Map<UUID, DaContact> contactsFor(Collection<UUID> daIds);
+
+    record DaContact(String name, String phone) {}
 }
