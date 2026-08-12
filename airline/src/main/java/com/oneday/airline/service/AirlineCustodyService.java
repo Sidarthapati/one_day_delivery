@@ -4,6 +4,7 @@ import com.oneday.airline.domain.AwbParcel;
 import com.oneday.airline.events.CustodyScanProducer;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.log.AuditLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,7 +33,14 @@ public class AirlineCustodyService {
     /** Fire {@code type} for every parcel on the AWB. Returns how many parcels were scanned (0 → unknown AWB). */
     public int record(UUID awbId, ScanEventType type) {
         List<AwbParcel> parcels = awbParcelRepository.findByAwbId(awbId);
-        parcels.forEach(p -> scanProducer.publish(p.getParcelId(), type));
+        parcels.forEach(p -> {
+            scanProducer.publish(p.getParcelId(), type);
+            AuditLog.event("awb.custody_scan")
+                    .kv("awbId", awbId)
+                    .kv("parcelId", p.getParcelId())
+                    .kv("scanType", type.name())
+                    .log();
+        });
         log.info("Custody scan {} fired for {} parcel(s) on AWB {}", type, parcels.size(), awbId);
         return parcels.size();
     }

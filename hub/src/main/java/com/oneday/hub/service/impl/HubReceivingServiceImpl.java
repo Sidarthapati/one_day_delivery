@@ -13,6 +13,7 @@ import com.oneday.hub.service.HubReceivingService;
 import com.oneday.hub.service.SortService;
 import com.oneday.hub.service.exception.ParcelNotFoundException;
 import com.oneday.hub.service.port.ShipmentInfoPort;
+import com.oneday.common.log.AuditLog;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -105,7 +106,7 @@ class HubReceivingServiceImpl implements HubReceivingService {
     }
 
     private InboundReceipt recordReceipt(ShipmentInfoPort.ParcelInfo parcel, UUID hubId, ArrivalMode mode, SortDirection direction) {
-        return inboundReceiptRepository.save(InboundReceipt.builder()
+        InboundReceipt receipt = inboundReceiptRepository.save(InboundReceipt.builder()
                 .parcelId(parcel.shipmentId())
                 .shipmentRef(parcel.shipmentRef())
                 .cityId(hubId)              // hub_id == city_id in v1
@@ -115,6 +116,15 @@ class HubReceivingServiceImpl implements HubReceivingService {
                 .reconciled(true)
                 .receivedAt(clock.instant())
                 .build());
+
+        AuditLog.event("hub.parcel_received")
+                .kv("shipmentRef", parcel.shipmentRef())
+                .kv("parcelId", parcel.shipmentId())
+                .kv("hubId", hubId)
+                .kv("arrivalMode", mode)
+                .kv("direction", direction)
+                .log();
+        return receipt;
     }
 
     private boolean isSameCity(ShipmentInfoPort.ParcelInfo parcel) {

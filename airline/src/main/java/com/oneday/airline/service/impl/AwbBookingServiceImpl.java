@@ -18,6 +18,7 @@ import com.oneday.airline.service.AwbBookingService;
 import com.oneday.hub.service.FlightBagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.oneday.common.log.AuditLog;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -96,6 +97,15 @@ class AwbBookingServiceImpl implements AwbBookingService {
         awb.setStatus(AwbStatus.BOOKED);
         Awb saved = awbRepository.save(awb);
         writeParcelLines(saved, command.bagId());
+
+        AuditLog.event("flight.booked")
+                .kv("awbId", saved.getId())
+                .kv("awbNo", saved.getAwbNo())
+                .kv("flightNo", saved.getFlightNo())
+                .kv("flightDate", saved.getFlightDate())
+                .kv("bagId", command.bagId())
+                .kv("parcelCount", saved.getParcelCount())
+                .log();
         return saved;
     }
 

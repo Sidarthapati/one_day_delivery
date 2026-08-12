@@ -9,6 +9,7 @@ import com.oneday.hub.service.FlightBagService;
 import com.oneday.hub.service.exception.*;
 import com.oneday.hub.service.port.BarcodePort;
 import com.oneday.hub.service.port.ShipmentInfoPort;
+import com.oneday.common.log.AuditLog;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -114,6 +115,14 @@ class FlightBagServiceImpl implements FlightBagService {
         bag.setParcelCount(bag.getParcelCount() + 1);
         bag.setWeightGrams(bag.getWeightGrams() + weight);
         flightBagRepository.save(bag);
+
+        AuditLog.event("bag.parcel_added")
+                .kv("bagId", bagId)
+                .kv("flightNo", bag.getFlightNo())
+                .kv("shipmentRef", parcel.shipmentRef())
+                .kv("parcelId", parcel.shipmentId())
+                .kv("weightGrams", weight)
+                .log();
         return item;
     }
 
@@ -168,6 +177,15 @@ class FlightBagServiceImpl implements FlightBagService {
         String standNo = standNo(bag.getCurrentStandId());
         eventProducer.emitBagSealed(bag, standNo);
         eventProducer.emitManifestGenerated(bag, manifest);
+
+        AuditLog.event("bag.sealed")
+                .kv("bagId", bagId)
+                .kv("flightNo", bag.getFlightNo())
+                .kv("flightDate", bag.getFlightDate())
+                .kv("destHub", bag.getDestHub())
+                .kv("parcelCount", items.size())
+                .kv("manifestId", manifest.getId())
+                .log();
         return new SealResult(bag, manifest);
     }
 
@@ -180,7 +198,15 @@ class FlightBagServiceImpl implements FlightBagService {
         }
         bag.setStatus(FlightBagStatus.DISPATCHED);
         bag.setDispatchedAt(clock.instant());
-        return flightBagRepository.save(bag);
+        flightBagRepository.save(bag);
+
+        AuditLog.event("bag.dispatched")
+                .kv("bagId", bagId)
+                .kv("flightNo", bag.getFlightNo())
+                .kv("flightDate", bag.getFlightDate())
+                .kv("parcelCount", bag.getParcelCount())
+                .log();
+        return bag;
     }
 
     @Override
