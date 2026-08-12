@@ -46,15 +46,16 @@ public class ShuttleQueueService {
     @Transactional(readOnly = true)
     public ShuttleQueueResponse queue(String cityCode, LocalDate date) {
         Instant now = clock.instant();
+        String hub = HubCode.of(cityCode);   // users.city_id ("delhi"/"DEL") → hub code ("DEL")
 
-        List<OutboundBag> outbound = flightBagService.bagsForOriginHub(cityCode, date).stream()
+        List<OutboundBag> outbound = flightBagService.bagsForOriginHub(hub, date).stream()
                 .filter(b -> b.getStatus() != FlightBagStatus.DISPATCHED)   // already gone
                 .map(b -> toOutbound(b, now))
                 .sorted(Comparator.comparing(OutboundBag::leaveBy,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
 
-        List<InboundFlight> inbound = inboundQuery.landedInboundAwbs(cityCode, date).stream()
+        List<InboundFlight> inbound = inboundQuery.landedInboundAwbs(hub, date).stream()
                 .filter(a -> !legRepository.existsByAwbIdAndDirection(a.awbId(), ShuttleDirection.INBOUND))
                 .map(a -> new InboundFlight(a.awbId(), a.flightNo(), a.flightDate(), a.awbNo(),
                         a.parcelCount(), a.landedAt()))

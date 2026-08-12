@@ -49,11 +49,12 @@ public class ShuttleActionService {
     /** Batch several sealed bags onto one trip; a non-ready/already-taken bag is skipped, not fatal. */
     @Transactional
     public BagActionResult outToAirport(UUID agentId, String cityCode, List<UUID> bagIds) {
+        String hub = HubCode.of(cityCode);
         List<BagOutcome> results = new ArrayList<>();
         for (UUID bagId : bagIds) {
             try {
                 FlightBag bag = flightBagService.bag(bagId);
-                if (!cityCode.equals(bag.getOriginHub())) {
+                if (!hub.equals(bag.getOriginHub())) {
                     results.add(BagOutcome.skipped(bagId, "WRONG_CITY"));
                     continue;
                 }
@@ -79,7 +80,7 @@ public class ShuttleActionService {
     @Transactional
     public void requestSeal(UUID agentId, String cityCode, UUID bagId) {
         FlightBag bag = flightBagService.bag(bagId);
-        if (!cityCode.equals(bag.getOriginHub())) {
+        if (!HubCode.of(cityCode).equals(bag.getOriginHub())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bag is not in your city");
         }
         flightBagService.requestSeal(bagId);
