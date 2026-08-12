@@ -85,6 +85,8 @@ class SortServiceImplTest {
         verify(flightBagService).openBag(cmd.capture());
         assertThat(cmd.getValue().destHub()).isEqualTo("CHENNAI");
         assertThat(cmd.getValue().flightNo()).isEqualTo("ODCHENNAI12");
+        // The parcel is actually placed INTO the bag — the whole point of the sort (not just bag-open).
+        verify(flightBagService).addParcel(bagId, parcel.shipmentRef());
         verify(eventProducer).emitStandAssigned(parcel.shipmentId(), hubId, hubId, "A-3", "CHENNAI", SortDirection.OUTBOUND);
     }
 

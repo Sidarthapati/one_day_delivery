@@ -99,6 +99,12 @@ public class HubBagController {
         return ManifestResponse.from(flightBagService.currentManifest(bagId));
     }
 
+    /** The parcels currently in the bag (IN_BAG) — powers the console's per-bag parcel list, live before sealing. */
+    @GetMapping("/{bagId}/parcels")
+    public List<FlightBagService.BagParcelInfo> parcels(@PathVariable UUID hubId, @PathVariable UUID bagId) {
+        return flightBagService.parcelsFor(bagId);
+    }
+
     /** One query per request, not per bag — every bag list/lookup here is scoped to a single hub. */
     private Map<UUID, String> standNoMap(UUID hubId) {
         return standRepository.findByHubIdOrderByZoneAscStandNoAsc(hubId).stream()

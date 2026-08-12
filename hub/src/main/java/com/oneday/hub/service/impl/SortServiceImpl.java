@@ -11,6 +11,7 @@ import com.oneday.hub.repository.StandRepository;
 import com.oneday.hub.service.FlightBagService;
 import com.oneday.hub.service.DeliveryBagService;
 import com.oneday.hub.service.SortService;
+import com.oneday.hub.service.exception.DuplicateBagItemException;
 import com.oneday.hub.service.exception.StandNotFoundException;
 import com.oneday.hub.service.exception.UnresolvedDestinationException;
 import com.oneday.hub.service.port.DeliveryRoutePort;
@@ -71,6 +72,15 @@ class SortServiceImpl implements SortService {
         FlightBag bag = flightBagService.openBag(new FlightBagService.OpenBagCommand(
                 hubId, hubId, flight.flightNo(), flight.flightDate(),
                 parcel.originCity(), destHub, flight.bagCutoff()));
+
+        // Place the parcel INTO the bag — the actual point of the sort. Without this the bag opens but
+        // stays empty (parcel_count 0). Idempotent: a re-scan of an already-bagged parcel is a no-op,
+        // never a duplicate error — mirrors the inbound path, which adds to its delivery bag here too.
+        try {
+            flightBagService.addParcel(bag.getId(), parcel.shipmentRef());
+        } catch (DuplicateBagItemException alreadyBagged) {
+            // Parcel already sits in a bag (re-scan / reprocess) — nothing to add.
+        }
 
         Stand stand = standRepository.findById(bag.getCurrentStandId())
                 .orElseThrow(() -> new StandNotFoundException(bag.getCurrentStandId()));
