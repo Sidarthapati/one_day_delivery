@@ -140,13 +140,9 @@ public class AirlineController {
                 "awb_no", request.awbNo(), "bags_updated", updated);
     }
 
-    // ── Airport custody actions (gap G1): one AWB = one plane, so each fires the scan for every parcel ──
-    /** Handed to Bhagwati / dispatched from origin hub → every parcel advances to DISPATCHED_TO_AIRPORT. */
-    @PostMapping("/awb/{awbId}/dispatched-to-airport")
-    public Map<String, Object> dispatchedToAirport(@PathVariable UUID awbId) {
-        return custody(awbId, ScanEventType.HUB_ORIGIN_OUT);
-    }
-
+    // ── Airport custody actions: only the two genuinely air-side legs (no hub scanner exists there) live
+    // here, one AWB = one plane so each fires the scan for every parcel. Origin-out (bag leaving the hub)
+    // and dest-in (parcel arriving at the dest hub) are hub-dock scans now, not airline-console buttons.
     /** Accepted by the ground handler / into the cargo terminal → AT_AIRPORT. */
     @PostMapping("/awb/{awbId}/gha-accepted")
     public Map<String, Object> ghaAccepted(@PathVariable UUID awbId) {
@@ -157,12 +153,6 @@ public class AirlineController {
     @PostMapping("/awb/{awbId}/dest-shuttle-in")
     public Map<String, Object> destShuttleIn(@PathVariable UUID awbId) {
         return custody(awbId, ScanEventType.DEST_SHUTTLE_IN);
-    }
-
-    /** Received back at the destination hub → AT_DEST_HUB (dest sort + delivery assignment follow). */
-    @PostMapping("/awb/{awbId}/dest-received")
-    public Map<String, Object> destReceived(@PathVariable UUID awbId) {
-        return custody(awbId, ScanEventType.HUB_DEST_IN);
     }
 
     private Map<String, Object> custody(UUID awbId, ScanEventType type) {

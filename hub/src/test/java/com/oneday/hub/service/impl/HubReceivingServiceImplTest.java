@@ -9,13 +9,16 @@ import com.oneday.hub.domain.DeliveryBagItem;
 import com.oneday.hub.domain.DeliveryBagItemStatus;
 import com.oneday.hub.domain.InboundReceipt;
 import com.oneday.hub.domain.SortDirection;
+import com.oneday.hub.events.HubArrivalScanProducer;
 import com.oneday.hub.events.HubEventProducer;
 import com.oneday.hub.repository.DeliveryBagItemRepository;
 import com.oneday.hub.repository.InboundReceiptRepository;
 import com.oneday.hub.service.HubReceivingService;
 import com.oneday.hub.service.SortService;
 import com.oneday.hub.service.exception.ParcelNotFoundException;
+import com.oneday.hub.service.exception.UndeterminedArrivalException;
 import com.oneday.hub.service.port.ShipmentInfoPort;
+import com.oneday.common.kafka.enums.ScanEventType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -42,12 +45,13 @@ class HubReceivingServiceImplTest {
     @Mock DeliveryBagItemRepository deliveryBagItemRepository;
     @Mock SortService sortService;
     @Mock HubEventProducer eventProducer;
+    @Mock HubArrivalScanProducer arrivalScanProducer;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-27T08:00:00Z"), ZoneOffset.UTC);
 
     private HubReceivingServiceImpl service() {
         return new HubReceivingServiceImpl(shipmentInfoPort, inboundReceiptRepository,
-                deliveryBagItemRepository, sortService, eventProducer, clock);
+                deliveryBagItemRepository, sortService, eventProducer, arrivalScanProducer, clock);
     }
 
     private final UUID hubId = UUID.randomUUID();
@@ -100,6 +104,46 @@ class HubReceivingServiceImplTest {
         assertThat(receipt.getValue().getArrivalMode()).isEqualTo(ArrivalMode.VAN);
         assertThat(receipt.getValue().getDirection()).isEqualTo(SortDirection.OUTBOUND);
         verify(eventProducer, never()).emitSameCityOutbound(any(), any(), any());
+        // The dock scan drives origin arrival (→ AT_ORIGIN_HUB), not the DA app button.
+        verify(arrivalScanProducer).emitArrival(parcel.shipmentId(), "BLR-1", hubId,
+                ScanEventType.HUB_ORIGIN_IN, "OUTBOUND");
+    }
+
+    @Test
+    void receive_hubReturnOrigin_recordsOutboundReceipt_andEmitsOriginIn() {
+        // HUB_RETURN: the DA carried it back, tapped handoff → RETURNED_TO_HUB. The dock scan confirms
+        // arrival (→ AT_ORIGIN_HUB) exactly like the VAN path.
+        ShipmentInfoPort.ParcelInfo parcel = new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1",
+                ShipmentState.RETURNED_TO_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                "DELHI", "MUMBAI", "400001", null, null);
+        when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel));
+        stubReceiptSave();
+        SortService.SortResult sort = new SortService.SortResult(parcel.shipmentId(), "BLR-1", "MUMBAI",
+                UUID.randomUUID(), UUID.randomUUID(), "A-2", "ODMUMBAI12", null,
+                "DELHI", "MUMBAI", null, null);
+        when(sortService.resolveOutbound(eq(hubId), eq(parcel), any())).thenReturn(sort);
+
+        service().receive(hubId, "BLR-1");
+
+        ArgumentCaptor<InboundReceipt> receipt = ArgumentCaptor.forClass(InboundReceipt.class);
+        verify(inboundReceiptRepository).save(receipt.capture());
+        assertThat(receipt.getValue().getArrivalMode()).isEqualTo(ArrivalMode.VAN);
+        assertThat(receipt.getValue().getDirection()).isEqualTo(SortDirection.OUTBOUND);
+        verify(arrivalScanProducer).emitArrival(parcel.shipmentId(), "BLR-1", hubId,
+                ScanEventType.HUB_ORIGIN_IN, "OUTBOUND");
+    }
+
+    @Test
+    void receive_notYetHandedOff_throwsUndeterminedArrival() {
+        // Still PICKED_UP — the DA hasn't tapped handoff, so it's not a dock-arrival state yet.
+        ShipmentInfoPort.ParcelInfo parcel = new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1",
+                ShipmentState.PICKED_UP, 1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                "DELHI", "MUMBAI", "400001", null, null);
+        when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel));
+
+        assertThatThrownBy(() -> service().receive(hubId, "BLR-1"))
+                .isInstanceOf(UndeterminedArrivalException.class);
+        verifyNoInteractions(arrivalScanProducer);
     }
 
     @Test
@@ -119,6 +163,9 @@ class HubReceivingServiceImplTest {
         assertThat(receipt.getValue().getArrivalMode()).isEqualTo(ArrivalMode.AIRPORT);
         assertThat(receipt.getValue().getDirection()).isEqualTo(SortDirection.INBOUND);
         verify(deliveryBagItemRepository, never()).save(any());
+        // The dest-hub dock scan drives dest arrival (→ AT_DEST_HUB), not the airline console button.
+        verify(arrivalScanProducer).emitArrival(parcel.shipmentId(), "BLR-1", hubId,
+                ScanEventType.HUB_DEST_IN, "INBOUND");
     }
 
     @Test

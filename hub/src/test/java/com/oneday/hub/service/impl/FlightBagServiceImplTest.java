@@ -41,13 +41,14 @@ class FlightBagServiceImplTest {
     @Mock ShipmentInfoPort shipmentInfoPort;
     @Mock BarcodePort barcodePort;
     @Mock HubEventProducer eventProducer;
+    @Mock com.oneday.hub.events.HubArrivalScanProducer arrivalScanProducer;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-27T10:00:00Z"), ZoneOffset.UTC);
 
     private FlightBagServiceImpl service() {
         return new FlightBagServiceImpl(flightBagRepository, flightBagItemRepository, bagManifestRepository,
                 standRepository, reassignmentAuditRepository, shipmentInfoPort, barcodePort,
-                eventProducer, new ObjectMapper(), clock);
+                eventProducer, arrivalScanProducer, new ObjectMapper(), clock);
     }
 
     private final UUID hubId = UUID.randomUUID();
@@ -205,16 +206,23 @@ class FlightBagServiceImplTest {
     }
 
     @Test
-    void dispatch_sealedBag_marksDispatched() {
+    void dispatch_sealedBag_marksDispatched_andEmitsOriginOutPerParcel() {
         UUID bagId = UUID.randomUUID();
         FlightBag bag = openBag(bagId);
         bag.setStatus(FlightBagStatus.SEALED);
         when(flightBagRepository.findById(bagId)).thenReturn(Optional.of(bag));
         when(flightBagRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        UUID parcelId = UUID.randomUUID();
+        FlightBagItem item = FlightBagItem.builder().bagId(bagId).parcelId(parcelId)
+                .shipmentRef("BLR-1").weightGrams(1500).status(FlightBagItemStatus.IN_BAG).build();
+        when(flightBagItemRepository.findByBagIdAndStatus(bagId, FlightBagItemStatus.IN_BAG))
+                .thenReturn(java.util.List.of(item));
 
         FlightBag dispatched = service().dispatch(bagId);
 
         assertThat(dispatched.getStatus()).isEqualTo(FlightBagStatus.DISPATCHED);
         assertThat(dispatched.getDispatchedAt()).isEqualTo(clock.instant());
+        // The bag leaving the dock IS the origin-out scan for each parcel (→ DISPATCHED_TO_AIRPORT).
+        verify(arrivalScanProducer).emitOriginOut(parcelId, "BLR-1", bagId, bag.getFlightNo());
     }
 }

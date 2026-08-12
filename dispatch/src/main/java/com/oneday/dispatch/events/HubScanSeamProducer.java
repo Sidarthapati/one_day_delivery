@@ -27,11 +27,6 @@ public class HubScanSeamProducer {
         this.eventPublisher = eventPublisher;
     }
 
-    /** DA dropped a collected pickup at the origin hub → M4 (HANDED_TO_PICKUP_VAN → AT_ORIGIN_HUB). */
-    public void emitHubOriginIn(UUID shipmentId) {
-        emit(shipmentId, ScanEventType.HUB_ORIGIN_IN);
-    }
-
     /** DA collected a dest parcel from the hub for last-mile (ledger only — M4 ignores it). */
     public void emitHubDestOut(UUID shipmentId) {
         emit(shipmentId, ScanEventType.HUB_DEST_OUT);

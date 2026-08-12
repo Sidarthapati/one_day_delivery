@@ -6,6 +6,7 @@ import com.oneday.hub.domain.DeliveryBagItem;
 import com.oneday.hub.domain.DeliveryBagItemStatus;
 import com.oneday.hub.domain.InboundReceipt;
 import com.oneday.hub.domain.SortDirection;
+import com.oneday.hub.events.HubArrivalScanProducer;
 import com.oneday.hub.events.HubEventProducer;
 import com.oneday.hub.repository.DeliveryBagItemRepository;
 import com.oneday.hub.repository.InboundReceiptRepository;
@@ -13,7 +14,9 @@ import com.oneday.hub.service.HubReceivingService;
 import com.oneday.hub.service.SortService;
 import com.oneday.hub.service.exception.ParcelNotFoundException;
 import com.oneday.hub.service.port.ShipmentInfoPort;
+import com.oneday.common.kafka.enums.ScanEventType;
 import com.oneday.common.log.AuditLog;
+import com.oneday.common.log.LogContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +42,7 @@ class HubReceivingServiceImpl implements HubReceivingService {
     private final DeliveryBagItemRepository deliveryBagItemRepository;
     private final SortService sortService;
     private final HubEventProducer eventProducer;
+    private final HubArrivalScanProducer arrivalScanProducer;
     private final Clock clock;
 
     HubReceivingServiceImpl(ShipmentInfoPort shipmentInfoPort,
@@ -46,12 +50,14 @@ class HubReceivingServiceImpl implements HubReceivingService {
                             DeliveryBagItemRepository deliveryBagItemRepository,
                             SortService sortService,
                             HubEventProducer eventProducer,
+                            HubArrivalScanProducer arrivalScanProducer,
                             Clock clock) {
         this.shipmentInfoPort = shipmentInfoPort;
         this.inboundReceiptRepository = inboundReceiptRepository;
         this.deliveryBagItemRepository = deliveryBagItemRepository;
         this.sortService = sortService;
         this.eventProducer = eventProducer;
+        this.arrivalScanProducer = arrivalScanProducer;
         this.clock = clock;
     }
 
@@ -61,25 +67,35 @@ class HubReceivingServiceImpl implements HubReceivingService {
         ShipmentInfoPort.ParcelInfo parcel = shipmentInfoPort.lookup(shipmentRef)
                 .orElseThrow(() -> new ParcelNotFoundException(shipmentRef));
 
-        // The barcode never carries the arrival mode — we derive it from the leg the parcel just
-        // finished (its M4 state). VAN vs SELF_DROP vs AIRPORT map 1:1 to mutually-exclusive states.
-        ArrivalMode mode = ArrivalMode.fromState(parcel.state());
-        Instant now = clock.instant();
+        try (var ignored = LogContext.forShipment(parcel.shipmentId(), parcel.shipmentRef(), parcel.shipmentId())) {
+            // The barcode never carries the arrival mode — we derive it from the leg the parcel just
+            // finished (its M4 state). A not-yet-arrived parcel (e.g. still PICKED_UP — the DA hasn't
+            // tapped handoff, so it's not RETURNED_TO_HUB yet) throws UndeterminedArrivalException → 409.
+            ArrivalMode mode = ArrivalMode.fromState(parcel.state());
+            Instant now = clock.instant();
 
-        if (mode == ArrivalMode.AIRPORT) {
-            UUID receiptId = recordReceipt(parcel, hubId, mode, SortDirection.INBOUND).getId();
-            return inboundDispatch(receiptId, hubId, parcel, now);
-        }
+            if (mode == ArrivalMode.AIRPORT) {
+                UUID receiptId = recordReceipt(parcel, hubId, mode, SortDirection.INBOUND).getId();
+                // The dock scan IS the record of dest-hub arrival (→ AT_DEST_HUB) — not a console button.
+                arrivalScanProducer.emitArrival(parcel.shipmentId(), parcel.shipmentRef(), hubId,
+                        ScanEventType.HUB_DEST_IN, "INBOUND");
+                return inboundDispatch(receiptId, hubId, parcel, now);
+            }
 
-        // First-mile origin arrival (VAN / SELF_DROP).
-        UUID receiptId = recordReceipt(parcel, hubId, mode, SortDirection.OUTBOUND).getId();
-        if (isSameCity(parcel)) {
-            // §12 — origin hub IS the dest hub; collapse the air legs and sort straight for delivery.
-            eventProducer.emitSameCityOutbound(parcel.shipmentId(), hubId, hubId);
-            return inboundDispatch(receiptId, hubId, parcel, now);
+            // First-mile origin arrival (VAN_MEETING / HUB_RETURN / SELF_DROP).
+            UUID receiptId = recordReceipt(parcel, hubId, mode, SortDirection.OUTBOUND).getId();
+            // The dock scan IS the record of origin-hub arrival (→ AT_ORIGIN_HUB) — not the DA app button.
+            ScanEventType originScan = mode == ArrivalMode.SELF_DROP
+                    ? ScanEventType.SELF_DROP_ACCEPTED : ScanEventType.HUB_ORIGIN_IN;
+            arrivalScanProducer.emitArrival(parcel.shipmentId(), parcel.shipmentRef(), hubId, originScan, "OUTBOUND");
+            if (isSameCity(parcel)) {
+                // §12 — origin hub IS the dest hub; collapse the air legs and sort straight for delivery.
+                eventProducer.emitSameCityOutbound(parcel.shipmentId(), hubId, hubId);
+                return inboundDispatch(receiptId, hubId, parcel, now);
+            }
+            SortService.SortResult sort = sortService.resolveOutbound(hubId, parcel, now);
+            return new ReceiveResult(receiptId, parcel.shipmentId(), parcel.shipmentRef(), true, null, sort, null);
         }
-        SortService.SortResult sort = sortService.resolveOutbound(hubId, parcel, now);
-        return new ReceiveResult(receiptId, parcel.shipmentId(), parcel.shipmentRef(), true, null, sort, null);
     }
 
     /** Destination branch (§8.2): DA_DELIVERY → ladder + delivery bag + M6 feed; HUB_COLLECT → shelf. */

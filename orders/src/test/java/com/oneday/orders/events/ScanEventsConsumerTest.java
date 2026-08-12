@@ -6,6 +6,7 @@ import com.oneday.common.kafka.events.ScanEvent;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.ShipmentStateMachine;
+import com.oneday.orders.service.exception.IllegalStateTransitionException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -82,5 +83,29 @@ class ScanEventsConsumerTest {
 
         verifyNoInteractions(stateMachine);
         verify(shipmentRepository, never()).save(any());
+    }
+
+    @Test
+    void duplicateScan_alreadyInTargetState_isSwallowed() {
+        // A re-scan: the parcel is already AT_DEST_HUB. The transition is illegal (from == to) but
+        // idempotent — ack, don't propagate to retry/DLQ.
+        UUID id = UUID.randomUUID();
+        doThrow(new IllegalStateTransitionException(ShipmentState.AT_DEST_HUB, ShipmentState.AT_DEST_HUB))
+                .when(stateMachine).transition(eq(id), eq(ShipmentState.AT_DEST_HUB), any());
+
+        consumer.onScanEvent(new ScanEvent(id, ScanEventType.HUB_DEST_IN)); // no throw
+    }
+
+    @Test
+    void outOfOrderScan_predecessorNotYetApplied_rethrowsForRetry() {
+        // Origin-out arrived before the bag-created event set IN_TAKEOFF_BAG. from != target → rethrow
+        // so the listener retry re-delivers once the predecessor lands.
+        UUID id = UUID.randomUUID();
+        doThrow(new IllegalStateTransitionException(ShipmentState.ORIGIN_HUB_PROCESSING, ShipmentState.DISPATCHED_TO_AIRPORT))
+                .when(stateMachine).transition(eq(id), eq(ShipmentState.DISPATCHED_TO_AIRPORT), any());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        consumer.onScanEvent(new ScanEvent(id, ScanEventType.HUB_ORIGIN_OUT)))
+                .isInstanceOf(IllegalStateTransitionException.class);
     }
 }

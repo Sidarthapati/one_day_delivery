@@ -16,7 +16,10 @@ public enum ArrivalMode {
     /** Derive the arrival mode from the state the parcel is in when it hits the dock. */
     public static ArrivalMode fromState(ShipmentState state) {
         return switch (state) {
-            case HANDED_TO_PICKUP_VAN, AT_ORIGIN_HUB -> VAN;   // M6 may have already in-scanned it
+            // Origin dock arrival. HANDED_TO_PICKUP_VAN = VAN_MEETING; RETURNED_TO_HUB = HUB_RETURN
+            // (DA carried it, tapped handoff → RETURNED_TO_HUB, now the dock scan confirms arrival).
+            // AT_ORIGIN_HUB tolerates a re-scan (M6 may have already in-scanned it).
+            case HANDED_TO_PICKUP_VAN, RETURNED_TO_HUB, AT_ORIGIN_HUB -> VAN;
             case AWAITING_SELF_DROP -> SELF_DROP;
             case LANDED, DISPATCHED_TO_HUB, AT_DEST_HUB -> AIRPORT;
             default -> throw new UndeterminedArrivalException(state);
