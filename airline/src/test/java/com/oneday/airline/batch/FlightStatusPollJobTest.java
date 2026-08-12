@@ -158,6 +158,46 @@ class FlightStatusPollJobTest {
     }
 
     @Test
+    void inFlightCheck_correctsArrivalFromVendorAndFlipsLandedWhenVendorSaysArrived() {
+        FlightInstance fi = instance(FlightInstanceStatus.DEPARTED);
+        Awb awb = bookedAwb();
+        UUID parcelId = UUID.randomUUID();
+        AwbParcel parcel = new AwbParcel();
+        parcel.setParcelId(parcelId);
+        Instant actualArrival = arrival.minusSeconds(31 * 60);   // landed 31 min early, like the real flight
+        when(flightProviderPort.status("ODDELBOM06", fi.getFlightDate())).thenReturn(
+                new FlightProviderPort.FlightStatusResult(FlightProviderPort.FlightRealWorldStatus.LANDED,
+                        departure, actualArrival));
+        when(awbRepository.findByFlightNoAndFlightDate("ODDELBOM06", fi.getFlightDate())).thenReturn(List.of(awb));
+        when(awbParcelRepository.findByAwbId(any())).thenReturn(List.of(parcel));
+
+        // Still airborne by the schedule (now < scheduled arrival), but the vendor already reports arrived.
+        job(departure.plusSeconds(75 * 60)).recheckArrival(fi, departure.plusSeconds(75 * 60));
+
+        assertThat(fi.getArrival()).isEqualTo(actualArrival);   // stored arrival corrected to reality
+        assertThat(fi.getStatus()).isEqualTo(FlightInstanceStatus.LANDED);
+        verify(flightEventProducer).emitLanded(parcelId);
+    }
+
+    @Test
+    void pollInFlight_checksEveryDepartedFlightPastTheDelayEachRunAndSkipsTheTooFresh() {
+        FlightInstance a = instance(FlightInstanceStatus.DEPARTED);             // departed 65 min ago → checked
+        FlightInstance b = instance(FlightInstanceStatus.DEPARTED);             // departed 65 min ago → checked
+        FlightInstance fresh = instance(FlightInstanceStatus.DEPARTED);
+        fresh.setDeparture(departure.plusSeconds(50 * 60));                     // departed 15 min ago → skipped
+        when(flightInstanceRepository.findByStatusIn(List.of(FlightInstanceStatus.DEPARTED)))
+                .thenReturn(List.of(a, b, fresh));
+        when(flightProviderPort.status("ODDELBOM06", a.getFlightDate())).thenReturn(
+                new FlightProviderPort.FlightStatusResult(FlightProviderPort.FlightRealWorldStatus.DEPARTED,
+                        departure, arrival));
+
+        job(departure.plusSeconds(65 * 60)).pollInFlight();   // 65 min after take-off → past the 60 min delay
+
+        // No one-shot guard: every eligible in-flight flight is re-checked on this run; the too-fresh one is skipped.
+        verify(flightProviderPort, times(2)).status(any(), any());
+    }
+
+    @Test
     void pollImminent_sweepsTheNextFewHoursAndReactsToACancellation() {
         FlightInstance fi = instance(FlightInstanceStatus.SCHEDULED);
         Awb awb = bookedAwb();

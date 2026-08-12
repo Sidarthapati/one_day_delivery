@@ -65,6 +65,15 @@ public class AirlineProperties {
     private long statusPollDelayMs = 300_000;   // 5 min
 
     /**
+     * How long after take-off the corrective vendor check starts re-fetching a flight's real arrival
+     * (§ Task 2). From here it re-checks every poll cycle ({@link #statusPollDelayMs}, ~5 min) until the
+     * flight lands, so the stored arrival — and the LANDED flip, and the arrival shown to the GHA console
+     * and the customer — tracks the vendor as it revises the ETA rather than the schedule captured at
+     * booking. Default 60 min.
+     */
+    private int inflightCheckDelayMinutes = 60;
+
+    /**
      * A simulated delay past this many minutes of the original scheduled departure is treated as
      * "breaks the delivery promise" — the reassignment engine moves the bag to a faster flight. Below
      * it, only an advisory time-changed notice goes out; no parcels move.
