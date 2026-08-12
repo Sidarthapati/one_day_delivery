@@ -25,12 +25,14 @@ public record BagResponse(
         Instant bagCutoff,
         UUID manifestId,
         Instant sealedAt,
-        Instant dispatchedAt) {
+        Instant dispatchedAt,
+        /** M12: set when a shuttle agent asked the hub to seal this OPEN bag early (console badge). */
+        Instant sealRequestedAt) {
 
     public static BagResponse from(FlightBag b, String standNo) {
         return new BagResponse(b.getId(), b.getCityId(), b.getHubId(), b.getFlightNo(), b.getFlightDate(),
                 b.getOriginHub(), b.getDestHub(), b.getCurrentStandId(), standNo, b.getStatus(),
                 b.getParcelCount(), b.getWeightGrams(), b.getBagCutoff(), b.getManifestId(),
-                b.getSealedAt(), b.getDispatchedAt());
+                b.getSealedAt(), b.getDispatchedAt(), b.getSealRequestedAt());
     }
 }

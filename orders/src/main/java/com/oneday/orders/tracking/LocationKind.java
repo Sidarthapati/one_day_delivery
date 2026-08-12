@@ -21,6 +21,10 @@ public enum LocationKind {
     /** On the move on a van between hub and DA. Live dot when GPS is fresh, else static fallback. */
     MOVING_VAN,
 
+    /** On a shuttle between a hub and its airport (hub→airport out, airport→hub in). Live dot when the
+     *  shuttle GPS is fresh, else the static airport pin. */
+    MOVING_SHUTTLE,
+
     /** In the air. No live point in v1 — the UI shows the route arc + "In transit by air". */
     ON_FLIGHT,
 

@@ -253,6 +253,25 @@ class FlightBagServiceImpl implements FlightBagService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<FlightBag> bagsForOriginHub(String originHub, java.time.LocalDate date) {
+        return flightBagRepository.findByOriginHubAndFlightDate(originHub, date);
+    }
+
+    @Override
+    @Transactional
+    public FlightBag requestSeal(UUID bagId) {
+        FlightBag bag = requireBag(bagId);
+        if (bag.getStatus() == FlightBagStatus.OPEN && bag.getSealRequestedAt() == null) {
+            bag.setSealRequestedAt(clock.instant());
+            flightBagRepository.save(bag);
+            AuditLog.event("bag.seal_requested")
+                    .kv("bagId", bagId).kv("flightNo", bag.getFlightNo()).log();
+        }
+        return bag;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<BagParcelInfo> parcelsFor(UUID bagId) {
         return flightBagItemRepository.findByBagIdAndStatus(bagId, FlightBagItemStatus.IN_BAG).stream()
                 .map(i -> new BagParcelInfo(i.getParcelId(), i.getShipmentRef(), i.getWeightGrams()))

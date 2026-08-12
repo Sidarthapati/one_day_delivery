@@ -23,6 +23,12 @@ public class HubProperties {
     /** Minutes before bag cutoff at which a bag is auto-considered for seal (§7.4). */
     private int bagCutoffBufferMinutes = 30;
 
+    /** M12 backstop: the AutoSealJob seals a still-OPEN bag at cutoff − this. Reuses the cutoff buffer. */
+    private int autoSealBufferMinutes = 30;
+
+    /** How often the AutoSealJob sweeps for OPEN bags due to be sealed (ms). Default 2 min. */
+    private long autoSealIntervalMs = 120_000;
+
     /** Stand occupancy %% that trips the overload high-water mark (§11). */
     private int standHighWaterPct = 90;
 

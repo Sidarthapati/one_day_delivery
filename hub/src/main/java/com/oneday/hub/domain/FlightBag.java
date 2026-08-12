@@ -69,6 +69,10 @@ public class FlightBag {
     @Column(name = "sealed_at")
     private Instant sealedAt;
 
+    // M12 shuttle: set when a shuttle agent asks the hub to seal this OPEN bag early (console badge).
+    @Column(name = "seal_requested_at")
+    private Instant sealRequestedAt;
+
     @Column(name = "dispatched_at")
     private Instant dispatchedAt;
 

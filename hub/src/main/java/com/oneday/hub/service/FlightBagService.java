@@ -49,6 +49,12 @@ public interface FlightBagService {
     /** Operator console: the day's flight bags at a hub (the live origin directory). */
     java.util.List<FlightBag> bagsForDate(UUID hubId, LocalDate date);
 
+    /** Shuttle outbound queue (M12): the day's bags leaving an origin hub, keyed by its string code. */
+    java.util.List<FlightBag> bagsForOriginHub(String originHub, LocalDate date);
+
+    /** M12: a shuttle agent asks the hub to seal this OPEN bag early (stamps seal_requested_at). */
+    FlightBag requestSeal(UUID bagId);
+
     /** The parcels currently in a bag (IN_BAG only) — M9's seam for per-parcel AWB linkage. */
     java.util.List<BagParcelInfo> parcelsFor(UUID bagId);
 

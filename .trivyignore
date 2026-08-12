@@ -1,8 +1,31 @@
 # Accepted CVEs — reviewed, no fix available in our framework generation.
+# The fixable HIGH/CRITICAL CVEs are remediated by the version overrides in pom.xml
+# (tomcat, spring-security 6.2.8, spring-framework 6.1.14, netty 4.1.136, jackson
+# 2.18.8, protobuf 3.25.5, postgresql). The entries below need Spring Boot 3.4/3.5
+# (Spring Framework 6.2/7.0, Spring Security 6.5+) and are deferred to a Boot major
+# upgrade — no in-line 6.1.x / 6.2.x / 3.2.x backport exists.
 #
-# CVE-2026-22732 — Spring Security policy bypass / information disclosure.
-# Fixed only in Spring Security 6.5.9 / 7.0.4, which require Spring Boot 3.4/3.5.
-# We are on Spring Boot 3.2.5 (Spring Security 6.2.x); no 6.2.x backport exists.
-# Tracked for remediation via a Spring Boot major upgrade. The other CRITICALs
-# (Tomcat + CVE-2024-38821) are remediated by the version overrides in pom.xml.
+# CVE-2026-22732 — Spring Security policy bypass / information disclosure. Fixed in 6.5.9 / 7.0.4.
 CVE-2026-22732
+# CVE-2025-22228 — Spring Security BCryptPasswordEncoder max password length. Fixed in 6.2.10 —
+# not yet published to Maven Central (latest 6.2.x is 6.2.8). Mitigated in practice: our BCrypt
+# inputs are OTPs / generated passwords well under the 72-byte limit.
+CVE-2025-22228
+#
+# --- Need a Spring Boot 3.4/3.5 major upgrade (Framework 6.2/7.0) — no 3.2.x/6.1.x backport. ---
+# CVE-2025-22235 — spring-boot: EndpointRequest.to() wrong matcher for unexposed actuator endpoint.
+#   Fixed 3.3.11 / 3.4.5. We don't rely on EndpointRequest.to() for security; low real exposure.
+CVE-2025-22235
+# CVE-2025-41249 — spring-core: annotation detection / method-security. Fixed 6.2.11.
+CVE-2025-41249
+# CVE-2026-41842 — spring-web(mvc/flux): DoS resolving static resources. Fixed 6.2.19 / 7.0.8.
+CVE-2026-41842
+# CVE-2026-41845 — spring-webmvc: XSS via incorrect JS escaping in JSP tags. Fixed 6.2.19 / 7.0.8.
+#   We serve no server-rendered JSPs (REST + static SPA only), so not exploitable in our app.
+CVE-2026-41845
+# CVE-2026-41850 — spring-expression: DoS via crafted SpEL. Fixed 6.2.19 / 7.0.8. We don't evaluate
+#   user-supplied SpEL.
+CVE-2026-41850
+# CVE-2026-40984 — micrometer-core: DoS via crafted HTTP request tags. Fixed 1.15.12 / 1.16.6, which
+#   ship with Spring Boot 3.4/3.5.
+CVE-2026-40984

@@ -27,7 +27,7 @@ class UserServiceImpl implements UserService {
 
     private static final List<String> CITY_SCOPED_ROLES = List.of(
             "STATION_MANAGER", "SUPERVISOR", "HUB_OPERATOR",
-            "DELIVERY_ASSOCIATE", "VAN_DRIVER", "CRON_DRIVER", "CALL_CENTER_AGENT");
+            "DELIVERY_ASSOCIATE", "VAN_DRIVER", "CRON_DRIVER", "SHUTTLE_AGENT", "CALL_CENTER_AGENT");
 
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;

@@ -3,6 +3,7 @@ package com.oneday.orders.tracking;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.port.LiveDaPositionPort;
 import com.oneday.common.port.LivePosition;
+import com.oneday.common.port.LiveShuttlePositionPort;
 import com.oneday.common.port.LiveVanPositionPort;
 import com.oneday.orders.config.TrackingProperties;
 import com.oneday.orders.domain.Address;
@@ -33,17 +34,20 @@ public class LocationResolver {
     private final CityNodeCatalog cities;
     private final ObjectProvider<LiveDaPositionPort> daPort;
     private final ObjectProvider<LiveVanPositionPort> vanPort;
+    private final ObjectProvider<LiveShuttlePositionPort> shuttlePort;
     private final ObjectProvider<FlightTrackingPort> flightPort;
     private final Duration staleAfter;
 
     LocationResolver(CityNodeCatalog cities,
                      ObjectProvider<LiveDaPositionPort> daPort,
                      ObjectProvider<LiveVanPositionPort> vanPort,
+                     ObjectProvider<LiveShuttlePositionPort> shuttlePort,
                      ObjectProvider<FlightTrackingPort> flightPort,
                      TrackingProperties properties) {
         this.cities = cities;
         this.daPort = daPort;
         this.vanPort = vanPort;
+        this.shuttlePort = shuttlePort;
         this.flightPort = flightPort;
         this.staleAfter = Duration.ofSeconds(properties.getGpsStaleSeconds());
     }
@@ -59,6 +63,7 @@ public class LocationResolver {
             case ON_FLIGHT -> onFlight(kind, s);
             case MOVING_DA -> moving(kind, s, movingDaFallback(s));
             case MOVING_VAN -> moving(kind, s, movingVanFallback(s));
+            case MOVING_SHUTTLE -> moving(kind, s, movingShuttleFallback(s));
         };
     }
 
@@ -68,8 +73,9 @@ public class LocationResolver {
             case BOOKED, PICKUP_ASSIGNED, AWAITING_SELF_DROP, PICKUP_FAILED, CANCELLED -> LocationKind.WITH_CUSTOMER;
             case PICKED_UP,
                  DROP_ASSIGNED, HUB_DELIVERY_ASSIGNED, DROP_COLLECTED, COLLECTED_FROM_HUB -> LocationKind.MOVING_DA;
-            case HANDED_TO_PICKUP_VAN, RETURNED_TO_HUB,
-                 DISPATCHED_TO_AIRPORT, DISPATCHED_TO_HUB, HANDED_TO_DROP_VAN -> LocationKind.MOVING_VAN;
+            case HANDED_TO_PICKUP_VAN, RETURNED_TO_HUB, HANDED_TO_DROP_VAN -> LocationKind.MOVING_VAN;
+            // The two hub↔airport legs are the shuttle agent's (M12) — live-tracked via the shuttle port.
+            case DISPATCHED_TO_AIRPORT, DISPATCHED_TO_HUB -> LocationKind.MOVING_SHUTTLE;
             case AT_ORIGIN_HUB, ORIGIN_HUB_PROCESSING, IN_TAKEOFF_BAG,
                  AT_DEST_HUB, DEST_HUB_PROCESSING, AWAITING_HUB_COLLECT,
                  DELIVERY_FAILED, RTO_INITIATED -> LocationKind.STATIONARY_HUB;
@@ -111,6 +117,10 @@ public class LocationResolver {
             LiveDaPositionPort p = daPort.getIfAvailable();
             return p == null ? Optional.empty() : p.forShipment(shipmentId);
         }
+        if (kind == LocationKind.MOVING_SHUTTLE) {
+            LiveShuttlePositionPort p = shuttlePort.getIfAvailable();
+            return p == null ? Optional.empty() : p.forShipment(shipmentId);
+        }
         LiveVanPositionPort p = vanPort.getIfAvailable();
         return p == null ? Optional.empty() : p.forShipment(shipmentId);
     }
@@ -127,9 +137,17 @@ public class LocationResolver {
     private Optional<Coord> movingVanFallback(Shipment s) {
         return switch (s.getState()) {
             case HANDED_TO_PICKUP_VAN, RETURNED_TO_HUB -> cities.hub(s.getOriginCity()).or(() -> originAddr(s));
+            case HANDED_TO_DROP_VAN -> cities.hub(s.getDestCity()).or(() -> destAddr(s));
+            default -> Optional.empty();
+        };
+    }
+
+    // Shuttle legs fall back to the relevant airport pin while there's no fresh shuttle GPS fix:
+    // outbound (hub→airport) to the origin airport, inbound (airport→hub) to the dest airport.
+    private Optional<Coord> movingShuttleFallback(Shipment s) {
+        return switch (s.getState()) {
             case DISPATCHED_TO_AIRPORT -> cities.airport(s.getOriginCity()).or(() -> originAddr(s));
             case DISPATCHED_TO_HUB -> cities.airport(s.getDestCity()).or(() -> destAddr(s));
-            case HANDED_TO_DROP_VAN -> cities.hub(s.getDestCity()).or(() -> destAddr(s));
             default -> Optional.empty();
         };
     }
