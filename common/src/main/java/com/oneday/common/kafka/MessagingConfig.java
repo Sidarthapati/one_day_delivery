@@ -1,7 +1,8 @@
 package com.oneday.common.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.amqp.support.converter.DefaultClassMapper;
+import org.springframework.amqp.support.converter.DefaultJackson2JavaTypeMapper;
+import org.springframework.amqp.support.converter.Jackson2JavaTypeMapper;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
@@ -26,15 +27,19 @@ public class MessagingConfig {
     @Bean
     public MessageConverter jsonMessageConverter(ObjectMapper objectMapper) {
         Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter(objectMapper);
-        // In-house monolith: every producer is our own code, so trust all packages for __TypeId__
-        // deserialization. NOTE: DefaultClassMapper does NOT do prefix/wildcard matching — a literal
-        // "com.oneday.*" matches no package (it only honours the exact "*" = trust-all token or exact
-        // package names), so it silently rejected every com.oneday event and broke ALL @RabbitListener
-        // consumers against a real broker. Use the trust-all token. Tighten to exact package names if
-        // an external/untrusted producer ever writes to a stream we consume.
-        DefaultClassMapper classMapper = new DefaultClassMapper();
-        classMapper.setTrustedPackages("*");
-        converter.setClassMapper(classMapper);
+        // Type resolution = INFERRED: deserialize each message to the TYPE THE LISTENER METHOD DECLARES
+        // (e.g. HubEvent), not the concrete class named in the producer's __TypeId__ header. Several M7
+        // events (StandAssignedEvent, BagCreatedEvent, …) publish their own concrete __TypeId__ but the
+        // orders.hub consumer binds the umbrella HubEvent — a header-driven ClassMapper deserialized to
+        // the concrete class and then failed "Cannot convert from [StandAssignedEvent] to [HubEvent]",
+        // dead-lettering every hub event and freezing shipments at AT_ORIGIN_HUB. Inference sidesteps the
+        // mismatch (the shared ObjectMapper ignores unknown fields, so the umbrella type absorbs any
+        // event's JSON). Still trust all packages for the header fallback (receiveAndConvert without a
+        // target type) — in-house monolith, every producer is ours.
+        DefaultJackson2JavaTypeMapper typeMapper = new DefaultJackson2JavaTypeMapper();
+        typeMapper.setTrustedPackages("*");
+        typeMapper.setTypePrecedence(Jackson2JavaTypeMapper.TypePrecedence.INFERRED);
+        converter.setJavaTypeMapper(typeMapper);
         return converter;
     }
 
