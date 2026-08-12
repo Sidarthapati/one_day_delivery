@@ -65,7 +65,7 @@ class AeroDataBoxClientParserTest {
             [ { "number": "AI806", "status": "Delayed",
                 "departure": { "scheduledTime": { "utc": "2026-08-11 00:30Z" }, "revisedTime": { "utc": "2026-08-11 01:15Z" } },
                 "arrival":   { "scheduledTime": { "utc": "2026-08-11 02:30Z" }, "revisedTime": { "utc": "2026-08-11 03:15Z" } } } ]
-            """));
+            """), LocalDate.of(2026, 8, 11));
 
         assertThat(row).isPresent();
         assertThat(row.get().rawStatus()).isEqualTo("Delayed");
@@ -79,14 +79,41 @@ class AeroDataBoxClientParserTest {
             [ { "status": "Expected",
                 "departure": { "scheduledTime": { "utc": "2026-08-11 00:30Z" } },
                 "arrival":   { "scheduledTime": { "utc": "2026-08-11 02:30Z" } } } ]
-            """));
+            """), LocalDate.of(2026, 8, 11));
 
         assertThat(row).isPresent();
         assertThat(row.get().estimatedDeparture()).isEqualTo(Instant.parse("2026-08-11T00:30:00Z"));
     }
 
     @Test
+    void picksTheInstanceDepartingOnTheQueriedDate_forMidnightStraddlingFlight() throws Exception {
+        // Captured live: 6E6025 on 2026-08-12 returns BOTH the instance that arrived that morning
+        // (departed 2026-08-11 23:50 IST) and the one departing that evening (2026-08-12 23:50 IST).
+        // We must pick the latter — the one whose scheduled DEPARTURE local date is the queried date.
+        String twoInstances = """
+            [ { "number": "6E 6025", "status": "Arrived",
+                "departure": { "scheduledTime": { "utc": "2026-08-11 18:20Z", "local": "2026-08-11 23:50+05:30" } },
+                "arrival":   { "scheduledTime": { "utc": "2026-08-11 20:20Z", "local": "2026-08-12 01:50+05:30" } } },
+              { "number": "6E 6025", "status": "Expected",
+                "departure": { "scheduledTime": { "utc": "2026-08-12 18:20Z", "local": "2026-08-12 23:50+05:30" } },
+                "arrival":   { "scheduledTime": { "utc": "2026-08-12 20:14Z", "local": "2026-08-13 01:44+05:30" } } } ]
+            """;
+
+        Optional<StatusRow> row = AeroDataBoxClient.parseStatus(json(twoInstances), LocalDate.of(2026, 8, 12));
+
+        assertThat(row).isPresent();
+        assertThat(row.get().rawStatus()).isEqualTo("Expected");   // tonight's instance, not the arrived one
+        assertThat(row.get().estimatedDeparture()).isEqualTo(Instant.parse("2026-08-12T18:20:00Z"));
+        assertThat(row.get().estimatedArrival()).isEqualTo(Instant.parse("2026-08-12T20:14:00Z"));
+
+        // And querying the prior date selects the earlier (arrived) instance — symmetry.
+        Optional<StatusRow> prior = AeroDataBoxClient.parseStatus(json(twoInstances), LocalDate.of(2026, 8, 11));
+        assertThat(prior).isPresent();
+        assertThat(prior.get().rawStatus()).isEqualTo("Arrived");
+    }
+
+    @Test
     void emptyStatusArrayYieldsEmpty() throws Exception {
-        assertThat(AeroDataBoxClient.parseStatus(json("[]"))).isEmpty();
+        assertThat(AeroDataBoxClient.parseStatus(json("[]"), LocalDate.of(2026, 8, 12))).isEmpty();
     }
 }
