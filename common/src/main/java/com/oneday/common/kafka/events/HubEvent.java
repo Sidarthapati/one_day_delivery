@@ -1,5 +1,6 @@
 package com.oneday.common.kafka.events;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.oneday.common.kafka.DomainEvent;
 import com.oneday.common.kafka.enums.HubEventType;
@@ -12,7 +13,11 @@ import java.util.UUID;
  * <p>Minimal consumption contract — see {@link DaEvent} for the tolerant-reader rationale.</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record HubEvent(UUID shipmentId, HubEventType eventType) implements DomainEvent {
+public record HubEvent(UUID shipmentId,
+                       // M7's concrete events expose eventType() as an interface method, which Jackson
+                       // serializes camelCase ("eventType") even though record components are snake_case;
+                       // accept that key so the umbrella binds when a concrete event is inferred to HubEvent.
+                       @JsonAlias("eventType") HubEventType eventType) implements DomainEvent {
 
     @Override
     public String partitionKey() {
