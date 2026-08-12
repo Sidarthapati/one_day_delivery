@@ -55,4 +55,8 @@ public class FlightInstance extends MutableBaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 16, nullable = false)
     private FlightInstanceStatus status;
+
+    /** Set once the post-take-off vendor check (§ Task 2) has corrected this flight's arrival, so it runs once. */
+    @Column(name = "inflight_checked", nullable = false)
+    private boolean inflightChecked;
 }

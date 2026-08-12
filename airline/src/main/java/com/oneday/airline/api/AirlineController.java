@@ -98,11 +98,20 @@ public class AirlineController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No booking for bag " + bagId));
     }
 
-    /** The consolidator's current word on a flight — the same call the status poll job makes. */
+    /**
+     * The flight's current status for the GHA console. Once our own {@code flight_instance} has actually
+     * moved (DEPARTED/LANDED/CANCELLED) we report that — the same progress the customer's tracking shows —
+     * since the consolidator's word only ever covers ON_TIME/DELAYED. While still SCHEDULED (or if no
+     * instance exists yet) we fall back to the consolidator, which carries the pre-departure disruption info.
+     */
     @GetMapping("/flights/{flightNo}/{flightDate}/status")
     public FlightStatusResponse flightStatus(@PathVariable String flightNo,
                                              @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate flightDate) {
-        return FlightStatusResponse.from(flightNo, flightDate, flightProviderPort.status(flightNo, flightDate));
+        return flightInstanceRepository.findByFlightNoAndFlightDate(flightNo, flightDate)
+                .filter(fi -> fi.getStatus() != com.oneday.airline.domain.FlightInstanceStatus.SCHEDULED)
+                .map(FlightStatusResponse::from)
+                .orElseGet(() -> FlightStatusResponse.from(flightNo, flightDate,
+                        flightProviderPort.status(flightNo, flightDate)));
     }
 
     @GetMapping("/flights/{flightNo}/{flightDate}/awbs")

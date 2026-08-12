@@ -86,6 +86,29 @@ public class FlightStatusPollJob {
         }
     }
 
+    /**
+     * Post-take-off correction (paid, once per flight): re-fetch each DEPARTED flight's real arrival from the
+     * vendor {@code inflight-check-delay-minutes} (default 60) after departure, so the LANDED flip — and the
+     * arrival shown to the GHA console and the customer — matches reality instead of the schedule captured at
+     * booking. The {@code inflightChecked} guard keeps it to a single vendor call per flight.
+     */
+    @Scheduled(fixedDelayString = "${airline.status-poll-delay-ms:300000}")
+    public void pollInFlight() {
+        Instant now = clock.instant();
+        Instant threshold = now.minus(Duration.ofMinutes(properties.getInflightCheckDelayMinutes()));
+        List<FlightInstance> instances = flightInstanceRepository.findByStatusIn(List.of(FlightInstanceStatus.DEPARTED));
+        for (FlightInstance instance : instances) {
+            if (instance.isInflightChecked() || instance.getDeparture().isAfter(threshold)) {
+                continue;   // not yet checked-worthy, or already checked once
+            }
+            try {
+                confirmArrival(instance, now);
+            } catch (Exception e) {
+                log.error("In-flight check failed for flight {} ({})", instance.getFlightNo(), instance.getFlightDate(), e);
+            }
+        }
+    }
+
     /** Imminent tier (paid): flights departing within the next few hours, swept every ~30 min. */
     @Scheduled(cron = "${airline.disruption-imminent-cron:0 */30 * * * *}", zone = "Asia/Kolkata")
     public void pollImminent() {
@@ -141,6 +164,31 @@ public class FlightStatusPollJob {
             flightInstanceRepository.save(instance);
             auditStatus(instance, "DEPARTED", "LANDED");
             notifyParcels(instance, flightEventProducer::emitLanded);
+        }
+    }
+
+    /**
+     * One post-take-off vendor check: correct the stored arrival from the vendor's word, and flip LANDED if the
+     * vendor already reports it arrived (or the corrected arrival is now past). Sets {@code inflightChecked} so
+     * it runs once. The frequent clock-only {@link #advanceProgress} still handles the LANDED flip at the
+     * (now-corrected) arrival for flights still airborne at check time.
+     */
+    void confirmArrival(FlightInstance instance, Instant now) {
+        FlightProviderPort.FlightStatusResult status =
+                flightProviderPort.status(instance.getFlightNo(), instance.getFlightDate());
+        if (status.estimatedArrival() != null) {
+            instance.setArrival(status.estimatedArrival());
+        }
+        instance.setInflightChecked(true);
+        boolean landed = status.status() == FlightProviderPort.FlightRealWorldStatus.LANDED
+                || !now.isBefore(instance.getArrival());
+        if (landed) {
+            instance.setStatus(FlightInstanceStatus.LANDED);
+            flightInstanceRepository.save(instance);
+            auditStatus(instance, "DEPARTED", "LANDED");
+            notifyParcels(instance, flightEventProducer::emitLanded);
+        } else {
+            flightInstanceRepository.save(instance);
         }
     }
 

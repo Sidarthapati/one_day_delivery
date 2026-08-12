@@ -55,6 +55,14 @@ class AeroDataBoxFlightProviderAdapter implements FlightProviderPort {
         if (s.contains("cancel")) {
             return new FlightStatusResult(FlightRealWorldStatus.CANCELLED, row.estimatedDeparture(), row.estimatedArrival());
         }
+        // Real in-flight progress — the post-take-off check (§ Task 2) needs the actual arrival, so surface
+        // ARRIVED/LANDED and EN-ROUTE/DEPARTED here rather than collapsing them to ON_TIME.
+        if (s.contains("arriv") || s.contains("landed")) {
+            return new FlightStatusResult(FlightRealWorldStatus.LANDED, row.estimatedDeparture(), row.estimatedArrival());
+        }
+        if (s.contains("en route") || s.contains("enroute") || s.contains("airborne") || s.contains("departed")) {
+            return new FlightStatusResult(FlightRealWorldStatus.DEPARTED, row.estimatedDeparture(), row.estimatedArrival());
+        }
         if (s.contains("delay") && row.estimatedDeparture() != null) {
             return new FlightStatusResult(FlightRealWorldStatus.DELAYED, row.estimatedDeparture(), row.estimatedArrival());
         }

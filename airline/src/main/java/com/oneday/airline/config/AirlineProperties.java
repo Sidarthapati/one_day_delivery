@@ -65,6 +65,14 @@ public class AirlineProperties {
     private long statusPollDelayMs = 300_000;   // 5 min
 
     /**
+     * How long after take-off to make the single corrective vendor check that re-fetches a flight's real
+     * arrival (§ Task 2). The schedule captured at booking can be minutes off (early/late arrival); this
+     * one post-departure ping fixes the stored arrival so the LANDED flip — and the arrival shown to the
+     * GHA console and the customer — matches reality. Default 60 min.
+     */
+    private int inflightCheckDelayMinutes = 60;
+
+    /**
      * A simulated delay past this many minutes of the original scheduled departure is treated as
      * "breaks the delivery promise" — the reassignment engine moves the bag to a faster flight. Below
      * it, only an advisory time-changed notice goes out; no parcels move.
