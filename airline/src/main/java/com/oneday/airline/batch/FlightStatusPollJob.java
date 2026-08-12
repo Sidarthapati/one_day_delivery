@@ -98,11 +98,11 @@ public class FlightStatusPollJob {
         Instant threshold = now.minus(Duration.ofMinutes(properties.getInflightCheckDelayMinutes()));
         List<FlightInstance> instances = flightInstanceRepository.findByStatusIn(List.of(FlightInstanceStatus.DEPARTED));
         for (FlightInstance instance : instances) {
-            if (instance.isInflightChecked() || instance.getDeparture().isAfter(threshold)) {
-                continue;   // not yet checked-worthy, or already checked once
+            if (instance.getDeparture().isAfter(threshold)) {
+                continue;   // too soon after take-off — checks start inflight-check-delay-minutes in
             }
             try {
-                confirmArrival(instance, now);
+                recheckArrival(instance, now);
             } catch (Exception e) {
                 log.error("In-flight check failed for flight {} ({})", instance.getFlightNo(), instance.getFlightDate(), e);
             }
@@ -168,18 +168,18 @@ public class FlightStatusPollJob {
     }
 
     /**
-     * One post-take-off vendor check: correct the stored arrival from the vendor's word, and flip LANDED if the
-     * vendor already reports it arrived (or the corrected arrival is now past). Sets {@code inflightChecked} so
-     * it runs once. The frequent clock-only {@link #advanceProgress} still handles the LANDED flip at the
-     * (now-corrected) arrival for flights still airborne at check time.
+     * A post-take-off vendor check: correct the stored arrival from the vendor's word, and flip LANDED if the
+     * vendor already reports it arrived (or the corrected arrival is now past). Runs every poll cycle (~5 min)
+     * once a flight is inflight-check-delay-minutes past take-off, so the arrival stays current as the vendor
+     * revises it — until the flight lands (no longer DEPARTED) or the clock-only {@link #advanceProgress} flips
+     * it at the corrected arrival.
      */
-    void confirmArrival(FlightInstance instance, Instant now) {
+    void recheckArrival(FlightInstance instance, Instant now) {
         FlightProviderPort.FlightStatusResult status =
                 flightProviderPort.status(instance.getFlightNo(), instance.getFlightDate());
         if (status.estimatedArrival() != null) {
             instance.setArrival(status.estimatedArrival());
         }
-        instance.setInflightChecked(true);
         boolean landed = status.status() == FlightProviderPort.FlightRealWorldStatus.LANDED
                 || !now.isBefore(instance.getArrival());
         if (landed) {

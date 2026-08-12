@@ -172,32 +172,29 @@ class FlightStatusPollJobTest {
         when(awbParcelRepository.findByAwbId(any())).thenReturn(List.of(parcel));
 
         // Still airborne by the schedule (now < scheduled arrival), but the vendor already reports arrived.
-        job(departure.plusSeconds(75 * 60)).confirmArrival(fi, departure.plusSeconds(75 * 60));
+        job(departure.plusSeconds(75 * 60)).recheckArrival(fi, departure.plusSeconds(75 * 60));
 
         assertThat(fi.getArrival()).isEqualTo(actualArrival);   // stored arrival corrected to reality
         assertThat(fi.getStatus()).isEqualTo(FlightInstanceStatus.LANDED);
-        assertThat(fi.isInflightChecked()).isTrue();
         verify(flightEventProducer).emitLanded(parcelId);
     }
 
     @Test
-    void pollInFlight_onlyChecksDepartedFlightsPastTheDelayAndNotAlreadyChecked() {
-        FlightInstance old = instance(FlightInstanceStatus.DEPARTED);           // departed > 60 min ago → checked
+    void pollInFlight_checksEveryDepartedFlightPastTheDelayEachRunAndSkipsTheTooFresh() {
+        FlightInstance a = instance(FlightInstanceStatus.DEPARTED);             // departed 65 min ago → checked
+        FlightInstance b = instance(FlightInstanceStatus.DEPARTED);             // departed 65 min ago → checked
         FlightInstance fresh = instance(FlightInstanceStatus.DEPARTED);
-        fresh.setDeparture(departure.plusSeconds(50 * 60));                     // departed 10 min ago → skipped
-        FlightInstance done = instance(FlightInstanceStatus.DEPARTED);
-        done.setInflightChecked(true);                                          // already checked → skipped
+        fresh.setDeparture(departure.plusSeconds(50 * 60));                     // departed 15 min ago → skipped
         when(flightInstanceRepository.findByStatusIn(List.of(FlightInstanceStatus.DEPARTED)))
-                .thenReturn(List.of(old, fresh, done));
-        when(flightProviderPort.status("ODDELBOM06", old.getFlightDate())).thenReturn(
+                .thenReturn(List.of(a, b, fresh));
+        when(flightProviderPort.status("ODDELBOM06", a.getFlightDate())).thenReturn(
                 new FlightProviderPort.FlightStatusResult(FlightProviderPort.FlightRealWorldStatus.DEPARTED,
                         departure, arrival));
 
-        job(departure.plusSeconds(65 * 60)).pollInFlight();   // 65 min after the old flight departed
+        job(departure.plusSeconds(65 * 60)).pollInFlight();   // 65 min after take-off → past the 60 min delay
 
-        verify(flightProviderPort, times(1)).status(any(), any());   // only the old flight is checked
-        assertThat(old.isInflightChecked()).isTrue();
-        assertThat(fresh.isInflightChecked()).isFalse();
+        // No one-shot guard: every eligible in-flight flight is re-checked on this run; the too-fresh one is skipped.
+        verify(flightProviderPort, times(2)).status(any(), any());
     }
 
     @Test
