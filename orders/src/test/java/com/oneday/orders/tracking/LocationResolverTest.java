@@ -8,6 +8,7 @@ import com.oneday.orders.config.TrackingProperties;
 import com.oneday.orders.config.TrackingProperties.CityNode;
 import com.oneday.orders.domain.Address;
 import com.oneday.orders.domain.Shipment;
+import com.oneday.orders.service.port.FlightTrackingPort;
 import com.oneday.orders.tracking.LocationResolver.ResolvedLocation;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class LocationResolverTest {
 
     private final LiveDaPositionPort daPort = mock(LiveDaPositionPort.class);
     private final LiveVanPositionPort vanPort = mock(LiveVanPositionPort.class);
+    private final FlightTrackingPort flightPort = mock(FlightTrackingPort.class);   // empty by default
 
     private LocationResolver resolver(boolean daAvailable, boolean vanAvailable) {
         TrackingProperties props = new TrackingProperties();
@@ -35,7 +37,7 @@ class LocationResolverTest {
         props.setCityNodes(Map.of("DEL", node(28.50, 77.15, 28.5562, 77.10)));
         CityNodeCatalog cities = new CityNodeCatalog(props);
         return new LocationResolver(cities, provider(daAvailable ? daPort : null),
-                provider(vanAvailable ? vanPort : null), props);
+                provider(vanAvailable ? vanPort : null), provider(flightPort), props);
     }
 
     @Test
@@ -63,12 +65,26 @@ class LocationResolverTest {
     }
 
     @Test
-    void departedIsOnFlightWithNoPoint() {
+    void departedWithNoFlightFixDrawsRouteOnly() {
+        // No M9 position (before departure / M9 no-op) → no dot, UI draws the route arc.
         ResolvedLocation r = resolver(true, true).resolve(shipment(ShipmentState.DEPARTED));
         assertThat(r.kind()).isEqualTo(LocationKind.ON_FLIGHT);
         assertThat(r.lat()).isNull();
         assertThat(r.moving()).isTrue();
         assertThat(r.live()).isFalse();
+    }
+
+    @Test
+    void departedWithFlightFixShowsMovingLiveDot() {
+        // M9 interpolates a position while airborne → a live, moving dot on the map.
+        when(flightPort.currentPosition(any())).thenReturn(Optional.of(
+                new FlightTrackingPort.LivePosition(22.9, 77.8, Instant.now(), "IN_TRANSIT")));
+        ResolvedLocation r = resolver(true, true).resolve(shipment(ShipmentState.DEPARTED));
+        assertThat(r.kind()).isEqualTo(LocationKind.ON_FLIGHT);
+        assertThat(r.lat()).isEqualTo(22.9);
+        assertThat(r.lon()).isEqualTo(77.8);
+        assertThat(r.live()).isTrue();
+        assertThat(r.moving()).isTrue();
     }
 
     @Test

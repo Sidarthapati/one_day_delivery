@@ -7,6 +7,7 @@ import com.oneday.common.port.LiveVanPositionPort;
 import com.oneday.orders.config.TrackingProperties;
 import com.oneday.orders.domain.Address;
 import com.oneday.orders.domain.Shipment;
+import com.oneday.orders.service.port.FlightTrackingPort;
 import com.oneday.orders.tracking.CityNodeCatalog.Coord;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -20,7 +21,8 @@ import java.util.Optional;
  * and produce a coordinate. Resting states (with the customer, at a hub, at an airport) yield a static
  * pin; the with-a-DA and on-a-van states yield a live dot from {@link LiveDaPositionPort} /
  * {@link LiveVanPositionPort}, degrading to the nearest static node when the GPS fix is missing or
- * stale. The air leg has no live point in v1 — the UI draws the route arc instead.
+ * stale. The air leg yields an interpolated live dot from {@link FlightTrackingPort} while airborne,
+ * falling back to the route arc (no dot) before departure / after landing.
  *
  * <p>Ports are injected lazily ({@link ObjectProvider}) so the orders module (and any profile without
  * dispatch/routing on the classpath) resolves to static fallbacks rather than failing to wire.</p>
@@ -31,15 +33,18 @@ public class LocationResolver {
     private final CityNodeCatalog cities;
     private final ObjectProvider<LiveDaPositionPort> daPort;
     private final ObjectProvider<LiveVanPositionPort> vanPort;
+    private final ObjectProvider<FlightTrackingPort> flightPort;
     private final Duration staleAfter;
 
     LocationResolver(CityNodeCatalog cities,
                      ObjectProvider<LiveDaPositionPort> daPort,
                      ObjectProvider<LiveVanPositionPort> vanPort,
+                     ObjectProvider<FlightTrackingPort> flightPort,
                      TrackingProperties properties) {
         this.cities = cities;
         this.daPort = daPort;
         this.vanPort = vanPort;
+        this.flightPort = flightPort;
         this.staleAfter = Duration.ofSeconds(properties.getGpsStaleSeconds());
     }
 
@@ -51,7 +56,7 @@ public class LocationResolver {
             case DELIVERED -> staticAt(kind, deliveredCoord(s));
             case STATIONARY_HUB -> staticAt(kind, hubCoord(s));
             case STATIONARY_AIRPORT -> staticAt(kind, airportCoord(s));
-            case ON_FLIGHT -> new ResolvedLocation(kind, null, null, false, true, null, null);
+            case ON_FLIGHT -> onFlight(kind, s);
             case MOVING_DA -> moving(kind, s, movingDaFallback(s));
             case MOVING_VAN -> moving(kind, s, movingVanFallback(s));
         };
@@ -72,6 +77,18 @@ public class LocationResolver {
             case DEPARTED, RTO_IN_TRANSIT -> LocationKind.ON_FLIGHT;
             case DROPPED, HUB_COLLECTED, RTO_COMPLETED -> LocationKind.DELIVERED;
         };
+    }
+
+    // ── air leg ─────────────────────────────────────────────────────────────
+    // A live dot while airborne (M9 interpolates origin-hub → dest-hub on the flight's own clock).
+    // Empty before departure / after landing / when M9 is a no-op → the UI draws the route arc, no dot.
+    private ResolvedLocation onFlight(LocationKind kind, Shipment s) {
+        FlightTrackingPort port = flightPort.getIfAvailable();
+        Optional<FlightTrackingPort.LivePosition> pos =
+                port == null ? Optional.empty() : port.currentPosition(s.getId());
+        return pos
+                .map(p -> new ResolvedLocation(kind, p.lat(), p.lon(), true, true, p.asOf(), null))
+                .orElseGet(() -> new ResolvedLocation(kind, null, null, false, true, null, null));
     }
 
     // ── moving legs ─────────────────────────────────────────────────────────
