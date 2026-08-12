@@ -5,6 +5,7 @@ import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.domain.FlightInstance;
 import com.oneday.airline.domain.FlightInstanceStatus;
+import com.oneday.common.log.AuditLog;
 import com.oneday.airline.events.FlightEventProducer;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
@@ -115,17 +116,30 @@ public class FlightStatusPollJob {
     // Not @Transactional: each repository save() is atomic on its own; the one place multi-step atomicity
     // matters (reassign) is a separate, correctly-proxied bean, and events publish best-effort after commit.
 
+    private static void auditStatus(FlightInstance instance, String from, String to) {
+        AuditLog.event("flight.status_changed")
+                .kv("flightNo", instance.getFlightNo())
+                .kv("flightDate", instance.getFlightDate())
+                .kv("originHub", instance.getOriginHub())
+                .kv("destHub", instance.getDestHub())
+                .kv("from", from)
+                .kv("to", to)
+                .log();
+    }
+
     /** Clock-only progress: SCHEDULED→DEPARTED at departure, DEPARTED→LANDED at arrival. Never calls the vendor. */
     void advanceProgress(FlightInstance instance) {
         Instant now = clock.instant();
         if (instance.getStatus() == FlightInstanceStatus.SCHEDULED && !now.isBefore(instance.getDeparture())) {
             instance.setStatus(FlightInstanceStatus.DEPARTED);
             flightInstanceRepository.save(instance);
+            auditStatus(instance, "SCHEDULED", "DEPARTED");
             notifyParcels(instance, flightEventProducer::emitDeparted);
         }
         if (instance.getStatus() == FlightInstanceStatus.DEPARTED && !now.isBefore(instance.getArrival())) {
             instance.setStatus(FlightInstanceStatus.LANDED);
             flightInstanceRepository.save(instance);
+            auditStatus(instance, "DEPARTED", "LANDED");
             notifyParcels(instance, flightEventProducer::emitLanded);
         }
     }
