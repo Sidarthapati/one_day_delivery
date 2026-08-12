@@ -140,13 +140,19 @@ class DaTaskServiceImpl implements DaTaskService {
     @Override
     @Transactional
     public DaTaskView recordHubHandoff(UUID daId, UUID taskId, List<String> parcelScans) {
-        // HUB_RETURN city (no van): the DA drops the collected pickups AT the hub. Same pickup-handoff
-        // lifecycle as the van path, but a neutral event (not VAN_HANDOFF_COMPLETED) + the origin-hub scan.
+        // HUB_RETURN city (no van): the DA drops the collected pickups AT the hub. This is a custody
+        // CLAIM (task done → RETURNED_TO_HUB, "handed to transport") — NOT the hub arrival. The hub
+        // operator's dock scan (M7 receive → HUB_ORIGIN_IN) is what advances the parcel to AT_ORIGIN_HUB,
+        // so a DA can't forge arrival by tapping a button.
         requireHubReturnCity(daId, taskId);
         return completePickupHandoff(daId, taskId, parcelScans, task -> {
             daEventProducer.emitHubReturnHandoffCompleted(daId, task.getCityId(), task.getShipmentId());
-            // M8-SEAM: the hub drop is the origin-hub inbound scan (advances to AT_ORIGIN_HUB → M7/M9).
-            hubScanSeamProducer.emitHubOriginIn(task.getShipmentId());
+            AuditLog.event("da.hub_handoff")
+                    .kv("daId", daId)
+                    .kv("taskId", taskId)
+                    .kv("shipmentId", task.getShipmentId())
+                    .kv("parcelScans", parcelScans.size())
+                    .log();
             log.debug("Hub handoff: task {} completed with {} scan(s)", taskId, parcelScans.size());
         });
     }

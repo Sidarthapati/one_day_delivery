@@ -3,6 +3,7 @@ package com.oneday.hub.service.impl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oneday.hub.domain.*;
+import com.oneday.hub.events.HubArrivalScanProducer;
 import com.oneday.hub.events.HubEventProducer;
 import com.oneday.hub.repository.*;
 import com.oneday.hub.service.FlightBagService;
@@ -30,6 +31,7 @@ class FlightBagServiceImpl implements FlightBagService {
     private final ShipmentInfoPort shipmentInfoPort;
     private final BarcodePort barcodePort;
     private final HubEventProducer eventProducer;
+    private final HubArrivalScanProducer arrivalScanProducer;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -41,6 +43,7 @@ class FlightBagServiceImpl implements FlightBagService {
                    ShipmentInfoPort shipmentInfoPort,
                    BarcodePort barcodePort,
                    HubEventProducer eventProducer,
+                   HubArrivalScanProducer arrivalScanProducer,
                    ObjectMapper objectMapper,
                    Clock clock) {
         this.flightBagRepository = flightBagRepository;
@@ -51,6 +54,7 @@ class FlightBagServiceImpl implements FlightBagService {
         this.shipmentInfoPort = shipmentInfoPort;
         this.barcodePort = barcodePort;
         this.eventProducer = eventProducer;
+        this.arrivalScanProducer = arrivalScanProducer;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -206,6 +210,12 @@ class FlightBagServiceImpl implements FlightBagService {
                 .kv("flightDate", bag.getFlightDate())
                 .kv("parcelCount", bag.getParcelCount())
                 .log();
+
+        // The bag leaving the origin dock for the airport IS the origin-out scan for every parcel it
+        // holds (→ DISPATCHED_TO_AIRPORT). Driven off the sealed manifest here, not an airline button.
+        for (FlightBagService.BagParcelInfo p : parcelsFor(bagId)) {
+            arrivalScanProducer.emitOriginOut(p.parcelId(), p.shipmentRef(), bagId, bag.getFlightNo());
+        }
         return bag;
     }
 

@@ -36,6 +36,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** Real-Postgres tests of the DA task-lifecycle transitions, guards, and (gated) event emission. */
@@ -155,9 +156,10 @@ class DaTaskServiceImplTest {
                 .atDate(today).atZone(zone).toInstant();
         assertThat(cron.getScheduledMeetingTime()).isEqualTo(expectedNext);
         assertThat(cron.getParcelCountHanded()).isEqualTo(1);
-        // Hub handoff emits the neutral (non-van) event + the origin-hub M8 seam.
+        // Hub handoff is a custody CLAIM only (→ RETURNED_TO_HUB). It must NOT drive the hub arrival —
+        // the origin-hub dock scan (M7 receive) owns AT_ORIGIN_HUB now, so nothing is emitted here.
         verify(events).emitHubReturnHandoffCompleted(eq(da), eq(city), eq(task.getShipmentId()));
-        verify(scanSeam).emitHubOriginIn(eq(task.getShipmentId()));
+        verifyNoInteractions(scanSeam);
     }
 
     @Test

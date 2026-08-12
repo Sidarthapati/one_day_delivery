@@ -3,9 +3,11 @@ package com.oneday.orders.events;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.kafka.enums.ScanEventType;
 import com.oneday.common.kafka.events.ScanEvent;
+import com.oneday.common.log.AuditLog;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
+import com.oneday.orders.service.exception.IllegalStateTransitionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -62,8 +64,37 @@ public class ScanEventsConsumer {
             log.debug("Scan event {} ignored for shipment {}", event.eventType(), event.shipmentId());
             return;
         }
-        stateMachine.transition(event.shipmentId(), target,
-                TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+        try {
+            stateMachine.transition(event.shipmentId(), target,
+                    TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+            AuditLog.event("scan.consumed")
+                    .kv("shipmentId", event.shipmentId())
+                    .kv("scanType", event.eventType().name())
+                    .kv("target", target)
+                    .log();
+        } catch (IllegalStateTransitionException e) {
+            if (e.getFromState() == target) {
+                // Idempotent re-scan: parcel already in the target state. Ack — don't retry/DLQ.
+                AuditLog.event("scan.skipped")
+                        .kv("shipmentId", event.shipmentId())
+                        .kv("scanType", event.eventType().name())
+                        .kv("target", target)
+                        .kv("reason", "already-in-target")
+                        .log();
+                return;
+            }
+            // Out-of-order (a racing predecessor event hasn't landed yet) or a genuine violation:
+            // rethrow so the listener retry re-delivers — the predecessor lands within the retry window,
+            // and a truly-invalid scan surfaces to the DLQ for investigation.
+            AuditLog.event("scan.skipped")
+                    .kv("shipmentId", event.shipmentId())
+                    .kv("scanType", event.eventType().name())
+                    .kv("from", e.getFromState())
+                    .kv("target", target)
+                    .kv("reason", "out-of-order-or-invalid")
+                    .log();
+            throw e;
+        }
     }
 
     private void applyLabel(ScanEvent event) {
