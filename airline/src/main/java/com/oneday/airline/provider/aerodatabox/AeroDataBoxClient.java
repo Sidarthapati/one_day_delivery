@@ -100,7 +100,7 @@ public class AeroDataBoxClient {
                     .uri("/flights/number/{number}/{date}", flightNo, date.toString())
                     .retrieve()
                     .body(String.class);
-            return parseStatus(MAPPER.readTree(body));
+            return parseStatus(MAPPER.readTree(body), date);
         } catch (Exception e) {
             log.error("AeroDataBox status fetch failed for {} ({}): {}", flightNo, date, e.getMessage());
             return Optional.empty();
@@ -131,15 +131,43 @@ public class AeroDataBoxClient {
         return rows;
     }
 
-    static Optional<StatusRow> parseStatus(JsonNode root) {
-        JsonNode leg = root.isArray() ? (root.isEmpty() ? null : root.get(0)) : root;
-        if (leg == null || leg.isMissingNode()) {
+    static Optional<StatusRow> parseStatus(JsonNode root, LocalDate queryDate) {
+        List<JsonNode> legs = new ArrayList<>();
+        if (root.isArray()) {
+            root.forEach(legs::add);
+        } else if (root != null && !root.isMissingNode()) {
+            legs.add(root);
+        }
+        if (legs.isEmpty()) {
             return Optional.empty();
         }
+        // A flight number that straddles midnight returns MULTIPLE instances for one date: the one that
+        // ARRIVED that morning (departed the prior evening) and the one DEPARTING that evening.
+        // AeroDataBox's date query matches either endpoint (dateLocalRole=Both), so we must pick the
+        // instance whose SCHEDULED DEPARTURE local date == the queried date — otherwise a red-eye reads
+        // as its already-arrived prior-day instance. Fall back to the first row if none carry a local date.
+        JsonNode leg = legs.stream()
+                .filter(l -> queryDate.equals(scheduledDepartureLocalDate(l)))
+                .findFirst()
+                .orElse(legs.get(0));
         String status = text(leg, "status");
         Instant estDep = instantOf(leg.path("departure"));
         Instant estArr = instantOf(leg.path("arrival"));
         return Optional.of(new StatusRow(status == null ? "" : status, estDep, estArr));
+    }
+
+    /** The flight's scheduled departure date in the departure airport's local time — AeroDataBox's own
+     *  query key — or null if absent. Disambiguates midnight-straddling instances of one flight number. */
+    private static LocalDate scheduledDepartureLocalDate(JsonNode leg) {
+        JsonNode local = leg.path("departure").path("scheduledTime").path("local");
+        if (!local.isValueNode() || local.asText().length() < 10) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(local.asText().substring(0, 10));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
