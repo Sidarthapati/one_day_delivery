@@ -1,8 +1,13 @@
 # Accepted CVEs — reviewed, no fix available in our framework generation.
+# The fixable HIGH/CRITICAL CVEs are remediated by the version overrides in pom.xml
+# (tomcat, spring-security 6.2.8, spring-framework 6.1.14, netty 4.1.136, jackson
+# 2.18.8, protobuf 3.25.5, postgresql). The entries below need Spring Boot 3.4/3.5
+# (Spring Framework 6.2/7.0, Spring Security 6.5+) and are deferred to a Boot major
+# upgrade — no in-line 6.1.x / 6.2.x / 3.2.x backport exists.
 #
-# CVE-2026-22732 — Spring Security policy bypass / information disclosure.
-# Fixed only in Spring Security 6.5.9 / 7.0.4, which require Spring Boot 3.4/3.5.
-# We are on Spring Boot 3.2.5 (Spring Security 6.2.x); no 6.2.x backport exists.
-# Tracked for remediation via a Spring Boot major upgrade. The other CRITICALs
-# (Tomcat + CVE-2024-38821) are remediated by the version overrides in pom.xml.
+# CVE-2026-22732 — Spring Security policy bypass / information disclosure. Fixed in 6.5.9 / 7.0.4.
 CVE-2026-22732
+# CVE-2025-22228 — Spring Security BCryptPasswordEncoder max password length. Fixed in 6.2.10 —
+# not yet published to Maven Central (latest 6.2.x is 6.2.8). Mitigated in practice: our BCrypt
+# inputs are OTPs / generated passwords well under the 72-byte limit.
+CVE-2025-22228
