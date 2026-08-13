@@ -22,6 +22,11 @@ public interface AwbRepository extends JpaRepository<Awb, UUID> {
 
     List<Awb> findByOriginHubAndFlightDate(String originHub, LocalDate flightDate);
 
-    /** M12 shuttle inbound queue: AWBs arriving at a dest hub on a date (filtered to LANDED by the service). */
-    List<Awb> findByDestHubAndFlightDate(String destHub, LocalDate flightDate);
+    /**
+     * M12 shuttle inbound queue: live bookings to a dest hub that have <b>not yet been collected</b>
+     * from the airport ({@code dest_collected_at IS NULL}). Date-free on purpose — the service further
+     * filters to flights that have LANDED. Anything landed and uncollected shows up until it's brought
+     * in, whether it landed today or yesterday; a collected AWB drops off immediately.
+     */
+    List<Awb> findByDestHubAndStatusAndDestCollectedAtIsNull(String destHub, AwbStatus status);
 }

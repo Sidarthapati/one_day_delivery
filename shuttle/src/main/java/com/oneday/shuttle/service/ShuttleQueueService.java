@@ -15,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
@@ -44,18 +43,20 @@ public class ShuttleQueueService {
     }
 
     @Transactional(readOnly = true)
-    public ShuttleQueueResponse queue(String cityCode, LocalDate date) {
+    public ShuttleQueueResponse queue(String cityCode) {
         Instant now = clock.instant();
         String hub = HubCode.of(cityCode);   // users.city_id ("delhi"/"DEL") → hub code ("DEL")
 
-        List<OutboundBag> outbound = flightBagService.bagsForOriginHub(hub, date).stream()
-                .filter(b -> b.getStatus() != FlightBagStatus.DISPATCHED)   // already gone
+        // Outbound = bags at this hub still waiting to go out (OPEN/SEALED); inbound = landed AWBs not
+        // yet collected. Both are STATE questions, never "today's" — anything still pending shows until
+        // it's handled, regardless of when the flight was.
+        List<OutboundBag> outbound = flightBagService.bagsForOriginHub(hub).stream()
                 .map(b -> toOutbound(b, now))
                 .sorted(Comparator.comparing(OutboundBag::leaveBy,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
 
-        List<InboundFlight> inbound = inboundQuery.landedInboundAwbs(hub, date).stream()
+        List<InboundFlight> inbound = inboundQuery.landedInboundAwbs(hub).stream()
                 .filter(a -> !legRepository.existsByAwbIdAndDirection(a.awbId(), ShuttleDirection.INBOUND))
                 .map(a -> new InboundFlight(a.awbId(), a.flightNo(), a.flightDate(), a.awbNo(),
                         a.parcelCount(), a.landedAt()))
