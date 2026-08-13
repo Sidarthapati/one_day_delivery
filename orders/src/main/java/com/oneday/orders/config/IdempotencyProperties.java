@@ -49,7 +49,10 @@ public class IdempotencyProperties {
      * Ant-style URL patterns that are exempt from idempotency enforcement even though they
      * match {@link #applyToPathPattern}. Use for simple resource CRUD that doesn't need
      * replay protection (e.g. saved-address and cart-item management); booking, payment,
-     * and cart checkout deliberately stay enforced.
+     * and cart checkout deliberately stay enforced. GPS telemetry heartbeats are exempt too:
+     * they're fire-and-forget, overwrite a single live-status row, and fire every ~12s — an
+     * idempotency key would be meaningless and would flood the key store. Without this the
+     * shuttle/van apps' pings 400 with IDEMPOTENCY_KEY_REQUIRED and are silently dropped.
      */
     @NotNull
     private List<String> exemptPathPatterns = List.of(
@@ -57,7 +60,9 @@ public class IdempotencyProperties {
             "/api/v1/addresses",
             "/api/v1/cart/items/**",
             "/api/v1/cart/items",
-            "/api/v1/bulk/**"
+            "/api/v1/bulk/**",
+            "/api/v1/shuttle/*/telemetry",
+            "/api/v1/van/*/telemetry"
     );
 
     public Duration getTtl() {
