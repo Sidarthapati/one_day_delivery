@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,7 +44,9 @@ public class MilestoneBuilder {
         // Done spine: every reached state that carries a customer label, deduped by label (keep the
         // earliest occurrence), in the order they happened.
         Map<String, Milestone> done = new LinkedHashMap<>();
+        Set<ShipmentState> reached = EnumSet.of(s.getState());
         for (ShipmentStateHistory h : historyRepository.findByShipmentIdOrderByOccurredAtAsc(s.getId())) {
+            reached.add(h.getToState());
             String label = stateMapper.labelFor(h.getToState());
             done.putIfAbsent(label, new Milestone(label, h.getOccurredAt(), true));
         }
@@ -52,7 +55,7 @@ public class MilestoneBuilder {
 
         // Pending checkpoints: the remaining expected steps, unless the shipment is already terminal.
         if (!TERMINAL.contains(s.getState())) {
-            for (ShipmentState step : template(s)) {
+            for (ShipmentState step : template(s, hubReturnDelivery(reached))) {
                 String label = stateMapper.labelFor(step);
                 if (!done.containsKey(label)) {
                     out.add(new Milestone(label, null, false));
@@ -63,8 +66,19 @@ public class MilestoneBuilder {
         return out;
     }
 
+    /**
+     * A hub-return delivery skips the drop van entirely — the DA collects the parcel from the dest hub
+     * ({@code HUB_DELIVERY_ASSIGNED} → {@code COLLECTED_FROM_HUB}) and delivers. Those two states are
+     * HUB_RETURN-only, so reaching either tells us not to preview the van-only "Out for delivery" step
+     * (which would otherwise sit pending forever). Van cities never hit them and keep their preview.
+     */
+    private static boolean hubReturnDelivery(Set<ShipmentState> reached) {
+        return reached.contains(ShipmentState.HUB_DELIVERY_ASSIGNED)
+                || reached.contains(ShipmentState.COLLECTED_FROM_HUB);
+    }
+
     /** The expected happy-path checkpoints for this shipment, shaped by its routing choices. */
-    private static List<ShipmentState> template(Shipment s) {
+    private static List<ShipmentState> template(Shipment s, boolean hubReturnDelivery) {
         List<ShipmentState> t = new ArrayList<>();
         t.add(ShipmentState.BOOKED);
         t.add(s.getPickupType() == PickupType.SELF_DROP
@@ -78,6 +92,10 @@ public class MilestoneBuilder {
         if (s.getDropType() == DropType.HUB_COLLECT) {
             t.add(ShipmentState.AWAITING_HUB_COLLECT);
             t.add(ShipmentState.HUB_COLLECTED);
+        } else if (hubReturnDelivery) {
+            // No drop van — the "Delivery agent en route" (COLLECTED_FROM_HUB) done step leads straight
+            // to Delivered; don't preview the van-only "Out for delivery" it will never reach.
+            t.add(ShipmentState.DROPPED);
         } else {
             t.add(ShipmentState.HANDED_TO_DROP_VAN);  // "Out for delivery"
             t.add(ShipmentState.DROPPED);
