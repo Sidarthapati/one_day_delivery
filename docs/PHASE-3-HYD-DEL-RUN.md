@@ -123,6 +123,10 @@ the **DEL shuttle agent (Ash)**. The airline console's "Dest shuttle-in" button 
 **Watch it live:** open the **track** page for the ref (business/customer). Milestones should advance
 **Landed → Out for delivery → Delivered**, with a moving dot on the airport→hub leg (if Ash pings) then on Yash.
 
+**Trace it in Axiom:** filter the logs by `parcelId` (or `shipmentRef`) to see the full custody trail in
+order — `shuttle.parcel_bound` (which agent carried it, in/out) · `awb.custody_scan` (DEST_SHUTTLE_IN) ·
+`awb.dest_collected` · `shipment.transition` for each state change.
+
 ---
 
 ## 6. If something stalls — quick triage

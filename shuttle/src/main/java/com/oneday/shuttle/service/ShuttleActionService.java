@@ -60,9 +60,16 @@ public class ShuttleActionService {
                 }
                 List<FlightBagService.BagParcelInfo> parcels = flightBagService.parcelsFor(bagId);
                 flightBagService.dispatch(bagId);   // throws if not SEALED / already dispatched
-                parcels.forEach(p -> legRepository.save(ShuttleLeg.builder()
-                        .parcelId(p.parcelId()).agentId(agentId)
-                        .direction(ShuttleDirection.OUTBOUND).bagId(bagId).build()));
+                parcels.forEach(p -> {
+                    legRepository.save(ShuttleLeg.builder()
+                            .parcelId(p.parcelId()).agentId(agentId)
+                            .direction(ShuttleDirection.OUTBOUND).bagId(bagId).build());
+                    // Per-parcel line so the whole leg is queryable by parcelId (who carried it, which way).
+                    AuditLog.event("shuttle.parcel_bound")
+                            .kv("parcelId", p.parcelId()).kv("shipmentRef", p.shipmentRef())
+                            .kv("agentId", agentId).kv("direction", "OUTBOUND")
+                            .kv("bagId", bagId).kv("flightNo", bag.getFlightNo()).log();
+                });
                 AuditLog.event("shuttle.out_to_airport")
                         .kv("agentId", agentId).kv("bagId", bagId)
                         .kv("flightNo", bag.getFlightNo()).kv("parcelCount", parcels.size()).log();
@@ -95,9 +102,15 @@ public class ShuttleActionService {
         if (scanned == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No parcels on AWB " + awbId);
         }
-        parcelIds.forEach(pid -> legRepository.save(ShuttleLeg.builder()
-                .parcelId(pid).agentId(agentId)
-                .direction(ShuttleDirection.INBOUND).awbId(awbId).build()));
+        parcelIds.forEach(pid -> {
+            legRepository.save(ShuttleLeg.builder()
+                    .parcelId(pid).agentId(agentId)
+                    .direction(ShuttleDirection.INBOUND).awbId(awbId).build());
+            // Per-parcel line so the whole leg is queryable by parcelId (who carried it, which way).
+            AuditLog.event("shuttle.parcel_bound")
+                    .kv("parcelId", pid).kv("agentId", agentId)
+                    .kv("direction", "INBOUND").kv("awbId", awbId).log();
+        });
         AuditLog.event("shuttle.collect_from_airport")
                 .kv("agentId", agentId).kv("awbId", awbId).kv("parcelCount", scanned).log();
         return scanned;
