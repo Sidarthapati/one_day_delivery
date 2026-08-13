@@ -69,6 +69,32 @@ class MilestoneBuilderTest {
         assertThat(labels(out)).doesNotContain("Out for delivery");
     }
 
+    @Test
+    void hubReturnDeliveryGoesEnRouteStraightToDeliveredWithNoOutForDelivery() {
+        // DEL is a HUB_RETURN city: the DA collects from the hub, no drop van. Once it reaches
+        // COLLECTED_FROM_HUB the timeline must not show the van-only "Out for delivery" phantom.
+        history(
+                hist(ShipmentState.BOOKED), hist(ShipmentState.PICKED_UP), hist(ShipmentState.AT_ORIGIN_HUB),
+                hist(ShipmentState.DEPARTED), hist(ShipmentState.AT_DEST_HUB),
+                hist(ShipmentState.HUB_DELIVERY_ASSIGNED), hist(ShipmentState.COLLECTED_FROM_HUB));
+        List<Milestone> out = builder.build(intercity(ShipmentState.COLLECTED_FROM_HUB));
+
+        assertThat(labels(out)).doesNotContain("Out for delivery");
+        assertThat(labels(out)).containsSubsequence("Delivery agent en route", "Delivered");
+        // "Delivered" is the only pending step left.
+        assertThat(out).filteredOn(m -> !m.done()).extracting(Milestone::label).containsExactly("Delivered");
+    }
+
+    @Test
+    void vanDeliveryStillPreviewsOutForDelivery() {
+        // A van-city (or pre-delivery) shipment keeps the "Out for delivery" preview unchanged.
+        history(hist(ShipmentState.BOOKED), hist(ShipmentState.PICKED_UP), hist(ShipmentState.AT_ORIGIN_HUB),
+                hist(ShipmentState.DEPARTED), hist(ShipmentState.AT_DEST_HUB), hist(ShipmentState.DROP_COLLECTED));
+        List<Milestone> out = builder.build(intercity(ShipmentState.DROP_COLLECTED));
+
+        assertThat(labels(out)).contains("Out for delivery");
+    }
+
     // ── fixtures ──────────────────────────────────────────────────────────
     private void history(ShipmentStateHistory... rows) {
         when(historyRepository.findByShipmentIdOrderByOccurredAtAsc(any())).thenReturn(List.of(rows));
