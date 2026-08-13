@@ -71,4 +71,9 @@ public class Awb extends MutableBaseEntity {
 
     @Column(name = "loaded_at")
     private Instant loadedAt;
+
+    /** Destination custody: stamped when a shuttle agent collects the landed AWB from the airport
+     *  (DEST_SHUTTLE_IN). Null = still at the airport, so it stays on the shuttle inbound queue. */
+    @Column(name = "dest_collected_at")
+    private Instant destCollectedAt;
 }

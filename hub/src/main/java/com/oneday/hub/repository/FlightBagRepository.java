@@ -26,8 +26,12 @@ public interface FlightBagRepository extends JpaRepository<FlightBag, UUID> {
     /** Operator console: the day's flight bags at a hub (open = the live origin directory). */
     List<FlightBag> findByHubIdAndFlightDate(UUID hubId, LocalDate flightDate);
 
-    /** Shuttle outbound queue (M12): the day's bags leaving an origin hub, keyed by its string code. */
-    List<FlightBag> findByOriginHubAndFlightDate(String originHub, LocalDate flightDate);
+    /**
+     * Shuttle outbound queue (M12): bags at an origin hub still waiting to go to the airport — OPEN or
+     * SEALED, never DISPATCHED. State-based, not date-based: a bag sealed yesterday that never went out
+     * must still show today. Keyed by the hub's string code.
+     */
+    List<FlightBag> findByOriginHubAndStatusIn(String originHub, java.util.Collection<FlightBagStatus> statuses);
 
     /** The AutoSealJob backstop: still-OPEN bags whose cutoff has passed the seal buffer. */
     List<FlightBag> findByStatusAndBagCutoffBefore(FlightBagStatus status, java.time.Instant cutoffBefore);

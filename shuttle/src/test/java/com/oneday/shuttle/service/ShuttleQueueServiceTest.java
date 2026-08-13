@@ -43,18 +43,18 @@ class ShuttleQueueServiceTest {
     }
 
     @Test
-    void outbound_showsOpenAndSealed_excludesDispatched_flagsOverdue_sortedByLeaveBy() {
+    void outbound_flagsOverdue_sortedByLeaveBy() {
+        // bagsForOriginHub returns only pending bags (OPEN/SEALED) — DISPATCHED is filtered at the query.
         // SEALED, cutoff +120m → leaveBy = +120 − 75 = +45m (future, not overdue).
         FlightBag sealed = bag(FlightBagStatus.SEALED, NOW.plus(120, ChronoUnit.MINUTES));
         // OPEN, cutoff +60m → leaveBy = −15m (past → OVERDUE).
         FlightBag open = bag(FlightBagStatus.OPEN, NOW.plus(60, ChronoUnit.MINUTES));
-        FlightBag dispatched = bag(FlightBagStatus.DISPATCHED, NOW.plus(200, ChronoUnit.MINUTES));
-        when(flightBagService.bagsForOriginHub("HYD", DATE)).thenReturn(List.of(sealed, open, dispatched));
-        when(inboundQuery.landedInboundAwbs("HYD", DATE)).thenReturn(List.of());
+        when(flightBagService.bagsForOriginHub("HYD")).thenReturn(List.of(sealed, open));
+        when(inboundQuery.landedInboundAwbs("HYD")).thenReturn(List.of());
 
-        List<ShuttleQueueResponse.OutboundBag> out = service().queue("HYD", DATE).outbound();
+        List<ShuttleQueueResponse.OutboundBag> out = service().queue("HYD").outbound();
 
-        assertThat(out).hasSize(2);   // DISPATCHED excluded
+        assertThat(out).hasSize(2);
         assertThat(out.get(0).status()).isEqualTo("OVERDUE");   // earliest leaveBy first
         assertThat(out.get(1).status()).isEqualTo("SEALED");
     }
@@ -63,14 +63,14 @@ class ShuttleQueueServiceTest {
     void inbound_dropsAwbsAlreadyCollected() {
         UUID collected = UUID.randomUUID();
         UUID pending = UUID.randomUUID();
-        when(flightBagService.bagsForOriginHub(any(), any())).thenReturn(List.of());
-        when(inboundQuery.landedInboundAwbs("HYD", DATE)).thenReturn(List.of(
+        when(flightBagService.bagsForOriginHub(any())).thenReturn(List.of());
+        when(inboundQuery.landedInboundAwbs("HYD")).thenReturn(List.of(
                 new InboundAwb(collected, "6E6025", DATE, "098-1", 3, NOW),
                 new InboundAwb(pending, "AI806", DATE, "098-2", 2, NOW)));
         when(legRepository.existsByAwbIdAndDirection(collected, ShuttleDirection.INBOUND)).thenReturn(true);
         when(legRepository.existsByAwbIdAndDirection(eq(pending), any())).thenReturn(false);
 
-        List<ShuttleQueueResponse.InboundFlight> in = service().queue("HYD", DATE).inbound();
+        List<ShuttleQueueResponse.InboundFlight> in = service().queue("HYD").inbound();
 
         assertThat(in).singleElement().satisfies(f -> assertThat(f.awbId()).isEqualTo(pending));
     }

@@ -253,8 +253,9 @@ class FlightBagServiceImpl implements FlightBagService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<FlightBag> bagsForOriginHub(String originHub, java.time.LocalDate date) {
-        return flightBagRepository.findByOriginHubAndFlightDate(originHub, date);
+    public List<FlightBag> bagsForOriginHub(String originHub) {
+        return flightBagRepository.findByOriginHubAndStatusIn(originHub,
+                java.util.List.of(FlightBagStatus.OPEN, FlightBagStatus.SEALED));
     }
 
     @Override

@@ -15,8 +15,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.Clock;
-import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
 
@@ -30,19 +28,17 @@ class ShuttleController {
 
     private final ShuttleQueueService queueService;
     private final ShuttleActionService actionService;
-    private final Clock clock;
 
-    ShuttleController(ShuttleQueueService queueService, ShuttleActionService actionService, Clock clock) {
+    ShuttleController(ShuttleQueueService queueService, ShuttleActionService actionService) {
         this.queueService = queueService;
         this.actionService = actionService;
-        this.clock = clock;
     }
 
     @GetMapping("/{agentId}/queue")
     public ShuttleQueueResponse queue(@AuthenticationPrincipal AuthUserDetails principal,
                                       @PathVariable UUID agentId) {
         ShuttleAuthz.requireAgent(principal, agentId);
-        return queueService.queue(ShuttleAuthz.city(principal), LocalDate.now(clock));
+        return queueService.queue(ShuttleAuthz.city(principal));
     }
 
     @PostMapping("/{agentId}/out-to-airport")

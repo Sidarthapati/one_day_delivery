@@ -1,7 +1,7 @@
 package com.oneday.airline.service;
 
-import com.oneday.airline.domain.Awb;
 import com.oneday.airline.domain.AwbParcel;
+import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.domain.FlightInstanceStatus;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
@@ -15,9 +15,11 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Public read for the M12 shuttle inbound queue: the AWBs arriving at a destination hub on a date whose
- * flight has actually <b>LANDED</b> (per the M9 status poll). The shuttle module subtracts the ones it
- * has already collected. Dynamic by construction — a flight that lands mid-drive simply starts matching.
+ * Public read for the M12 shuttle inbound queue: every live booking to a destination hub whose flight
+ * has <b>LANDED</b> and which has <b>not yet been collected</b> from the airport (its
+ * {@code dest_collected_at} is null). No date filter — a bag that landed yesterday and still hasn't been
+ * brought to the hub must still be collected today. Dynamic by construction: a flight that lands
+ * mid-drive simply starts matching, and an AWB drops off the moment any agent collects it.
  */
 @Service
 public class ShuttleInboundQueryService {
@@ -43,8 +45,8 @@ public class ShuttleInboundQueryService {
     }
 
     @Transactional(readOnly = true)
-    public List<InboundAwb> landedInboundAwbs(String destHub, LocalDate date) {
-        return awbRepository.findByDestHubAndFlightDate(destHub, date).stream()
+    public List<InboundAwb> landedInboundAwbs(String destHub) {
+        return awbRepository.findByDestHubAndStatusAndDestCollectedAtIsNull(destHub, AwbStatus.BOOKED).stream()
                 .map(a -> flightInstanceRepository
                         .findByFlightNoAndFlightDate(a.getFlightNo(), a.getFlightDate())
                         .filter(fi -> fi.getStatus() == FlightInstanceStatus.LANDED)
