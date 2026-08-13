@@ -24,12 +24,31 @@
 | **Drop** | Prasanna Apartment, Model Town, New Delhi 110033 (~28.7159, 77.1445) |
 | **DEL delivery mode** | **`HUB_RETURN`** ✅ (already set — delivery auto-assigns, no van needed) |
 
-**Done already** (steps 1–11 of the old chain, forced through ops-recovery where the M7 hub consumer was thin):
-`BOOKED → PICKUP_ASSIGNED → PICKED_UP → RETURNED_TO_HUB → AT_ORIGIN_HUB → ORIGIN_HUB_PROCESSING →
-IN_TAKEOFF_BAG → DISPATCHED_TO_AIRPORT → AT_AIRPORT → DEPARTED → LANDED`.
+### ✅ Already completed — the first mile + the flight (nothing for you to do here)
 
-**Left to do** (this card):
-`LANDED → DISPATCHED_TO_HUB → AT_DEST_HUB → DEST_HUB_PROCESSING → HUB_DELIVERY_ASSIGNED → COLLECTED_FROM_HUB → DROPPED`.
+This is why your card has **no pickup / hub / airport tasks** — they're all done. The parcel has already
+travelled the whole way from the Hyderabad sender to the Delhi airport:
+
+| ✅ | What happened | State reached |
+|---|---|---|
+| ✅ | Sender booked the parcel (HYD → DEL, prepaid) | `BOOKED` |
+| ✅ | Pickup auto-assigned to the HYD driver | `PICKUP_ASSIGNED` |
+| ✅ | HYD driver picked it up from the sender | `PICKED_UP` |
+| ✅ | Driver handed it to the Hyderabad hub | `RETURNED_TO_HUB` |
+| ✅ | Hub received + scanned it in | `AT_ORIGIN_HUB` |
+| ✅ | Hub sorted it into the flight bag | `ORIGIN_HUB_PROCESSING` → `IN_TAKEOFF_BAG` |
+| ✅ | Bag went to Hyderabad airport | `DISPATCHED_TO_AIRPORT` |
+| ✅ | Airline (GHA) took custody | `AT_AIRPORT` |
+| ✅ | Flight `6E6025` took off and **landed in Delhi** | `DEPARTED` → **`LANDED`** ← *you start here* |
+
+**👉 Your part — the Delhi last mile** (§5 below):
+
+| ⬜ | What you'll do | State it reaches |
+|---|---|---|
+| ⬜ | Shuttle agent collects it from Delhi airport | `DISPATCHED_TO_HUB` |
+| ⬜ | Delhi hub scans it in + sorts for delivery | `AT_DEST_HUB` → `DEST_HUB_PROCESSING` |
+| ⬜ | System assigns the delivery to Yash (auto) | `HUB_DELIVERY_ASSIGNED` |
+| ⬜ | Yash collects from hub + delivers to the door | `COLLECTED_FROM_HUB` → `DROPPED` ✅ |
 
 ---
 
