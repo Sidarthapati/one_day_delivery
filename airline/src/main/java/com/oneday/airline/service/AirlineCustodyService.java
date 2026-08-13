@@ -57,8 +57,17 @@ public class AirlineCustodyService {
     private void stampDestCollected(UUID awbId) {
         awbRepository.findById(awbId).ifPresent(awb -> {
             if (awb.getDestCollectedAt() == null) {
-                awb.setDestCollectedAt(Instant.now());
+                Instant at = Instant.now();
+                awb.setDestCollectedAt(at);
                 awbRepository.save(awb);
+                AuditLog.event("awb.dest_collected")   // the "off the airport, on its way to the hub" fact
+                        .kv("awbId", awbId)
+                        .kv("awbNo", awb.getAwbNo())
+                        .kv("flightNo", awb.getFlightNo())
+                        .kv("destHub", awb.getDestHub())
+                        .kv("parcelCount", awb.getParcelCount())
+                        .kv("collectedAt", at)
+                        .log();
             }
         });
     }
