@@ -99,12 +99,14 @@ the **DEL shuttle agent (Ash)**. The airline console's "Dest shuttle-in" button 
 
 ## 4. Pre-flight for the last mile — do these before you start
 
-| # | Check | How |
-|---|---|---|
-| **L0** | **Shuttle-queue state-fix deployed** (`airline V9_12` + state-based queries) | So the LANDED Aug-12 parcel shows in Ash's app regardless of date. Confirm after deploy: `GET $BASE/shuttle/eeceaa7e-07b2-48c8-8fef-a740312ff41e/queue` (as Ash) → the AWB appears under `inbound`. If `inbound` is empty, L0 isn't live yet. |
-| **L1** | **DEL delivery mode = `HUB_RETURN`** | ✅ already set. Confirm: `GET $BASE/routing/fleet/f47ac10b-58cc-4372-a567-0e02b2c3d479` → `"meeting_mode":"HUB_RETURN"`. |
-| **L2** | **DEL DA plan APPROVED + roster loaded for the run day** | Without an approved DEL territory plan + a loaded shift, `HUB_DELIVERY_ASSIGNED` never fires. Approve for the run day, then load: `POST $BASE/dispatch/admin/shift-load?date=<run-day>&shift=SHIFT_1`. (SHIFT_1 auto-loads 05:45 IST; force it if you start earlier.) |
-| **L3** | **`yash.s1` online in the driver app** | Log in as `yash.s1@oneday.test`, toggle **online** — needed for delivery auto-assign. |
+Run day is **2026-08-13, SHIFT_1**. L0–L2 are done; **only L3 is left, and Yash does it himself.**
+
+| # | Check | Status | Notes |
+|---|---|---|---|
+| **L0** | Shuttle-queue state-fix deployed (`airline V9_12` + state-based queries) | ✅ **done** | Live (PRs #102 + #103 merged & deployed). Verified: `GET $BASE/shuttle/eeceaa7e-07b2-48c8-8fef-a740312ff41e/queue` (as Ash) shows the AWB under `inbound`. |
+| **L1** | DEL delivery mode = `HUB_RETURN` | ✅ **done** | `GET $BASE/routing/fleet/f47ac10b-58cc-4372-a567-0e02b2c3d479` → `"meeting_mode":"HUB_RETURN"`. |
+| **L2** | DEL DA plan APPROVED + roster loaded (Aug 13, SHIFT_1) | ✅ **done** | Plan `fcc3b802` approved — **`yash.s1` owns all DEL territory** (3466 hexes, 100%). Roster loaded into the dispatch engine. *If the backend restarts before the run, re-run:* `POST $BASE/dispatch/admin/shift-load?date=2026-08-13&shift=SHIFT_1`. |
+| **L3** | `yash.s1` online in the driver app | ⬜ **Yash does this live** | The only step that can't be pre-done — it's a live GPS heartbeat. When Yash starts, he logs into `yash.s1@oneday.test` and toggles **online**. Required for delivery auto-assign (S3). |
 
 ---
 
@@ -161,7 +163,7 @@ UPDATE flight_instance SET departure = now() + interval '2 min', arrival = now()
 
 ---
 
-**Bottom line for tomorrow:** the parcel is sitting at **LANDED** in Delhi with everything downstream green
-(DEL = HUB_RETURN, both shuttle agents registered and working, queue is now state-based). Once the **L0
-state-fix is deployed**, the parcel just shows in Ash's app — then it's four screen taps (S1→S4) to
-**DELIVERED**. No SQL, no curl.
+**Bottom line:** the parcel is sitting at **LANDED** in Delhi and everything is prepped — the fix is live
+and the parcel already shows in Ash's app, DEL = HUB_RETURN, and the DEL roster is approved + loaded with
+`yash.s1` owning the territory (L0–L2 ✅). The **only** thing left before the run is **L3: Yash goes online**
+in the driver app. Then it's four screen taps (S1→S4) to **DELIVERED**. No SQL, no curl.
