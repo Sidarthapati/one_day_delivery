@@ -52,4 +52,23 @@ class MessagingConfigTest {
         assertThat(hub.eventType()).isEqualTo(HubEventType.STAND_ASSIGNED);
         assertThat(hub.shipmentId()).isEqualTo(shipmentId);
     }
+
+    /**
+     * DEST_SORT_COMPLETE ({@code DestSortCompleteEvent}) keys its parcel by {@code parcel_id}, not
+     * {@code shipment_id}. Without the alias on {@link HubEvent#shipmentId()} it bound to null, so the M4
+     * consumer's {@code shipmentId==null} guard silently dropped every dest-sort event and parcels froze
+     * at {@code AT_DEST_HUB}. This is the wire shape that event produces (java.time fields elided — the
+     * umbrella ignores them); the id must bind so the last mile can start.
+     */
+    @Test
+    void hubEventBindsParcelIdAliasToShipmentId() throws Exception {
+        UUID shipmentId = UUID.randomUUID();
+        String wire = "{\"parcel_id\":\"" + shipmentId + "\",\"eventType\":\"DEST_SORT_COMPLETE\","
+                + "\"city_id\":\"" + UUID.randomUUID() + "\",\"hub_id\":\"" + UUID.randomUUID() + "\"}";
+
+        HubEvent hub = mapper().readValue(wire, HubEvent.class);
+
+        assertThat(hub.shipmentId()).isEqualTo(shipmentId);   // was null before the @JsonAlias fix
+        assertThat(hub.eventType()).isEqualTo(HubEventType.DEST_SORT_COMPLETE);
+    }
 }
