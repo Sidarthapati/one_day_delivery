@@ -44,7 +44,12 @@ public class AeroDataBoxClient {
     private long nextAllowedAt = 0L;
 
     public AeroDataBoxClient(AeroDataBoxProperties properties) {
-        RestClient.Builder b = RestClient.builder().baseUrl(properties.getBaseUrl());
+        RestClient.Builder b = RestClient.builder()
+                .requestFactory(org.springframework.boot.web.client.ClientHttpRequestFactories.get(
+                        org.springframework.boot.web.client.ClientHttpRequestFactorySettings.DEFAULTS
+                                .withConnectTimeout(java.time.Duration.ofSeconds(3))
+                                .withReadTimeout(java.time.Duration.ofSeconds(10))))
+                .baseUrl(properties.getBaseUrl());
         if (!properties.getApiKey().isBlank()) {
             b = b.defaultHeader("x-rapidapi-key", properties.getApiKey());
         }

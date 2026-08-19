@@ -1,0 +1,44 @@
+# Production profile (SPRING_PROFILES_ACTIVE=prod). LOADED ON TOP of application.yml /
+# application.properties. This profile is intentionally NOT activated yet — staging continues on
+# the `staging` profile. Everything here is dormant hardening; cutover = flip the profile + supply
+# the prod env vars. See docs/prod-readiness/PROD-READINESS-NOW.md.
+#
+# Under prod:
+#   - all mock/dev beans (@Profile("!prod")) are excluded; MockGuard fails boot if any slips through.
+#   - ProdEnvGuard fails boot unless the required prod env vars are present and JWT_SECRET is strong.
+#   - NO localhost fallbacks — a missing datasource/broker var must fail fast, not dial localhost.
+
+server:
+  port: ${PORT:8080}
+
+spring:
+  datasource:
+    # No localhost default in prod — fail fast if the env var is absent.
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      # Flyway owns every DDL change — never let Hibernate touch the prod schema.
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    # Prod schema is clean (no dev checksum drift), so validate migrations on migrate.
+    validate-on-migrate: true
+    out-of-order: false
+  rabbitmq:
+    # No localhost default in prod — fail fast if CLOUDAMQP_URL is absent.
+    addresses: ${CLOUDAMQP_URL}
+
+logging:
+  level:
+    root: INFO
+    com.oneday: INFO
+
+# CORS — prod allows only the real Vercel console origins (comma-separated env override wins).
+# Staging keeps localhost/*.vercel.app in application.yml defaults; prod narrows it here.
+godspeed:
+  cors:
+    allowed-origins: ${GODSPEED_CORS_ALLOWED_ORIGINS:https://godspeed-customer.vercel.app,https://godspeed-business.vercel.app,https://godspeed-admin.vercel.app,https://godspeed-hub.vercel.app,https://godspeed-station.vercel.app,https://godspeed-airline.vercel.app}
+  ratelimit:
+    enabled: true

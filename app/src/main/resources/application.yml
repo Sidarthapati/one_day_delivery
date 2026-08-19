@@ -1,9 +1,36 @@
+server:
+  # Never leak internals in error responses: no stack trace, exception class, message, or binding
+  # errors in the body. These are Spring's defaults, pinned explicitly so a future change can't
+  # silently start leaking. Module @RestControllerAdvice handlers still return curated ProblemDetails.
+  error:
+    include-stacktrace: never
+    include-exception: false
+    include-message: never
+    include-binding-errors: never
+  tomcat:
+    # Bound the request-worker pool so a traffic spike degrades gracefully (queue + shed) instead of
+    # spawning unbounded threads. Env-overridable; right-size against the pool + load test (Branch 2).
+    threads:
+      max: ${TOMCAT_MAX_THREADS:200}
+      min-spare: 10
+    accept-count: 100
+    connection-timeout: 20000
+
 spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday?reWriteBatchedInserts=true}
     username: ${SPRING_DATASOURCE_USERNAME:oneday}
     password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Bounded pool: keep well under the Render Postgres connection budget so a single web instance
+      # (or a burst of them) can't exhaust the server's max_connections. Env-overridable for tuning
+      # once the load test (Branch 2) gives real numbers.
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN:2}
+      connection-timeout: 10000     # fail a checkout after 10s rather than hanging the request
+      max-lifetime: 1800000         # recycle connections every 30m (under managed-PG idle cutoffs)
+      keepalive-time: 300000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -42,6 +69,41 @@ spring:
 # M3 grid config. The assembled app loads ITS OWN application.yml (the grid module's is
 # shadowed on the classpath), so the cityCode→cityId map + H3 resolution must live here for
 # GridProperties to bind. Keep the UUIDs in sync with grid/src/main/resources/application.yml.
+# Cross-cutting prod-hardening config (dormant defaults for dev/staging). CORS origins here are
+# permissive for local + Vercel preview testing; application-prod.yml narrows them to the pinned
+# console origins. Rate limiting is OFF by default so staging load/testing is unthrottled; prod
+# turns it on. See docs/prod-readiness/PROD-READINESS-NOW.md.
+godspeed:
+  cors:
+    allowed-origins: ${GODSPEED_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001,http://localhost:3002,https://*.vercel.app}
+  ratelimit:
+    enabled: ${GODSPEED_RATELIMIT_ENABLED:false}
+
+# Observability. /actuator/health/** is public (load-balancer probe); every other actuator endpoint
+# (prometheus, metrics, info) sits behind auth via SecurityConfig's anyRequest().authenticated().
+# Health details are hidden from anonymous callers so a public probe never leaks component internals.
+# readiness = readinessState + DB (the app can't serve without Postgres); the broker is intentionally
+# excluded — it's lazy/optional, a flapping broker must not de-route traffic.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+      show-components: when-authorized
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  metrics:
+    tags:
+      application: oneday-delivery
+
 grid:
   h3:
     resolution: 8

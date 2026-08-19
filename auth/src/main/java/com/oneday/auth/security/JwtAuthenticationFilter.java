@@ -13,6 +13,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 
@@ -47,6 +48,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
+    // Only refresh lastUsedAt at most once per this interval — avoids a DB write on every single
+    // API-key request (which, at scale, is a write per call on the hot auth path).
+    private static final Duration LAST_USED_THROTTLE = Duration.ofMinutes(5);
+
     private void tryAuthenticateWithApiKey(String rawKey) {
         try {
             String hash = sha256Hex(rawKey);
@@ -54,8 +59,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 var user = apiKey.getUser();
                 if (!user.isActive())
                     return;
-                apiKey.setLastUsedAt(Instant.now());
-                apiKeyRepository.save(apiKey);
+                Instant now = Instant.now();
+                Instant last = apiKey.getLastUsedAt();
+                if (last == null || last.isBefore(now.minus(LAST_USED_THROTTLE))) {
+                    apiKey.setLastUsedAt(now);
+                    apiKeyRepository.save(apiKey);
+                }
                 setAuthentication(user);
             });
         } catch (Exception ignored) {

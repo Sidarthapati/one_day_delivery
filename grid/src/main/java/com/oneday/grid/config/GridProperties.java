@@ -27,6 +27,9 @@ public class GridProperties {
     public static class Osrm {
         private String baseUrl = "http://localhost:5000";
         private int adjacencyThresholdSeconds = 600;
+        // Bound every OSRM call so a hung/slow OSRM can't stall the nightly grid replan.
+        private int connectTimeoutMs = 3000;
+        private int readTimeoutMs = 15000;
     }
 
     @Data

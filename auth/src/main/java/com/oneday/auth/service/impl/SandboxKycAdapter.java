@@ -39,7 +39,18 @@ class SandboxKycAdapter implements KycPort {
 
     SandboxKycAdapter(KycProperties props) {
         this.props = props;
-        this.http = RestClient.builder().baseUrl(props.getBaseUrl()).build();
+        this.http = RestClient.builder()
+                .requestFactory(timedFactory())
+                .baseUrl(props.getBaseUrl())
+                .build();
+    }
+
+    // Bounded connect/read timeouts so a hung KYC sandbox can't stall an onboarding request thread.
+    private static org.springframework.http.client.ClientHttpRequestFactory timedFactory() {
+        return org.springframework.boot.web.client.ClientHttpRequestFactories.get(
+                org.springframework.boot.web.client.ClientHttpRequestFactorySettings.DEFAULTS
+                        .withConnectTimeout(java.time.Duration.ofSeconds(3))
+                        .withReadTimeout(java.time.Duration.ofSeconds(10)));
     }
 
     @Override
@@ -126,6 +137,7 @@ class SandboxKycAdapter implements KycPort {
         // Sandbox expects the RAW access token in Authorization (no "Bearer " prefix).
         String token = auth == null ? null : str(auth.get("access_token"));
         return RestClient.builder()
+                .requestFactory(timedFactory())
                 .baseUrl(props.getBaseUrl())
                 .defaultHeader("Authorization", token == null ? "" : token)
                 .defaultHeader("x-api-key", props.getApiKey())

@@ -3,7 +3,7 @@
 **Purpose.** One durable backlog of every feature/change requested by internal & ops stakeholders,
 round by round. Each request carries a **verdict** (is it implemented today?), **code evidence**, a
 **recommended approach**, **effort**, and **priority** — so we can keep building features on the go
-while hardening for prod (see [`PROD-READINESS-PLAN.md`](./PROD-READINESS-PLAN.md)).
+while hardening for prod (see [`PROD-READINESS-PLAN.md`](./prod-readiness/PROD-READINESS-PLAN.md)).
 
 **How to use.**
 - Add each new stakeholder round as a **new dated section at the top**, same columns.
@@ -55,7 +55,7 @@ buffers 20k small messages trivially). This decouples *arrival rate* from *DB co
 exactly the "delay not loss" behaviour we want.
 
 **Pairs with** pool/thread tuning + a load-tested capacity target — see
-[`PROD-READINESS-PLAN.md`](./PROD-READINESS-PLAN.md) Gate B5 (tuning) and Gate D4 (burst load test).
+[`PROD-READINESS-PLAN.md`](./prod-readiness/PROD-READINESS-PLAN.md) Gate B5 (tuning) and Gate D4 (burst load test).
 Cheapest wins first: (1) tune Hikari pool + Tomcat threads (free, config) → ~50–100/sec; (2) bigger
 Postgres/Render ($450) → ~200–500/sec (**Postgres is the true ceiling; RabbitMQ is not the
 bottleneck for orders/sec**); (3) this async intake → burst-safe; (4) multi-instance needs PgBouncer.

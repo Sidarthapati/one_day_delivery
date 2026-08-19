@@ -44,6 +44,10 @@ class RazorpayXPayoutAdapter implements PayoutPort {
         String basic = Base64.getEncoder().encodeToString(
                 (props.getRazorpayxKeyId() + ":" + props.getRazorpayxKeySecret()).getBytes(StandardCharsets.UTF_8));
         this.http = RestClient.builder()
+                .requestFactory(org.springframework.boot.web.client.ClientHttpRequestFactories.get(
+                        org.springframework.boot.web.client.ClientHttpRequestFactorySettings.DEFAULTS
+                                .withConnectTimeout(java.time.Duration.ofSeconds(3))
+                                .withReadTimeout(java.time.Duration.ofSeconds(15))))
                 .baseUrl(BASE)
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Basic " + basic)
                 .build();
