@@ -10,6 +10,10 @@ on-the-go changes ops keeps requesting (tracked in [`CHANGE-REQUESTS.md`](./CHAN
 > This is a living plan. Dates are gate windows, not rigid sprints — a gate closes when its **exit
 > criteria** are met. Nothing in Gate A is negotiable before a real user touches production.
 
+> **Companion:** [`PROD-READINESS-NOW.md`](./PROD-READINESS-NOW.md) — the *do-now* subset: every
+> checklist item classified into what we can build **before** the company/creds exist **without
+> blocking testing** (profile-gated dormant hardening), plus the phased `f-prod-hardening` branches.
+
 ---
 
 ## 1. Context
@@ -58,6 +62,20 @@ Severity: **P0** = forge/expose risk, fix before any real user · **P1** = GA-re
 — SHA-256 body fingerprint, 24h TTL, replay); DLQ topology + ADMIN replay tooling; Flyway-owned
 schema; `open-in-view=false`; batch-insert tuning; gitignored `.env` with only placeholder secrets;
 CI (build + CodeQL + Trivy CVE + gitleaks).
+
+### 2.1 Capacity snapshot (estimates — pending Gate D4 load test)
+
+Booking intake is **synchronous** and all throughput knobs are unset (Spring defaults: Tomcat 200
+threads / accept 100; HikariCP pool 10) → effective booking concurrency ≈ **10**.
+
+| Config | Est. sustained orders/sec | Burst (e.g. 20k) behaviour |
+|--------|:-------------------------:|----------------------------|
+| **Now** (Render starter, defaults) | ~**10–30** | Intake **can drop** — beyond ~200 concurrent + 100 queued, excess requests are refused/timeout (`5xx`/TCP reset). Post-commit events are durable (delay-not-loss). |
+| **+ tuning** (pool/threads, free — Gate B5) | ~**50–100** | Same shape, higher ceiling. |
+| **+ $450 Render + bigger Postgres** | ~**200–500** | Postgres is the true ceiling; **RabbitMQ ($300) is not the orders/sec bottleneck** — it buffers events easily. |
+| **+ async intake** (CR-008) | decoupled from DB | Burst = **pure delay, no loss** (durable queue). |
+
+Detail + approach in **CR-008** ([`CHANGE-REQUESTS.md`](./CHANGE-REQUESTS.md)).
 
 ---
 
@@ -138,8 +156,12 @@ scoped · brute-force capped · no unbounded external call.
   missing one (dispatch, routing, grid, airline, shuttle, sla, barcode); one consistent error envelope.
 - **B3 `[auth]`** Short-lived access token + refresh-token rotation + revocation list; cut the 8h TTL.
 - **B4** Make API-key `lastUsedAt` async/throttled (no DB write per request).
-- **B5 `[data]`** Set Flyway `validate-on-migrate=true` after reconciling drifted grid migrations;
-  size HikariCP explicitly against the bulk-pricing pool + Render Postgres connection limit.
+- **B5 `[data/capacity]`** Set Flyway `validate-on-migrate=true` after reconciling drifted grid
+  migrations. **Tune the throughput knobs** (all currently unset → Spring defaults: Tomcat 200
+  threads / accept 100 / 20s timeout; HikariCP pool 10): size HikariCP explicitly against the
+  bulk-pricing pool + Render Postgres `max_connections`, size Tomcat worker threads, and set a sane
+  connection-timeout. Effective booking concurrency today ≈ the pool (10), so this alone lifts
+  intake from ~10–30 to ~50–100 orders/sec. See CR-008 in [`CHANGE-REQUESTS.md`](./CHANGE-REQUESTS.md).
 - **B6** Reconcile `autoStartup=false` consumers with their producers so no queue silently DLQs.
 
 **Exit B:** all external calls fault-isolated · uniform errors · safe token lifecycle · migrations
@@ -173,9 +195,12 @@ end · dashboards live.
   camera, with a documented pass/fail sheet: label mint · pickup · `HUB_ORIGIN_IN/OUT` ·
   `GHA_ACCEPTANCE` · `VAN_LOAD/UNLOAD` · `DEST_SHUTTLE_IN` · `HUB_DEST_IN/OUT` · `HUB_COLLECT` ·
   `DELIVERED`. Include the UPI/Wi-Fi/URL-QR false-read guard (`oneday-driver-app/src/scan.ts`).
-- **D4 Load test.** k6/Gatling against staging at target GA scale — booking, quote, payment,
-  tracking, scan ingest, telemetry. Find the DB-pool / OSRM / broker ceiling; record a **capacity
-  plan** and set pool/autoscale sizes from the results.
+- **D4 Load test + burst test.** k6/Gatling against staging — (a) *sustained* at target GA scale
+  (booking, quote, payment, tracking, scan ingest, telemetry) to find the DB-pool / OSRM / broker
+  ceiling and set a **target orders/sec**; (b) a *burst* test (e.g. 20k spike) to prove behaviour
+  under overload. Record a **capacity plan** and set pool/autoscale sizes from the results. If the
+  burst test shows intake-side loss (rejected requests), it validates the need for **CR-008 (async
+  `202` + queue intake)** so a burst becomes delay-not-loss rather than dropped orders.
 
 **Exit D:** green e2e in CI · FE + mobile E2E green · scan checklist 100% pass · load test hits
 target throughput with headroom + documented capacity plan.

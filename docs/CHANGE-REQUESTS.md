@@ -15,6 +15,54 @@ Verdict `NO` / `PARTIAL` / `YES`. Status `Open` / `In progress` / `Done`.
 
 ---
 
+## Round 2 — Engineering / capacity · logged 2026-08-17
+
+| ID | Request | Verdict today | Effort | Priority | Status |
+|----|---------|:-------------:|:------:|:--------:|:------:|
+| CR-008 | **Async booking intake** (`202` + queue) so an order burst delays, not drops | **NO** | M | High | Open |
+
+---
+
+### CR-008 — Async booking intake (burst = delay, not loss)
+
+**Verdict: NO.** Order intake is **fully synchronous**. `B2cShipmentController` /
+`B2bShipmentController` return `BookingResponse` directly — no `202 Accepted`, no `@Async`, no queue.
+There is also **no `server.tomcat.*` or `spring.datasource.hikari.*` tuning** anywhere, so the app
+runs on Spring defaults:
+
+- Tomcat worker threads **200**, accept queue (`acceptCount`) **100**, connection-timeout **20s**.
+- HikariCP DB pool **10**.
+
+Because a booking is DB-heavy, effective concurrency ≈ **the pool (10)**, not 200 — the other
+threads block waiting for a connection (Hikari waits ~30s then throws `500`). **Estimated current
+capacity ~10–30 orders/sec** (untested — pending the Gate D4 load test).
+
+**Under a burst (e.g. 20k simultaneous):** ~10 process, ~190 block then `500`, ~100 wait in the
+accept queue, and the **remaining ~19,700 are refused (TCP reset)** — i.e. **loss at the door**.
+Idempotency keys (`IdempotencyFilter`) make a client *retry* safe, but nothing retries
+automatically. Note: everything *after* commit is already durable (events publish AFTER_COMMIT to
+durable queues + DLQ) → downstream is delay-not-loss; only **intake** can drop.
+
+**Recommended approach.** Split intake from fulfilment:
+1. Booking endpoint validates cheaply (auth, schema, serviceability), **enqueues the booking command
+   to RabbitMQ (durable)**, and returns **`202 Accepted` + a booking-request/tracking id**.
+2. A consumer processes commands at a **DB-safe rate**; the client polls / gets a webhook for the
+   final `shipmentRef` + payment outcome.
+3. Reuse the existing idempotency key as the command dedupe key so retries never double-book.
+
+A 20k burst then just **fills the queue = pure delay, zero loss** (durable messages; RabbitMQ
+buffers 20k small messages trivially). This decouples *arrival rate* from *DB commit rate* —
+exactly the "delay not loss" behaviour we want.
+
+**Pairs with** pool/thread tuning + a load-tested capacity target — see
+[`PROD-READINESS-PLAN.md`](./PROD-READINESS-PLAN.md) Gate B5 (tuning) and Gate D4 (burst load test).
+Cheapest wins first: (1) tune Hikari pool + Tomcat threads (free, config) → ~50–100/sec; (2) bigger
+Postgres/Render ($450) → ~200–500/sec (**Postgres is the true ceiling; RabbitMQ is not the
+bottleneck for orders/sec**); (3) this async intake → burst-safe; (4) multi-instance needs PgBouncer.
+**Effort M · Priority High.**
+
+---
+
 ## Round 1 — Internal presentation review · logged 2026-08-17
 
 | ID | Request | Verdict today | Effort | Priority | Status |
@@ -161,10 +209,14 @@ flowchart LR
     CR003["CR-003 · Route on map"]
     CR006["CR-006 · Van/DA registration review"]
     CR007["CR-007 · Merchant viewer"]
+    CR008["CR-008 · Async intake<br/>(burst-safe)"]:::hi
+    CR008 -. hardening .-> GATE["PROD-READINESS · Gate B5 + D4"]:::ext
     classDef hi fill:#fde68a,stroke:#b45309,color:#000;
+    classDef ext fill:#dbeafe,stroke:#1e40af,color:#000;
 ```
 
-*High priority:* CR-001, CR-002, CR-004. *CR-005 is gated on CR-004.*
+*High priority:* CR-001, CR-002, CR-004, CR-008. *CR-005 is gated on CR-004.*
+*CR-008 ties into the prod-readiness capacity work (Gate B5 tuning + Gate D4 burst load test).*
 
 ---
 
