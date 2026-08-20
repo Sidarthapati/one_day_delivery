@@ -42,6 +42,25 @@ class UserManagementE2eTest extends AuthE2eSupport {
                 .andExpect(status().isOk());
     }
 
+    // vuln-0015 (privilege escalation, fail closed): a Station Manager must NOT mint an ADMIN
+    // (ADMIN is not city-scoped, so it previously slipped past the city-only guard).
+    @Test
+    void stationManagerCannotCreateAdmin() throws Exception {
+        String smToken = tokenForRole("STATION_MANAGER");
+        mvc.perform(asJson(post("/users").header("Authorization", bearer(smToken)),
+                        new RegisterUserRequest("Evil Admin", uniqueEmail(), PW, "ADMIN", "DEL")))
+                .andExpect(status().isForbidden());
+    }
+
+    // …nor a peer Station Manager.
+    @Test
+    void stationManagerCannotCreatePeerStationManager() throws Exception {
+        String smToken = tokenForRole("STATION_MANAGER");
+        mvc.perform(asJson(post("/users").header("Authorization", bearer(smToken)),
+                        new RegisterUserRequest("Peer SM", uniqueEmail(), PW, "STATION_MANAGER", "DEL")))
+                .andExpect(status().isForbidden());
+    }
+
     // A customer has no user-provisioning rights → 403.
     @Test
     void customerCannotCreateUser() throws Exception {

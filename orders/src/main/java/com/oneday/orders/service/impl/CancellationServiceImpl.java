@@ -82,13 +82,21 @@ class CancellationServiceImpl implements CancellationService {
             throw new EntityNotFoundException("Shipment not found: " + shipmentRef);
         }
 
+        // Ownership guard — the caller must have booked this shipment. Fail CLOSED: a null booker
+        // must not bypass the check (that would let any authenticated user cancel it). 404 (not 403)
+        // so a caller cannot probe for shipments owned by other users (same reasoning as the lane guard).
+        if (shipment.getBookedByUserId() == null
+                || !shipment.getBookedByUserId().toString().equals(userId)) {
+            throw new EntityNotFoundException("Shipment not found: " + shipmentRef);
+        }
+
         return doCancel(shipment, reason, userId, false);
     }
 
     @Override
     @Transactional
     public CancellationResponse cancelAsAdmin(String shipmentRef, String reason, String userId) {
-        // No lane guard (admin cancels any lane) and ownership is bypassed below.
+        // No lane guard (admin cancels any lane) and no ownership guard — admin acts on behalf of any user.
         Shipment shipment = shipmentRepository.findByShipmentRef(shipmentRef)
                 .orElseThrow(() -> new EntityNotFoundException("Shipment not found: " + shipmentRef));
         return doCancel(shipment, reason, userId, true);
@@ -179,10 +187,11 @@ class CancellationServiceImpl implements CancellationService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "B2B account not found: " + shipment.getB2bAccountId()));
 
-        // Admin (bypassOwnership) cancels on behalf of the account; customers must own it.
+        // Admin (bypassOwnership) cancels on behalf of the account; customers must own it. Fail
+        // CLOSED — a null owner must not let a non-owning B2B user reverse credit on this account.
         if (!bypassOwnership
-                && account.getOwnerUserId() != null
-                && !account.getOwnerUserId().toString().equals(userId)) {
+                && (account.getOwnerUserId() == null
+                    || !account.getOwnerUserId().toString().equals(userId))) {
             throw new AccountAccessException(
                     "User " + userId + " does not own account " + account.getId());
         }

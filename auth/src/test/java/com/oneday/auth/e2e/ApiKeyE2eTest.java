@@ -31,7 +31,7 @@ class ApiKeyE2eTest extends AuthE2eSupport {
         String token = tokenForRole("B2C_CUSTOMER");
         String rawKey = createKey(token, "machine-key");
 
-        mvc.perform(get("/roles").header("X-Api-Key", rawKey))
+        mvc.perform(get("/auth/api-keys").header("X-Api-Key", rawKey))
                 .andExpect(status().isOk());
     }
 
@@ -48,7 +48,7 @@ class ApiKeyE2eTest extends AuthE2eSupport {
         mvc.perform(delete("/auth/api-keys/{id}", keyId).header("Authorization", bearer(token)))
                 .andExpect(status().isNoContent());
 
-        mvc.perform(get("/roles").header("X-Api-Key", rawKey))
+        mvc.perform(get("/auth/api-keys").header("X-Api-Key", rawKey))
                 .andExpect(status().isUnauthorized());
     }
 

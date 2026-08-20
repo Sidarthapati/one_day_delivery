@@ -107,8 +107,9 @@ class WebhookServiceImpl implements WebhookService {
         if (isBlank(trimmed)) {
             a.setWebhookUrl(null);   // clearing the URL disables webhooks (secret kept for re-enable)
         } else {
-            if (!trimmed.startsWith("https://") && !trimmed.startsWith("http://")) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Webhook URL must be http(s)");
+            String unsafe = SsrfGuard.reasonIfUnsafe(trimmed);
+            if (unsafe != null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid webhook URL: " + unsafe);
             }
             a.setWebhookUrl(trimmed);
             if (regenerateSecret || isBlank(a.getWebhookSecret())) {
@@ -158,6 +159,17 @@ class WebhookServiceImpl implements WebhookService {
         d.setUrl(url);
         d.setPayload(json);
         d.setStatus(WebhookDeliveryStatus.PENDING);
+
+        // SSRF guard at delivery time too — a stored URL may now resolve to an internal address, and
+        // dispatchForTransition auto-fires this on every shipment state change. Skip (mark FAILED),
+        // never throw, so a bad URL cannot break the state-change flow.
+        String ssrf = SsrfGuard.reasonIfUnsafe(url);
+        if (ssrf != null) {
+            d.setStatus(WebhookDeliveryStatus.FAILED);
+            d.setError("blocked: " + ssrf);
+            log.warn("Webhook {} → {} blocked by SSRF guard: {}", event, url, ssrf);
+            return deliveries.save(d);
+        }
 
         String signature = secret == null ? "" : WebhookSignatures.sign(json, secret);
         try {

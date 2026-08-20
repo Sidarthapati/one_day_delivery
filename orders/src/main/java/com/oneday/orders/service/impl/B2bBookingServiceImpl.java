@@ -121,9 +121,9 @@ class B2bBookingServiceImpl implements B2bBookingService {
             throw new AccountInactiveException(
                     "B2B account is inactive: " + req.getB2bAccountId());
         }
-        // Ownership: the caller must own the account (when an owner is set). Prevents one
-        // B2B user drawing down another account's credit. ADMIN-on-behalf is not modelled yet.
-        if (account.getOwnerUserId() != null && !account.getOwnerUserId().toString().equals(userId)) {
+        // Ownership: the caller must own the account. Fail CLOSED — a null ownerUserId must NOT
+        // let any B2B user draw down this account's credit/wallet. ADMIN-on-behalf is not modelled yet.
+        if (account.getOwnerUserId() == null || !account.getOwnerUserId().toString().equals(userId)) {
             throw new AccountAccessException(
                     "Caller is not authorized for B2B account: " + req.getB2bAccountId());
         }

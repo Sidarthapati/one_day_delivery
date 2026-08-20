@@ -81,7 +81,8 @@ class B2bBookingServiceImplTest {
     private B2bBookingServiceImpl service;
 
     private static final String IDEMPOTENCY_KEY = "idem-b2b-123";
-    private static final String USER_ID         = "user-b2b-abc";
+    private static final UUID   OWNER_ID        = UUID.randomUUID();
+    private static final String USER_ID         = OWNER_ID.toString();
     private static final String SHIPMENT_REF    = "1DD-BLR-20260530-00001";
     private static final UUID   SHIPMENT_ID     = UUID.randomUUID();
     private static final UUID   ACCOUNT_ID      = UUID.randomUUID();
@@ -181,6 +182,33 @@ class B2bBookingServiceImplTest {
                 .isInstanceOf(B2bBookingService.AccountInactiveException.class);
 
         verify(serviceabilityPort, never()).check(any());
+        verify(shipmentRepository, never()).save(any());
+    }
+
+    // ── ownership (fail closed) ──────────────────────────────────────────────
+
+    @Test
+    void book_callerDoesNotOwnAccount_throwsAccountAccessException() {
+        B2bAccount ownedByOther = activeAccount(0L, 1_000_000L);
+        ownedByOther.setOwnerUserId(UUID.randomUUID()); // a different user owns it
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(ownedByOther));
+
+        assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID))
+                .isInstanceOf(B2bBookingService.AccountAccessException.class);
+
+        verify(serviceabilityPort, never()).check(any());
+        verify(shipmentRepository, never()).save(any());
+    }
+
+    @Test
+    void book_accountHasNoOwner_throwsAccountAccessException() {
+        B2bAccount noOwner = activeAccount(0L, 1_000_000L);
+        noOwner.setOwnerUserId(null); // fail closed: an ownerless account is not drawable
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(noOwner));
+
+        assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID))
+                .isInstanceOf(B2bBookingService.AccountAccessException.class);
+
         verify(shipmentRepository, never()).save(any());
     }
 
@@ -301,6 +329,7 @@ class B2bBookingServiceImplTest {
         acc.setCityId("BLR");
         acc.setIsActive(true);
         acc.setRateCardId(RATE_CARD_ID);
+        acc.setOwnerUserId(OWNER_ID); // caller (USER_ID) owns the account
         return acc;
     }
 
