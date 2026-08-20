@@ -15,6 +15,18 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
 
     Optional<RefreshToken> findByTokenHash(String tokenHash);
 
+    /**
+     * Atomically claim a token for rotation: revoke it <em>only if it is still active</em>. Returns
+     * the number of rows updated — exactly one caller of N concurrent {@code /auth/refresh} requests
+     * with the same token gets {@code 1} (the winner); the rest get {@code 0}. This is what makes the
+     * "a refresh token is used at most once" invariant hold under concurrency.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE RefreshToken t SET t.revokedAt = :now "
+            + "WHERE t.tokenHash = :hash AND t.revokedAt IS NULL")
+    int revokeIfActive(@Param("hash") String tokenHash, @Param("now") Instant now);
+
     /** Revoke every still-active token in a family — the theft response on reuse detection. */
     @Modifying
     @Transactional

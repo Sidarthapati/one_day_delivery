@@ -1,10 +1,11 @@
 name: E2E (Postgres)
 
 # Runs the @Tag("e2e") suites (auth/orders/dispatch) against a real Postgres — the tests that CI's
-# main build skips (`-DexcludedGroups=e2e`). Manual for now: see ops/ci/README.md for why it's not
-# yet on the PR gate (the module e2e tests use ddl-auto=validate against a PRE-EXISTING full schema,
-# and a from-scratch DB currently trips the V1_12-before-V10 migration ordering issue — so this job
-# loads a committed schema baseline instead of building the schema from zero).
+# main build skips (`-DexcludedGroups=e2e`). Builds the full schema from scratch with real Flyway
+# (now that the migration set is ordering-correct — the onboarding-vs-auth ordering defect was fixed
+# in Route 1: V10/V11 renamed to V1_11_1/V1_11_2 so they precede V1_12/V1_13). The module e2e tests
+# use ddl-auto=validate + module-scoped Flyway, so they need the schema + flyway_schema_history
+# already present — which this Flyway migrate builds. Manual (workflow_dispatch), not on the PR gate.
 on:
   workflow_dispatch:
 
@@ -40,16 +41,19 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Load schema baseline
-        # The baseline is a full pg_dump (schema + flyway_schema_history) of a cleanly-migrated DB,
-        # so the module-scoped Flyway runs find their migrations already recorded (no-op) and
-        # ddl-auto=validate has a schema to validate against. Absent = job can't run yet (blocker).
+      - name: Build schema from scratch (real Flyway, all modules)
+        # Flatten every module's main-DB migration (exclude the separate consolidator DB) into one
+        # location and let Flyway apply them in version order, recording flyway_schema_history with
+        # real checksums — so the module-scoped Flyway in the tests sees its migrations as applied.
+        # Verified locally: all 123 migrations apply cleanly from scratch in order.
         run: |
-          if [ ! -f ops/ci/schema-baseline.sql ]; then
-            echo "::error::ops/ci/schema-baseline.sql missing — see ops/ci/README.md (migration-ordering prerequisite). Skipping e2e."
-            exit 1
-          fi
-          PGPASSWORD=ignored psql -h localhost -U oneday -d oneday -v ON_ERROR_STOP=1 -f ops/ci/schema-baseline.sql
+          mkdir -p /tmp/sql
+          find . -name 'V*.sql' -path '*/src/main/resources/db/migration/*' \
+            ! -path '*/target/*' ! -path '*migration-consolidator*' -exec cp {} /tmp/sql/ \;
+          echo "applying $(ls /tmp/sql | wc -l) migrations"
+          docker run --rm --network host -v /tmp/sql:/flyway/sql flyway/flyway:10-alpine \
+            -url=jdbc:postgresql://localhost:5432/oneday -user=oneday -password= \
+            -outOfOrder=true -connectRetries=10 migrate
 
       - name: Run e2e-tagged tests
         run: mvn install -Dgroups=e2e --batch-mode --no-transfer-progress

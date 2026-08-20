@@ -14,10 +14,18 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,27 +53,47 @@ class RefreshTokenServiceImplTest {
         repository = mock(RefreshTokenRepository.class);
         userRepository = mock(UserRepository.class);
 
+        // All mutating answers synchronize on `store` so the mock models a serialized DB — the
+        // concurrency test relies on revokeIfActive being atomic (only the first caller flips the row).
         when(repository.save(any(RefreshToken.class))).thenAnswer(inv -> {
-            RefreshToken t = inv.getArgument(0);
-            if (idOf(t) == null) {
-                setId(t, UUID.randomUUID());
-            }
-            store.put(t.getTokenHash(), t);
-            return t;
-        });
-        when(repository.findByTokenHash(any())).thenAnswer(inv ->
-                Optional.ofNullable(store.get(inv.getArgument(0, String.class))));
-        when(repository.revokeFamily(any(), any())).thenAnswer(inv -> {
-            UUID fam = inv.getArgument(0);
-            Instant now = inv.getArgument(1);
-            int n = 0;
-            for (RefreshToken t : store.values()) {
-                if (t.getFamilyId().equals(fam) && t.getRevokedAt() == null) {
-                    t.setRevokedAt(now);
-                    n++;
+            synchronized (store) {
+                RefreshToken t = inv.getArgument(0);
+                if (idOf(t) == null) {
+                    setId(t, UUID.randomUUID());
                 }
+                store.put(t.getTokenHash(), t);
+                return t;
             }
-            return n;
+        });
+        when(repository.findByTokenHash(any())).thenAnswer(inv -> {
+            synchronized (store) {
+                return Optional.ofNullable(store.get(inv.getArgument(0, String.class)));
+            }
+        });
+        // Atomic claim: revoke only if currently active; return 1 to exactly one concurrent caller.
+        when(repository.revokeIfActive(any(), any())).thenAnswer(inv -> {
+            synchronized (store) {
+                RefreshToken t = store.get(inv.getArgument(0, String.class));
+                if (t != null && t.getRevokedAt() == null) {
+                    t.setRevokedAt(inv.getArgument(1));
+                    return 1;
+                }
+                return 0;
+            }
+        });
+        when(repository.revokeFamily(any(), any())).thenAnswer(inv -> {
+            synchronized (store) {
+                UUID fam = inv.getArgument(0);
+                Instant now = inv.getArgument(1);
+                int n = 0;
+                for (RefreshToken t : store.values()) {
+                    if (t.getFamilyId().equals(fam) && t.getRevokedAt() == null) {
+                        t.setRevokedAt(now);
+                        n++;
+                    }
+                }
+                return n;
+            }
         });
 
         Role role = new Role();
@@ -109,11 +137,15 @@ class RefreshTokenServiceImplTest {
     }
 
     @Test
-    void rotate_reuseOfRevokedToken_revokesWholeFamilyAndThrows() {
+    void rotate_laterReuseOfRotatedToken_revokesWholeFamilyAndThrows() {
         RefreshTokenService.Issued first = service.issue(user);
+        RefreshToken firstEntity = store.values().iterator().next();
         RefreshTokenService.Rotation rot = service.rotate(first.rawToken()); // first now revoked
 
-        // Replaying the already-rotated first token = theft signal.
+        // Simulate a genuine *later* replay of the long-rotated token (well beyond the grace window) —
+        // a stolen-token replay, not a near-simultaneous double-submit.
+        firstEntity.setRevokedAt(Instant.now().minusSeconds(120));
+
         assertThatThrownBy(() -> service.rotate(first.rawToken()))
                 .isInstanceOf(InvalidRefreshTokenException.class);
 
@@ -121,6 +153,46 @@ class RefreshTokenServiceImplTest {
         // The successor is now revoked too — the family is dead.
         RefreshToken successor = store.get(sha256Hex(rot.rawToken()));
         assertThat(successor.getRevokedAt()).isNotNull();
+    }
+
+    @Test
+    void rotate_concurrentRequests_exactlyOneSucceeds_familyNotNuked() throws Exception {
+        RefreshTokenService.Issued issued = service.issue(user);
+
+        int n = 12;
+        ExecutorService pool = Executors.newFixedThreadPool(n);
+        CountDownLatch ready = new CountDownLatch(n);
+        CountDownLatch go = new CountDownLatch(1);
+        AtomicInteger ok = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (int i = 0; i < n; i++) {
+            futures.add(pool.submit(() -> {
+                ready.countDown();
+                go.await(); // all threads pile onto the same token at once
+                try {
+                    service.rotate(issued.rawToken());
+                    ok.incrementAndGet();
+                } catch (InvalidRefreshTokenException e) {
+                    rejected.incrementAndGet();
+                }
+                return null;
+            }));
+        }
+        ready.await(5, TimeUnit.SECONDS);
+        go.countDown();
+        for (Future<?> f : futures) {
+            f.get(5, TimeUnit.SECONDS);
+        }
+        pool.shutdownNow();
+
+        // The invariant: a refresh token is used at most once — exactly one rotation succeeds.
+        assertThat(ok.get()).isEqualTo(1);
+        assertThat(rejected.get()).isEqualTo(n - 1);
+        // A benign concurrent double-submit must not nuke the family — the winner's successor is the
+        // single surviving active token.
+        assertThat(store.values().stream().filter(RefreshToken::isActive).count()).isEqualTo(1);
     }
 
     @Test

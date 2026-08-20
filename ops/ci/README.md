@@ -1,57 +1,45 @@
-# CI: e2e-in-CI prerequisite
+# CI: e2e-in-CI
 
 The main CI build (`.github/workflows/ci.yml`) runs the mock suite with `-DexcludedGroups=e2e`
 because it has no database. `.github/workflows/e2e.yml` runs the excluded `@Tag("e2e")` suites
-(auth/orders/dispatch) against a real Postgres 16 service — but it is **manual-only** until the
-prerequisite below is met.
+(auth/orders/dispatch) against a real Postgres 16 service. Manual (`workflow_dispatch`), not on the
+PR gate.
 
-## Why it can't just `flyway migrate` a fresh DB
+## How the schema is built (real Flyway, from scratch)
 
-The module e2e tests deliberately don't build the schema themselves:
+The module e2e tests use `ddl-auto=validate` with module-scoped Flyway (auth's Flyway is disabled),
+so they need the full schema **and** `flyway_schema_history` already present. The e2e job builds both
+by flattening every module's main-DB migration into one location and running **real Flyway migrate**
+— which applies them in version order and records history with correct checksums. No committed schema
+dump is involved anymore.
 
-- `auth` test → Flyway **disabled**, `ddl-auto=validate` (expects the schema to already exist).
-- `orders` / `dispatch` tests → Flyway **scoped to that one module's** migrations only, with
-  `validate-on-migrate=false`, `ddl-auto=validate`. They assume the *other* modules' tables
-  (`users`, grid, onboarding, …) are already present — because on the shared dev DB they always are.
+This works because the migration set is now **ordering-correct from scratch** (see below). Verified
+locally: all 123 migrations apply cleanly in order into a fresh Postgres 16.
 
-So on a truly empty DB, orders' FK to `users` (and similar) has nothing to point at, and — the real
-blocker — **the full migration set doesn't apply from scratch in version order**: `V1_12` (auth,
-which ALTERs `onboarding_requests`) sorts before `V10` (top-level, which CREATEs
-`onboarding_requests`). `out-of-order=true` doesn't help: a single migrate pass still runs ascending,
-so `V1_12` runs before `V10` and fails. Render/staging never hit this because they accreted
-migrations in commit order over time.
+## The migration-ordering fix (Route 1 — done)
 
-## Status: baseline committed ✅
+Previously a fresh DB could not be migrated: `V1_12` (auth) `ALTER`ed `onboarding_requests`, but that
+table was created in `V10` and phone-column added in `V11` — and Flyway sorts `1.12 < 10 < 11`, so the
+alter ran before the create. Render/staging never hit it (they accreted migrations in commit order).
 
-`ops/ci/schema-baseline.sql` has been generated (pg_dump of a fully-migrated DB: full schema + 116
-`flyway_schema_history` rows) with the Branch 2 `refresh_tokens` (V1_16) appended, and **verified to
-load cleanly into a fresh Postgres 16** (77 tables, 117 history rows, `refresh_tokens` present). The
-`E2E` workflow is therefore unblocked — trigger it (`workflow_dispatch`) to run the DB-backed suites.
+**Fix:** the two mis-numbered onboarding migrations were renamed down into the `1.x` sequence so they
+precede the auth alters:
 
-## The two ways to (re)build the baseline
+```
+V10 → V1_11_1__create_onboarding_requests
+V11 → V1_11_2__add_phone_to_onboarding_requests
+```
 
-1. **Commit a schema baseline** (what's in place now — low-risk, no change to staging).
-   Regenerate from a cleanly-migrated DB when migrations change:
-   ```bash
-   pg_dump --no-owner --no-privileges --schema-only \
-     --dbname="$CLEAN_DB_URL" > ops/ci/schema-baseline.sql
-   # ensure it includes the flyway_schema_history rows:
-   pg_dump --no-owner --no-privileges --table=flyway_schema_history \
-     --dbname="$CLEAN_DB_URL" >> ops/ci/schema-baseline.sql
-   ```
-   The e2e job loads this, so the scoped Flyway runs find their migrations already recorded (no-op)
-   and `validate` has a schema. Regenerate when migrations change. *(A "cleanly-migrated DB" means one
-   built in dependency order — e.g. a current staging restore, since staging is correctly migrated.)*
+Order is now `1.11.1 (create) < 1.11.2 (phone) < 1.12 (b2b) < 1.13 (volume)` — correct from scratch.
+File contents are unchanged, so **checksums are unchanged**; only the version + script name change.
 
-2. **Renumber the migrations** so the set applies from scratch in order (the real fix, **deferred to
-   pre-cutover** because it changes applied versions on staging/prod and needs a coordinated
-   `flyway repair`). Tracked in `docs/prod-readiness/PROD-READINESS-NOW.md` §B1.8 and the master plan
-   go-live migration gate.
+### Applying the fix to an already-migrated DB
 
-Until one is done, the e2e workflow errors out at the "Load schema baseline" step with a pointer here.
+Existing DBs (staging, any dev DB) have `flyway_schema_history` rows for the old versions `10`/`11`.
+Because Flyway tracks a migration's identity by version, those rows must be relabeled to match the
+renamed files **before** the renamed migrations deploy — otherwise Flyway sees the old versions as
+"missing" and the new versions as "pending" (and tries to re-create existing tables). The one-time
+relabel is in [`relabel-onboarding-migrations.sql`](./relabel-onboarding-migrations.sql).
 
-## Credentials note
-
-The module test ymls disagree on the DB password (`auth` uses `oneday`, `orders`/`dispatch` use
-`secret`). The Postgres service runs with `POSTGRES_HOST_AUTH_METHOD=trust` so the password value is
-ignored and both connect as user `oneday` to db `oneday`.
+**Sequencing (per DB): run the relabel first, then deploy the renamed migrations.** Fresh DBs (CI,
+future prod) need nothing — they build correctly from scratch.

@@ -2,7 +2,8 @@ name: ZAP Baseline Scan
 
 # Passive DAST baseline against the running staging app. Non-intrusive (no active attacks / no
 # fuzzing), so it's safe to point at shared staging. Manual + weekly; not on every PR (needs a live
-# target). Human penetration testing stays deferred [ENTITY] — this is the automated substitute.
+# target). This is an automated security BASELINE + regression guard — it is NOT a penetration test
+# and does not establish "security tested". Human penetration testing remains deferred [ENTITY].
 on:
   workflow_dispatch:
     inputs:

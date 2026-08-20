@@ -1,10 +1,12 @@
-# Capacity Plan (living)
+# Capacity Plan — Initial Configuration / Measurement Pending
 
 How we size the connection pool and thread pool from measured load, and the current settings.
 Re-run [`perf/k6/load.js`](../../perf/k6/load.js) and update the numbers after any material change.
 
-> **Status:** template + starting settings. The measured columns are filled in after the first k6
-> run against staging (Branch 2 deliverable — the run itself needs the staging env up).
+> **Status: NOT a validated capacity plan yet.** The values below are conservative *starting
+> configuration*, not measured capacity. There is no proven throughput/latency ceiling until the k6
+> run against staging fills the "Measured" columns. Do not cite this as "capacity validated" until
+> then.
 
 ## The knobs
 
@@ -46,7 +48,7 @@ Re-run [`perf/k6/load.js`](../../perf/k6/load.js) and update the numbers after a
 
 ## Current verdict
 
-Defaults (pool 10 / threads 200) are a conservative single-instance starting point. Revisit once the
+**Initial configuration, not a measured capacity plan.** Defaults (pool 10 / threads 200) are a conservative single-instance starting point. Revisit once the
 k6 run gives real latency; if the app is DB-bound (likely), the lever is pool size vs Postgres plan,
 not thread count. Horizontal scale (multiple Render instances) needs the rate-limiter moved to a
 shared store (Redis) first — tracked as a Branch 2+ follow-up.
