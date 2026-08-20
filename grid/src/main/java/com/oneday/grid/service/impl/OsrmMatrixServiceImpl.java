@@ -13,9 +13,12 @@ import com.uber.h3core.LengthUnit;
 import com.uber.h3core.util.LatLng;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.web.client.ClientHttpRequestFactories;
+import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,7 +44,12 @@ public class OsrmMatrixServiceImpl implements OsrmMatrixService {
         this.hexRepository = hexRepository;
         this.properties = properties;
         this.h3Core = h3Core;
-        this.osrmClient = new OsrmClient(properties.getOsrm().getBaseUrl(), new RestTemplate());
+        // Bounded connect/read timeouts — a hung OSRM must not stall the nightly replan indefinitely.
+        var settings = ClientHttpRequestFactorySettings.DEFAULTS
+                .withConnectTimeout(Duration.ofMillis(properties.getOsrm().getConnectTimeoutMs()))
+                .withReadTimeout(Duration.ofMillis(properties.getOsrm().getReadTimeoutMs()));
+        this.osrmClient = new OsrmClient(properties.getOsrm().getBaseUrl(),
+                new RestTemplate(ClientHttpRequestFactories.get(settings)));
     }
 
     @Override

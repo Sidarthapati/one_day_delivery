@@ -1,0 +1,8 @@
+# Godspeed security disclosure (RFC 9116)
+# PLACEHOLDER — replace Contact + Canonical with the real entity domain/inbox before go-live.
+
+Contact: mailto:security@godspeed.delivery
+Expires: 2027-01-01T00:00:00.000Z
+Preferred-Languages: en
+Policy: https://godspeed.delivery/.well-known/security-policy
+Canonical: https://godspeed.delivery/.well-known/security.txt

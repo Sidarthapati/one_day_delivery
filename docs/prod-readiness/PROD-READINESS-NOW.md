@@ -210,15 +210,15 @@ Each stays a **loud sandbox mock that refuses to masquerade as live** (boot-flag
 ## Branch execution tracker
 
 ### Branch 1 — `f-prod-hardening` (off `main`) · safe hardening, dormant-in-prod
-- [ ] **B1.1** prod profile (`application-prod.yml`) + `MockGuard` boot-guard + startup env validation
-- [ ] **B1.2** JWT secret from `${JWT_SECRET}` + fail-fast under prod; rotate/delete committed literal
-- [ ] **B1.3** rate limiting (bucket4j filter; `godspeed.ratelimit.*`; strict prod / relaxed staging)
-- [ ] **B1.4** security headers + `godspeed.cors.allowed-origins` (prod Vercel-only; staging + localhost)
-- [ ] **B1.5** external-call timeouts + circuit breakers (OSRM, grid, RazorpayX, KYC, AeroDataBox, SMS/email/webhook)
-- [ ] **B1.6** uniform error envelope + advice for dispatch/routing/grid/airline/shuttle/sla/barcode; PII log scrub
-- [ ] **B1.7** actuator + Micrometer/Prometheus + deep health; **Grafana Cloud**, **Sentry**, **uptime monitor**, Axiom drain
-- [ ] **B1.8** Hikari + Tomcat sizing; `validate-on-migrate=true` (post drift-reconcile); async API-key `lastUsedAt`
-- [ ] **B1.9** `security.txt` + `SECURITY.md`; docs (DPDP map, RPO/RTO, runbooks, retention, cost estimate)
+- [x] **B1.1** prod profile (`application-prod.yml`) + `MockGuard` boot-guard + startup env validation (`ProdEnvGuard`) — guard unit tests green
+- [x] **B1.2** JWT secret from `${JWT_SECRET}` + fail-fast under prod; committed literal downgraded to a dev-only fallback that `ProdEnvGuard` rejects
+- [x] **B1.3** rate limiting (dependency-free in-memory token-bucket `RateLimitFilter`; `godspeed.ratelimit.*`; off in staging, on in prod; 429 + `Retry-After`; login/otp/register per-IP + per-API-key) — filter unit tests green *(bucket4j swapped for a zero-dependency token bucket to keep the supply-chain surface unchanged; Redis-backed multi-instance = Branch 2)*
+- [x] **B1.4** security headers (nosniff/frame-DENY/referrer always on; HSTS+CSP prod-only) + `godspeed.cors.allowed-origins` (prod Vercel-only; staging + localhost/`*.vercel.app`)
+- [x] **B1.5** external-call timeouts: OSRM (routing+grid, config-driven `connect/read-timeout-ms`), RazorpayX, KYC (both builders), AeroDataBox now bounded via `ClientHttpRequestFactorySettings`; SMS/email/webhook `HttpClient`s already had connect+request timeouts. *Circuit breakers remain scoped to orders-booking (`ResilienceConfig`); broad CB extension deferred — timeouts already remove the thread-exhaustion failure mode.*
+- [x] **B1.6** uniform error envelope — scoped `@RestControllerAdvice` (RFC-7807 ProblemDetail, extends `ResponseEntityExceptionHandler`) added to dispatch/routing/grid/airline/shuttle/sla/barcode (airline maps its domain not-founds → 404); `server.error.include-*: never` pinned as the no-leak guarantee; dead `orders/api/GlobalExceptionHandler` shell deleted; security exceptions rethrown so 401/403 are never masked as 500. *(Deep PII-in-logs scrub audit → Branch 2.)*
+- [x] **B1.7 (code)** actuator + `micrometer-registry-prometheus` in `app`; deep health with `readiness`(=app+DB) / `liveness` probe groups; `/actuator/health/**` public (details hidden), all other actuator endpoints behind auth; `render.yaml` healthcheck → `/actuator/health/readiness`. **Remaining = account wiring (no code):** point Grafana Cloud at `/actuator/prometheus`; add Sentry SDK + DSN once the account exists (inert without a DSN, so deferred to avoid dead supply-chain surface); uptime monitor on the staging URL; Render→Axiom log drain.
+- [x] **B1.8** Hikari pool (`maximum-pool-size`/`minimum-idle`/timeouts, env-overridable) + Tomcat thread bounds; `validate-on-migrate=true` in `application-prod.yml` (staging stays `false` for the known grid checksum drift); API-key `lastUsedAt` write throttled to ≤1/5min (was a DB write per API call on the hot auth path). **⚠️ Finding:** migrations don't apply cleanly to a *from-scratch* DB — `V1_12`(auth) version-sorts before `V10`(onboarding_requests create), so a fresh prod DB fails. Render/staging only ever accreted migrations in commit order via `out-of-order=true`. Renumber/reorder before a fresh-prod cutover — tracked for the go-live migration test (Gate in master plan / Branch 2).
+- [x] **B1.9** `/.well-known/security.txt` (RFC 9116, permitted in `SecurityConfig`) + `SECURITY.md`; docs: `RUNBOOKS.md` (deploy/rollback/incident/DLQ-replay/on-call), `DATA-PROTECTION-AND-RETENTION.md` (DPDP map + retention), `DR-RPO-RTO.md`, `PROD-COST-ESTIMATE.md`. *(Contact is a placeholder domain until entity.)*
 
 ### Branch 2 — `f-prod-hardening-depth` · heavier (still no entity/creds)
 - [ ] refresh-token rotation + revocation; cut 8h TTL

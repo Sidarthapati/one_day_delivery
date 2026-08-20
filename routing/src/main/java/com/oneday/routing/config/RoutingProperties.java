@@ -60,6 +60,9 @@ public class RoutingProperties {
     public static class Osrm {
         // M6 builds its own travel matrix over {hub} ∪ vertices (∪ airport) — M6-D-009.
         private String baseUrl = "http://localhost:5000";
+        // Bound every OSRM call so a hung/slow OSRM can't stall the nightly route plan.
+        private int connectTimeoutMs = 3000;
+        private int readTimeoutMs = 15000;
     }
 
     @Data

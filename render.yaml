@@ -10,7 +10,7 @@ services:
     region: singapore          # same region as oneday-db-staging → internal, no-SSL DB link
     plan: starter
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /auth/health   # permitAll GET returning 200 (demo static index.html was removed)
+    healthCheckPath: /actuator/health/readiness   # deep readiness (app + DB); public, details hidden
     autoDeploy: false           # deploy on demand, not on every push, for staging
     envVars:
       - key: SPRING_PROFILES_ACTIVE
