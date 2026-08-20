@@ -21,10 +21,17 @@ which ALTERs `onboarding_requests`) sorts before `V10` (top-level, which CREATEs
 so `V1_12` runs before `V10` and fails. Render/staging never hit this because they accreted
 migrations in commit order over time.
 
-## The two ways to unblock (pick one)
+## Status: baseline committed ✅
 
-1. **Commit a schema baseline** (low-risk, do this to turn the job on now).
-   From a cleanly-migrated DB, dump schema + Flyway history:
+`ops/ci/schema-baseline.sql` has been generated (pg_dump of a fully-migrated DB: full schema + 116
+`flyway_schema_history` rows) with the Branch 2 `refresh_tokens` (V1_16) appended, and **verified to
+load cleanly into a fresh Postgres 16** (77 tables, 117 history rows, `refresh_tokens` present). The
+`E2E` workflow is therefore unblocked — trigger it (`workflow_dispatch`) to run the DB-backed suites.
+
+## The two ways to (re)build the baseline
+
+1. **Commit a schema baseline** (what's in place now — low-risk, no change to staging).
+   Regenerate from a cleanly-migrated DB when migrations change:
    ```bash
    pg_dump --no-owner --no-privileges --schema-only \
      --dbname="$CLEAN_DB_URL" > ops/ci/schema-baseline.sql
