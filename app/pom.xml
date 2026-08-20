@@ -83,6 +83,17 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- Distributed tracing (B2.2): Micrometer Tracing → OpenTelemetry → OTLP exporter.
+             Dormant by default (sampling 0.0, no endpoint); prod turns it on via env. traceId/spanId
+             land in the MDC automatically, so they already flow into the JSON logs. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

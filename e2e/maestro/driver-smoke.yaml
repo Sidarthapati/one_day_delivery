@@ -1,0 +1,38 @@
+# Maestro smoke flow for the Godspeed driver app (React Native / Android).
+# Covers the critical DA path: launch → login → see today's queue → open a task → "I've arrived"
+# (the manual arrival that replaced the 200m geofence). Selectors are placeholders — align them with
+# the app's testID/accessibility labels, then remove the optional/skip markers as the app stabilises.
+#
+# Run:  maestro test e2e/maestro/driver-smoke.yaml
+# Env:  DRIVER_EMAIL / DRIVER_PASSWORD (a seeded DA on staging)
+appId: in.godspeed.driver
+---
+- launchApp:
+    clearState: true
+
+# --- Login ---
+- assertVisible: "Sign in"
+- tapOn:
+    id: "email"
+- inputText: "${DRIVER_EMAIL}"
+- tapOn:
+    id: "password"
+- inputText: "${DRIVER_PASSWORD}"
+- tapOn:
+    text: "Sign in"
+
+# --- Today's queue ---
+- assertVisible:
+    text: "Today"
+    timeout: 15000
+
+# --- Open the first task and confirm arrival (manual "I've arrived") ---
+- tapOn:
+    id: "task-card-0"
+    optional: true
+- tapOn:
+    text: "I've arrived"
+    optional: true
+- assertVisible:
+    text: "Arrived"
+    optional: true

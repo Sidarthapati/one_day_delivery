@@ -101,6 +101,8 @@ public class SecurityConfig {
                         // Business self-signup — public, like /auth/request-onboarding (runs KYC, files a PENDING request).
                         .requestMatchers("/auth/request-business-onboarding").permitAll()
                         .requestMatchers("/auth/oauth/google", "/auth/otp/request", "/auth/otp/verify").permitAll()
+                        // Refresh/logout carry the refresh token in the body, not the (expired) access JWT.
+                        .requestMatchers("/auth/refresh", "/auth/logout").permitAll()
                         // Public "Talk to sales" capture + white-label shipment tracking (token-scoped).
                         .requestMatchers(HttpMethod.POST, "/api/sales/leads").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()

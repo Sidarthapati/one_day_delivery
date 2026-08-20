@@ -1,0 +1,39 @@
+name: Playwright E2E
+
+# Browser smoke over the six deployed consoles. Manual — the consoles deploy separately on Vercel,
+# so this isn't part of the backend PR gate. URLs come from repo vars (fallback: stable aliases).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  consoles:
+    name: Console smoke (chromium)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: e2e/playwright
+    env:
+      CUSTOMER_URL: ${{ vars.CUSTOMER_URL }}
+      BUSINESS_URL: ${{ vars.BUSINESS_URL }}
+      HUB_URL: ${{ vars.HUB_URL }}
+      STATION_URL: ${{ vars.STATION_URL }}
+      AIRLINE_URL: ${{ vars.AIRLINE_URL }}
+      ADMIN_URL: ${{ vars.ADMIN_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: e2e/playwright/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
