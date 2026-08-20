@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Stage 1 — prove the B2.1 refresh-token flow end to end against a running app.
-# Verifies: login returns a refreshToken → /auth/refresh rotates → the OLD token is rejected (reuse
-# detection, 401) → /auth/logout revokes. Read-only except for the tokens it mints for itself.
+# Verifies: login returns a refresh_token → /auth/refresh rotates → the OLD token is rejected
+# (401) → the session survives a benign replay (grace window) → /auth/logout revokes.
+# The app serializes JSON as snake_case, so the field is `refresh_token`. Read-only except for the
+# tokens it mints for itself.
 #
 # Usage:
 #   BASE_URL=https://one-day-delivery.onrender.com \
@@ -22,37 +24,30 @@ getfield() { # getfield <json> <field>
   else sed -nE "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/p" <<<"$1"; fi
 }
 
-echo "1) login → expect a refreshToken in the response"
+echo "1) login → expect a refresh_token in the response"
 LOGIN=$(curl -fsS -X POST "$BASE_URL/auth/login" -H "$J" \
   -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
-RT1=$(getfield "$LOGIN" refreshToken)
+RT1=$(getfield "$LOGIN" refresh_token)
 AT1=$(getfield "$LOGIN" token)
 [ -n "$AT1" ] || fail "no access token in login response"
-[ -n "$RT1" ] || fail "no refreshToken in login response (is godspeed.refresh.enabled=true?)"
+[ -n "$RT1" ] || fail "no refresh_token in login response (is godspeed.refresh.enabled=true?)"
 pass "login returned an access token + refresh token"
 
 echo "2) refresh with the refresh token → expect a NEW access + NEW refresh token"
 REFRESH=$(curl -fsS -X POST "$BASE_URL/auth/refresh" -H "$J" \
-  -d "{\"refreshToken\":\"$RT1\"}")
-RT2=$(getfield "$REFRESH" refreshToken)
+  -d "{\"refresh_token\":\"$RT1\"}")
+RT2=$(getfield "$REFRESH" refresh_token)
 AT2=$(getfield "$REFRESH" token)
 [ -n "$RT2" ] && [ "$RT2" != "$RT1" ] || fail "refresh did not rotate the refresh token"
 [ -n "$AT2" ] || fail "refresh did not return a new access token"
 pass "refresh rotated: got a new access + new refresh token"
 
-echo "3) replay the OLD refresh token → expect 401 (reuse detection revokes the family)"
+echo "3) replay the OLD refresh token → expect 401 (already rotated)"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/refresh" -H "$J" \
-  -d "{\"refreshToken\":\"$RT1\"}")
+  -d "{\"refresh_token\":\"$RT1\"}")
 [ "$CODE" = "401" ] || fail "reuse of the old token returned $CODE, expected 401"
-pass "old (already-rotated) token rejected with 401 — reuse detection works"
+pass "old (already-rotated) token rejected with 401"
 
-<<<<<<< Updated upstream
-echo "4) the NEW token (RT2) is now dead too (family was revoked) → expect 401"
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/refresh" -H "$J" \
-  -d "{\"refreshToken\":\"$RT2\"}")
-[ "$CODE" = "401" ] || fail "RT2 returned $CODE after family revocation, expected 401"
-pass "successor token also dead — whole family revoked on theft signal"
-=======
 # The successor stays valid: an immediate replay of RT1 is a benign double-submit (within the reuse
 # grace window), NOT theft — so the live session must survive it. (Genuine *later* replay revokes the
 # whole family; that's covered by the unit test with a controlled clock, not a sub-second live smoke.)
@@ -61,15 +56,10 @@ REFRESH2=$(curl -fsS -X POST "$BASE_URL/auth/refresh" -H "$J" -d "{\"refresh_tok
 RT3=$(getfield "$REFRESH2" refresh_token)
 [ -n "$RT3" ] || fail "RT2 refresh did not return a new token — the session was wrongly revoked by a benign replay"
 pass "RT2 still valid — grace window prevented a spurious logout; rotated to RT3"
->>>>>>> Stashed changes
 
 echo "5) logout(RT3) → expect 204"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/logout" -H "$J" \
-<<<<<<< Updated upstream
-  -d "{\"refreshToken\":\"$RT2\"}")
-=======
   -d "{\"refresh_token\":\"$RT3\"}")
->>>>>>> Stashed changes
 [ "$CODE" = "204" ] || fail "logout returned $CODE, expected 204"
 pass "logout returned 204"
 
