@@ -29,3 +29,7 @@ CVE-2026-41850
 # CVE-2026-40984 — micrometer-core: DoS via crafted HTTP request tags. Fixed 1.15.12 / 1.16.6, which
 #   ship with Spring Boot 3.4/3.5.
 CVE-2026-40984
+# CVE-2026-22733 — spring-boot: auth bypass on Actuator CloudFoundry endpoints. Fixed 3.5.12 / 4.0.4.
+#   The /cloudfoundryapplication endpoints only activate under a CloudFoundry deployment (VCAP env);
+#   we deploy on Render, so the vulnerable path is never wired. Needs a Boot 3.5 upgrade to clear.
+CVE-2026-22733
