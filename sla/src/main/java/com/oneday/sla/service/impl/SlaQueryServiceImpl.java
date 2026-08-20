@@ -1,6 +1,8 @@
 package com.oneday.sla.service.impl;
 
 import com.oneday.common.domain.enums.SlaState;
+import com.oneday.common.port.CourierOnShipmentPort;
+import com.oneday.common.port.ShipmentContactPort;
 import com.oneday.sla.domain.SlaAction;
 import com.oneday.sla.domain.SlaActionType;
 import com.oneday.sla.domain.SlaEscalation;
@@ -25,7 +27,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class SlaQueryServiceImpl implements SlaQueryService {
@@ -36,13 +40,18 @@ public class SlaQueryServiceImpl implements SlaQueryService {
     private final SlaLegRepository legRepo;
     private final SlaEscalationRepository escalationRepo;
     private final SlaActionRepository actionRepo;
+    private final CourierOnShipmentPort courierPort;
+    private final ShipmentContactPort contactPort;
 
     public SlaQueryServiceImpl(SlaShipmentRepository shipmentRepo, SlaLegRepository legRepo,
-                               SlaEscalationRepository escalationRepo, SlaActionRepository actionRepo) {
+                               SlaEscalationRepository escalationRepo, SlaActionRepository actionRepo,
+                               CourierOnShipmentPort courierPort, ShipmentContactPort contactPort) {
         this.shipmentRepo = shipmentRepo;
         this.legRepo = legRepo;
         this.escalationRepo = escalationRepo;
         this.actionRepo = actionRepo;
+        this.courierPort = courierPort;
+        this.contactPort = contactPort;
     }
 
     @Override
@@ -51,7 +60,15 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         int p = Math.max(0, page);
         int s = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
         Page<SlaShipment> result = shipmentRepo.controlTower(state, cityScope, PageRequest.of(p, s));
-        List<SlaShipmentSummary> items = result.getContent().stream().map(SlaShipmentSummary::from).toList();
+        // Batch the customer contacts (one findAllById); the current handler (DA) is per-row today.
+        Map<UUID, ShipmentContactPort.ShipmentContact> contacts = contactPort.contactsFor(
+                result.getContent().stream().map(SlaShipment::getShipmentId).collect(Collectors.toSet()));
+        List<SlaShipmentSummary> items = result.getContent().stream()
+                .map(ss -> SlaShipmentSummary.from(
+                        ss,
+                        courierPort.forShipment(ss.getShipmentId()).orElse(null),
+                        contacts.get(ss.getShipmentId())))
+                .toList();
         return new SlaControlTowerResponse(p, s, result.getTotalElements(), items);
     }
 
@@ -66,7 +83,11 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         List<SlaEscalationView> escalations = escalationRepo
                 .findByShipmentIdOrderByCreatedAtDesc(ss.getShipmentId()).stream()
                 .map(this::toEscalationView).toList();
-        return new SlaShipmentDetailResponse(SlaShipmentSummary.from(ss), legs, escalations);
+        SlaShipmentSummary summary = SlaShipmentSummary.from(
+                ss,
+                courierPort.forShipment(ss.getShipmentId()).orElse(null),
+                contactPort.contactsFor(List.of(ss.getShipmentId())).get(ss.getShipmentId()));
+        return new SlaShipmentDetailResponse(summary, legs, escalations);
     }
 
     @Override

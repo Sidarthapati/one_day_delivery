@@ -25,13 +25,16 @@ public class SlaEngine {
     private final SlaLegRepository legRepo;
     private final ProjectionCalculator projection;
     private final EscalationService escalation;
+    private final PriorityScorer priorityScorer;
 
     public SlaEngine(SlaShipmentRepository shipmentRepo, SlaLegRepository legRepo,
-                     ProjectionCalculator projection, EscalationService escalation) {
+                     ProjectionCalculator projection, EscalationService escalation,
+                     PriorityScorer priorityScorer) {
         this.shipmentRepo = shipmentRepo;
         this.legRepo = legRepo;
         this.projection = projection;
         this.escalation = escalation;
+        this.priorityScorer = priorityScorer;
     }
 
     @Transactional
@@ -56,7 +59,8 @@ public class SlaEngine {
                     .findFirst()
                     .orElse(null);
             ss.setCurrentLeg(pendingLeg);
-            ss.setOverallState(SlaState.GREEN);
+            applyState(ss, SlaState.GREEN, now);
+            applyPriority(ss, legs, now);
             shipmentRepo.save(ss);
             return;
         }
@@ -79,7 +83,8 @@ public class SlaEngine {
             overall = SlaState.BREACHED;
             ss.setBreached(true);
         }
-        ss.setOverallState(overall);
+        applyState(ss, overall, now);
+        applyPriority(ss, legs, now);
         shipmentRepo.save(ss);
 
         // Escalate on entering RED / BREACHED (idempotent downstream).
@@ -88,5 +93,22 @@ public class SlaEngine {
         } else if (overall == SlaState.RED && previous != SlaState.RED && previous != SlaState.BREACHED) {
             escalation.raiseRed(ss, currentLeg, previous);
         }
+    }
+
+    /** Set the colour, stamping entered_state_at only when it actually changes (for "in RED 12m"). */
+    private void applyState(SlaShipment ss, SlaState next, Instant now) {
+        if (ss.getOverallState() != next || ss.getEnteredStateAt() == null) {
+            ss.setEnteredStateAt(now);
+        }
+        ss.setOverallState(next);
+    }
+
+    /** Recompute + store the triage priority (band, act-by, urgency, score). */
+    private void applyPriority(SlaShipment ss, List<SlaLeg> legs, Instant now) {
+        PriorityScorer.Scored scored = priorityScorer.score(ss, legs, now);
+        ss.setBand(scored.band());
+        ss.setActByAt(scored.actByAt());
+        ss.setUrgencyMinutes(scored.urgencyMinutes());
+        ss.setPriorityScore(scored.score());
     }
 }
