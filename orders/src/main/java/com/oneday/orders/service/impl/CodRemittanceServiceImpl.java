@@ -168,7 +168,10 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
     @Override
     @Transactional
     public CodRemittanceResponse createRemittance(UUID accountId, UUID actorId) {
-        B2bAccount account = accounts.findById(accountId)
+        // Lock the account row for the duration: two concurrent create calls would otherwise both read
+        // the same remittable collections and each cut a remittance for the SAME money (vuln-0017).
+        // The loser blocks here, then finds nothing remittable and gets a clean CONFLICT below.
+        B2bAccount account = accounts.findByIdForUpdate(accountId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
         // A payout needs a verified bank account on file — you can't remit into thin air.
         if (account.getBankVerificationState() == null || !account.getBankVerificationState().isPayable()) {
@@ -215,7 +218,9 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
     @Override
     @Transactional
     public CodRemittanceResponse markPaid(UUID remittanceId, String utr) {
-        CodRemittance r = remittances.findById(remittanceId)
+        // Lock the row so a concurrent markPaid/payout can't both pass the PENDING check and
+        // double-remit / double-notify (unflagged sibling of vuln-0017).
+        CodRemittance r = remittances.findByIdForUpdate(remittanceId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Remittance not found"));
         if (r.getState() != CodRemittanceState.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Remittance is not PENDING");
@@ -243,7 +248,7 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
     @Override
     @Transactional
     public CodRemittanceResponse payout(UUID remittanceId) {
-        CodRemittance r = remittances.findById(remittanceId)
+        CodRemittance r = remittances.findByIdForUpdate(remittanceId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Remittance not found"));
         if (r.getState() != CodRemittanceState.PENDING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Remittance is not PENDING");

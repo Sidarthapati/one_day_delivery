@@ -38,13 +38,28 @@ class CodCashServiceImpl implements CodCashService {
     @Override
     @Transactional
     public CodCashDepositResponse recordDeposit(UUID daUserId, RecordCodDepositRequest request) {
+        String ref = request.depositRef() == null ? null : request.depositRef().trim();
+        // Idempotent on (DA, deposit_ref): a repeated submission returns the existing deposit instead
+        // of double-counting cash. A concurrent duplicate is caught by the DB unique index (V4_36).
+        if (ref != null && !ref.isBlank()) {
+            var existing = deposits.findByDaUserIdAndDepositRef(daUserId, ref);
+            if (existing.isPresent()) {
+                return CodCashDepositResponse.from(existing.get());
+            }
+        }
         CodCashDeposit d = new CodCashDeposit();
         d.setDaUserId(daUserId);
         d.setAmountPaise(request.amountPaise());
-        d.setDepositRef(request.depositRef());
+        d.setDepositRef(ref);
         d.setNote(request.note());
         d.setStatus(CodCashDepositState.DEPOSITED);
-        return CodCashDepositResponse.from(deposits.save(d));
+        try {
+            return CodCashDepositResponse.from(deposits.saveAndFlush(d));
+        } catch (org.springframework.dao.DataIntegrityViolationException race) {
+            // Lost the race to a concurrent identical submit — return the winner.
+            return CodCashDepositResponse.from(
+                    deposits.findByDaUserIdAndDepositRef(daUserId, ref).orElseThrow(() -> race));
+        }
     }
 
     @Override
