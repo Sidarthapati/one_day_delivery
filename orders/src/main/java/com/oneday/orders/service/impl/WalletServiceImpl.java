@@ -1,11 +1,13 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.orders.domain.B2bAccount;
+import com.oneday.orders.domain.WalletRechargeOrder;
 import com.oneday.orders.domain.WalletTransaction;
 import com.oneday.orders.domain.WalletTransactionType;
 import com.oneday.orders.dto.WalletResponse;
 import com.oneday.orders.dto.WalletTransactionResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
+import com.oneday.orders.repository.WalletRechargeOrderRepository;
 import com.oneday.orders.repository.WalletTransactionRepository;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.WalletService;
@@ -26,13 +28,16 @@ class WalletServiceImpl implements WalletService {
 
     private final B2bAccountRepository accounts;
     private final WalletTransactionRepository ledger;
+    private final WalletRechargeOrderRepository rechargeOrders;
     private final PaymentPort paymentPort;
 
     WalletServiceImpl(B2bAccountRepository accounts,
                       WalletTransactionRepository ledger,
+                      WalletRechargeOrderRepository rechargeOrders,
                       PaymentPort paymentPort) {
         this.accounts = accounts;
         this.ledger = ledger;
+        this.rechargeOrders = rechargeOrders;
         this.paymentPort = paymentPort;
     }
 
@@ -55,13 +60,20 @@ class WalletServiceImpl implements WalletService {
     public PaymentPort.PaymentOrder createRechargeOrder(UUID accountId, long amountPaise) {
         require(accountId);
         // Razorpay caps receipt at 40 chars; "wr-" + 32-hex account id = 35.
-        return paymentPort.createOrder(amountPaise, "wr-" + accountId.toString().replace("-", ""));
+        PaymentPort.PaymentOrder order = paymentPort.createOrder(amountPaise, "wr-" + accountId.toString().replace("-", ""));
+        // Record the ordered (gateway-authoritative) amount so confirm never trusts a client value.
+        WalletRechargeOrder ro = new WalletRechargeOrder();
+        ro.setRazorpayOrderId(order.orderId());
+        ro.setB2bAccountId(accountId);
+        ro.setAmountPaise(order.amountPaise());
+        rechargeOrders.save(ro);
+        return order;
     }
 
     @Override
     @Transactional
     public WalletResponse confirmRecharge(UUID accountId, String razorpayOrderId, String razorpayPaymentId,
-                                          String signature, long amountPaise) {
+                                          String signature) {
         B2bAccount a = accounts.findByIdForUpdate(accountId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
         // Idempotent: a payment id credits the wallet exactly once.
@@ -69,6 +81,12 @@ class WalletServiceImpl implements WalletService {
             log.info("Wallet recharge for payment {} already applied; returning current balance", safe(razorpayPaymentId));
             return WalletResponse.of(accountId, balance(a));
         }
+        // Resolve the credited amount from the server-side order record — NEVER from the client.
+        // Razorpay's signature covers only orderId|paymentId, so the amount cannot be trusted from the body.
+        long amountPaise = rechargeOrders.findByRazorpayOrderIdAndB2bAccountId(razorpayOrderId, accountId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "No recharge order for orderId " + safe(razorpayOrderId)))
+                .getAmountPaise();
         // A tampered signature throws PaymentVerificationException → mapped to 402 by the handler.
         paymentPort.verifySignature(razorpayOrderId, razorpayPaymentId, signature);
         paymentPort.capture(razorpayPaymentId, amountPaise);

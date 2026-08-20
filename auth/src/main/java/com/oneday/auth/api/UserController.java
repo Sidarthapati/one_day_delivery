@@ -100,6 +100,7 @@ public class UserController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CALL_CENTER_AGENT') or #id == authentication.principal.userId")
     public ResponseEntity<UserResponse> getUser(@PathVariable UUID id) {
         return ResponseEntity.ok(userService.getUser(id));
     }
