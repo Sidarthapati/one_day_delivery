@@ -103,8 +103,8 @@ class CancellationE2eTest extends OrdersE2eSupport {
     @Test
     void stationManagerCancelsInOwnCity_succeeds() throws Exception {
         // Default b2c route is DEL → BLR, still BOOKED (origin-held custody) — a DEL station manager
-        // is the current custodian.
-        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        // is the current custodian. (PREPAID: consumer COD was withdrawn — B2C is prepaid-only.)
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
 
         mvc.perform(delete("/api/v1/admin/shipments/{ref}", ref)
                         .header("Authorization", "Bearer " + tokenForCity("STATION_MANAGER", randomUserId(), "DEL")))
@@ -116,7 +116,7 @@ class CancellationE2eTest extends OrdersE2eSupport {
     // they can't use the error to confirm the ref exists at all (mirrors the b2b/b2c lane guard).
     @Test
     void stationManagerCancelsOutsideOwnCity_returns404() throws Exception {
-        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.COD);
+        String ref = bookB2c(tokenFor("B2C_CUSTOMER", randomUserId()), PaymentMode.PREPAID);
 
         mvc.perform(delete("/api/v1/admin/shipments/{ref}", ref)
                         .header("Authorization", "Bearer " + tokenForCity("STATION_MANAGER", randomUserId(), "BOM")))

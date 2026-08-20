@@ -46,16 +46,43 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/refresh" -
 [ "$CODE" = "401" ] || fail "reuse of the old token returned $CODE, expected 401"
 pass "old (already-rotated) token rejected with 401 — reuse detection works"
 
+<<<<<<< Updated upstream
 echo "4) the NEW token (RT2) is now dead too (family was revoked) → expect 401"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/refresh" -H "$J" \
   -d "{\"refreshToken\":\"$RT2\"}")
 [ "$CODE" = "401" ] || fail "RT2 returned $CODE after family revocation, expected 401"
 pass "successor token also dead — whole family revoked on theft signal"
+=======
+# The successor stays valid: an immediate replay of RT1 is a benign double-submit (within the reuse
+# grace window), NOT theft — so the live session must survive it. (Genuine *later* replay revokes the
+# whole family; that's covered by the unit test with a controlled clock, not a sub-second live smoke.)
+echo "4) the successor RT2 is still valid (benign replay didn't nuke the session) → expect a new token"
+REFRESH2=$(curl -fsS -X POST "$BASE_URL/auth/refresh" -H "$J" -d "{\"refresh_token\":\"$RT2\"}")
+RT3=$(getfield "$REFRESH2" refresh_token)
+[ -n "$RT3" ] || fail "RT2 refresh did not return a new token — the session was wrongly revoked by a benign replay"
+pass "RT2 still valid — grace window prevented a spurious logout; rotated to RT3"
+>>>>>>> Stashed changes
 
-echo "5) logout is idempotent → expect 204 even for an already-dead token"
+echo "5) logout(RT3) → expect 204"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/logout" -H "$J" \
+<<<<<<< Updated upstream
   -d "{\"refreshToken\":\"$RT2\"}")
+=======
+  -d "{\"refresh_token\":\"$RT3\"}")
+>>>>>>> Stashed changes
 [ "$CODE" = "204" ] || fail "logout returned $CODE, expected 204"
+pass "logout returned 204"
+
+echo "6) refresh(RT3) after logout → expect 401 (logout revoked it)"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/refresh" -H "$J" \
+  -d "{\"refresh_token\":\"$RT3\"}")
+[ "$CODE" = "401" ] || fail "RT3 usable after logout (got $CODE), expected 401"
+pass "logged-out token rejected with 401"
+
+echo "7) logout is idempotent → expect 204 again for the already-revoked token"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/auth/logout" -H "$J" \
+  -d "{\"refresh_token\":\"$RT3\"}")
+[ "$CODE" = "204" ] || fail "second logout returned $CODE, expected 204"
 pass "logout idempotent (204)"
 
 echo
