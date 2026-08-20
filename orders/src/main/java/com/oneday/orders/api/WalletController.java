@@ -65,7 +65,7 @@ class WalletController {
             @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody WalletRechargeConfirmRequest req) {
         return wallet.confirmRecharge(ownedAccountId(principal), req.getRazorpayOrderId(),
-                req.getRazorpayPaymentId(), req.getSignature(), req.getAmountPaise());
+                req.getRazorpayPaymentId(), req.getSignature());
     }
 
     /** The B2B account owned by the caller, or 404 (also gates the endpoint to B2B users). */

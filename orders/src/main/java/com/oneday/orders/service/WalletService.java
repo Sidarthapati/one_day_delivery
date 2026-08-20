@@ -24,11 +24,12 @@ public interface WalletService {
     com.oneday.orders.service.PaymentPort.PaymentOrder createRechargeOrder(UUID accountId, long amountPaise);
 
     /**
-     * Verify the gateway signature and credit the wallet. Idempotent on the razorpay payment id —
-     * a duplicate confirm returns the current balance without double-crediting.
+     * Verify the gateway signature and credit the wallet by the amount recorded on the server-side
+     * recharge order (never a client-supplied amount — Razorpay does not sign the amount). Idempotent
+     * on the razorpay payment id — a duplicate confirm returns the current balance without double-crediting.
      */
     WalletResponse confirmRecharge(UUID accountId, String razorpayOrderId, String razorpayPaymentId,
-                                   String signature, long amountPaise);
+                                   String signature);
 
     /**
      * Debit the wallet for a booking. Called INSIDE the booking transaction with a row already
