@@ -17,12 +17,15 @@ import java.util.Date;
 class JwtServiceImpl implements JwtService {
 
     private final SecretKey key;
-    private final long expiryHours;
+    private final long accessTtlSeconds;
 
     JwtServiceImpl(@Value("${jwt.secret}") String secret,
-                   @Value("${jwt.expiry-hours:8}") long expiryHours) {
+                   @Value("${jwt.expiry-hours:8}") long expiryHours,
+                   @Value("${jwt.access-token-minutes:0}") long accessMinutes) {
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-        this.expiryHours = expiryHours;
+        // Minutes granularity wins when set (prod cuts the access TTL to ~15m so a stolen JWT is
+        // short-lived); otherwise fall back to the legacy hours setting (8h on staging).
+        this.accessTtlSeconds = accessMinutes > 0 ? accessMinutes * 60 : expiryHours * 3600;
     }
 
     @Override
@@ -51,6 +54,6 @@ class JwtServiceImpl implements JwtService {
 
     @Override
     public Instant expiryFor(User user) {
-        return Instant.now().plusSeconds(expiryHours * 3600);
+        return Instant.now().plusSeconds(accessTtlSeconds);
     }
 }

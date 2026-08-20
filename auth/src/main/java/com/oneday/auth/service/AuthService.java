@@ -6,6 +6,7 @@ import com.oneday.auth.dto.response.ApiKeyCreateResponse;
 import com.oneday.auth.dto.response.ApiKeyResponse;
 import com.oneday.auth.dto.response.LoginResponse;
 import com.oneday.auth.dto.response.OtpRequestResponse;
+import com.oneday.auth.dto.response.TokenResponse;
 
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +18,8 @@ public interface AuthService {
     OtpRequestResponse requestOtp(OtpRequestRequest request);
     LoginResponse verifyOtp(OtpVerifyRequest request);
     User validateToken(String token);
+    TokenResponse refresh(String rawRefreshToken);
+    void logout(String rawRefreshToken);
     ApiKeyCreateResponse createApiKey(UUID userId, ApiKeyCreateRequest request);
     void revokeApiKey(UUID keyId, UUID requestingUserId);
     List<ApiKeyResponse> listApiKeys(UUID userId);

@@ -103,6 +103,16 @@ management:
   metrics:
     tags:
       application: oneday-delivery
+  # Distributed tracing — DORMANT by default: 0% sampling means no spans are recorded or exported,
+  # so staging pays nothing and needs no collector. Prod raises the probability and points
+  # management.otlp.tracing.endpoint at a collector (Grafana Tempo) via env. traceId/spanId are put
+  # on the MDC whenever a span is active, so they appear as fields in the JSON logs automatically.
+  tracing:
+    enabled: true
+    sampling:
+      probability: ${TRACING_SAMPLE_PROBABILITY:0.0}
+  # No otlp.tracing.endpoint here on purpose: at 0.0 sampling nothing is exported, so leaving Boot's
+  # default endpoint unused keeps staging free of a collector. Prod sets the real endpoint via env.
 
 grid:
   h3:

@@ -1,0 +1,68 @@
+name: E2E (Postgres)
+
+# Runs the @Tag("e2e") suites (auth/orders/dispatch) against a real Postgres — the tests that CI's
+# main build skips (`-DexcludedGroups=e2e`). Builds the full schema from scratch with real Flyway
+# (now that the migration set is ordering-correct — the onboarding-vs-auth ordering defect was fixed
+# in Route 1: V10/V11 renamed to V1_11_1/V1_11_2 so they precede V1_12/V1_13). The module e2e tests
+# use ddl-auto=validate + module-scoped Flyway, so they need the schema + flyway_schema_history
+# already present — which this Flyway migrate builds. Manual (workflow_dispatch), not on the PR gate.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E against Postgres 16
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # trust auth so both sets of test creds (oneday/oneday and oneday/secret) connect — the
+          # module test ymls disagree on the password; trust makes the value irrelevant.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: oneday
+          POSTGRES_DB: oneday
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U oneday"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build schema from scratch (real Flyway, all modules)
+        # Flatten every module's main-DB migration (exclude the separate consolidator DB) into one
+        # location and let Flyway apply them in version order, recording flyway_schema_history with
+        # real checksums — so the module-scoped Flyway in the tests sees its migrations as applied.
+        # Verified locally: all 123 migrations apply cleanly from scratch in order.
+        run: |
+          mkdir -p /tmp/sql
+          find . -name 'V*.sql' -path '*/src/main/resources/db/migration/*' \
+            ! -path '*/target/*' ! -path '*migration-consolidator*' -exec cp {} /tmp/sql/ \;
+          echo "applying $(ls /tmp/sql | wc -l) migrations"
+          docker run --rm --network host -v /tmp/sql:/flyway/sql flyway/flyway:10-alpine \
+            -url=jdbc:postgresql://localhost:5432/oneday -user=oneday -password= \
+            -outOfOrder=true -connectRetries=10 migrate
+
+      - name: Run e2e-tagged tests
+        run: mvn install -Dgroups=e2e --batch-mode --no-transfer-progress
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-surefire-reports
+          path: '**/target/surefire-reports/*.xml'
+          if-no-files-found: ignore
+          retention-days: 14

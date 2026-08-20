@@ -9,5 +9,6 @@ public record LoginResponse(
         String cityId,
         String name,
         String phone,
-        boolean mustChangePassword
+        boolean mustChangePassword,
+        String refreshToken
 ) {}

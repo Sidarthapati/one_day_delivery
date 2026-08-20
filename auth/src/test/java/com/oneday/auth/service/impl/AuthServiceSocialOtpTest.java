@@ -16,9 +16,11 @@ import com.oneday.auth.repository.OtpChallengeRepository;
 import com.oneday.auth.repository.RoleAuditLogRepository;
 import com.oneday.auth.repository.RoleRepository;
 import com.oneday.auth.repository.UserRepository;
+import com.oneday.auth.config.RefreshTokenProperties;
 import com.oneday.auth.service.GoogleTokenVerifier;
 import com.oneday.auth.service.JwtService;
 import com.oneday.auth.service.OtpSender;
+import com.oneday.auth.service.RefreshTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -71,9 +73,14 @@ class AuthServiceSocialOtpTest {
         when(jwtService.createToken(any(User.class))).thenReturn("signed-jwt");
         when(jwtService.expiryFor(any(User.class))).thenReturn(Instant.now().plusSeconds(3600));
 
+        RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
+        when(refreshTokenService.issue(any(User.class))).thenReturn(
+                new RefreshTokenService.Issued("raw-refresh", Instant.now().plusSeconds(1_209_600)));
+
         service = new AuthServiceImpl(userRepository, roleRepository, apiKeyRepository,
                 auditLogRepository, otpRepository, jwtService, passwordEncoder,
-                googleTokenVerifier, otpSender, new OtpProperties());
+                googleTokenVerifier, otpSender, new OtpProperties(),
+                refreshTokenService, new RefreshTokenProperties());
     }
 
     @Test

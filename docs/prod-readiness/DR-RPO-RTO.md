@@ -26,6 +26,11 @@ the drill has something to validate against.
 
 ## Restore procedure (rehearse on staging)
 
+> Automated as [`ops/dr/restore-drill.sh`](../../ops/dr/restore-drill.sh) — restores a backup into a
+> scratch DB, asserts Flyway history + core tables, optionally boots + smokes the app, and prints the
+> actual RPO/RTO. See [`ops/dr/README.md`](../../ops/dr/README.md). Steps below are what it automates.
+
+
 1. Provision a fresh Postgres (new Render instance or scratch DB).
 2. Restore the latest backup into it (Render dashboard *Restore*, or `pg_restore` of the dump).
 3. Point a test app at it: `SPRING_DATASOURCE_URL=...` (+ `CONSOLIDATOR_DATASOURCE_*`).

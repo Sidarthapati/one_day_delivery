@@ -35,6 +35,21 @@ logging:
     root: INFO
     com.oneday: INFO
 
+# Tracing on in prod: sample a slice of requests to a collector (Grafana Tempo). Both are env-driven
+# so cutover needs only the collector URL; default sample 10% keeps overhead low.
+management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLE_PROBABILITY:0.1}
+  otlp:
+    tracing:
+      endpoint: ${OTLP_TRACING_ENDPOINT}
+
+# Access JWT is cut to minutes in prod (staging keeps the 8h jwt.expiry-hours). The long-lived,
+# revocable session rides on the rotating refresh token instead.
+jwt:
+  access-token-minutes: ${JWT_ACCESS_TOKEN_MINUTES:15}
+
 # CORS — prod allows only the real Vercel console origins (comma-separated env override wins).
 # Staging keeps localhost/*.vercel.app in application.yml defaults; prod narrows it here.
 godspeed:
@@ -42,3 +57,7 @@ godspeed:
     allowed-origins: ${GODSPEED_CORS_ALLOWED_ORIGINS:https://godspeed-customer.vercel.app,https://godspeed-business.vercel.app,https://godspeed-admin.vercel.app,https://godspeed-hub.vercel.app,https://godspeed-station.vercel.app,https://godspeed-airline.vercel.app}
   ratelimit:
     enabled: true
+  refresh:
+    # Rotation is on everywhere; prod additionally shortens the session TTL.
+    enabled: true
+    ttl: ${JWT_REFRESH_TTL:7d}

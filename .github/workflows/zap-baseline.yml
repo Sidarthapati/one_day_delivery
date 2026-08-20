@@ -1,0 +1,38 @@
+name: ZAP Baseline Scan
+
+# Passive DAST baseline against the running staging app. Non-intrusive (no active attacks / no
+# fuzzing), so it's safe to point at shared staging. Manual + weekly; not on every PR (needs a live
+# target). This is an automated security BASELINE + regression guard — it is NOT a penetration test
+# and does not establish "security tested". Human penetration testing remains deferred [ENTITY].
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target base URL to scan'
+        required: false
+        default: 'https://one-day-delivery.onrender.com'
+  schedule:
+    - cron: '0 3 * * 1' # Mondays 03:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  zap-baseline:
+    name: ZAP baseline (passive)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ github.event.inputs.target || vars.STAGING_URL || 'https://one-day-delivery.onrender.com' }}
+          # Triage file: downgrade/suppress known-safe alerts so the run is actionable signal only.
+          rules_file_name: '.zap/rules.tsv'
+          # -a includes alpha passive rules; -j spiders as an AJAX app first.
+          cmd_options: '-a'
+          # Don't open GitHub issues automatically; the HTML/MD report artifact is the output.
+          allow_issue_writing: false
+          # Warnings don't fail the build; only FAIL-level alerts do (see rules.tsv).
+          fail_action: true
