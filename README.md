@@ -5,7 +5,7 @@ across 5 Indian cities** — a parcel picked up today arrives at its destination
 It serves both businesses (**Godspeed for Business**) and individual customers, and owns the entire
 logistics chain end to end, with no third-party last-mile carriers in v1:
 
-```
+```text
 Pickup DA  →  Origin hub sortation  →  Airline flight  →  Destination hub sortation  →  Delivery DA
 ```
 
