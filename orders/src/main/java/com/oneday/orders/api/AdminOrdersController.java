@@ -3,7 +3,9 @@ package com.oneday.orders.api;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.CancellationResponse;
 import com.oneday.orders.dto.ShipmentPageResponse;
+import com.oneday.orders.dto.ShipmentSummaryStats;
 import com.oneday.orders.service.AdminOrderQueryService;
+import com.oneday.orders.service.AdminOrderSummaryService;
 import com.oneday.orders.service.CancellationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -33,11 +35,14 @@ class AdminOrdersController {
     private static final String STATION_MANAGER = "STATION_MANAGER";
 
     private final AdminOrderQueryService adminOrderQueryService;
+    private final AdminOrderSummaryService adminOrderSummaryService;
     private final CancellationService cancellationService;
 
     AdminOrdersController(AdminOrderQueryService adminOrderQueryService,
+                          AdminOrderSummaryService adminOrderSummaryService,
                           CancellationService cancellationService) {
         this.adminOrderQueryService = adminOrderQueryService;
+        this.adminOrderSummaryService = adminOrderSummaryService;
         this.cancellationService = cancellationService;
     }
 
@@ -49,17 +54,31 @@ class AdminOrdersController {
             @RequestParam(value = "size", defaultValue = "25") int size) {
         // ADMIN (always) + STATION_MANAGER; everyone else → 403.
         Authz.requireRole(principal, STATION_MANAGER);
+        return adminOrderQueryService.listShipments(state, cityScope(principal), page, size);
+    }
 
-        // Admin sees all cities (null scope). A station manager is restricted to their own city.
-        String cityScope = null;
-        if (STATION_MANAGER.equals(principal.getUser().getRole().getName())) {
-            cityScope = principal.getUser().getCityId();
-            if (cityScope == null || cityScope.isBlank()) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                        "Station manager has no city assigned");
-            }
+    /**
+     * Aggregate parcel counts for the ops monitoring dashboard — per ops bucket and per raw state.
+     * Same visibility as {@link #listShipments}: ADMIN counts every city (null scope), a
+     * STATION_MANAGER counts only shipments touching their own city.
+     */
+    @GetMapping("/summary")
+    public ShipmentSummaryStats summary(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        return adminOrderSummaryService.summary(cityScope(principal));
+    }
+
+    /** Null for ADMIN (all cities); the station manager's own city otherwise (403 if unassigned). */
+    private static String cityScope(AuthUserDetails principal) {
+        if (!STATION_MANAGER.equals(principal.getUser().getRole().getName())) {
+            return null;
         }
-        return adminOrderQueryService.listShipments(state, cityScope, page, size);
+        String cityScope = principal.getUser().getCityId();
+        if (cityScope == null || cityScope.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Station manager has no city assigned");
+        }
+        return cityScope;
     }
 
     /**

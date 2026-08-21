@@ -63,4 +63,14 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     Page<Shipment> findByCityInvolvedAndState(@Param("city") String city,
                                               @Param("state") ShipmentState state,
                                               Pageable pageable);
+
+    // Ops monitoring: one grouped count instead of N per-state list calls. Backed by
+    // idx_shipments_state / (origin_city|dest_city, state) — see V4_35.
+    @Query("SELECT s.state AS state, COUNT(s) AS count FROM Shipment s GROUP BY s.state")
+    List<StateCount> countByState();
+
+    // City-scoped variant — same origin-OR-dest rule as findByCityInvolved (station-manager scope).
+    @Query("SELECT s.state AS state, COUNT(s) AS count FROM Shipment s "
+            + "WHERE s.originCity = :city OR s.destCity = :city GROUP BY s.state")
+    List<StateCount> countByStateForCity(@Param("city") String city);
 }
