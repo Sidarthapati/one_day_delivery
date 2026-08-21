@@ -38,6 +38,12 @@ public class PriorityScorer {
     // band (a rainy last-mile beats a dry one) but never outranks an actual breach or a sooner cutoff.
     // ponytail: calibration knob.
     private static final double WEATHER_WEIGHT = 40_000d;
+    // Freshness (trajectory): a parcel that *just* escalated is a new fire the manager hasn't seen;
+    // it should surface above the stale ones already being worked. Full boost on entry, decaying to
+    // zero over the window. Only in the urgent bands — a fresh WATCH parcel isn't a fire.
+    // ponytail: calibration knob; velocity (Δ projected-finish) is a later refinement.
+    private static final double FRESHNESS_WEIGHT = 30_000d;
+    private static final long FRESHNESS_WINDOW_MIN = 20;
 
     private static final int CRITICAL_ACT_BY_MIN = 30;
     private static final int HIGH_ACT_BY_MIN = 120;
@@ -68,8 +74,19 @@ public class PriorityScorer {
 
         boolean weatherExposed = isWeatherExposed(ss, adverseCities);
         PriorityBand band = band(ss, actByAt, now);
-        double score = score(band, fixable, actByAt, urgencyMinutes, weatherExposed, now);
+        double score = score(band, fixable, actByAt, urgencyMinutes, weatherExposed,
+                freshnessBoost(band, ss.getEnteredStateAt(), now), now);
         return new Scored(band, urgencyMinutes, actByAt, score, fixable, weatherExposed);
+    }
+
+    /** A decaying nudge for a parcel that just entered an urgent band — new fires over stale ones. */
+    private double freshnessBoost(PriorityBand band, Instant enteredStateAt, Instant now) {
+        if (band == PriorityBand.WATCH || enteredStateAt == null) {
+            return 0;
+        }
+        long minsInState = Math.max(0, minutesBetween(enteredStateAt, now));
+        double decay = Math.max(0, 1.0 - (double) minsInState / FRESHNESS_WINDOW_MIN);
+        return FRESHNESS_WEIGHT * decay;
     }
 
     /** True when the parcel is on a ground leg heading into (or picked up in) a city with adverse weather. */
@@ -95,12 +112,13 @@ public class PriorityScorer {
     }
 
     private double score(PriorityBand band, boolean fixable, Instant actByAt,
-                         Integer urgencyMinutes, boolean weatherExposed, Instant now) {
+                         Integer urgencyMinutes, boolean weatherExposed, double freshnessBoost, Instant now) {
         double s = band.rank() * BAND_WEIGHT;
         s += (fixable ? 1 : 0) * FIXABLE_WEIGHT;
         // Sooner act-by → higher, in [0, ACT_BY_HORIZON_MIN]. Null act-by contributes 0 (sorts last).
         long actByMin = actByAt == null ? ACT_BY_HORIZON_MIN : Math.max(0, minutesBetween(now, actByAt));
         s += Math.max(0, ACT_BY_HORIZON_MIN - actByMin);
+        s += freshnessBoost;
         if (weatherExposed) {
             s += WEATHER_WEIGHT;
         }
