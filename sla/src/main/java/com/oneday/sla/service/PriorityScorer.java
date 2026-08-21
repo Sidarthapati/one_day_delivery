@@ -44,13 +44,20 @@ public class PriorityScorer {
     // ponytail: calibration knob; velocity (Δ projected-finish) is a later refinement.
     private static final double FRESHNESS_WEIGHT = 30_000d;
     private static final long FRESHNESS_WINDOW_MIN = 20;
+    // Ack decay (R4, anti-fatigue): once a manager attends to a parcel, sink it within its band so the
+    // queue keeps showing new fires. Weight sits just above the whole within-band range (fixable + act-by
+    // + freshness + weather ≈ 1.13e6) so a worked parcel drops below its un-worked band-peers but never
+    // crosses into a lower band — an acked breach is still a breach, just handled. Decays back to zero
+    // over the cooldown so an unresolved parcel resurfaces. ponytail: calibration knob.
+    private static final double ACK_DECAY_WEIGHT = 2_000_000d;
+    private static final long ACK_COOLDOWN_MIN = 30;
 
     private static final int CRITICAL_ACT_BY_MIN = 30;
     private static final int HIGH_ACT_BY_MIN = 120;
 
     /** The computed triage result for one shipment. */
     public record Scored(PriorityBand band, Integer urgencyMinutes, Instant actByAt,
-                         double score, boolean fixable, boolean weatherExposed) {}
+                         double score, boolean fixable, boolean weatherExposed, boolean acknowledged) {}
 
     /** No-weather overload (event lifecycle paths where a live weather read isn't warranted). */
     public Scored score(SlaShipment ss, List<SlaLeg> legs, Instant now) {
@@ -76,7 +83,35 @@ public class PriorityScorer {
         PriorityBand band = band(ss, actByAt, now);
         double score = score(band, fixable, actByAt, urgencyMinutes, weatherExposed,
                 freshnessBoost(band, ss.getEnteredStateAt(), now), now);
-        return new Scored(band, urgencyMinutes, actByAt, score, fixable, weatherExposed);
+        score += ackDecay(ss, now);
+        return new Scored(band, urgencyMinutes, actByAt, score, fixable, weatherExposed, ackIsLive(ss, now));
+    }
+
+    /**
+     * Has a manager attended to this parcel's <em>current</em> state, with the cooldown not yet lapsed?
+     * A worsening after the ack (a later {@code enteredStateAt}) is a fresh fire the ack no longer
+     * covers, so the parcel resurfaces. Shared by the score's decay and the "being handled" summary flag.
+     */
+    public static boolean ackIsLive(SlaShipment ss, Instant now) {
+        Instant acked = ss.getAcknowledgedAt();
+        if (acked == null) {
+            return false;
+        }
+        if (ss.getEnteredStateAt() != null && ss.getEnteredStateAt().isAfter(acked)) {
+            return false;
+        }
+        long mins = minutesBetween(acked, now);
+        return mins >= 0 && mins < ACK_COOLDOWN_MIN;
+    }
+
+    /** A negative, decaying term that sinks an acknowledged parcel within its band over the cooldown. */
+    private double ackDecay(SlaShipment ss, Instant now) {
+        if (!ackIsLive(ss, now)) {
+            return 0;
+        }
+        long mins = Math.max(0, minutesBetween(ss.getAcknowledgedAt(), now));
+        double decay = 1.0 - (double) mins / ACK_COOLDOWN_MIN;
+        return -ACK_DECAY_WEIGHT * decay;
     }
 
     /** A decaying nudge for a parcel that just entered an urgent band — new fires over stale ones. */
