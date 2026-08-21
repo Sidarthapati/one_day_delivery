@@ -5,6 +5,7 @@ import com.oneday.sla.dto.SlaControlTowerResponse;
 import com.oneday.sla.dto.SlaEscalationView;
 import com.oneday.sla.dto.SlaPassRateResponse;
 import com.oneday.sla.dto.SlaShipmentDetailResponse;
+import com.oneday.sla.dto.WeatherWatchResponse;
 
 import java.time.Instant;
 import java.util.List;
@@ -22,6 +23,9 @@ public interface SlaQueryService {
     List<SlaEscalationView> redQueue(String cityScope);
 
     SlaPassRateResponse passRate(Instant from, Instant to, String cityScope);
+
+    /** Proactive weather advisories: adverse cities + how many open parcels are exposed. */
+    WeatherWatchResponse weatherWatch(String cityScope);
 
     void acknowledge(java.util.UUID escalationId, String cityScope, String userId, String role, String notes);
 

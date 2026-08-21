@@ -13,6 +13,8 @@ import com.oneday.sla.dto.SlaLegView;
 import com.oneday.sla.dto.SlaPassRateResponse;
 import com.oneday.sla.dto.SlaShipmentDetailResponse;
 import com.oneday.sla.dto.SlaShipmentSummary;
+import com.oneday.sla.dto.WeatherWatchResponse;
+import com.oneday.sla.service.WeatherService;
 import com.oneday.sla.repository.SlaActionRepository;
 import com.oneday.sla.repository.SlaEscalationRepository;
 import com.oneday.sla.repository.SlaLegRepository;
@@ -42,16 +44,26 @@ public class SlaQueryServiceImpl implements SlaQueryService {
     private final SlaActionRepository actionRepo;
     private final CourierOnShipmentPort courierPort;
     private final ShipmentContactPort contactPort;
+    private final WeatherService weatherService;
 
     public SlaQueryServiceImpl(SlaShipmentRepository shipmentRepo, SlaLegRepository legRepo,
                                SlaEscalationRepository escalationRepo, SlaActionRepository actionRepo,
-                               CourierOnShipmentPort courierPort, ShipmentContactPort contactPort) {
+                               CourierOnShipmentPort courierPort, ShipmentContactPort contactPort,
+                               WeatherService weatherService) {
         this.shipmentRepo = shipmentRepo;
         this.legRepo = legRepo;
         this.escalationRepo = escalationRepo;
         this.actionRepo = actionRepo;
         this.courierPort = courierPort;
         this.contactPort = contactPort;
+        this.weatherService = weatherService;
+    }
+
+    /** True when this parcel is on a ground leg heading into a currently-adverse city. */
+    private boolean weatherExposed(SlaShipment ss, java.util.Set<String> adverse) {
+        if (adverse.isEmpty() || !WeatherService.isWeatherExposedLeg(ss.getCurrentLeg())) return false;
+        String city = WeatherService.relevantCity(ss.getCurrentLeg(), ss.getOriginCity(), ss.getDestCity());
+        return city != null && adverse.contains(city);
     }
 
     @Override
@@ -63,11 +75,13 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         // Batch the customer contacts (one findAllById); the current handler (DA) is per-row today.
         Map<UUID, ShipmentContactPort.ShipmentContact> contacts = contactPort.contactsFor(
                 result.getContent().stream().map(SlaShipment::getShipmentId).collect(Collectors.toSet()));
+        java.util.Set<String> adverse = weatherService.adverseCities();
         List<SlaShipmentSummary> items = result.getContent().stream()
                 .map(ss -> SlaShipmentSummary.from(
                         ss,
                         courierPort.forShipment(ss.getShipmentId()).orElse(null),
-                        contacts.get(ss.getShipmentId())))
+                        contacts.get(ss.getShipmentId()),
+                        weatherExposed(ss, adverse)))
                 .toList();
         return new SlaControlTowerResponse(p, s, result.getTotalElements(), items);
     }
@@ -86,7 +100,8 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         SlaShipmentSummary summary = SlaShipmentSummary.from(
                 ss,
                 courierPort.forShipment(ss.getShipmentId()).orElse(null),
-                contactPort.contactsFor(List.of(ss.getShipmentId())).get(ss.getShipmentId()));
+                contactPort.contactsFor(List.of(ss.getShipmentId())).get(ss.getShipmentId()),
+                weatherExposed(ss, weatherService.adverseCities()));
         return new SlaShipmentDetailResponse(summary, legs, escalations);
     }
 
@@ -107,6 +122,38 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         long closed = shipmentRepo.countClosedBetween(from, to, cityScope);
         long breached = shipmentRepo.countBreachedBetween(from, to, cityScope);
         return SlaPassRateResponse.of(from, to, cityScope, closed, breached);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public WeatherWatchResponse weatherWatch(String cityScope) {
+        Map<String, WeatherService.CityWeather> weather = weatherService.current();
+        java.util.Set<String> adverse = weatherService.adverseCities();
+        if (adverse.isEmpty()) {
+            return new WeatherWatchResponse(List.of());
+        }
+        // Count open, weather-exposed parcels per adverse city (respecting the caller's city scope).
+        Map<String, Long> exposedByCity = shipmentRepo.findByClosedAtIsNull().stream()
+                .filter(ss -> cityScope == null
+                        || cityScope.equals(ss.getOriginCity()) || cityScope.equals(ss.getDestCity()))
+                .filter(ss -> weatherExposed(ss, adverse))
+                .collect(Collectors.groupingBy(
+                        ss -> WeatherService.relevantCity(ss.getCurrentLeg(), ss.getOriginCity(), ss.getDestCity()),
+                        Collectors.counting()));
+
+        List<WeatherWatchResponse.CityAdvisory> advisories = adverse.stream()
+                .filter(city -> cityScope == null || cityScope.equals(city))
+                .map(city -> {
+                    WeatherService.CityWeather w = weather.get(city);
+                    return new WeatherWatchResponse.CityAdvisory(
+                            city,
+                            w != null ? w.condition() : "Adverse",
+                            w != null ? w.tempC() : Double.NaN,
+                            exposedByCity.getOrDefault(city, 0L).intValue());
+                })
+                .sorted((a, b) -> Integer.compare(b.exposedCount(), a.exposedCount()))
+                .toList();
+        return new WeatherWatchResponse(advisories);
     }
 
     @Override

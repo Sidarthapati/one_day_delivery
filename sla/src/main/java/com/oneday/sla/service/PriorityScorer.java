@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Turns a shipment's SLA state into a triage priority: which band it's in, the act-by deadline the
@@ -33,15 +34,24 @@ public class PriorityScorer {
     private static final double BAND_WEIGHT = 1_000_000_000d;
     private static final double FIXABLE_WEIGHT = 1_000_000d;
     private static final long ACT_BY_HORIZON_MIN = 100_000; // an absent/far act-by sorts last in-band
+    // Weather nudge: capped well below the act-by term so a weather-exposed parcel rises within its
+    // band (a rainy last-mile beats a dry one) but never outranks an actual breach or a sooner cutoff.
+    // ponytail: calibration knob.
+    private static final double WEATHER_WEIGHT = 40_000d;
 
     private static final int CRITICAL_ACT_BY_MIN = 30;
     private static final int HIGH_ACT_BY_MIN = 120;
 
     /** The computed triage result for one shipment. */
     public record Scored(PriorityBand band, Integer urgencyMinutes, Instant actByAt,
-                         double score, boolean fixable) {}
+                         double score, boolean fixable, boolean weatherExposed) {}
 
+    /** No-weather overload (event lifecycle paths where a live weather read isn't warranted). */
     public Scored score(SlaShipment ss, List<SlaLeg> legs, Instant now) {
+        return score(ss, legs, now, Set.of());
+    }
+
+    public Scored score(SlaShipment ss, List<SlaLeg> legs, Instant now, Set<String> adverseCities) {
         Instant target = ss.getInternalTargetAt();
         Instant actByAt = nearestOpenLegDeadline(legs);
         boolean fixable = isFixable(ss.getCurrentLeg());
@@ -56,9 +66,19 @@ public class PriorityScorer {
             urgencyMinutes = (int) minutesBetween(target, finish);
         }
 
+        boolean weatherExposed = isWeatherExposed(ss, adverseCities);
         PriorityBand band = band(ss, actByAt, now);
-        double score = score(band, fixable, actByAt, urgencyMinutes, now);
-        return new Scored(band, urgencyMinutes, actByAt, score, fixable);
+        double score = score(band, fixable, actByAt, urgencyMinutes, weatherExposed, now);
+        return new Scored(band, urgencyMinutes, actByAt, score, fixable, weatherExposed);
+    }
+
+    /** True when the parcel is on a ground leg heading into (or picked up in) a city with adverse weather. */
+    private boolean isWeatherExposed(SlaShipment ss, Set<String> adverseCities) {
+        if (adverseCities.isEmpty() || !WeatherService.isWeatherExposedLeg(ss.getCurrentLeg())) {
+            return false;
+        }
+        String city = WeatherService.relevantCity(ss.getCurrentLeg(), ss.getOriginCity(), ss.getDestCity());
+        return city != null && adverseCities.contains(city);
     }
 
     private PriorityBand band(SlaShipment ss, Instant actByAt, Instant now) {
@@ -75,12 +95,15 @@ public class PriorityScorer {
     }
 
     private double score(PriorityBand band, boolean fixable, Instant actByAt,
-                         Integer urgencyMinutes, Instant now) {
+                         Integer urgencyMinutes, boolean weatherExposed, Instant now) {
         double s = band.rank() * BAND_WEIGHT;
         s += (fixable ? 1 : 0) * FIXABLE_WEIGHT;
         // Sooner act-by → higher, in [0, ACT_BY_HORIZON_MIN]. Null act-by contributes 0 (sorts last).
         long actByMin = actByAt == null ? ACT_BY_HORIZON_MIN : Math.max(0, minutesBetween(now, actByAt));
         s += Math.max(0, ACT_BY_HORIZON_MIN - actByMin);
+        if (weatherExposed) {
+            s += WEATHER_WEIGHT;
+        }
         // Overshoot tie-break — small weight so it never crosses an act-by band inside the same band.
         if (urgencyMinutes != null) {
             s += Math.max(0, urgencyMinutes) / 1000.0;
