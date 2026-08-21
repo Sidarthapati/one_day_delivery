@@ -1,8 +1,10 @@
 package com.oneday.sla.service.impl;
 
+import com.oneday.common.domain.enums.SlaLegType;
 import com.oneday.common.domain.enums.SlaState;
 import com.oneday.common.port.CourierOnShipmentPort;
 import com.oneday.common.port.ShipmentContactPort;
+import com.oneday.common.port.StageContactPort;
 import com.oneday.sla.domain.SlaAction;
 import com.oneday.sla.domain.SlaActionType;
 import com.oneday.sla.domain.SlaEscalation;
@@ -43,20 +45,46 @@ public class SlaQueryServiceImpl implements SlaQueryService {
     private final SlaEscalationRepository escalationRepo;
     private final SlaActionRepository actionRepo;
     private final CourierOnShipmentPort courierPort;
+    private final StageContactPort stageContactPort;
     private final ShipmentContactPort contactPort;
     private final WeatherService weatherService;
 
     public SlaQueryServiceImpl(SlaShipmentRepository shipmentRepo, SlaLegRepository legRepo,
                                SlaEscalationRepository escalationRepo, SlaActionRepository actionRepo,
-                               CourierOnShipmentPort courierPort, ShipmentContactPort contactPort,
-                               WeatherService weatherService) {
+                               CourierOnShipmentPort courierPort, StageContactPort stageContactPort,
+                               ShipmentContactPort contactPort, WeatherService weatherService) {
         this.shipmentRepo = shipmentRepo;
         this.legRepo = legRepo;
         this.escalationRepo = escalationRepo;
         this.actionRepo = actionRepo;
         this.courierPort = courierPort;
+        this.stageContactPort = stageContactPort;
         this.contactPort = contactPort;
         this.weatherService = weatherService;
+    }
+
+    /**
+     * Who to call for a parcel, by the stage it's in: the DA on the first/last mile, the hub desk while
+     * it sits in a hub, the GHA desk while it moves through the airline. Empty when nothing resolves
+     * (e.g. no DA assigned yet) — the row then falls back to the customer contact.
+     */
+    private SlaShipmentSummary.Handler handlerFor(SlaShipment ss) {
+        SlaLegType leg = ss.getCurrentLeg();
+        if (leg == null) {
+            return null;
+        }
+        return switch (leg) {
+            case FIRST_MILE, LAST_MILE -> courierPort.forShipment(ss.getShipmentId())
+                    .map(c -> new SlaShipmentSummary.Handler(c.name(), c.phone(), c.role().name()))
+                    .orElse(null);
+            case ORIGIN_HUB -> toHandler(stageContactPort.hubDesk(ss.getOriginCity()));
+            case DEST_HUB -> toHandler(stageContactPort.hubDesk(ss.getDestCity()));
+            case ORIGIN_AIRPORT, AIR, DEST_AIRPORT -> toHandler(stageContactPort.ghaDesk());
+        };
+    }
+
+    private static SlaShipmentSummary.Handler toHandler(java.util.Optional<StageContactPort.Contact> c) {
+        return c.map(x -> new SlaShipmentSummary.Handler(x.name(), x.phone(), x.role())).orElse(null);
     }
 
     /** True when this parcel is on a ground leg heading into a currently-adverse city. */
@@ -79,7 +107,7 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         List<SlaShipmentSummary> items = result.getContent().stream()
                 .map(ss -> SlaShipmentSummary.from(
                         ss,
-                        courierPort.forShipment(ss.getShipmentId()).orElse(null),
+                        handlerFor(ss),
                         contacts.get(ss.getShipmentId()),
                         weatherExposed(ss, adverse)))
                 .toList();
@@ -99,7 +127,7 @@ public class SlaQueryServiceImpl implements SlaQueryService {
                 .map(this::toEscalationView).toList();
         SlaShipmentSummary summary = SlaShipmentSummary.from(
                 ss,
-                courierPort.forShipment(ss.getShipmentId()).orElse(null),
+                handlerFor(ss),
                 contactPort.contactsFor(List.of(ss.getShipmentId())).get(ss.getShipmentId()),
                 weatherExposed(ss, weatherService.adverseCities()));
         return new SlaShipmentDetailResponse(summary, legs, escalations);
