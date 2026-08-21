@@ -54,6 +54,11 @@ public class PriorityScorer {
 
     private static final int CRITICAL_ACT_BY_MIN = 30;
     private static final int HIGH_ACT_BY_MIN = 120;
+    // Band hysteresis (R5): the 60s sweeper recomputes every parcel, so a metric hovering on a band
+    // boundary would flip the parcel in and out of the manager's top bucket each pass — a jittery list.
+    // Promotion (getting worse) is always immediate; DEMOTION requires the act-by to clear the boundary
+    // by this deadband, so a parcel that merely wobbles around 120m stays put. ponytail: calibration knob.
+    private static final int BAND_HYSTERESIS_MIN = 15;
 
     /** The computed triage result for one shipment. */
     public record Scored(PriorityBand band, Integer urgencyMinutes, Instant actByAt,
@@ -136,13 +141,21 @@ public class PriorityScorer {
     private PriorityBand band(SlaShipment ss, Instant actByAt, Instant now) {
         boolean promiseBlown = ss.getPublicPromiseAt() != null && now.isAfter(ss.getPublicPromiseAt());
         long actByMin = actByAt == null ? Long.MAX_VALUE : minutesBetween(now, actByAt);
+        boolean red = ss.getOverallState() == SlaState.RED;
+        PriorityBand prev = ss.getBand() != null ? ss.getBand() : PriorityBand.WATCH;
 
-        if (ss.isBreached() || promiseBlown || actByMin <= CRITICAL_ACT_BY_MIN) {
-            return PriorityBand.CRITICAL;
-        }
-        if (ss.getOverallState() == SlaState.RED || actByMin <= HIGH_ACT_BY_MIN) {
-            return PriorityBand.HIGH;
-        }
+        // Entry thresholds — what promotes a parcel into a band.
+        boolean critEnter = ss.isBreached() || promiseBlown || actByMin <= CRITICAL_ACT_BY_MIN;
+        boolean highEnter = red || actByMin <= HIGH_ACT_BY_MIN;
+        // Hold thresholds — relaxed by the deadband, so a parcel already in the band doesn't fall out on a
+        // wobble. (breach/promise/RED are hard facts, not boundaries, so they carry no deadband.)
+        boolean critHold = ss.isBreached() || promiseBlown || actByMin <= CRITICAL_ACT_BY_MIN + BAND_HYSTERESIS_MIN;
+        boolean highHold = red || actByMin <= HIGH_ACT_BY_MIN + BAND_HYSTERESIS_MIN;
+
+        if (critEnter) return PriorityBand.CRITICAL;
+        if (prev == PriorityBand.CRITICAL && critHold) return PriorityBand.CRITICAL; // resist CRITICAL→lower
+        if (highEnter) return PriorityBand.HIGH;
+        if (prev != PriorityBand.WATCH && highHold) return PriorityBand.HIGH;        // resist →WATCH
         return PriorityBand.WATCH;
     }
 
