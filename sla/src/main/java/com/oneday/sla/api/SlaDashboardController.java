@@ -7,6 +7,7 @@ import com.oneday.sla.dto.SlaControlTowerResponse;
 import com.oneday.sla.dto.SlaEscalationView;
 import com.oneday.sla.dto.SlaPassRateResponse;
 import com.oneday.sla.dto.SlaShipmentDetailResponse;
+import com.oneday.sla.dto.WeatherWatchResponse;
 import com.oneday.sla.service.SlaQueryService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -57,6 +58,13 @@ public class SlaDashboardController {
             @PathVariable String ref) {
         Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR);
         return service.detail(ref, Authz.cityScope(principal));
+    }
+
+    /** Proactive weather advisories: adverse operating cities + how many open parcels are exposed. */
+    @GetMapping("/weather-watch")
+    public WeatherWatchResponse weatherWatch(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR);
+        return service.weatherWatch(Authz.cityScope(principal));
     }
 
     /** Open escalations awaiting action (RED / BREACHED). */

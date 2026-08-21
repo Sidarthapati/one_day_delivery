@@ -26,15 +26,17 @@ public class SlaEngine {
     private final ProjectionCalculator projection;
     private final EscalationService escalation;
     private final PriorityScorer priorityScorer;
+    private final WeatherService weatherService;
 
     public SlaEngine(SlaShipmentRepository shipmentRepo, SlaLegRepository legRepo,
                      ProjectionCalculator projection, EscalationService escalation,
-                     PriorityScorer priorityScorer) {
+                     PriorityScorer priorityScorer, WeatherService weatherService) {
         this.shipmentRepo = shipmentRepo;
         this.legRepo = legRepo;
         this.projection = projection;
         this.escalation = escalation;
         this.priorityScorer = priorityScorer;
+        this.weatherService = weatherService;
     }
 
     @Transactional
@@ -103,9 +105,9 @@ public class SlaEngine {
         ss.setOverallState(next);
     }
 
-    /** Recompute + store the triage priority (band, act-by, urgency, score). */
+    /** Recompute + store the triage priority (band, act-by, urgency, score, incl. weather nudge). */
     private void applyPriority(SlaShipment ss, List<SlaLeg> legs, Instant now) {
-        PriorityScorer.Scored scored = priorityScorer.score(ss, legs, now);
+        PriorityScorer.Scored scored = priorityScorer.score(ss, legs, now, weatherService.adverseCities());
         ss.setBand(scored.band());
         ss.setActByAt(scored.actByAt());
         ss.setUrgencyMinutes(scored.urgencyMinutes());
