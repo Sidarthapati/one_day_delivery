@@ -1,15 +1,35 @@
-# One-Day Delivery
+# Godspeed — One-Day Delivery
 
-An in-house one-day intercity parcel delivery platform (B2B + B2C) across 5 Indian cities.
-It owns the full logistics chain — pickup DA → hub sortation → airline flight → hub sortation →
-delivery DA — with no third-party last-mile carriers in v1.
+**Godspeed** is an in-house intercity parcel delivery platform that guarantees **next-day delivery
+across 5 Indian cities** — a parcel picked up today arrives at its destination city tomorrow.
+It serves both businesses (**Godspeed for Business**) and individual customers, and owns the entire
+logistics chain end to end, with no third-party last-mile carriers in v1:
+
+```
+Pickup DA  →  Origin hub sortation  →  Airline flight  →  Destination hub sortation  →  Delivery DA
+```
+
+Every leg is time-boxed against that one-day promise: the platform will only book a shipment it can
+actually get onto a flight in time to land the next day — the **cron-meeting constraint** below is
+what makes the guarantee real rather than aspirational.
+
+## Why it's interesting
+
+- **One-day SLA as a hard constraint, not a hope.** Dispatch refuses any pickup that can't reach the
+  hub before the airline cutoff, so the delivery date is committed at booking time.
+- **A living map of the cities.** Serviceability, demand, and delivery-associate (DA) territories run
+  on an **Uber H3 hex grid** that replans nightly — the operational footprint adapts to real demand.
+- **Full custody chain.** Every parcel is tracked scan-by-scan (pickup → hub → van → flight → hub →
+  doorstep) on an append-only ledger, so location and accountability are always answerable.
+- **Per-leg SLA monitoring** (GREEN / AMBER / RED) with an event-driven control tower that escalates
+  before a breach, not after.
 
 ## Stack
 
 - **Java 21 + Spring Boot 3.2**, Maven multi-module monolith
 - **PostgreSQL** (Flyway migrations), **RabbitMQ** (CloudAMQP) for the event bus
-- React frontends (customer / business / hub / station / airline / admin consoles) live in the
-  separate `oneday-web` repo; the driver app in `oneday-driver-app`
+- React consoles (customer / business / hub / station / airline / admin) live in the separate
+  `oneday-web` repo; the driver app in `oneday-driver-app`
 
 ## Modules
 
@@ -28,7 +48,7 @@ The system is a Maven multi-module monolith. Each module is a submodule with its
 | `routing` (M6) | Nightly van route plan over the grid graph |
 | `hub` (M7) | Inbound dock, stand assignment, bag creation, manifests |
 | `airline` (M9) | Flight schedule sync, hub-level assignment, GHA API |
-| `sla` (M10) | Per-leg SLA state (GREEN/AMBER/RED); Kafka consumer |
+| `sla` (M10) | Per-leg SLA state (GREEN/AMBER/RED); RabbitMQ consumer |
 | `exceptions` (M11) | Failure capture, call-center queue, RTO workflow |
 | `app` | Entry point — wires all modules, no business logic |
 
@@ -46,7 +66,7 @@ mvn test -pl orders          # test a single module
 mvn spring-boot:run -pl app  # run the app at http://localhost:8080/
 ```
 
-Flyway applies migrations automatically on startup, and the 5 city H3 grids seed on boot
+Flyway applies migrations automatically on startup, and the 5-city H3 grids seed on boot
 (non-prod profiles), so serviceability is live immediately.
 
 ## Key design invariants
@@ -56,7 +76,7 @@ Flyway applies migrations automatically on startup, and the 5 city H3 grids seed
 - **Nightly stability** — grids (M3) and van routes (M6) replan once nightly; intraday changes
   need station-manager approval.
 - **Cron-meeting is a hard constraint** — M5 confirms a parcel can reach the hub cron before the
-  airline cutoff, or it is not assigned.
+  airline cutoff, or it is not assigned. This is what underwrites the one-day guarantee.
 - **Cross-module imports** — only import another module's public service interface, never its
   internal classes.
 
