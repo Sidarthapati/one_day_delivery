@@ -127,6 +127,19 @@ class PriorityScorerTest {
     }
 
     @Test
+    void aJustEscalatedParcelOutranksAStaleOneInTheSameBand() {
+        SlaShipment fresh = ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null);
+        fresh.setEnteredStateAt(now);           // new fire
+        SlaShipment stale = ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null);
+        stale.setEnteredStateAt(minus(60));     // been critical an hour → boost decayed to zero
+
+        var f = scorer.score(fresh, legDue(minus(5)), now);
+        var s = scorer.score(stale, legDue(minus(5)), now);
+        assertThat(f.band()).isEqualTo(s.band());
+        assertThat(f.score()).isGreaterThan(s.score());
+    }
+
+    @Test
     void weatherOnlyExposesGroundLegsHeadingIntoTheAdverseCity() {
         // In the air → not exposed (can't act, and dest weather isn't the parcel's ground risk yet).
         SlaShipment inAir = ship(SlaState.GREEN, false, SlaLegType.AIR, plus(600), plus(120), null);
