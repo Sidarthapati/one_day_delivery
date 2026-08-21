@@ -38,7 +38,10 @@ public record SlaShipmentSummary(
         String receiverName,
         String receiverPhone,
         // True when the parcel is on a ground leg heading into a city with adverse weather right now.
-        boolean weatherExposed) {
+        boolean weatherExposed,
+        // Anti-fatigue: a manager is on it (acknowledged, cooldown live, not since re-escalated) + who.
+        boolean beingHandled,
+        String acknowledgedBy) {
 
     /** The resolved current handler for a parcel — DA, hub desk, or GHA desk — normalised to strings. */
     public record Handler(String name, String phone, String role) {}
@@ -64,6 +67,8 @@ public record SlaShipmentSummary(
                 handler == null ? null : handler.role(),
                 contact == null ? null : contact.receiverName(),
                 contact == null ? null : contact.receiverPhone(),
-                weatherExposed);
+                weatherExposed,
+                com.oneday.sla.service.PriorityScorer.ackIsLive(s, Instant.now()),
+                s.getAcknowledgedBy());
     }
 }

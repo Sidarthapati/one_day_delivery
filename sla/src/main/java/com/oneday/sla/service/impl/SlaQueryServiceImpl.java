@@ -277,6 +277,14 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         action.setActedByRole(role);
         action.setNotes(notes);
         actionRepo.save(action);
+
+        // Anti-fatigue (R4): stamp the parcel so the scorer sinks it within its band for a cooldown —
+        // a manager who's on it shouldn't keep seeing it top the queue. A later escalation clears this.
+        shipmentRepo.findByShipmentId(esc.getShipmentId()).ifPresent(ss -> {
+            ss.setAcknowledgedAt(Instant.now());
+            ss.setAcknowledgedBy(userId);
+            shipmentRepo.save(ss);
+        });
     }
 
     private SlaEscalationView toEscalationView(SlaEscalation e) {

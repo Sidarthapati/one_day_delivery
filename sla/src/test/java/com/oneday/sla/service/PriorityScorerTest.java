@@ -140,6 +140,32 @@ class PriorityScorerTest {
     }
 
     @Test
+    void acknowledgedParcelSinksWithinBandButNeverBelowIt() {
+        SlaShipment worked = ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null);
+        worked.setEnteredStateAt(minus(45));
+        worked.setAcknowledgedAt(minus(2));      // a manager just acked — cooldown live, not since re-escalated
+        SlaShipment fresh = ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null);
+        fresh.setEnteredStateAt(minus(45));      // same state, nobody's on it
+
+        var w = scorer.score(worked, legDue(minus(5)), now);
+        var f = scorer.score(fresh, legDue(minus(5)), now);
+        assertThat(w.acknowledged()).isTrue();
+        assertThat(f.acknowledged()).isFalse();
+        assertThat(w.band()).isEqualTo(PriorityBand.CRITICAL);     // an acked breach is still CRITICAL
+        assertThat(w.score()).isLessThan(f.score());               // but drops below its un-worked peer
+        assertThat(w.score()).isGreaterThan(PriorityBand.HIGH.rank() * 1_000_000_000d); // never a band-jump down
+    }
+
+    @Test
+    void aReEscalationAfterTheAckResurfacesTheParcel() {
+        SlaShipment reescalated = ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null);
+        reescalated.setAcknowledgedAt(minus(10));
+        reescalated.setEnteredStateAt(minus(2));   // worsened AFTER the ack → the ack no longer covers it
+        var r = scorer.score(reescalated, legDue(minus(5)), now);
+        assertThat(r.acknowledged()).isFalse();    // resurfaces — the decay is gone
+    }
+
+    @Test
     void weatherOnlyExposesGroundLegsHeadingIntoTheAdverseCity() {
         // In the air → not exposed (can't act, and dest weather isn't the parcel's ground risk yet).
         SlaShipment inAir = ship(SlaState.GREEN, false, SlaLegType.AIR, plus(600), plus(120), null);

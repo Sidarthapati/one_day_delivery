@@ -98,4 +98,12 @@ public class SlaShipment extends MutableBaseEntity {
     /** When the parcel entered its current SLA colour — for "in RED 12m" and ack decay. */
     @Column(name = "entered_state_at")
     private Instant enteredStateAt;
+
+    /** When a manager last acknowledged/acted on this parcel — sinks it within its band for a cooldown. */
+    @Column(name = "acknowledged_at")
+    private Instant acknowledgedAt;
+
+    /** Who acknowledged it — shown as "being handled by X" on the queue. */
+    @Column(name = "acknowledged_by")
+    private String acknowledgedBy;
 }
