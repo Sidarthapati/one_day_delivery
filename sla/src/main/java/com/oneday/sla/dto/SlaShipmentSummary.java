@@ -3,7 +3,6 @@ package com.oneday.sla.dto;
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.SlaLegType;
 import com.oneday.common.domain.enums.SlaState;
-import com.oneday.common.port.CourierOnShipmentPort;
 import com.oneday.common.port.ShipmentContactPort;
 import com.oneday.sla.domain.PriorityBand;
 import com.oneday.sla.domain.SlaShipment;
@@ -41,6 +40,9 @@ public record SlaShipmentSummary(
         // True when the parcel is on a ground leg heading into a city with adverse weather right now.
         boolean weatherExposed) {
 
+    /** The resolved current handler for a parcel — DA, hub desk, or GHA desk — normalised to strings. */
+    public record Handler(String name, String phone, String role) {}
+
     /** Entity-only mapping — contact + weather null/false. Used where per-row enrichment isn't warranted. */
     public static SlaShipmentSummary from(SlaShipment s) {
         return from(s, null, null, false);
@@ -48,7 +50,7 @@ public record SlaShipmentSummary(
 
     /** Full row including the resolved current handler, receiving customer, and weather exposure. */
     public static SlaShipmentSummary from(SlaShipment s,
-                                          CourierOnShipmentPort.Courier handler,
+                                          Handler handler,
                                           ShipmentContactPort.ShipmentContact contact,
                                           boolean weatherExposed) {
         return new SlaShipmentSummary(
@@ -59,7 +61,7 @@ public record SlaShipmentSummary(
                 s.getBand(), s.getUrgencyMinutes(), s.getActByAt(), s.getEnteredStateAt(),
                 handler == null ? null : handler.name(),
                 handler == null ? null : handler.phone(),
-                handler == null ? null : handler.role().name(),
+                handler == null ? null : handler.role(),
                 contact == null ? null : contact.receiverName(),
                 contact == null ? null : contact.receiverPhone(),
                 weatherExposed);
