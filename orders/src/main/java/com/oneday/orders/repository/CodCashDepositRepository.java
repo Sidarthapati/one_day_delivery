@@ -6,11 +6,15 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface CodCashDepositRepository extends JpaRepository<CodCashDeposit, UUID> {
 
     List<CodCashDeposit> findByDaUserIdOrderByCreatedAtDesc(UUID daUserId);
+
+    /** Idempotency guard: a (DA, deposit_ref) pair records a cash drop at most once. */
+    Optional<CodCashDeposit> findByDaUserIdAndDepositRef(UUID daUserId, String depositRef);
 
     List<CodCashDeposit> findAllByOrderByCreatedAtDesc();
 

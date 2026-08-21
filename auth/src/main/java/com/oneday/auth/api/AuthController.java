@@ -3,13 +3,16 @@ package com.oneday.auth.api;
 import com.oneday.auth.dto.request.ApiKeyCreateRequest;
 import com.oneday.auth.dto.request.GoogleLoginRequest;
 import com.oneday.auth.dto.request.LoginRequest;
+import com.oneday.auth.dto.request.LogoutRequest;
 import com.oneday.auth.dto.request.OtpRequestRequest;
 import com.oneday.auth.dto.request.OtpVerifyRequest;
+import com.oneday.auth.dto.request.RefreshRequest;
 import com.oneday.auth.dto.request.RegisterRequest;
 import com.oneday.auth.dto.response.ApiKeyCreateResponse;
 import com.oneday.auth.dto.response.ApiKeyResponse;
 import com.oneday.auth.dto.response.LoginResponse;
 import com.oneday.auth.dto.response.OtpRequestResponse;
+import com.oneday.auth.dto.response.TokenResponse;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.auth.service.AuthService;
 import jakarta.validation.Valid;
@@ -63,6 +66,19 @@ public class AuthController {
     @PostMapping("/otp/verify")
     public ResponseEntity<LoginResponse> verifyOtp(@Valid @RequestBody OtpVerifyRequest request) {
         return ResponseEntity.ok(authService.verifyOtp(request));
+    }
+
+    /** Rotate a refresh token for a fresh access JWT (and a new refresh token). Reuse → 401. */
+    @PostMapping("/refresh")
+    public ResponseEntity<TokenResponse> refresh(@Valid @RequestBody RefreshRequest request) {
+        return ResponseEntity.ok(authService.refresh(request.refreshToken()));
+    }
+
+    /** Revoke a refresh token (logout). Idempotent — always 204. */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@Valid @RequestBody LogoutRequest request) {
+        authService.logout(request.refreshToken());
+        return ResponseEntity.noContent().build();
     }
 
     @PreAuthorize("hasAnyRole('ADMIN', 'B2B_USER', 'B2C_CUSTOMER')")

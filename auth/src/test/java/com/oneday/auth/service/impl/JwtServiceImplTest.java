@@ -30,7 +30,7 @@ class JwtServiceImplTest {
 
     @BeforeEach
     void setup() {
-        jwtService = new JwtServiceImpl(SECRET, 8L);
+        jwtService = new JwtServiceImpl(SECRET, 8L, 0L);
     }
 
     // A minted token round-trips: parsing it back yields exactly the identity claims that were put in
@@ -61,7 +61,7 @@ class JwtServiceImplTest {
     // A token signed with a different secret is rejected (forged-token defence).
     @Test
     void parseToken_wrongSecret_throws() {
-        String foreign = new JwtServiceImpl("completely-different-secret-key-value-here", 8L)
+        String foreign = new JwtServiceImpl("completely-different-secret-key-value-here", 8L, 0L)
                 .createToken(fakeUser("ADMIN", null));
 
         assertThatThrownBy(() -> jwtService.parseToken(foreign)).isInstanceOf(JwtException.class);
@@ -70,7 +70,7 @@ class JwtServiceImplTest {
     // An expired token is rejected.
     @Test
     void parseToken_expired_throws() {
-        String expired = new JwtServiceImpl(SECRET, 0L).createToken(fakeUser("ADMIN", null));
+        String expired = new JwtServiceImpl(SECRET, 0L, 0L).createToken(fakeUser("ADMIN", null));
 
         assertThatThrownBy(() -> jwtService.parseToken(expired)).isInstanceOf(JwtException.class);
     }

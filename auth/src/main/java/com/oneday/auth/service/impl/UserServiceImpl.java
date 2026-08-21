@@ -63,9 +63,16 @@ class UserServiceImpl implements UserService {
         var actor = userRepository.findById(actorId)
                 .orElseThrow(() -> new UserNotFoundException("Actor not found"));
 
-        // Station Manager city-scope enforcement
+        // Station Manager enforcement — fail closed. A Station Manager may create ONLY non-privileged
+        // city-scoped operational roles (never ADMIN, B2B_USER, customers, AIRLINE_GHA, or a peer
+        // Station Manager), and only within their own city. Mirrors changeRole()'s
+        // enforceStationManagerScope(); previously ADMIN slipped through because it is not city-scoped.
         if ("STATION_MANAGER".equals(actor.getRole().getName())) {
-            if (needsCity && !actor.getCityId().equals(request.cityId())) {
+            if (!needsCity || "STATION_MANAGER".equals(role.getName())) {
+                throw new ForbiddenException(
+                        "Station Manager cannot create users with role " + role.getName());
+            }
+            if (!actor.getCityId().equals(request.cityId())) {
                 throw new ForbiddenException("Station Manager can only create users in their own city");
             }
         }

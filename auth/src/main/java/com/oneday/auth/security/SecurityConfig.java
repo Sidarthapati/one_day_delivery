@@ -101,6 +101,8 @@ public class SecurityConfig {
                         // Business self-signup — public, like /auth/request-onboarding (runs KYC, files a PENDING request).
                         .requestMatchers("/auth/request-business-onboarding").permitAll()
                         .requestMatchers("/auth/oauth/google", "/auth/otp/request", "/auth/otp/verify").permitAll()
+                        // Refresh/logout carry the refresh token in the body, not the (expired) access JWT.
+                        .requestMatchers("/auth/refresh", "/auth/logout").permitAll()
                         // Public "Talk to sales" capture + white-label shipment tracking (token-scoped).
                         .requestMatchers(HttpMethod.POST, "/api/sales/leads").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()
@@ -111,6 +113,57 @@ public class SecurityConfig {
                         // on the ERROR dispatch, so without this any 404/500 on an authenticated
                         // endpoint would be masked as a misleading 401.
                         .requestMatchers("/error").permitAll()
+
+                        // ── Role-scoped operational modules (M3/M6/M7/M8/M9) ─────────────────────────
+                        // These modules carry NO in-controller authorization, so these path rules are the
+                        // gate (previously any authenticated user — even a B2C customer — could approve
+                        // route plans, seal hub bags, confirm airline handovers, etc.). Fine-grained
+                        // "owns-this-resource" checks (van↔driver, da↔cron self) are a documented follow-up;
+                        // this closes the privilege boundary. ADMIN is permitted everywhere.
+
+                        // Customer booking map serviceability — must stay open to any authenticated user
+                        // (restricting it to ops roles would break booking). Keep BEFORE the grid rules.
+                        .requestMatchers(HttpMethod.GET, "/api/grid/serviceable-at").authenticated()
+
+                        // M6 routing — van-driver app (role-gated; per-van ownership is a follow-up).
+                        .requestMatchers("/api/v1/van/*/telemetry",
+                                "/routing/vans/*/manifest", "/routing/vans/*/load-scan",
+                                "/routing/vans/*/return-scan", "/routing/vans/*/stops/confirm",
+                                "/routing/vans/*/breakdown").hasAnyRole("VAN_DRIVER", "ADMIN")
+                        .requestMatchers("/routing/vans/*/recovery").hasAnyRole("STATION_MANAGER", "ADMIN")
+                        .requestMatchers("/routing/vans/*/live").hasAnyRole("STATION_MANAGER", "SUPERVISOR", "ADMIN")
+                        // Nightly route governance — mutations are ADMIN/STATION_MANAGER only.
+                        .requestMatchers(HttpMethod.POST, "/routing/plans/*/approve",
+                                "/routing/plans/*/override", "/routing/plans/*/replan").hasAnyRole("STATION_MANAGER", "ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/routing/fleet/**").hasAnyRole("STATION_MANAGER", "ADMIN")
+                        .requestMatchers("/routing/cron/**").hasAnyRole("DELIVERY_ASSOCIATE", "STATION_MANAGER", "SUPERVISOR", "ADMIN")
+                        // Planning-console reads (fleet GET, nodes, plans, shuttle timetable).
+                        .requestMatchers("/routing/**").hasAnyRole("STATION_MANAGER", "SUPERVISOR", "ADMIN")
+
+                        // M7 hub — operator console.
+                        .requestMatchers("/hub/**").hasAnyRole("HUB_OPERATOR", "SUPERVISOR", "ADMIN")
+
+                        // M3 grid — admin init, proposal governance, planning console.
+                        .requestMatchers(HttpMethod.POST, "/api/grid/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/proposals/**").hasAnyRole("STATION_MANAGER", "ADMIN")
+                        .requestMatchers("/api/grid/**").hasAnyRole("STATION_MANAGER", "SUPERVISOR", "ADMIN")
+
+                        // M9 airline — ground-crew confirmations + admin. The WhatsApp AWB webhook is a
+                        // stub needing its own Meta-signature auth (follow-up); role-gated until then.
+                        .requestMatchers(HttpMethod.POST, "/airline/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/airline/**").hasAnyRole("AIRLINE_GHA", "ADMIN")
+
+                        // M8 barcode — operational scan roles.
+                        .requestMatchers("/api/v1/scan/**").hasAnyRole("HUB_OPERATOR", "DELIVERY_ASSOCIATE", "SHUTTLE_AGENT", "AIRLINE_GHA", "ADMIN")
+
+                        // Orders stragglers: dev OTP peek (!prod) leaked cleartext OTP to any user;
+                        // minting a gateway order is a customer action.
+                        .requestMatchers("/internal/dev/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/payments/order").hasAnyRole("C2C_CUSTOMER", "B2C_CUSTOMER", "B2B_USER", "ADMIN")
+
+                        // auth — role catalog disclosure (sibling POST/DELETE are already ADMIN-gated).
+                        .requestMatchers(HttpMethod.GET, "/roles").hasAnyRole("ADMIN", "STATION_MANAGER")
+
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 // Throttle brute-force before any auth work happens.

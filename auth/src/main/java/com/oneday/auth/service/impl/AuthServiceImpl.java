@@ -17,6 +17,7 @@ import com.oneday.auth.dto.response.ApiKeyCreateResponse;
 import com.oneday.auth.dto.response.ApiKeyResponse;
 import com.oneday.auth.dto.response.LoginResponse;
 import com.oneday.auth.dto.response.OtpRequestResponse;
+import com.oneday.auth.dto.response.TokenResponse;
 import com.oneday.auth.exception.ApiKeyCapExceededException;
 import com.oneday.auth.exception.BadCredentialsException;
 import com.oneday.auth.exception.EmailAlreadyExistsException;
@@ -27,12 +28,14 @@ import com.oneday.auth.exception.UserNotFoundException;
 import com.oneday.auth.repository.ApiKeyRepository;
 import com.oneday.auth.repository.OtpChallengeRepository;
 import com.oneday.auth.repository.RoleAuditLogRepository;
+import com.oneday.auth.config.RefreshTokenProperties;
 import com.oneday.auth.repository.RoleRepository;
 import com.oneday.auth.repository.UserRepository;
 import com.oneday.auth.service.AuthService;
 import com.oneday.auth.service.GoogleTokenVerifier;
 import com.oneday.auth.service.JwtService;
 import com.oneday.auth.service.OtpSender;
+import com.oneday.auth.service.RefreshTokenService;
 import io.jsonwebtoken.JwtException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -68,6 +71,8 @@ class AuthServiceImpl implements AuthService {
     private final GoogleTokenVerifier googleTokenVerifier;
     private final OtpSender otpSender;
     private final OtpProperties otpProperties;
+    private final RefreshTokenService refreshTokenService;
+    private final RefreshTokenProperties refreshTokenProperties;
     private final SecureRandom secureRandom = new SecureRandom();
 
     AuthServiceImpl(UserRepository userRepository,
@@ -79,7 +84,9 @@ class AuthServiceImpl implements AuthService {
             PasswordEncoder passwordEncoder,
             GoogleTokenVerifier googleTokenVerifier,
             OtpSender otpSender,
-            OtpProperties otpProperties) {
+            OtpProperties otpProperties,
+            RefreshTokenService refreshTokenService,
+            RefreshTokenProperties refreshTokenProperties) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.apiKeyRepository = apiKeyRepository;
@@ -90,6 +97,8 @@ class AuthServiceImpl implements AuthService {
         this.googleTokenVerifier = googleTokenVerifier;
         this.otpSender = otpSender;
         this.otpProperties = otpProperties;
+        this.refreshTokenService = refreshTokenService;
+        this.refreshTokenProperties = refreshTokenProperties;
     }
 
     @Override
@@ -247,6 +256,21 @@ class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
+    public TokenResponse refresh(String rawRefreshToken) {
+        RefreshTokenService.Rotation r = refreshTokenService.rotate(rawRefreshToken);
+        String accessToken = jwtService.createToken(r.user());
+        Instant accessExpiry = jwtService.expiryFor(r.user());
+        return new TokenResponse(accessToken, accessExpiry, r.rawToken(), r.expiresAt());
+    }
+
+    @Override
+    @Transactional
+    public void logout(String rawRefreshToken) {
+        refreshTokenService.revoke(rawRefreshToken);
+    }
+
+    @Override
+    @Transactional
     public ApiKeyCreateResponse createApiKey(UUID userId, ApiKeyCreateRequest request) {
         if (apiKeyRepository.countByUserIdAndActiveTrue(userId) >= API_KEY_CAP) {
             throw new ApiKeyCapExceededException();
@@ -325,8 +349,12 @@ class AuthServiceImpl implements AuthService {
     private LoginResponse toLoginResponse(User user) {
         String token = jwtService.createToken(user);
         Instant expiresAt = jwtService.expiryFor(user);
+        String refreshToken = refreshTokenProperties.isEnabled()
+                ? refreshTokenService.issue(user).rawToken()
+                : null;
         return new LoginResponse(token, expiresAt, user.getRole().getName(),
-                user.getCityId(), user.getName(), user.getPhone(), user.isMustChangePassword());
+                user.getCityId(), user.getName(), user.getPhone(), user.isMustChangePassword(),
+                refreshToken);
     }
 
     private void writeAuditLog(UUID actorId, UUID targetUserId, String action,

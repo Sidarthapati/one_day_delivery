@@ -1,5 +1,6 @@
 package com.oneday.app.prod;
 
+import com.oneday.orders.config.RazorpayProperties;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
@@ -24,9 +25,11 @@ public class ProdEnvGuard implements InitializingBean {
     private static final int MIN_JWT_SECRET_LENGTH = 32;
 
     private final Environment env;
+    private final RazorpayProperties razorpay;
 
-    public ProdEnvGuard(Environment env) {
+    public ProdEnvGuard(Environment env, RazorpayProperties razorpay) {
         this.env = env;
+        this.razorpay = razorpay;
     }
 
     @Override
@@ -50,6 +53,21 @@ public class ProdEnvGuard implements InitializingBean {
             problems.add("godspeed.cors.allowed-origins (GODSPEED_CORS_ALLOWED_ORIGINS) is not set");
         } else if (cors.trim().equals("*")) {
             problems.add("godspeed.cors.allowed-origins is a wildcard '*' — pin the real console origins in prod");
+        }
+
+        // When Razorpay is live, the HMAC secret/key must be real — never the committed mock/demo
+        // default (which would sign with a publicly-known secret, making signatures forgeable).
+        if (razorpay.isLive()) {
+            String secret = razorpay.getKeySecret();
+            if (isBlank(secret) || secret.contains("mock") || secret.contains("change_me") || secret.contains("demo")) {
+                problems.add("razorpay.key-secret is unset or still the committed mock/demo default while "
+                        + "razorpay.live=true — set a real RAZORPAY_KEY_SECRET");
+            }
+            String keyId = razorpay.getKeyId();
+            if (isBlank(keyId) || keyId.startsWith("rzp_test") || keyId.contains("demo")) {
+                problems.add("razorpay.key-id is unset or a test/demo key while razorpay.live=true — "
+                        + "set a real RAZORPAY_KEY_ID");
+            }
         }
 
         if (!problems.isEmpty()) {

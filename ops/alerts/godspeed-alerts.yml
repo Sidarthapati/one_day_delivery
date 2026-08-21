@@ -1,0 +1,113 @@
+# Prometheus alerting rules for the Godspeed backend.
+# Load into Prometheus / Grafana Cloud (rule_files:) or import as a Grafana alert rule group.
+# Metrics come from the app's /actuator/prometheus scrape (Micrometer) except the rabbitmq_* series,
+# which come from a RabbitMQ exporter / CloudAMQP metrics endpoint (see ops/alerts/README.md).
+#
+# Thresholds are starting points sized for a single Render web service; tune from the k6 capacity run.
+groups:
+  # ---------------------------------------------------------------- golden signals (RED method)
+  - name: golden-signals
+    rules:
+      - alert: HighErrorRate
+        # >5% of requests are 5xx over 5m (excludes 4xx client errors).
+        expr: |
+          sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+            / sum(rate(http_server_requests_seconds_count[5m])) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "5xx error rate >5% ({{ $value | humanizePercentage }})"
+          description: "Server error rate has exceeded 5% for 5 minutes. Check logs (Axiom) and recent deploys."
+
+      - alert: HighRequestLatencyP95
+        # p95 latency over 2s for 10m (matches the k6 load threshold / capacity plan).
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_server_requests_seconds_bucket[5m])) by (le)) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 request latency >2s"
+          description: "p95 latency has exceeded 2s for 10 minutes. Suspect DB pool contention or a slow downstream (OSRM/gateway)."
+
+      - alert: PaymentEndpointErrors
+        # Any sustained 5xx on the payment path — money flow, tighter bar than the global rate.
+        expr: |
+          sum(rate(http_server_requests_seconds_count{uri=~"/api/v1/payments.*",status=~"5.."}[5m])) > 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "Payment endpoint returning 5xx"
+          description: "The payment path is erroring. Check the Razorpay adapter, gateway timeouts, and the payment_transactions table."
+
+  # ---------------------------------------------------------------- saturation (USE method)
+  - name: saturation
+    rules:
+      - alert: DbConnectionPoolExhausted
+        # Threads are waiting on a Hikari connection — the DB pool is the bottleneck.
+        expr: hikaricp_connections_pending > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Hikari connection pool has waiters"
+          description: "Requests are queuing for a DB connection for 5m. Raise DB_POOL_MAX (within the Postgres plan) or shorten DB work. See CAPACITY-PLAN.md."
+
+      - alert: JvmHeapPressure
+        expr: |
+          sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"}) > 0.9
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "JVM heap >90%"
+          description: "Heap usage over 90% for 10m — risk of GC thrash / OOM. Check for a leak or size the instance up."
+
+      - alert: TomcatThreadsSaturated
+        expr: |
+          tomcat_threads_busy_threads / tomcat_threads_config_max_threads > 0.85
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Tomcat worker threads >85% busy"
+          description: "The HTTP thread pool is near saturation. Correlate with pool waiters; scale out or raise TOMCAT_MAX_THREADS."
+
+  # ---------------------------------------------------------------- infra / dependencies
+  - name: infra
+    rules:
+      - alert: ApplicationDown
+        # The scrape target itself is unreachable — app down or unreachable by Prometheus.
+        expr: up{job="godspeed-backend"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Godspeed backend scrape target down"
+          description: "Prometheus can't scrape the app for 2m. Check Render service health and /actuator/health/readiness."
+
+      - alert: DatabaseUnhealthy
+        # Boot health component for the datasource (needs the health details in the metric; else
+        # rely on ApplicationDown + the readiness probe flipping the Render instance).
+        expr: |
+          sum(rate(http_server_requests_seconds_count{uri="/actuator/health/readiness",status=~"5..|503"}[5m])) > 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "Readiness probe failing"
+          description: "The readiness probe (app + DB) is returning non-2xx. Postgres may be down or the pool exhausted."
+
+      - alert: DeadLetterQueueGrowing
+        # rabbitmq_exporter / CloudAMQP metric. Any DLQ with a rising backlog = messages failing
+        # past their retry budget (M10/M11 breach handling, consumer bugs, poison messages).
+        expr: sum by (queue) (rabbitmq_queue_messages{queue=~".*\\.dlq"}) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Dead-letter queue {{ $labels.queue }} non-empty"
+          description: "A DLQ has held messages for 10m. Inspect with rabbitmqadmin and replay after fixing the consumer. See RUNBOOKS.md (DLQ replay)."
+
+      - alert: BrokerConnectionLost
+        # rabbitmq_exporter reports 0 live connections from the app, or the exporter can't reach the broker.
+        expr: rabbitmq_connections < 1
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "No live RabbitMQ connections"
+          description: "The app appears disconnected from CloudAMQP for 3m — events won't flow (M4→M5→M7…). Check CLOUDAMQP_URL and broker status."

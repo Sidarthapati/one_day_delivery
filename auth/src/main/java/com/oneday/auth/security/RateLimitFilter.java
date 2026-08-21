@@ -84,12 +84,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
         };
     }
 
-    // Behind Render/Vercel the real client IP is the first X-Forwarded-For entry.
+    // The client can spoof X-Forwarded-For by prepending fake entries (the old code trusted the
+    // LEFTMOST entry → per-IP rate limits were trivially bypassable, vuln-0008). The trusted reverse
+    // proxy (Render/Vercel) APPENDS the real peer IP, so the RIGHTMOST entry is the one it added and
+    // the client cannot forge. Assumes a single trusted proxy hop in front of the app.
     private static String clientIp(HttpServletRequest request) {
         String xff = request.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) {
-            int comma = xff.indexOf(',');
-            return (comma > 0 ? xff.substring(0, comma) : xff).trim();
+            int comma = xff.lastIndexOf(',');
+            return (comma >= 0 ? xff.substring(comma + 1) : xff).trim();
         }
         return request.getRemoteAddr();
     }
