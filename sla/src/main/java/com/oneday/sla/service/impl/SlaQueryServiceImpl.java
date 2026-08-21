@@ -5,10 +5,12 @@ import com.oneday.common.domain.enums.SlaState;
 import com.oneday.common.port.CourierOnShipmentPort;
 import com.oneday.common.port.ShipmentContactPort;
 import com.oneday.common.port.StageContactPort;
+import com.oneday.sla.domain.PriorityBand;
 import com.oneday.sla.domain.SlaAction;
 import com.oneday.sla.domain.SlaActionType;
 import com.oneday.sla.domain.SlaEscalation;
 import com.oneday.sla.domain.SlaShipment;
+import com.oneday.sla.dto.SlaClusterResponse;
 import com.oneday.sla.dto.SlaControlTowerResponse;
 import com.oneday.sla.dto.SlaEscalationView;
 import com.oneday.sla.dto.SlaLegView;
@@ -30,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -112,6 +115,69 @@ public class SlaQueryServiceImpl implements SlaQueryService {
                         weatherExposed(ss, adverse)))
                 .toList();
         return new SlaControlTowerResponse(p, s, result.getTotalElements(), items);
+    }
+
+    /** The operational cause a parcel shares with its peers — the group key for the clustered queue. */
+    private record Cause(String stage, String scope, String label) {}
+
+    private static Cause causeOf(SlaShipment ss) {
+        SlaLegType leg = ss.getCurrentLeg();
+        if (leg == null) {
+            return new Cause("PICKUP", ss.getOriginCity(), "Awaiting pickup · " + ss.getOriginCity());
+        }
+        return switch (leg) {
+            case FIRST_MILE -> new Cause("PICKUP", ss.getOriginCity(), "Pickup · " + ss.getOriginCity());
+            case LAST_MILE -> new Cause("DELIVERY", ss.getDestCity(), "Delivery · " + ss.getDestCity());
+            case ORIGIN_HUB -> new Cause("HUB", ss.getOriginCity(), "Hub · " + ss.getOriginCity());
+            case DEST_HUB -> new Cause("HUB", ss.getDestCity(), "Hub · " + ss.getDestCity());
+            // ponytail: no flight number on sla_shipment, so air legs cluster by lane, not by flight —
+            // sharpen to "AI-501 → 12 RED" once M9 flight assignment is joined onto the shipment.
+            case ORIGIN_AIRPORT, AIR, DEST_AIRPORT -> {
+                String lane = ss.getOriginCity() + "→" + ss.getDestCity();
+                yield new Cause("AIR", lane, "Airline (GHA) · " + lane);
+            }
+        };
+    }
+
+    /** The single desk to call for a whole cluster: the city hub/dispatch desk, or the national GHA for air. */
+    private SlaShipmentSummary.Handler deskFor(Cause c) {
+        return "AIR".equals(c.stage())
+                ? toHandler(stageContactPort.ghaDesk())
+                : toHandler(stageContactPort.hubDesk(c.scope()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public SlaClusterResponse clusters(String cityScope) {
+        // The actionable set: open parcels that are actually at risk (not GREEN) — a healthy parcel is no fire.
+        Map<Cause, List<SlaShipment>> grouped = shipmentRepo.findByClosedAtIsNull().stream()
+                .filter(ss -> visible(ss, cityScope))
+                .filter(ss -> ss.getOverallState() != SlaState.GREEN)
+                .collect(Collectors.groupingBy(SlaQueryServiceImpl::causeOf));
+
+        List<SlaClusterResponse.Cluster> clusters = grouped.entrySet().stream()
+                .map(e -> {
+                    Cause c = e.getKey();
+                    List<SlaShipment> members = e.getValue().stream()
+                            .sorted(Comparator.comparingDouble(SlaShipment::getPriorityScore).reversed())
+                            .toList();
+                    PriorityBand band = members.stream()
+                            .map(SlaShipment::getBand).filter(java.util.Objects::nonNull)
+                            .max(Comparator.comparingInt(PriorityBand::rank)).orElse(PriorityBand.WATCH);
+                    int breached = (int) members.stream().filter(SlaShipment::isBreached).count();
+                    Instant earliestActBy = members.stream()
+                            .map(SlaShipment::getActByAt).filter(java.util.Objects::nonNull)
+                            .min(Comparator.naturalOrder()).orElse(null);
+                    List<String> refs = members.stream().map(SlaShipment::getShipmentRef).limit(50).toList();
+                    return new SlaClusterResponse.Cluster(c.stage(), c.scope(), c.label(), band,
+                            members.size(), breached, earliestActBy, refs, deskFor(c));
+                })
+                // Worst band first (never a band-jump), then bigger cluster, then soonest deadline.
+                .sorted(Comparator.comparingInt((SlaClusterResponse.Cluster cl) -> cl.band().rank()).reversed()
+                        .thenComparing(Comparator.comparingInt(SlaClusterResponse.Cluster::size).reversed())
+                        .thenComparing(cl -> cl.earliestActBy() == null ? Instant.MAX : cl.earliestActBy()))
+                .toList();
+        return new SlaClusterResponse(clusters);
     }
 
     @Override

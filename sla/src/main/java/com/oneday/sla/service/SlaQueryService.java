@@ -1,6 +1,7 @@
 package com.oneday.sla.service;
 
 import com.oneday.common.domain.enums.SlaState;
+import com.oneday.sla.dto.SlaClusterResponse;
 import com.oneday.sla.dto.SlaControlTowerResponse;
 import com.oneday.sla.dto.SlaEscalationView;
 import com.oneday.sla.dto.SlaPassRateResponse;
@@ -17,6 +18,9 @@ import java.util.List;
 public interface SlaQueryService {
 
     SlaControlTowerResponse controlTower(SlaState state, String cityScope, int page, int size);
+
+    /** The at-risk queue grouped by shared root cause — one row per cause, with the one desk to call. */
+    SlaClusterResponse clusters(String cityScope);
 
     SlaShipmentDetailResponse detail(String shipmentRef, String cityScope);
 

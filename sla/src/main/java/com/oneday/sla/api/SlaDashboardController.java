@@ -3,6 +3,7 @@ package com.oneday.sla.api;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.common.domain.enums.SlaState;
 import com.oneday.sla.dto.SlaActionRequest;
+import com.oneday.sla.dto.SlaClusterResponse;
 import com.oneday.sla.dto.SlaControlTowerResponse;
 import com.oneday.sla.dto.SlaEscalationView;
 import com.oneday.sla.dto.SlaPassRateResponse;
@@ -49,6 +50,13 @@ public class SlaDashboardController {
             @RequestParam(defaultValue = "50") int size) {
         Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR);
         return service.controlTower(state, Authz.cityScope(principal), page, size);
+    }
+
+    /** The at-risk queue collapsed to shared root causes — one row per cause, with the one desk to call. */
+    @GetMapping("/clusters")
+    public SlaClusterResponse clusters(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR);
+        return service.clusters(Authz.cityScope(principal));
     }
 
     /** Per-parcel leg breakdown + escalation history. */
