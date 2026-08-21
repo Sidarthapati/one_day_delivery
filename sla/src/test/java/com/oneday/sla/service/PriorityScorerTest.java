@@ -166,6 +166,31 @@ class PriorityScorerTest {
     }
 
     @Test
+    void bandHysteresisHoldsThroughAWobbleButDemotesOnAClearImprovement() {
+        // act-by 125m: raw band is WATCH (>120). A parcel already HIGH holds (within the 135m deadband)...
+        SlaShipment wasHigh = ship(SlaState.GREEN, false, SlaLegType.DEST_HUB, plus(600), plus(300), null);
+        wasHigh.setBand(PriorityBand.HIGH);
+        assertThat(scorer.score(wasHigh, legDue(plus(125)), now).band()).isEqualTo(PriorityBand.HIGH);
+
+        // ...but a fresh parcel (no prior band) at 125m is plain WATCH — the hold only resists demotion.
+        SlaShipment fresh = ship(SlaState.GREEN, false, SlaLegType.DEST_HUB, plus(600), plus(300), null);
+        assertThat(scorer.score(fresh, legDue(plus(125)), now).band()).isEqualTo(PriorityBand.WATCH);
+
+        // A clear improvement past the deadband (act-by 140m) demotes even a previously-HIGH parcel.
+        SlaShipment improved = ship(SlaState.GREEN, false, SlaLegType.DEST_HUB, plus(600), plus(300), null);
+        improved.setBand(PriorityBand.HIGH);
+        assertThat(scorer.score(improved, legDue(plus(140)), now).band()).isEqualTo(PriorityBand.WATCH);
+    }
+
+    @Test
+    void bandPromotionIsAlwaysImmediateRegardlessOfPriorBand() {
+        // A WATCH parcel whose act-by has closed to 100m promotes to HIGH this instant — no deadband up.
+        SlaShipment s = ship(SlaState.GREEN, false, SlaLegType.DEST_HUB, plus(600), plus(300), null);
+        s.setBand(PriorityBand.WATCH);
+        assertThat(scorer.score(s, legDue(plus(100)), now).band()).isEqualTo(PriorityBand.HIGH);
+    }
+
+    @Test
     void weatherOnlyExposesGroundLegsHeadingIntoTheAdverseCity() {
         // In the air → not exposed (can't act, and dest weather isn't the parcel's ground risk yet).
         SlaShipment inAir = ship(SlaState.GREEN, false, SlaLegType.AIR, plus(600), plus(120), null);
