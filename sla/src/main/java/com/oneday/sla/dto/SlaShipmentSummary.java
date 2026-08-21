@@ -37,17 +37,20 @@ public record SlaShipmentSummary(
         String handlerPhone,
         String handlerRole,
         String receiverName,
-        String receiverPhone) {
+        String receiverPhone,
+        // True when the parcel is on a ground leg heading into a city with adverse weather right now.
+        boolean weatherExposed) {
 
-    /** Entity-only mapping — contact fields null. Used where a per-row contact lookup isn't warranted. */
+    /** Entity-only mapping — contact + weather null/false. Used where per-row enrichment isn't warranted. */
     public static SlaShipmentSummary from(SlaShipment s) {
-        return from(s, null, null);
+        return from(s, null, null, false);
     }
 
-    /** Full row including the resolved current handler and receiving customer. */
+    /** Full row including the resolved current handler, receiving customer, and weather exposure. */
     public static SlaShipmentSummary from(SlaShipment s,
                                           CourierOnShipmentPort.Courier handler,
-                                          ShipmentContactPort.ShipmentContact contact) {
+                                          ShipmentContactPort.ShipmentContact contact,
+                                          boolean weatherExposed) {
         return new SlaShipmentSummary(
                 s.getShipmentId(), s.getShipmentRef(), s.getOriginCity(), s.getDestCity(), s.getLane(),
                 s.getDeliveryType(), s.getOverallState(), s.getCurrentLeg(), s.isBreached(),
@@ -58,6 +61,7 @@ public record SlaShipmentSummary(
                 handler == null ? null : handler.phone(),
                 handler == null ? null : handler.role().name(),
                 contact == null ? null : contact.receiverName(),
-                contact == null ? null : contact.receiverPhone());
+                contact == null ? null : contact.receiverPhone(),
+                weatherExposed);
     }
 }

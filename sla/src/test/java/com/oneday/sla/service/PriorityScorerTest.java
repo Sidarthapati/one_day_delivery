@@ -106,4 +106,44 @@ class PriorityScorerTest {
                 legDue(plus(200)), now);  // customer 24h promise already blown
         assertThat(s.band()).isEqualTo(PriorityBand.CRITICAL);
     }
+
+    @Test
+    void weatherExposureLiftsWithinBandButNeverAcrossIt() {
+        SlaShipment toBom = ship(SlaState.GREEN, false, SlaLegType.LAST_MILE, plus(600), plus(120), null);
+        toBom.setOriginCity("DEL"); toBom.setDestCity("BOM");
+        var dry = scorer.score(toBom, legDue(plus(300)), now, java.util.Set.of());
+        var rainy = scorer.score(toBom, legDue(plus(300)), now, java.util.Set.of("BOM")); // dest adverse
+
+        assertThat(rainy.weatherExposed()).isTrue();
+        assertThat(dry.weatherExposed()).isFalse();
+        assertThat(rainy.band()).isEqualTo(dry.band());                 // still WATCH — no band jump
+        assertThat(rainy.score()).isGreaterThan(dry.score());           // but ranks above its dry twin
+
+        // A weather-exposed WATCH parcel must never outrank a real breach.
+        var breached = scorer.score(
+                ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null),
+                legDue(minus(5)), now, java.util.Set.of("BOM"));
+        assertThat(breached.score()).isGreaterThan(rainy.score());
+    }
+
+    @Test
+    void aJustEscalatedParcelOutranksAStaleOneInTheSameBand() {
+        SlaShipment fresh = ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null);
+        fresh.setEnteredStateAt(now);           // new fire
+        SlaShipment stale = ship(SlaState.BREACHED, true, SlaLegType.DEST_HUB, minus(60), now, null);
+        stale.setEnteredStateAt(minus(60));     // been critical an hour → boost decayed to zero
+
+        var f = scorer.score(fresh, legDue(minus(5)), now);
+        var s = scorer.score(stale, legDue(minus(5)), now);
+        assertThat(f.band()).isEqualTo(s.band());
+        assertThat(f.score()).isGreaterThan(s.score());
+    }
+
+    @Test
+    void weatherOnlyExposesGroundLegsHeadingIntoTheAdverseCity() {
+        // In the air → not exposed (can't act, and dest weather isn't the parcel's ground risk yet).
+        SlaShipment inAir = ship(SlaState.GREEN, false, SlaLegType.AIR, plus(600), plus(120), null);
+        inAir.setOriginCity("DEL"); inAir.setDestCity("BOM");
+        assertThat(scorer.score(inAir, legDue(plus(300)), now, java.util.Set.of("BOM")).weatherExposed()).isFalse();
+    }
 }
