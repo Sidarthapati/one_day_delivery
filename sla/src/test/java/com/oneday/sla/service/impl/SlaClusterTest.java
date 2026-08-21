@@ -61,13 +61,14 @@ class SlaClusterTest {
                 // Three hub parcels in BLR, all HIGH → one bigger HIGH cluster.
                 ship("H1", "BLR", "MAA", SlaLegType.ORIGIN_HUB, SlaState.RED, PriorityBand.HIGH, false, 2_000_020),
                 ship("H2", "BLR", "HYD", SlaLegType.ORIGIN_HUB, SlaState.RED, PriorityBand.HIGH, false, 2_000_010),
-                ship("H3", "BLR", "HYD", SlaLegType.ORIGIN_HUB, SlaState.AMBER, PriorityBand.WATCH, false, 1_000_000),
-                // A healthy parcel must never appear.
-                ship("G1", "BLR", "DEL", SlaLegType.LAST_MILE, SlaState.GREEN, PriorityBand.WATCH, false, 500)));
+                ship("H3", "BLR", "HYD", SlaLegType.ORIGIN_HUB, SlaState.GREEN, PriorityBand.HIGH, false, 2_000_005),
+                // A WATCH-band parcel is no fire — even AMBER — and must never appear.
+                ship("W1", "BLR", "DEL", SlaLegType.LAST_MILE, SlaState.AMBER, PriorityBand.WATCH, false, 1_000_000)));
 
         List<SlaClusterResponse.Cluster> clusters = svc.clusters(null).clusters();
 
-        // Two clusters (AIR lane + BLR hub); the GREEN parcel is excluded.
+        // Two clusters (AIR lane + BLR hub); the WATCH-band parcel is excluded. H3 is colour-GREEN but
+        // HIGH band (racing a cutoff) and still clusters — the fire cut is the band, not the colour.
         assertThat(clusters).hasSize(2);
 
         // Worst band first: the AIR cluster carries a CRITICAL member, so it tops the all-HIGH hub cluster.

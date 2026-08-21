@@ -149,10 +149,12 @@ public class SlaQueryServiceImpl implements SlaQueryService {
     @Override
     @Transactional(readOnly = true)
     public SlaClusterResponse clusters(String cityScope) {
-        // The actionable set: open parcels that are actually at risk (not GREEN) — a healthy parcel is no fire.
+        // The actionable set = the fire bands (CRITICAL/HIGH). WATCH is "keep an eye, no fire" — and this
+        // is the band, not the colour: a parcel that's colour-GREEN but racing a 60-min flight cutoff is
+        // a HIGH-band fire and belongs here, while a slack AMBER (WATCH band) does not.
         Map<Cause, List<SlaShipment>> grouped = shipmentRepo.findByClosedAtIsNull().stream()
                 .filter(ss -> visible(ss, cityScope))
-                .filter(ss -> ss.getOverallState() != SlaState.GREEN)
+                .filter(ss -> ss.getBand() != null && ss.getBand() != PriorityBand.WATCH)
                 .collect(Collectors.groupingBy(SlaQueryServiceImpl::causeOf));
 
         List<SlaClusterResponse.Cluster> clusters = grouped.entrySet().stream()
