@@ -1,0 +1,30 @@
+name: Claude Code
+
+# Interactive on-demand assistant. Mention @claude in any PR/issue comment or in a
+# PR review comment and Claude will respond in-thread — answer questions, push fixes,
+# read CI results. Runs on the Claude Max subscription via CLAUDE_CODE_OAUTH_TOKEN.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  claude:
+    # Only spin up a runner when a comment actually mentions @claude.
+    if: contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push fix commits
+      pull-requests: write
+      issues: write
+      id-token: write # required for the action's GitHub App auth
+      actions: read # let Claude read CI results to help debug
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
