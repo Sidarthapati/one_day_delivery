@@ -75,4 +75,27 @@ public class SlaShipment extends MutableBaseEntity {
 
     @Column(name = "breached", nullable = false)
     private boolean breached;
+
+    // ── Triage priority (written by SlaEngine via PriorityScorer on every recompute) ──────────
+
+    /** Sortable urgency; higher = act sooner. Encodes band > fixable > act-by > overshoot. */
+    @Column(name = "priority_score", nullable = false)
+    private double priorityScore;
+
+    /** Coarse triage bucket the control tower groups by. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "band", nullable = false)
+    private PriorityBand band = PriorityBand.WATCH;
+
+    /** Minutes projected (or already) past the internal target; negative = slack. Null before the clock starts. */
+    @Column(name = "urgency_minutes")
+    private Integer urgencyMinutes;
+
+    /** The soonest hard window the manager is racing (nearest open-leg deadline) — the default sort spine. */
+    @Column(name = "act_by_at")
+    private Instant actByAt;
+
+    /** When the parcel entered its current SLA colour — for "in RED 12m" and ack decay. */
+    @Column(name = "entered_state_at")
+    private Instant enteredStateAt;
 }

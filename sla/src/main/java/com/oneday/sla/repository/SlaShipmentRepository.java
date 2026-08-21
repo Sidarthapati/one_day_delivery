@@ -31,7 +31,7 @@ public interface SlaShipmentRepository extends JpaRepository<SlaShipment, UUID> 
             where s.closedAt is null
               and (:state is null or s.overallState = :state)
               and (:city is null or s.originCity = :city or s.destCity = :city)
-            order by s.updatedAt desc
+            order by s.priorityScore desc
             """)
     Page<SlaShipment> controlTower(@Param("state") SlaState state,
                                    @Param("city") String city,
