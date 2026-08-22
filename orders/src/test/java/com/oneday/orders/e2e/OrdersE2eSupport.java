@@ -11,6 +11,7 @@ import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.PickupType;
 import com.oneday.common.kafka.EventPublisher;
 import com.oneday.common.port.EtaPort;
+import com.oneday.common.port.PickupAssignmentPort;
 import com.oneday.common.port.PricingPort;
 import com.oneday.common.port.ServiceabilityPort;
 import com.oneday.common.port.dto.EtaResult;
@@ -84,6 +85,8 @@ abstract class OrdersE2eSupport {
     @MockBean protected AuthService authService;
     @MockBean protected ApiKeyRepository apiKeyRepository;
     @MockBean protected EventPublisher eventPublisher;
+    // Implemented in dispatch (off the orders test classpath) — mock so the context boots.
+    @MockBean protected PickupAssignmentPort pickupAssignmentPort;
 
     /** Default happy-path stubs for the external ports; individual tests override as needed. */
     @BeforeEach
@@ -99,6 +102,8 @@ abstract class OrdersE2eSupport {
                 new EtaResult(Instant.now().plusSeconds(86_400), 1440));
         // Razorpay: signature/capture/refund all succeed by default (PREPAID happy path).
         lenient().when(paymentPort.initiateRefund(anyString(), anyLong())).thenReturn("rfnd_test_1");
+        // Pickup assignment: the DA is assigned by default; measurement-auth tests override.
+        lenient().when(pickupAssignmentPort.isActivePickupDa(any(), any())).thenReturn(true);
     }
 
     // ── Auth helpers ────────────────────────────────────────────────────────

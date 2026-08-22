@@ -1,10 +1,12 @@
 package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.orders.dto.MeasurementView;
 import com.oneday.orders.dto.MyShipmentDetailResponse;
 import com.oneday.orders.dto.MyShipmentSummaryResponse;
 import com.oneday.orders.dto.ShipmentLabelResponse;
 import com.oneday.orders.service.CustomerOrderQueryService;
+import com.oneday.orders.service.ParcelMeasurementService;
 import com.oneday.orders.service.PickupOtpService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -29,11 +31,14 @@ class MyShipmentsController {
 
     private final CustomerOrderQueryService customerOrderQueryService;
     private final PickupOtpService pickupOtpService;
+    private final ParcelMeasurementService parcelMeasurementService;
 
     MyShipmentsController(CustomerOrderQueryService customerOrderQueryService,
-                         PickupOtpService pickupOtpService) {
+                         PickupOtpService pickupOtpService,
+                         ParcelMeasurementService parcelMeasurementService) {
         this.customerOrderQueryService = customerOrderQueryService;
         this.pickupOtpService = pickupOtpService;
+        this.parcelMeasurementService = parcelMeasurementService;
     }
 
     @GetMapping("/mine")
@@ -64,6 +69,22 @@ class MyShipmentsController {
         return customerOrderQueryService
                 .shipmentLabel(Authz.requireUserId(principal), ref)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such shipment: " + ref));
+    }
+
+    /**
+     * The dimension measurements recorded for the caller's own shipment (declared vs measured +
+     * evidence photos), so the merchant can see the proof behind any weight/size adjustment. Evidence
+     * photo URLs are short-lived presigned GETs. Owner-scoped: 404 if the caller didn't book it.
+     */
+    @GetMapping("/mine/{ref}/measurements")
+    public List<MeasurementView> myShipmentMeasurements(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("ref") String ref) {
+        Authz.requireCustomerRole(principal, "C2C_CUSTOMER", "B2C_CUSTOMER", "B2B_USER");
+        // Ownership gate: reuse the detail lookup (empty → not the caller's shipment → 404).
+        customerOrderQueryService.myShipmentDetail(Authz.requireUserId(principal), ref)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No such shipment: " + ref));
+        return parcelMeasurementService.history(ref, true);
     }
 
     /** The pickup OTP for the caller's own shipment, so the merchant can read it to the pickup associate. */

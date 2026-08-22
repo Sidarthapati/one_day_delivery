@@ -13,6 +13,16 @@ RUN mvn -B -ntp -pl app -am clean package -DskipTests
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
+# OpenCV (vision module, bytedeco) native runtime deps — the ArUco dimension engine's objdetect/
+# highgui modules won't load on a headless image without these, and measurement silently degrades to
+# "photos stored, no dims". highgui links GTK2 (not GTK3); on this Ubuntu-24.04 (Noble) base the GTK2
+# package carries the t64 suffix. Proven to load OpenCV headless in CI. Clean apt lists to stay small.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libgomp1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    && (apt-get install -y --no-install-recommends libgtk2.0-0t64 \
+        || apt-get install -y --no-install-recommends libgtk2.0-0) \
+    && rm -rf /var/lib/apt/lists/*
+
 # The spring-boot-maven-plugin repackage produces the executable app jar
 # (app-<version>.jar); the plain jar is app-<version>.jar.original and is skipped.
 COPY --from=build /build/app/target/app-*.jar app.jar
