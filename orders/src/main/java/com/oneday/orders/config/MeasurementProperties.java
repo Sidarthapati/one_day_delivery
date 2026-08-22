@@ -23,6 +23,9 @@ public class MeasurementProperties {
     /** Max evidence photos accepted per measurement. */
     private int maxEvidencePhotos = 4;
 
+    /** Max bytes for a single evidence object; larger uploads are rejected before buffering into heap. */
+    private long maxEvidenceBytes = 15L * 1024 * 1024;
+
     /** TTL (seconds) of the presigned PUT URLs handed to the app for upload. */
     private long uploadUrlTtlSeconds = 300;
 
@@ -40,6 +43,9 @@ public class MeasurementProperties {
 
     public int getMaxEvidencePhotos() { return maxEvidencePhotos; }
     public void setMaxEvidencePhotos(int maxEvidencePhotos) { this.maxEvidencePhotos = maxEvidencePhotos; }
+
+    public long getMaxEvidenceBytes() { return maxEvidenceBytes; }
+    public void setMaxEvidenceBytes(long maxEvidenceBytes) { this.maxEvidenceBytes = maxEvidenceBytes; }
 
     public long getUploadUrlTtlSeconds() { return uploadUrlTtlSeconds; }
     public void setUploadUrlTtlSeconds(long uploadUrlTtlSeconds) { this.uploadUrlTtlSeconds = uploadUrlTtlSeconds; }

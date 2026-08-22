@@ -17,11 +17,18 @@ import java.util.UUID;
  */
 public interface ParcelMeasurementService {
 
-    /** Presign {@code count} upload slots for a shipment's evidence photos. */
-    List<EvidenceUpload> presignUploads(String shipmentRef, int count);
+    /**
+     * Presign {@code count} upload slots for a shipment's evidence photos. The caller must be the DA
+     * assigned to this pickup (or an ADMIN); otherwise 403.
+     */
+    List<EvidenceUpload> presignUploads(String shipmentRef, int count, UUID callerUserId, boolean admin);
 
-    /** Measure from the uploaded evidence and record the observation (source = DA_PICKUP). */
-    MeasurementView recordDaPickupMeasurement(String shipmentRef, UUID daUserId, List<EvidenceCapture> captures);
+    /**
+     * Measure from the uploaded evidence and record the observation (source = DA_PICKUP). The caller
+     * must be the DA assigned to this pickup (or an ADMIN); otherwise 403.
+     */
+    MeasurementView recordDaPickupMeasurement(String shipmentRef, UUID daUserId, boolean admin,
+                                              List<EvidenceCapture> captures);
 
     /** All recorded measurements for a shipment, newest first. Evidence GET URLs when requested. */
     List<MeasurementView> history(String shipmentRef, boolean withEvidenceUrls);

@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -41,6 +43,7 @@ class ParcelMeasurementE2eTest extends OrdersE2eSupport {
         lenient().when(storage.presignPut(anyString(), anyString(), any())).thenReturn("https://r2.example/put");
         lenient().when(storage.presignGet(anyString(), any())).thenReturn("https://r2.example/get");
         lenient().when(storage.exists(anyString())).thenReturn(true);
+        lenient().when(storage.size(anyString())).thenReturn(1_000L);
         lenient().when(storage.getBytes(anyString())).thenReturn(new byte[]{1, 2, 3});
         lenient().when(engine.isAvailable()).thenReturn(true);
     }
@@ -145,6 +148,44 @@ class ParcelMeasurementE2eTest extends OrdersE2eSupport {
                         .header("Authorization", "Bearer " + daToken())
                         .contentType("application/json").content(body))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void unassignedDaIsForbidden() throws Exception {
+        String custToken = tokenFor("C2C_CUSTOMER", randomUserId());
+        String ref = bookB2c(custToken, PaymentMode.PREPAID);
+        // This DA is NOT the one assigned to the pickup.
+        when(pickupAssignmentPort.isActivePickupDa(any(), any())).thenReturn(false);
+
+        String body = json.writeValueAsString(Map.of("captures", List.of(
+                Map.of("object_key", key(ref, "top"), "view", "TOP"))));
+
+        mvc.perform(post("/internal/v1/shipments/{ref}/measurement", ref)
+                        .header("Authorization", "Bearer " + daToken())
+                        .contentType("application/json").content(body))
+                .andExpect(status().isForbidden());
+
+        // ...and presign is gated the same way.
+        mvc.perform(post("/internal/v1/shipments/{ref}/measurement/upload-urls?count=2", ref)
+                        .header("Authorization", "Bearer " + daToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void oversizedEvidenceIsRejectedNotBuffered() throws Exception {
+        String custToken = tokenFor("C2C_CUSTOMER", randomUserId());
+        String ref = bookB2c(custToken, PaymentMode.PREPAID);
+        when(storage.size(anyString())).thenReturn(50L * 1024 * 1024);   // 50MB, over the 15MB cap
+
+        String body = json.writeValueAsString(Map.of("captures", List.of(
+                Map.of("object_key", key(ref, "top"), "view", "TOP"))));
+
+        mvc.perform(post("/internal/v1/shipments/{ref}/measurement", ref)
+                        .header("Authorization", "Bearer " + daToken())
+                        .contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false));   // not measured; oversized object never buffered
+        verify(storage, never()).getBytes(anyString());
     }
 
     private static String key(String ref, String tag) {

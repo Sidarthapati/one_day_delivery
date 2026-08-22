@@ -1,6 +1,7 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.common.port.ObjectStoragePort;
+import com.oneday.common.port.PickupAssignmentPort;
 import com.oneday.orders.config.MeasurementProperties;
 import com.oneday.orders.domain.MeasurementMethod;
 import com.oneday.orders.domain.MeasurementSource;
@@ -48,6 +49,7 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
     private final DiscrepancyPolicy discrepancyPolicy;
     private final MeasurementPersister persister;
     private final MeasurementProperties props;
+    private final PickupAssignmentPort pickupAssignment;
 
     ParcelMeasurementServiceImpl(ShipmentRepository shipmentRepository,
                                  ParcelMeasurementRepository measurementRepository,
@@ -55,7 +57,8 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
                                  DimensionEngine engine,
                                  DiscrepancyPolicy discrepancyPolicy,
                                  MeasurementPersister persister,
-                                 MeasurementProperties props) {
+                                 MeasurementProperties props,
+                                 PickupAssignmentPort pickupAssignment) {
         this.shipmentRepository = shipmentRepository;
         this.measurementRepository = measurementRepository;
         this.storage = storage;
@@ -63,11 +66,13 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
         this.discrepancyPolicy = discrepancyPolicy;
         this.persister = persister;
         this.props = props;
+        this.pickupAssignment = pickupAssignment;
     }
 
     @Override
-    public List<EvidenceUpload> presignUploads(String shipmentRef, int count) {
+    public List<EvidenceUpload> presignUploads(String shipmentRef, int count, UUID callerUserId, boolean admin) {
         Shipment shipment = resolve(shipmentRef);
+        requireAssignedOrAdmin(callerUserId, admin, shipment.getId());
         if (count < 1 || count > props.getMaxEvidencePhotos()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "count must be between 1 and " + props.getMaxEvidencePhotos());
@@ -85,8 +90,10 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
     }
 
     @Override
-    public MeasurementView recordDaPickupMeasurement(String shipmentRef, UUID daUserId, List<EvidenceCapture> captures) {
+    public MeasurementView recordDaPickupMeasurement(String shipmentRef, UUID daUserId, boolean admin,
+                                                     List<EvidenceCapture> captures) {
         Shipment shipment = resolve(shipmentRef);
+        requireAssignedOrAdmin(daUserId, admin, shipment.getId());
         if (captures == null || captures.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "no captures");
         }
@@ -104,7 +111,14 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
             keys.add(key);
             if (!storage.isAvailable()) { fetchFailed = true; continue; }
             try {
-                if (!storage.exists(key)) { fetchFailed = true; continue; }
+                long sz = storage.size(key);               // one HEAD: existence + size
+                if (sz < 0) { fetchFailed = true; continue; }   // not uploaded
+                if (sz > props.getMaxEvidenceBytes()) {         // reject oversized BEFORE buffering into heap
+                    log.warn("Evidence object {} is {} bytes, over the {} cap — skipping",
+                            logSafe(key), sz, props.getMaxEvidenceBytes());
+                    fetchFailed = true;
+                    continue;
+                }
                 byte[] bytes = storage.getBytes(key);
                 engineCaptures.add(new DimensionEngine.Capture(bytes, parseView(c.view())));
             } catch (RuntimeException e) {
@@ -211,6 +225,17 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
     private Shipment resolve(String shipmentRef) {
         return shipmentRepository.findByShipmentRef(shipmentRef)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "shipment not found"));
+    }
+
+    /** A DA may only measure a pickup they were assigned to; ADMIN (ops/demo) bypasses. */
+    private void requireAssignedOrAdmin(UUID callerUserId, boolean admin, UUID shipmentId) {
+        if (admin) {
+            return;
+        }
+        if (callerUserId == null || !pickupAssignment.isActivePickupDa(callerUserId, shipmentId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "not the delivery associate assigned to this pickup");
+        }
     }
 
     private void requireOwnedKey(String key, String shipmentRef) {

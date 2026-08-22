@@ -112,6 +112,22 @@ public class R2ObjectStorageAdapter implements ObjectStoragePort {
     }
 
     @Override
+    public long size(String key) {
+        requireAvailable();
+        try {
+            return s3.headObject(HeadObjectRequest.builder()
+                    .bucket(props.getBucket()).key(physicalKey(key)).build()).contentLength();
+        } catch (NoSuchKeyException e) {
+            return -1;
+        } catch (S3Exception e) {
+            if (e.statusCode() == 404) {
+                return -1;
+            }
+            throw new ObjectStorageException("HEAD (size) failed for key " + key, e);
+        }
+    }
+
+    @Override
     public byte[] getBytes(String key) {
         requireAvailable();
         try {

@@ -43,7 +43,7 @@ public class ParcelMeasurementController {
                                            @AuthenticationPrincipal AuthUserDetails principal,
                                            @RequestParam(defaultValue = "2") int count) {
         Authz.requireRole(principal, "DELIVERY_ASSOCIATE");
-        return measurementService.presignUploads(ref, count);
+        return measurementService.presignUploads(ref, count, principal.getUserId(), isAdmin(principal));
     }
 
     /** Submit uploaded evidence for measurement; returns the measured dims + over-declared verdict. */
@@ -53,7 +53,11 @@ public class ParcelMeasurementController {
                                   @Valid @RequestBody MeasurementSubmitRequest request) {
         Authz.requireRole(principal, "DELIVERY_ASSOCIATE");
         UUID daUserId = principal.getUserId();
-        return measurementService.recordDaPickupMeasurement(ref, daUserId, request.captures());
+        return measurementService.recordDaPickupMeasurement(ref, daUserId, isAdmin(principal), request.captures());
+    }
+
+    private static boolean isAdmin(AuthUserDetails principal) {
+        return principal != null && Authz.ADMIN.equals(principal.getUser().getRole().getName());
     }
 
     /** All measurements for a shipment, with short-lived evidence photo URLs (ops/dispute console). */

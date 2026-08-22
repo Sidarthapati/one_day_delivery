@@ -223,5 +223,6 @@ measurement:
   tolerance-side-cm: ${MEASUREMENT_TOLERANCE_SIDE_CM:2.0}
   volumetric-divisor: 5000
   max-evidence-photos: 4
+  max-evidence-bytes: ${MEASUREMENT_MAX_EVIDENCE_BYTES:15728640}   # 15 MB/photo; oversized rejected pre-buffer
   upload-url-ttl-seconds: 300
   view-url-ttl-seconds: 600

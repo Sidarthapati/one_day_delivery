@@ -30,6 +30,9 @@ public interface ObjectStoragePort {
     /** True if the object exists (HEAD). Used to verify a client actually completed its upload. */
     boolean exists(String key);
 
+    /** The object's size in bytes (HEAD), or -1 if it doesn't exist. Used to reject oversized uploads. */
+    long size(String key);
+
     /** The object's bytes — used server-side to feed the CV engine. Throws if the object is missing. */
     byte[] getBytes(String key);
 }
