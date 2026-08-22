@@ -199,3 +199,34 @@ sla:
 # M11 exceptions — re-attempts before a failed pickup/delivery is flagged UNDELIVERABLE (recommend RTO).
 exceptions:
   max-reattempts: 2
+
+# Object storage (Cloudflare R2, S3-compatible) for parcel-dimension evidence photos.
+# Credentials come from env ONLY — never commit. Blank locally → storage disabled, feature degrades.
+storage:
+  endpoint: ${R2_ENDPOINT:}
+  region: ${R2_REGION:auto}
+  access-key-id: ${R2_ACCESS_KEY_ID:}
+  secret-access-key: ${R2_SECRET_ACCESS_KEY:}
+  bucket: ${R2_BUCKET:}
+  # Environment folder-prefix so dev/staging/prod never intermix in a shared bucket. Defaults to the
+  # active Spring profile (prod → "prod", staging → "staging"), or "local" when no profile is set;
+  # override with R2_KEY_PREFIX. For hard isolation, also point each env at its own R2_BUCKET.
+  key-prefix: ${R2_KEY_PREFIX:${spring.profiles.active:local}}
+
+# First-mile "scan dimensions" CV engine (OpenCV/ArUco). markerSizeCm MUST match the printed board.
+vision:
+  marker-size-cm: ${VISION_MARKER_SIZE_CM:5.0}
+  dictionary-id: ${VISION_DICT_ID:4}          # 4 = DICT_5X5_50 (the fleet marker)
+  timeout-ms: ${VISION_TIMEOUT_MS:8000}
+  max-image-edge-px: 2000
+  min-confidence: 0.35
+
+# Discrepancy tolerance (moderate) + evidence limits.
+measurement:
+  tolerance-pct: ${MEASUREMENT_TOLERANCE_PCT:10.0}
+  tolerance-side-cm: ${MEASUREMENT_TOLERANCE_SIDE_CM:2.0}
+  volumetric-divisor: 5000
+  max-evidence-photos: 4
+  max-evidence-bytes: ${MEASUREMENT_MAX_EVIDENCE_BYTES:15728640}   # 15 MB/photo; oversized rejected pre-buffer
+  upload-url-ttl-seconds: 300
+  view-url-ttl-seconds: 600
