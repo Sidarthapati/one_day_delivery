@@ -32,11 +32,17 @@ class ExceptionCaseServiceImplTest {
     private final ExceptionCaseRepository caseRepo = mock(ExceptionCaseRepository.class);
     private final ExceptionActionRepository actionRepo = mock(ExceptionActionRepository.class);
     private final ShipmentLookupService lookup = mock(ShipmentLookupService.class);
+    private final com.oneday.orders.service.ShipmentJourneyService journey =
+            mock(com.oneday.orders.service.ShipmentJourneyService.class);
+    private final com.oneday.common.port.CourierOnShipmentPort courier =
+            mock(com.oneday.common.port.CourierOnShipmentPort.class);
+    private final com.oneday.common.port.ShipmentContactPort contact =
+            mock(com.oneday.common.port.ShipmentContactPort.class);
     private final ExceptionEventProducer producer = mock(ExceptionEventProducer.class);
     private final ExceptionProperties props = new ExceptionProperties(); // maxReattempts = 2
 
     private final ExceptionCaseServiceImpl svc =
-            new ExceptionCaseServiceImpl(caseRepo, actionRepo, lookup, producer, props);
+            new ExceptionCaseServiceImpl(caseRepo, actionRepo, lookup, journey, courier, contact, producer, props);
 
     private final UUID shipmentId = UUID.randomUUID();
 

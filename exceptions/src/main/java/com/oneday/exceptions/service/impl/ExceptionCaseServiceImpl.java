@@ -15,9 +15,12 @@ import com.oneday.exceptions.dto.ExceptionCaseSummary;
 import com.oneday.exceptions.dto.ExceptionQueueResponse;
 import com.oneday.exceptions.dto.ExceptionSummaryResponse;
 import com.oneday.exceptions.events.ExceptionEventProducer;
+import com.oneday.common.port.CourierOnShipmentPort;
+import com.oneday.common.port.ShipmentContactPort;
 import com.oneday.exceptions.repository.ExceptionActionRepository;
 import com.oneday.exceptions.repository.ExceptionCaseRepository;
 import com.oneday.exceptions.service.ExceptionCaseService;
+import com.oneday.orders.service.ShipmentJourneyService;
 import com.oneday.orders.service.ShipmentLookupService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -39,15 +42,22 @@ public class ExceptionCaseServiceImpl implements ExceptionCaseService {
     private final ExceptionCaseRepository caseRepo;
     private final ExceptionActionRepository actionRepo;
     private final ShipmentLookupService shipmentLookup;
+    private final ShipmentJourneyService journeyService;
+    private final CourierOnShipmentPort courierPort;
+    private final ShipmentContactPort contactPort;
     private final ExceptionEventProducer producer;
     private final ExceptionProperties props;
 
     public ExceptionCaseServiceImpl(ExceptionCaseRepository caseRepo, ExceptionActionRepository actionRepo,
-                                    ShipmentLookupService shipmentLookup, ExceptionEventProducer producer,
-                                    ExceptionProperties props) {
+                                    ShipmentLookupService shipmentLookup, ShipmentJourneyService journeyService,
+                                    CourierOnShipmentPort courierPort, ShipmentContactPort contactPort,
+                                    ExceptionEventProducer producer, ExceptionProperties props) {
         this.caseRepo = caseRepo;
         this.actionRepo = actionRepo;
         this.shipmentLookup = shipmentLookup;
+        this.journeyService = journeyService;
+        this.courierPort = courierPort;
+        this.contactPort = contactPort;
         this.producer = producer;
         this.props = props;
     }
@@ -176,7 +186,15 @@ public class ExceptionCaseServiceImpl implements ExceptionCaseService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Case not found"));
         List<ExceptionActionView> actions = actionRepo.findByCaseIdOrderByCreatedAtAsc(caseId).stream()
                 .map(ExceptionActionView::from).toList();
-        return new ExceptionCaseDetail(ExceptionCaseSummary.from(c), actions);
+        // The full picture: the shipment's whole internal trail + who to call at the failed stage.
+        List<com.oneday.orders.dto.JourneyStep> journey = journeyService.journey(c.getShipmentId());
+        ExceptionCaseDetail.Contact handler = courierPort.forShipment(c.getShipmentId())
+                .map(x -> new ExceptionCaseDetail.Contact(x.name(), x.phone(), x.role().name())).orElse(null);
+        ShipmentContactPort.ShipmentContact contact =
+                contactPort.contactsFor(List.of(c.getShipmentId())).get(c.getShipmentId());
+        ExceptionCaseDetail.Contact receiver = contact == null ? null
+                : new ExceptionCaseDetail.Contact(contact.receiverName(), contact.receiverPhone(), "CUSTOMER");
+        return new ExceptionCaseDetail(ExceptionCaseSummary.from(c), actions, journey, handler, receiver);
     }
 
     // ── Resolve ───────────────────────────────────────────────────────────────────────────────────
