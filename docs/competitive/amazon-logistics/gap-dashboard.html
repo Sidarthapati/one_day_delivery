@@ -1,0 +1,387 @@
+<title>Amazon Logistics Teardown</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+:root{
+  --ground:#F5F6F8; --surface:#FFFFFF; --surface-2:#FBFBFC;
+  --ink:#14171E; --ink-2:#3A414E; --muted:#6A7280; --faint:#9AA1AC;
+  --line:#E4E7EC; --line-2:#EEF0F3;
+  --have:#1F8A54; --have-bg:#E7F4ED;
+  --part:#B8770A; --part-bg:#FaF1DE;
+  --miss:#CE402B; --miss-bg:#FBE9E5;
+  --shadow:0 1px 2px rgba(20,23,30,.04),0 8px 24px -12px rgba(20,23,30,.12);
+}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D0F13; --surface:#15181E; --surface-2:#181C23;
+    --ink:#EEF1F5; --ink-2:#C2C8D2; --muted:#8B93A0; --faint:#646C79;
+    --line:#262B33; --line-2:#1F242B;
+    --have:#4FBE86; --have-bg:#12271D;
+    --part:#E0A73A; --part-bg:#2A2312;
+    --miss:#EC6A54; --miss-bg:#2C1713;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px -14px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D0F13; --surface:#15181E; --surface-2:#181C23;
+  --ink:#EEF1F5; --ink-2:#C2C8D2; --muted:#8B93A0; --faint:#646C79;
+  --line:#262B33; --line-2:#1F242B;
+  --have:#4FBE86; --have-bg:#12271D;
+  --part:#E0A73A; --part-bg:#2A2312;
+  --miss:#EC6A54; --miss-bg:#2C1713;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px -14px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:Inter,system-ui,sans-serif;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1020px;margin:0 auto;padding:clamp(20px,5vw,64px) clamp(16px,4vw,40px)}
+.eyebrow{
+  font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+  display:flex;align-items:center;gap:10px;
+}
+.eyebrow::before{content:"";width:26px;height:2px;background:var(--ink);display:inline-block}
+h1{
+  font-family:Archivo,sans-serif;font-weight:800;letter-spacing:-.02em;
+  font-size:clamp(30px,6vw,54px);line-height:1.02;margin:.35em 0 .3em;
+  text-wrap:balance;
+}
+h1 .amz{color:var(--muted)}
+.lede{font-size:clamp(15px,2.1vw,18px);color:var(--ink-2);max-width:62ch;margin:0}
+.meta{
+  display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:22px;
+  font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--muted);
+}
+.meta b{color:var(--ink-2);font-weight:600}
+section{margin-top:clamp(38px,6vw,64px)}
+h2{
+  font-family:Archivo,sans-serif;font-weight:700;letter-spacing:-.01em;
+  font-size:clamp(19px,3vw,25px);margin:0 0 4px;
+}
+.sub{color:var(--muted);font-size:14.5px;margin:0 0 22px;max-width:64ch}
+
+/* summary band */
+.band{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tally{
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  padding:20px 20px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden;
+}
+.tally::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+.tally.h::before{background:var(--have)} .tally.p::before{background:var(--part)} .tally.m::before{background:var(--miss)}
+.tally .n{font-family:Archivo,sans-serif;font-weight:800;font-size:clamp(34px,7vw,52px);line-height:1;font-variant-numeric:tabular-nums}
+.tally.h .n{color:var(--have)} .tally.p .n{color:var(--part)} .tally.m .n{color:var(--miss)}
+.tally .lb{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:8px}
+.tally .d{font-size:13px;color:var(--ink-2);margin-top:6px}
+.net{margin-top:16px;font-size:14.5px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line-2);border-radius:12px;padding:14px 16px}
+.net b{color:var(--ink)}
+
+/* scorecard */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:720px}
+thead th{
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);text-align:left;font-weight:600;
+  padding:14px 16px;border-bottom:1px solid var(--line);background:var(--surface-2);
+}
+tbody td{padding:13px 16px;border-bottom:1px solid var(--line-2);font-size:14px;vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:none}
+tbody tr{position:relative}
+td.area{color:var(--ink);font-weight:600;font-family:Archivo,sans-serif;font-size:14.5px;width:30%}
+td.area .k{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--faint);font-weight:600;margin-right:8px}
+td.strip{padding:0;width:4px}
+td.strip span{display:block;width:4px;height:100%;min-height:44px}
+.h td.strip span{background:var(--have)} .p td.strip span{background:var(--part)} .m td.strip span{background:var(--miss)}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;font-family:"IBM Plex Mono",monospace;
+  font-size:11.5px;font-weight:600;letter-spacing:.04em;padding:4px 10px;border-radius:999px;white-space:nowrap;
+}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%}
+.chip.h{color:var(--have);background:var(--have-bg)} .chip.h::before{background:var(--have)}
+.chip.p{color:var(--part);background:var(--part-bg)} .chip.p::before{background:var(--part)}
+.chip.m{color:var(--miss);background:var(--miss-bg)} .chip.m::before{background:var(--miss)}
+
+/* surfaces */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 18px 16px;box-shadow:var(--shadow)}
+.card .idx{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--faint);font-weight:600}
+.card h3{font-family:Archivo,sans-serif;font-weight:700;font-size:16px;margin:6px 0 4px;letter-spacing:-.01em}
+.card .url{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);word-break:break-all;margin-bottom:10px}
+.card ul{margin:0;padding-left:16px;font-size:13px;color:var(--ink-2)}
+.card li{margin:3px 0}
+
+/* theme detail */
+.theme{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow);margin-bottom:12px}
+.theme summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:12px;font-family:Archivo,sans-serif;font-weight:700;font-size:16px;letter-spacing:-.01em}
+.theme summary::-webkit-details-marker{display:none}
+.theme summary .tw{margin-left:auto}
+.theme .caret{color:var(--faint);font-size:13px;transition:transform .2s ease;font-family:"IBM Plex Mono",monospace}
+.theme[open] .caret{transform:rotate(90deg)}
+.theme .body{margin-top:14px;font-size:14px;color:var(--ink-2)}
+.theme .body p{margin:0 0 10px}
+.theme .lab{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+
+/* priorities */
+.steps{counter-reset:s;display:grid;gap:12px}
+.step{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow)}
+.step .num{counter-increment:s;font-family:Archivo,sans-serif;font-weight:800;font-size:22px;color:var(--ink);width:38px;height:38px;border:1.5px solid var(--line);border-radius:10px;display:grid;place-items:center;font-variant-numeric:tabular-nums}
+.step .num::before{content:counter(s)}
+.step h3{margin:1px 0 3px;font-family:Archivo,sans-serif;font-size:15.5px;font-weight:700}
+.step p{margin:0;font-size:13.5px;color:var(--ink-2)}
+.step .eff{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);margin-top:6px}
+
+.ahead{background:var(--surface-2);border:1px solid var(--line-2);border-radius:14px;padding:20px 22px}
+.ahead ul{margin:12px 0 0;padding-left:18px;font-size:14px;color:var(--ink-2)}
+.ahead li{margin:6px 0}
+.ahead b{color:var(--ink)}
+
+.foot{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);font-family:"IBM Plex Mono",monospace;line-height:1.7}
+.foot b{color:var(--ink-2)}
+mark{background:var(--part-bg);color:var(--part);padding:0 4px;border-radius:4px;font-weight:600}
+a{color:inherit}
+@media (max-width:560px){.band{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Competitive Teardown</div>
+    <h1>Godspeed <span class="amz">vs</span> Amazon Logistics</h1>
+    <p class="lede">A screen-by-screen read of Amazon's delivery-operations back-office, mapped
+      against what our platform ships today — and where the real gaps are.</p>
+    <div class="meta">
+      <span><b>137</b> distinct screens</span>
+      <span>source · <b>51-min ops walkthrough</b></span>
+      <span>station · <b>LKOF / Lucknow</b></span>
+      <span>captured · <b>2026-08-21</b></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>The headline</h2>
+    <p class="sub">The video is almost entirely Amazon's <b>operations, station and partner-finance
+      web tooling</b> — plus a very rich per-parcel data export. It is <em>not</em> their driver phone
+      app. So the comparison is against our <b>Station / Admin / Hub consoles and backend analytics</b>,
+      where most of the delta lives.</p>
+    <div class="band">
+      <div class="tally h"><div class="n">3</div><div class="lb">Have</div><div class="d">At or near parity</div></div>
+      <div class="tally p"><div class="n">11</div><div class="lb">Partial</div><div class="d">Foundation exists, surface missing</div></div>
+      <div class="tally m"><div class="n">7</div><div class="lb">Missing</div><div class="d">Whole capability absent</div></div>
+    </div>
+    <p class="net">The gaps cluster in four places: <b>exceptions &amp; problem-solve</b>,
+      <b>ops analytics &amp; reporting</b>, <b>partner finance &amp; loss-recovery</b>, and
+      <b>fraud / integrity</b>. On <b>on-road driver execution</b> — scan, OTP, van loops, GPS —
+      we're actually solid; Amazon didn't even show their driver app.</p>
+  </section>
+
+  <section>
+    <h2>Capability scorecard</h2>
+    <p class="sub">21 capability areas. Amazon's version vs ours today.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Capability</th><th>Amazon</th><th>Godspeed today</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">A</span>Live route-execution control tower</td><td>DA pace, projected return, risk states</td><td>SLA lanes + van map + state buckets</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">B</span>GPS driver-trace replay + heatmap</td><td>Full-shift time-scrubber, heatmap</td><td>GPS captured; live map only</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">C</span>Per-package event / scan timeline</td><td>Actor, node, driver, GPS, reason</td><td>Strong ledger, thin ops UI</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="m"><td class="strip"><span></span></td><td class="area"><span class="k">D</span>Package search + CSV export + deep-links</td><td>1000+ filters, bulk export, links</td><td>Basic list filters, no export</td><td><span class="chip m">Missing</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">E</span>Ageing / dwell analytics</td><td>Days-in-status buckets, fwd/rev</td><td>SLA deadlines, no ageing report</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="m"><td class="strip"><span></span></td><td class="area"><span class="k">F</span>Exceptions / problem-solve / RTO engine</td><td>Exceptions view, reason taxonomy</td><td>M11 module is an empty shell</td><td><span class="chip m">Missing</span></td></tr>
+          <tr class="m"><td class="strip"><span></span></td><td class="area"><span class="k">G</span>Reschedule / reassign / on-road / batch</td><td>Full manage-packages tooling</td><td>Enum states, no orchestration</td><td><span class="chip m">Missing</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">H</span>Parcel disposition rollups</td><td>Reattemptable / undeliverable / missing</td><td>Failed / RTO states only</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="h"><td class="strip"><span></span></td><td class="area"><span class="k">I</span>COD driver cash reconciliation</td><td>Collected / deposited / variance</td><td>Admin COD cash recon</td><td><span class="chip h">Have</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">J</span>Bank-deposit remittance + variance</td><td>Expected-vs-actual + slip scan-back</td><td>Remittance + payouts, no variance</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">K</span>Station layout / induct / stow</td><td>QR induct tables, sort zones</td><td>Hub stands / zones / bags</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">L</span>Outbound depart / print-depart</td><td>Departure manifests</td><td>Hub bag manifests + AWB</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">M</span>Shift / scheduling planning</td><td>Work blocks, configure plan</td><td>Roster + shift jobs, no planner</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="m"><td class="strip"><span></span></td><td class="area"><span class="k">N</span>DA performance scorecards</td><td>Stops/hr, on-time, datewise</td><td>None</td><td><span class="chip m">Missing</span></td></tr>
+          <tr class="m"><td class="strip"><span></span></td><td class="area"><span class="k">O</span>DA / DSP payments &amp; earnings</td><td>Payments console</td><td>None (payout = COD only)</td><td><span class="chip m">Missing</span></td></tr>
+          <tr class="m"><td class="strip"><span></span></td><td class="area"><span class="k">P</span>Partner loss-recovery / dispute</td><td>Dedicated chargeback tool</td><td>None</td><td><span class="chip m">Missing</span></td></tr>
+          <tr class="m"><td class="strip"><span></span></td><td class="area"><span class="k">Q</span>Fraud / integrity monitoring</td><td>Fake-GPS, bad-scan, deductions</td><td>Append-only ledger only</td><td><span class="chip m">Missing</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">R</span>Per-parcel data-model richness</td><td>~40+ fields per parcel</td><td>Solid core, thin sortation</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="p"><td class="strip"><span></span></td><td class="area"><span class="k">S</span>Multi-DSP model</td><td>Vendor drivers + store points</td><td>Own DAs + B2B accounts</td><td><span class="chip p">Partial</span></td></tr>
+          <tr class="h"><td class="strip"><span></span></td><td class="area"><span class="k">T</span>Auth / SSO</td><td>Cognito "Cloak" + WorkSpaces</td><td>M1 JWT + Google + phone OTP</td><td><span class="chip h">Have</span></td></tr>
+          <tr class="h"><td class="strip"><span></span></td><td class="area"><span class="k">U</span>On-road driver app</td><td>Not shown in video</td><td>Native app: scan / OTP / loops / GPS</td><td><span class="chip h">Have</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>What Amazon actually showed</h2>
+    <p class="sub">Four surfaces — the operations layer we should be benchmarking against.</p>
+    <div class="cards">
+      <div class="card">
+        <div class="idx">01 · CONTROL TOWER</div>
+        <h3>Route Execution</h3>
+        <div class="url">logistics.amazon.in / operations</div>
+        <ul>
+          <li>Per-DA pace: avg vs last-hour stops/hr</li>
+          <li>Projected Return-To-Station</li>
+          <li>"Next stop expected N hrs ago"</li>
+          <li>GPS trace replay + heatmap</li>
+          <li>Attempt-success %, at-risk / behind</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="idx">02 · STATION OPS</div>
+        <h3>Station Command Center</h3>
+        <div class="url">amazonlogistics.eu / station</div>
+        <ul>
+          <li>Package search → event timeline</li>
+          <li>Ageing / dwell, RTS</li>
+          <li>Problem-solve &amp; manage packages</li>
+          <li>Cash: driver recon + bank deposits</li>
+          <li>Station layout, induct / stow</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="idx">03 · PARTNER FINANCE</div>
+        <h3>amazon cloak</h3>
+        <div class="url">cloak.tech.amazon.dev</div>
+        <ul>
+          <li>Per-parcel ₹ loss valuation</li>
+          <li>Loss buckets + recoverable status</li>
+          <li>SLA-bound dispute workflow</li>
+          <li>Bulk dispute / export</li>
+          <li>~1,498-item recovery queue</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="idx">04 · DATA MODEL</div>
+        <h3>PackageResults export</h3>
+        <div class="url">CSV / Excel · ~40+ fields</div>
+        <ul>
+          <li>Ship class (AIR / AFTERNOON / STD)</li>
+          <li>Sort zone / cluster / aisle</li>
+          <li>Dwell "minutes-in-last-scan"</li>
+          <li>Promised vs estimated vs RDD</li>
+          <li>Driver ID, DSP, service type</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The gaps, in detail</h2>
+    <p class="sub">Expand each theme. Verdict reflects the whole cluster.</p>
+
+    <details class="theme" open>
+      <summary><span class="caret">▸</span> Exceptions, problem-solve &amp; RTO <span class="tw"><span class="chip m">Missing</span></span></summary>
+      <div class="body">
+        <p><span class="lab">Amazon</span> Exceptions view + manage-packages: reschedule windows, change
+          assigned station, on-road override, batch tracking-ID ops, a real reason-code taxonomy, and
+          disposition rollups (reattemptable / undeliverable / <mark>missing</mark> / returned-to-station).</p>
+        <p><span class="lab">Us</span> State-machine states exist for failed/RTO/reschedule and a station
+          <code>/exceptions</code> page — but <b>M11 is an empty shell</b>: nothing emits the exception event,
+          so there's no engine, no reason taxonomy (failures are free-text), no attempt policy, no call-center
+          queue, no batch tooling.</p>
+        <p><span class="lab">Effort · High</span> A whole module. The single highest-leverage gap.</p>
+      </div>
+    </details>
+
+    <details class="theme">
+      <summary><span class="caret">▸</span> Ops analytics &amp; reporting <span class="tw"><span class="chip p">Partial</span></span></summary>
+      <div class="body">
+        <p><span class="lab">Amazon</span> Per-DA pace &amp; projected-RTS dashboards, attempt-success %,
+          GPS-trace replay with a time-scrubber, ageing buckets by days-in-status, DA scorecards, and
+          <b>CSV/Excel export everywhere</b>.</p>
+        <p><span class="lab">Us</span> We store the raw material — <code>da_gps_ping</code>, dispatch queue,
+          <code>scan_ledger</code>, SLA legs — and have SLA lanes + a live van map. Missing are the
+          aggregations: pace/RTS/attempt-success, trace replay, ageing report, scorecards, and export.</p>
+        <p><span class="lab">Effort · Medium</span> Mostly a Station-console dashboard over data we already have.</p>
+      </div>
+    </details>
+
+    <details class="theme">
+      <summary><span class="caret">▸</span> Package search &amp; event timeline <span class="tw"><span class="chip p">Partial</span></span></summary>
+      <div class="body">
+        <p><span class="lab">Amazon</span> Global package search (rich filters, 1000+, CSV, shareable
+          deep-links) → per-package event timeline with actor, node, driver and GPS.</p>
+        <p><span class="lab">Us</span> A strong, tamper-proof spine — append-only <code>scan_ledger</code> +
+          <code>shipment_state_history</code> + custody + handoff. What's missing is a unified ops
+          "search → full timeline" view, plus export and deep-links.</p>
+        <p><span class="lab">Effort · Low–Medium</span> UI over existing data + an export endpoint.</p>
+      </div>
+    </details>
+
+    <details class="theme">
+      <summary><span class="caret">▸</span> COD, cash &amp; deposits <span class="tw"><span class="chip h">Have</span> <span class="chip p">Partial</span></span></summary>
+      <div class="body">
+        <p><span class="lab">Have</span> Driver cash reconciliation — DA deposits, admin cash-recon,
+          B2B remittance (gross/fee/net/UTR), bank penny-drop — good parity.</p>
+        <p><span class="lab">Partial</span> Amazon adds an expected-vs-actual cash <b>variance</b> loop and
+          reconciles against physical <b>barcoded deposit slips</b> scanned back. We have no variance workflow
+          or cash-management-services integration.</p>
+        <p><span class="lab">Effort · Medium</span></p>
+      </div>
+    </details>
+
+    <details class="theme">
+      <summary><span class="caret">▸</span> Workforce: schedule · performance · pay <span class="tw"><span class="chip m">Missing</span></span></summary>
+      <div class="body">
+        <p><span class="lab">Amazon</span> Scheduling + shift planning (work blocks), DA performance
+          scorecards, and a DA/DSP <b>Payments</b> console.</p>
+        <p><span class="lab">Us</span> Roster + shift jobs exist (G1 shipped), but no shift-planning UI, no
+          <b>performance scorecards</b> at all, and no <b>driver earnings/pay</b> (our "payout" is COD only).</p>
+        <p><span class="lab">Effort</span> Performance = medium (derive from ledger); pay = high (new domain).</p>
+      </div>
+    </details>
+
+    <details class="theme">
+      <summary><span class="caret">▸</span> Partner loss-recovery &amp; disputes <span class="tw"><span class="chip m">Missing</span></span></summary>
+      <div class="body">
+        <p><span class="lab">Amazon</span> A dedicated chargeback tool: per-parcel ₹ loss, loss buckets,
+          recoverable classification, SLA-bound dispute lifecycle, bulk dispute/export.</p>
+        <p><span class="lab">Us</span> Nothing comparable — and it matters for our B2B + own-fleet model
+          once partner accountability and loss attribution scale.</p>
+        <p><span class="lab">Effort · High</span> A new module.</p>
+      </div>
+    </details>
+
+    <details class="theme">
+      <summary><span class="caret">▸</span> Fraud / integrity &amp; data richness <span class="tw"><span class="chip m">Missing</span> <span class="chip p">Partial</span></span></summary>
+      <div class="body">
+        <p><span class="lab">Fraud · Missing</span> Amazon tracks fake-GPS (spoofing), bad-scan analytics and
+          deductions. Our append-only ledger is a good base, but no spoof detection or bad-scan analytics exist.</p>
+        <p><span class="lab">Data · Partial</span> We have core weight/dims/volumetric/payment/SLA/ETA. Thinner:
+          ship-speed class, sort zone/cluster/aisle, dwell-per-scan, service-type taxonomy, promised-vs-RDD split,
+          merchant attribution.</p>
+        <p><span class="lab">Effort</span> Fraud = medium (analytics over GPS+scans); data = low–medium (additive columns).</p>
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <h2>Close the gap — in this order</h2>
+    <p class="sub">Highest leverage first; steps 1–2 reuse data we already store.</p>
+    <div class="steps">
+      <div class="step"><div class="num"></div><div><h3>Build the M11 exceptions / problem-solve engine</h3><p>Reason-code taxonomy, attempt policy, RTO producer, reschedule / reassign / on-road override, batch ops, disposition rollups. Unblocks the biggest single delta.</p><div class="eff">Effort · High</div></div></div>
+      <div class="step"><div class="num"></div><div><h3>Ship the ops-analytics layer</h3><p>Per-DA pace / RTS / attempt-success dashboard, GPS-trace replay, ageing report, DA scorecards, and CSV export across consoles. Mostly aggregation over existing data.</p><div class="eff">Effort · Medium</div></div></div>
+      <div class="step"><div class="num"></div><div><h3>Cash variance + deposit scan-back, then DA/DSP payments</h3><p>Expected-vs-actual reconciliation with barcoded slips; then a real driver-earnings ledger.</p><div class="eff">Effort · Medium → High</div></div></div>
+      <div class="step"><div class="num"></div><div><h3>Partner loss-recovery module + fraud analytics</h3><p>Chargeback/dispute workflow and fake-GPS / bad-scan monitoring over the ledger.</p><div class="eff">Effort · High → Medium</div></div></div>
+      <div class="step"><div class="num"></div><div><h3>Enrich the parcel data model</h3><p>Ship-class, sort granularity, dwell, service-type, promised-vs-RDD — folded into steps 1–2.</p><div class="eff">Effort · Low–Medium</div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where we're already ahead</h2>
+    <div class="ahead">
+      <ul>
+        <li><b>On-road driver app.</b> Our native app (pickup/delivery + failure sheets, van load/loop/stops/return-scan, shuttle, camera barcode scan, background GPS, native-maps nav, OTP proof) is a real product. Amazon's driver app wasn't even shown.</li>
+        <li><b>Append-only integrity.</b> A DB-trigger-enforced immutable scan ledger is a strong foundation for audit and fraud work.</li>
+        <li><b>Intercity + air leg.</b> Our airline (M9), hub bags and shuttle (M12) model a multi-leg network richer than a single-station last-mile view.</li>
+        <li><b>Shipper self-serve.</b> Customer web + B2B console (wallet, dev keys/webhooks, white-label tracking, bulk upload, invoices, remittances) — a surface Amazon's ops video doesn't touch.</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="foot">
+    <div><b>Method.</b> 51-min recording → ffmpeg scene detection (152 frames) → perceptual-hash dedup → 137 distinct screens → 7 parallel vision passes → synthesis.</div>
+    <div><b>Data handling.</b> Raw frames hold real third-party PII (names, phones, cash figures) and are kept local only. This page describes capabilities &amp; schemas with generic values — no PII embedded.</div>
+    <div><b>Local collection.</b> docs/competitive/amazon-logistics/ · screens/ · AMAZON-SCREEN-INVENTORY.md · GAP-ANALYSIS.md</div>
+  </div>
+</div>
