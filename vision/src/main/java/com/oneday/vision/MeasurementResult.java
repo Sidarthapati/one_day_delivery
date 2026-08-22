@@ -1,9 +1,10 @@
 package com.oneday.vision;
 
 /**
- * Outcome of a dimension measurement. On {@link Status#OK} the L/W/H are populated (centimetres,
- * longest-first is NOT guaranteed — they map to the parcel axes as measured); otherwise the
- * dimensions are null and {@link #status()} explains why.
+ * Outcome of a dimension measurement. On {@link Status#OK} {@code lengthCm} and {@code widthCm} are
+ * always present (centimetres); {@code heightCm} is present only when a side capture succeeded and is
+ * null for the top-only flow. Longest-first is NOT guaranteed — they map to the parcel axes as
+ * measured. For any non-OK status all three dimensions are null and {@link #status()} explains why.
  *
  * @param status     outcome
  * @param lengthCm   measured length in cm (null unless OK)

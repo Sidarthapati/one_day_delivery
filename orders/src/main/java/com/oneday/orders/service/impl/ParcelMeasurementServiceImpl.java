@@ -108,7 +108,7 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
                 byte[] bytes = storage.getBytes(key);
                 engineCaptures.add(new DimensionEngine.Capture(bytes, parseView(c.view())));
             } catch (RuntimeException e) {
-                log.warn("Evidence fetch failed for key {}: {}", key, e.toString());
+                log.warn("Evidence fetch failed for key {}: {}", logSafe(key), e.toString());
                 fetchFailed = true;
             }
         }
@@ -117,7 +117,7 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
         ParcelMeasurement m = toEntity(shipment, daUserId, keys, result);
         ParcelMeasurement saved = persister.persist(m);
         log.info("Recorded DA_PICKUP measurement ref={} status={} overDeclared={}",
-                shipmentRef, saved.getStatus(), saved.isOverDeclared());
+                logSafe(shipmentRef), saved.getStatus(), saved.isOverDeclared());
         return toView(saved, null);
     }
 
@@ -214,9 +214,15 @@ class ParcelMeasurementServiceImpl implements ParcelMeasurementService {
     }
 
     private void requireOwnedKey(String key, String shipmentRef) {
-        if (key == null || !key.startsWith(KEY_PREFIX + "/") || !key.contains("/" + shipmentRef + "/")) {
+        if (key == null || !key.startsWith(KEY_PREFIX + "/") || !key.contains("/" + shipmentRef + "/")
+                || key.chars().anyMatch(ch -> ch < 0x20)) {   // reject control chars (log-injection safe)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "evidence key does not belong to this shipment");
         }
+    }
+
+    /** Strip CR/LF/control chars from a user-supplied value before logging (prevents log forging). */
+    private static String logSafe(String s) {
+        return s == null ? null : s.replaceAll("[\\p{Cntrl}]", "_");
     }
 
     private String buildKey(String shipmentRef) {

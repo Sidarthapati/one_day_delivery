@@ -5,6 +5,7 @@ import com.oneday.orders.service.DiscrepancyPolicy;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
+import java.util.Locale;
 
 @Component
 class DiscrepancyPolicyImpl implements DiscrepancyPolicy {
@@ -39,10 +40,10 @@ class DiscrepancyPolicyImpl implements DiscrepancyPolicy {
 
         boolean over = volumeExceeded || sideExceeded;
         if (!over) {
-            return new Verdict(false, String.format(
+            return new Verdict(false, String.format(Locale.ROOT,
                     "within tolerance (volume +%.0f%%, worst side +%.1fcm)", volPctOver, worstSideOver));
         }
-        return new Verdict(true, String.format(
+        return new Verdict(true, String.format(Locale.ROOT,
                 "over-declared: volume +%.0f%% (declared %s → measured %s cm), worst side +%.1fcm",
                 volPctOver, fmt(d), fmt(m), worstSideOver));
     }
@@ -58,6 +59,6 @@ class DiscrepancyPolicyImpl implements DiscrepancyPolicy {
     }
 
     private static String fmt(double[] a) {
-        return String.format("%.0fx%.0fx%.0f", a[0], a[1], a[2]);
+        return String.format(Locale.ROOT, "%.0fx%.0fx%.0f", a[0], a[1], a[2]);
     }
 }

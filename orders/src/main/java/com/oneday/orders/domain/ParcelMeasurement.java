@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * One append-only observation of a parcel's dimensions (see {@code V4_35}). Never mutated after
+ * One append-only observation of a parcel's dimensions (see {@code V4_38}). Never mutated after
  * insert. The declared dimensions are snapshotted here so the row is self-contained evidence for a
  * dispute; the customer's declaration on {@code Shipment} is never changed.
  */

@@ -1,6 +1,15 @@
 # First-Mile Parcel Dimension Checker — Design & Plan
 
-> Status: **DRAFT / for discussion.** Branch `f-dimension-checker`. Not yet implemented.
+> Status: **IMPLEMENTED** on branch `f-dimension-checker` (PRs: backend #121, driver #34, web #23).
+>
+> **As-built note (supersedes options explored below).** The measurement runs **server-side in the
+> Java monolith** via a new `vision` module (bytedeco **OpenCV/ArUco**) — *not* a Python CV sidecar
+> (that option was evaluated and rejected because `grid`/`routing` already ship OR-Tools native-in-JVM).
+> The DA capture endpoints live in **`orders`** at `/internal/v1/shipments/{ref}/measurement` (role
+> `DELIVERY_ASSOCIATE`), *not* in `dispatch`; the merchant view reads `GET /api/v1/shipments/mine/{ref}/measurements`.
+> Marker = **DICT_5X5_50, 5 cm**. Migration is **`V4_38`**. Evidence lives in Cloudflare R2 under an
+> environment key-prefix. The sections below record the original decision process; where they differ
+> from this note, this note is authoritative.
 
 ## Context
 

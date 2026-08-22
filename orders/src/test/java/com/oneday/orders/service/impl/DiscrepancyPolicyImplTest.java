@@ -35,8 +35,9 @@ class DiscrepancyPolicyImplTest {
 
     @Test
     void singleSideOverThresholdFlagged() {
-        // volume barely up but one side +5cm → side rule trips
-        var v = policy.evaluate(new double[]{30, 20, 10}, new Double[]{30.0, 20.0, 15.0});
+        // declared 30x20x10 (6000), measured 33x20x9.5 (6270) → volume only +4.5% (within tolerance),
+        // but the longest side is +3cm → the SIDE rule alone must trip (volume rule stays silent).
+        var v = policy.evaluate(new double[]{30, 20, 10}, new Double[]{33.0, 20.0, 9.5});
         assertThat(v.overDeclared()).isTrue();
     }
 
