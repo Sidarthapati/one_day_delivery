@@ -21,6 +21,13 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      # OpenCV (vision module, bytedeco) needs a few system libs to load on a headless runner —
+      # notably highgui's GTK/GL deps. Without these the ArUco engine reports itself unavailable and
+      # its native tests self-skip (graceful), but installing them lets those tests actually run.
+      # The same libs are required on the deploy runtime (Render) for the feature to measure.
+      - name: Install OpenCV native runtime deps
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libgomp1 libglib2.0-0 libgtk-3-0
+
       - name: Build and test all modules
         # Exclude the "e2e" group: those are full-stack @SpringBootTest suites that need a
         # real Postgres (and run locally against the dev DB). CI has no database, so they

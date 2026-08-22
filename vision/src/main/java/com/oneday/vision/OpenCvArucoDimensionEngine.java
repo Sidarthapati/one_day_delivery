@@ -1,6 +1,7 @@
 package com.oneday.vision;
 
 import org.bytedeco.javacpp.BytePointer;
+import org.bytedeco.javacpp.Loader;
 import org.bytedeco.javacpp.indexer.FloatIndexer;
 import org.bytedeco.javacpp.indexer.IntIndexer;
 import org.bytedeco.opencv.opencv_core.Mat;
@@ -69,8 +70,16 @@ public class OpenCvArucoDimensionEngine implements DimensionEngine {
 
     private static boolean tryLoadNative() {
         try {
-            // Force the javacpp opencv_core preset to load its native library now.
-            org.bytedeco.opencv.global.opencv_core.getBuildInformation();
+            // Force-load EVERY native module the engine actually uses — not just opencv_core. On a
+            // headless runner missing OpenCV's system libs, opencv_objdetect (ArUco) fails to load
+            // even though core loads fine; probing the full chain here means isAvailable() reflects
+            // reality, so callers/tests degrade or skip instead of crashing mid-measurement.
+            Loader.load(org.bytedeco.opencv.global.opencv_core.class);
+            Loader.load(org.bytedeco.opencv.global.opencv_imgproc.class);
+            Loader.load(org.bytedeco.opencv.global.opencv_imgcodecs.class);
+            Loader.load(org.bytedeco.opencv.global.opencv_calib3d.class);
+            Loader.load(org.bytedeco.opencv.global.opencv_objdetect.class); // ArUco — the module that
+            // pulls highgui and fails on a headless runner without OpenCV's GUI/GL system libs.
             return true;
         } catch (Throwable t) { // NOSONAR — native load can throw Error (UnsatisfiedLinkError)
             LoggerFactory.getLogger(OpenCvArucoDimensionEngine.class)
