@@ -38,6 +38,7 @@ CREATE TABLE exception_action (
     acted_by       VARCHAR(64),
     acted_by_role  VARCHAR(32),
     notes          TEXT,
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()   -- BaseEntity carries @UpdateTimestamp; append-only in practice
 );
 CREATE INDEX idx_exception_action_case ON exception_action (case_id, created_at);
