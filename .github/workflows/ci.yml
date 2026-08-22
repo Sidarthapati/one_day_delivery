@@ -26,7 +26,12 @@ jobs:
       # its native tests self-skip (graceful), but installing them lets those tests actually run.
       # The same libs are required on the deploy runtime (Render) for the feature to measure.
       - name: Install OpenCV native runtime deps
-        run: sudo apt-get update && sudo apt-get install -y libgl1 libgomp1 libglib2.0-0 libgtk-3-0
+        # bytedeco OpenCV's highgui is built against GTK2 (not GTK3), plus GL/X11 deps. On Ubuntu 24.04
+        # the GTK2 package is renamed with the t64 suffix; fall back to the old name for older runners.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libgomp1 libglib2.0-0 libsm6 libxext6 libxrender1
+          sudo apt-get install -y libgtk2.0-0t64 || sudo apt-get install -y libgtk2.0-0
 
       - name: Build and test all modules
         # Exclude the "e2e" group: those are full-stack @SpringBootTest suites that need a
