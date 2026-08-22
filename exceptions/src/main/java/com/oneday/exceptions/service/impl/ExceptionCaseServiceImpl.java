@@ -27,6 +27,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -35,7 +37,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Service
-public class ExceptionCaseServiceImpl implements ExceptionCaseService {
+class ExceptionCaseServiceImpl implements ExceptionCaseService {
 
     private static final int MAX_PAGE_SIZE = 100;
 
@@ -72,6 +74,13 @@ public class ExceptionCaseServiceImpl implements ExceptionCaseService {
             return; // DA-scoped event with no shipment (e.g. a fleet-wide cron miss) — nothing to case yet.
         }
         Optional<ExceptionCase> live = caseRepo.findFirstByShipmentIdAndResolvedAtIsNull(shipmentId);
+        if (live.isPresent() && live.get().getStatus() == ExceptionStatus.RTO) {
+            // Already returning to origin — a failure on the return leg isn't a fresh delivery attempt,
+            // so don't reset the case to OPEN/REATTEMPTABLE. Just record it on the trail.
+            logAction(live.get().getId(), "FAILURE_CAPTURED", "system", null,
+                    "failure during RTO" + (reason != null ? " · " + reason : ""));
+            return;
+        }
         ExceptionCase c = live.orElseGet(() -> openCase(shipmentId, shipmentRef, type));
         if (live.isPresent()) {
             // A repeat failure on the same live case → another attempt; re-open it for action.
@@ -127,6 +136,9 @@ public class ExceptionCaseServiceImpl implements ExceptionCaseService {
             case RTO_COMPLETED -> close(c, ExceptionStatus.RTO, Disposition.RETURNED);
             // A successful terminal delivery clears any lingering case (e.g. a reschedule that landed).
             case DROPPED, HUB_COLLECTED -> close(c, ExceptionStatus.RESOLVED, Disposition.RESOLVED);
+            // Shipment cancelled (M4 allows it from PICKUP_FAILED, which opened this case) — close the
+            // case so it doesn't sit OPEN forever, and so no agent can later drive an illegal RTO from it.
+            case CANCELLED -> close(c, ExceptionStatus.CANCELLED, c.getDisposition());
             default -> { /* other transitions don't affect the case */ }
         }
     }
@@ -211,8 +223,15 @@ public class ExceptionCaseServiceImpl implements ExceptionCaseService {
         }
 
         // Drive M4 (and, downstream, M10) by publishing the matching event — the orders consumer transitions.
+        // Publish only AFTER this tx commits (matches orders' ShipmentEventProducer): the broker send is
+        // synchronous and swallows errors, so publishing inline would let M4 act on an event a later
+        // rollback erases — a permanent M11/M4 divergence with no audit row.
         if (action.event() != null) {
-            producer.publish(c.getShipmentId(), action.event());
+            var evt = action.event();
+            var sid = c.getShipmentId();
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { producer.publish(sid, evt); }
+            });
         }
 
         c.setResolution(action);

@@ -17,7 +17,7 @@ public enum ExceptionReason {
     OTHER,
     UNKNOWN;
 
-    /** Best-effort map of M5's free-text reason string onto the taxonomy. Null/unrecognised → UNKNOWN. */
+    /** Best-effort map of M5's free-text reason string onto the taxonomy. Null/blank → UNKNOWN; unrecognised → OTHER. */
     public static ExceptionReason fromCode(String code) {
         if (code == null || code.isBlank()) {
             return UNKNOWN;
