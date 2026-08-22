@@ -24,6 +24,7 @@
         <module>grid</module>
         <module>barcode</module>
         <module>orders</module>
+        <module>vision</module>
         <module>dispatch</module>
         <module>routing</module>
         <module>hub</module>
@@ -39,6 +40,12 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lombok.version>1.18.44</lombok.version>
         <springdoc.version>2.3.0</springdoc.version>
+        <!-- Object storage (Cloudflare R2 via the S3-compatible API) — see common/ObjectStoragePort. -->
+        <awssdk.version>2.28.16</awssdk.version>
+        <!-- Computer-vision (OpenCV/ArUco) for the vision module. Native libs are bundled per-platform
+             (classifier deps in vision/pom.xml) — same native-in-JVM shape as OR-Tools in grid/routing. -->
+        <javacpp.version>1.5.10</javacpp.version>
+        <opencv.version>4.9.0-1.5.10</opencv.version>
         <!-- Override Spring Boot 3.2.5's managed versions to patched releases that clear the
              HIGH/CRITICAL CVEs flagged by Trivy. Same minor/patch lines (drop-in compatible):
              tomcat 10.1.20 → 10.1.55 (CVE-2025-24813, CVE-2026-41293/43512/43515),
@@ -77,6 +84,19 @@
                 <version>1.19.7</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!-- AWS SDK v2 BOM — pins the s3 + s3-presigner versions used by the R2 storage adapter. -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${awssdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.oneday</groupId>
+                <artifactId>vision</artifactId>
+                <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.oneday</groupId>
