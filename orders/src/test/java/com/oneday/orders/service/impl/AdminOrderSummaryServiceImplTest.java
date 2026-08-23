@@ -95,7 +95,7 @@ class AdminOrderSummaryServiceImplTest {
         ShipmentAgeingStats stats = svc.ageing(null);
 
         assertThat(stats.total()).isEqualTo(10);
-        assertThat(stats.bands()).containsExactly("<2h", "2-4h", "4-8h", ">8h");
+        assertThat(stats.bands()).containsExactly("<2h", "2-4h", "4-8h", "8h+");
         assertThat(stats.byBucket().get("IN_TRANSIT")).containsExactly(3L, 0L, 0L, 2L);
         assertThat(stats.byBucket().get("OUT_FOR_DELIVERY")).containsExactly(0L, 4L, 0L, 0L);
         assertThat(stats.byBucket().get("EXCEPTIONS")).containsExactly(0L, 0L, 0L, 1L);

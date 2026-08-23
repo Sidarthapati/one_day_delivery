@@ -28,7 +28,8 @@ class AdminOrderSummaryServiceImpl implements AdminOrderSummaryService {
 
     // ponytail: hour bands for a one-day product (SLA is intraday). Constants for now; make them
     // config-driven only if ops want to tune the thresholds.
-    private static final List<String> BANDS = List.of("<2h", "2-4h", "4-8h", ">8h");
+    // "8h+" (not ">8h") because band 3 is inclusive of exactly 8h — the CASE assigns band 3 at age >= t3.
+    private static final List<String> BANDS = List.of("<2h", "2-4h", "4-8h", "8h+");
     private static final long BAND_T1_SECONDS = 2 * 3600L;
     private static final long BAND_T2_SECONDS = 4 * 3600L;
     private static final long BAND_T3_SECONDS = 8 * 3600L;
@@ -48,9 +49,15 @@ class AdminOrderSummaryServiceImpl implements AdminOrderSummaryService {
         this.shipmentRepository = shipmentRepository;
     }
 
+    /** City keys are prefixed so no cityId value (which {@code User.cityId} allows to be any string) can
+     *  ever collide with the all-cities sentinel and leak another scope's cached stats. */
+    private static String cacheKey(String cityScope) {
+        return cityScope == null ? ALL_CITIES_KEY : "city:" + cityScope;
+    }
+
     @Override
     public ShipmentSummaryStats summary(String cityScope) {
-        String key = (cityScope == null) ? ALL_CITIES_KEY : cityScope;
+        String key = cacheKey(cityScope);
         Cached hit = cache.get(key);
         long now = System.currentTimeMillis();
         if (hit != null && now - hit.at() < TTL_MILLIS) {
@@ -86,7 +93,7 @@ class AdminOrderSummaryServiceImpl implements AdminOrderSummaryService {
 
     @Override
     public ShipmentAgeingStats ageing(String cityScope) {
-        String key = (cityScope == null) ? ALL_CITIES_KEY : cityScope;
+        String key = cacheKey(cityScope);
         CachedAgeing hit = ageingCache.get(key);
         long now = System.currentTimeMillis();
         if (hit != null && now - hit.at() < TTL_MILLIS) {
