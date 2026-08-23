@@ -5,6 +5,7 @@ import com.oneday.orders.dto.CancellationResponse;
 import com.oneday.orders.dto.ShipmentAgeingStats;
 import com.oneday.orders.dto.ShipmentPageResponse;
 import com.oneday.orders.dto.ShipmentSummaryStats;
+import com.oneday.orders.dto.ShipmentTimelineResponse;
 import com.oneday.orders.service.AdminOrderQueryService;
 import com.oneday.orders.service.AdminOrderSummaryService;
 import com.oneday.orders.service.CancellationService;
@@ -77,6 +78,19 @@ class AdminOrdersController {
     public ShipmentAgeingStats ageing(@AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, STATION_MANAGER);
         return adminOrderSummaryService.ageing(cityScope(principal));
+    }
+
+    /**
+     * One parcel's full ops timeline by ref — header + M4 state history merged with the M8 scan trail,
+     * oldest first (the "search → timeline" drill-down). Same visibility as {@link #listShipments}: a
+     * shipment outside a station manager's city 404s (matching the read rule), as does an unknown ref.
+     */
+    @GetMapping("/{ref}/timeline")
+    public ShipmentTimelineResponse timeline(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("ref") String ref) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        return adminOrderQueryService.timeline(ref, cityScope(principal));
     }
 
     /** Null for ADMIN (all cities); the station manager's own city otherwise (403 if unassigned). */

@@ -1,6 +1,7 @@
 package com.oneday.orders.service;
 
 import com.oneday.orders.dto.ShipmentPageResponse;
+import com.oneday.orders.dto.ShipmentTimelineResponse;
 
 /**
  * Read-only orders-database access for ADMIN tooling. Lists shipments across all customers
@@ -19,4 +20,12 @@ public interface AdminOrderQueryService {
      * @return a page of shipment summaries, newest first
      */
     ShipmentPageResponse listShipments(String stateFilter, String cityScope, int page, int size);
+
+    /**
+     * One parcel's full ops timeline by human ref: header + M4 state history merged with the M8 scan
+     * trail, oldest first. {@code cityScope} null → any city (ADMIN); otherwise the shipment must touch
+     * that city (origin or destination) or it 404s — the same read rule as {@link #listShipments}.
+     * An unknown ref 404s.
+     */
+    ShipmentTimelineResponse timeline(String shipmentRef, String cityScope);
 }
