@@ -158,6 +158,14 @@ public class Shipment extends MutableBaseEntity {
     @Column(name = "eta_updated")
     private Instant etaUpdated;
 
+    // ── Dwell / ageing primitive (V4_39; nullable, mutable) ───────────────
+    /** Denormalized latest scan (populated by the M8-scan writer, issue #124). Dwell = now − lastScanAt. */
+    @Column(name = "last_scan_at")
+    private Instant lastScanAt;
+
+    @Column(name = "last_scan_type", length = 30)
+    private String lastScanType;
+
     // ── Scheduled pickup (nullable = ASAP) ────────────────────────────────
     @Column(name = "scheduled_pickup_start")
     private Instant scheduledPickupStart;

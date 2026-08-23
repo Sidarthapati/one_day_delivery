@@ -4,6 +4,8 @@ import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.exceptions.domain.ExceptionReason;
 import com.oneday.exceptions.domain.ExceptionType;
 import com.oneday.exceptions.domain.ResolveAction;
+import com.oneday.exceptions.dto.BatchResolveRequest;
+import com.oneday.exceptions.dto.BatchResolveResponse;
 import com.oneday.exceptions.dto.ExceptionCaseDetail;
 import com.oneday.exceptions.dto.ExceptionQueueResponse;
 import com.oneday.exceptions.dto.ExceptionSummaryResponse;
@@ -35,4 +37,7 @@ public interface ExceptionCaseService {
 
     /** Take a problem-solve action — publishes the M4-driving event and records the action. */
     void resolve(UUID caseId, ResolveAction action, String cityScope, String userId, String role, String notes);
+
+    /** Apply one action to many cases, each in its own transaction; returns a per-case outcome. */
+    BatchResolveResponse batchResolve(BatchResolveRequest request, String cityScope, String userId, String role);
 }

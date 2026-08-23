@@ -2,6 +2,8 @@ package com.oneday.exceptions.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.exceptions.domain.ExceptionType;
+import com.oneday.exceptions.dto.BatchResolveRequest;
+import com.oneday.exceptions.dto.BatchResolveResponse;
 import com.oneday.exceptions.dto.ExceptionCaseDetail;
 import com.oneday.exceptions.dto.ExceptionQueueResponse;
 import com.oneday.exceptions.dto.ExceptionSummaryResponse;
@@ -72,5 +74,16 @@ public class ExceptionController {
         service.resolve(id, body.action(), Authz.cityScope(principal),
                 Authz.requireUserId(principal), Authz.role(principal), body.notes());
         return ResponseEntity.noContent().build();
+    }
+
+    /** Apply one action to many cases at once (e.g. a whole missed-flight bag). Returns a per-case outcome — a closed
+     *  or missing case in the batch is reported, not fatal — so this is 200, not 204. */
+    @PostMapping("/resolve")
+    public BatchResolveResponse batchResolve(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @Valid @RequestBody BatchResolveRequest body) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR, Authz.CALL_CENTER_AGENT);
+        return service.batchResolve(body, Authz.cityScope(principal),
+                Authz.requireUserId(principal), Authz.role(principal));
     }
 }

@@ -9,19 +9,27 @@ import com.oneday.exceptions.domain.ExceptionReason;
 import com.oneday.exceptions.domain.ExceptionStatus;
 import com.oneday.exceptions.domain.ExceptionType;
 import com.oneday.exceptions.domain.ResolveAction;
+import com.oneday.exceptions.dto.BatchResolveRequest;
+import com.oneday.exceptions.dto.BatchResolveResponse;
 import com.oneday.exceptions.events.ExceptionEventProducer;
 import com.oneday.exceptions.repository.ExceptionActionRepository;
 import com.oneday.exceptions.repository.ExceptionCaseRepository;
+import com.oneday.exceptions.service.ExceptionCaseService;
 import com.oneday.orders.service.ShipmentLookupService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,9 +49,11 @@ class ExceptionCaseServiceImplTest {
             mock(com.oneday.common.port.ShipmentContactPort.class);
     private final ExceptionEventProducer producer = mock(ExceptionEventProducer.class);
     private final ExceptionProperties props = new ExceptionProperties(); // maxReattempts = 2
+    // Self-proxy is a mock; the batch test stubs it to delegate to the real svc.resolve.
+    private final ExceptionCaseService self = mock(ExceptionCaseService.class);
 
     private final ExceptionCaseServiceImpl svc =
-            new ExceptionCaseServiceImpl(caseRepo, actionRepo, lookup, journey, courier, contact, producer, props);
+            new ExceptionCaseServiceImpl(caseRepo, actionRepo, lookup, journey, courier, contact, producer, props, self);
 
     private final UUID shipmentId = UUID.randomUUID();
 
@@ -142,6 +152,34 @@ class ExceptionCaseServiceImplTest {
     }
 
     @Test
+    void resolveReassignDeliveryPublishesTheReassignEvent() {
+        UUID caseId = UUID.randomUUID();
+        ExceptionCase c = new ExceptionCase();
+        c.setShipmentId(shipmentId);
+        when(caseRepo.findById(caseId)).thenReturn(Optional.of(c));
+        when(caseRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        resolveInTx(() -> svc.resolve(caseId, ResolveAction.REASSIGN_DELIVERY, null, "u1", "STATION_MANAGER", null));
+
+        verify(producer).publish(shipmentId, ExceptionsEventType.DELIVERY_REASSIGNED);
+        assertThat(c.getStatus()).isEqualTo(ExceptionStatus.RESCHEDULED);
+    }
+
+    @Test
+    void reassignDeliveryRejectsCallCentreAgentBeforeAnyLookup() {
+        UUID caseId = UUID.randomUUID();
+
+        // Reassigning a DA is an intraday dispatch change — a call-centre agent must not trigger it, and
+        // the 403 must come BEFORE the case lookup so it can't probe existence/state via this endpoint.
+        assertThatThrownBy(() ->
+                svc.resolve(caseId, ResolveAction.REASSIGN_DELIVERY, null, "u1", "CALL_CENTER_AGENT", null))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        verify(caseRepo, never()).findById(any());
+        verify(producer, never()).publish(any(), any());
+    }
+
+    @Test
     void markResolvedClosesWithoutPublishing() {
         UUID caseId = UUID.randomUUID();
         ExceptionCase c = new ExceptionCase();
@@ -154,6 +192,53 @@ class ExceptionCaseServiceImplTest {
         verify(producer, never()).publish(any(), any());
         assertThat(c.getResolvedAt()).isNotNull();
         assertThat(c.getStatus()).isEqualTo(ExceptionStatus.RESOLVED);
+    }
+
+    @Test
+    void markMissingKeepsCaseLiveWithMissingDisposition() {
+        UUID caseId = UUID.randomUUID();
+        ExceptionCase c = new ExceptionCase();
+        c.setShipmentId(shipmentId);
+        when(caseRepo.findById(caseId)).thenReturn(Optional.of(c));
+        when(caseRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.resolve(caseId, ResolveAction.MARK_MISSING, null, "u1", "STATION_MANAGER", "not on the van");
+
+        verify(producer, never()).publish(any(), any());       // no M4 event
+        assertThat(c.getResolvedAt()).isNull();                // stays live in the queue
+        assertThat(c.getStatus()).isEqualTo(ExceptionStatus.IN_PROGRESS);
+        assertThat(c.getDisposition()).isEqualTo(Disposition.MISSING);
+    }
+
+    @Test
+    void batchResolveReportsPerCaseOutcome() {
+        UUID ok = UUID.randomUUID(), closed = UUID.randomUUID(), gone = UUID.randomUUID();
+        ExceptionCase okCase = new ExceptionCase();
+        okCase.setShipmentId(shipmentId);
+        ExceptionCase closedCase = new ExceptionCase();
+        closedCase.setResolvedAt(Instant.now());               // already closed → 409
+        when(caseRepo.findById(ok)).thenReturn(Optional.of(okCase));
+        when(caseRepo.findById(closed)).thenReturn(Optional.of(closedCase));
+        when(caseRepo.findById(gone)).thenReturn(Optional.empty()); // not found → 404
+        when(caseRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        // The self-proxy delegates to the real resolve (MARK_RESOLVED → no publish, so no tx needed).
+        doAnswer(inv -> {
+            svc.resolve(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2),
+                    inv.getArgument(3), inv.getArgument(4), inv.getArgument(5));
+            return null;
+        }).when(self).resolve(any(), any(), any(), any(), any(), any());
+
+        BatchResolveRequest req = new BatchResolveRequest(ResolveAction.MARK_RESOLVED, List.of(ok, closed, gone), null);
+        BatchResolveResponse resp = svc.batchResolve(req, null, "u1", "STATION_MANAGER");
+
+        assertThat(resp.results()).hasSize(3);
+        assertThat(statusOf(resp, ok)).isEqualTo(BatchResolveResponse.Status.OK);
+        assertThat(statusOf(resp, closed)).isEqualTo(BatchResolveResponse.Status.ALREADY_CLOSED);
+        assertThat(statusOf(resp, gone)).isEqualTo(BatchResolveResponse.Status.NOT_FOUND);
+    }
+
+    private static BatchResolveResponse.Status statusOf(BatchResolveResponse r, UUID id) {
+        return r.results().stream().filter(i -> i.caseId().equals(id)).findFirst().orElseThrow().status();
     }
 
     @Test

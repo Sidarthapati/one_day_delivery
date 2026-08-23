@@ -5,5 +5,6 @@ public record ExceptionSummaryResponse(
         long open,
         long reattemptable,
         long undeliverable,
-        long returned) {
+        long returned,
+        long missing) {
 }
