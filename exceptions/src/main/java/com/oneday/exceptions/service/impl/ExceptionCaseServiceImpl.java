@@ -9,6 +9,8 @@ import com.oneday.exceptions.domain.ExceptionReason;
 import com.oneday.exceptions.domain.ExceptionStatus;
 import com.oneday.exceptions.domain.ExceptionType;
 import com.oneday.exceptions.domain.ResolveAction;
+import com.oneday.exceptions.dto.BatchResolveRequest;
+import com.oneday.exceptions.dto.BatchResolveResponse;
 import com.oneday.exceptions.dto.ExceptionActionView;
 import com.oneday.exceptions.dto.ExceptionCaseDetail;
 import com.oneday.exceptions.dto.ExceptionCaseSummary;
@@ -22,6 +24,7 @@ import com.oneday.exceptions.repository.ExceptionCaseRepository;
 import com.oneday.exceptions.service.ExceptionCaseService;
 import com.oneday.orders.service.ShipmentJourneyService;
 import com.oneday.orders.service.ShipmentLookupService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -32,6 +35,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -49,11 +53,16 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
     private final ShipmentContactPort contactPort;
     private final ExceptionEventProducer producer;
     private final ExceptionProperties props;
+    /** Self-proxy so batchResolve's per-id resolve() calls cross the @Transactional boundary (a direct
+     *  this.resolve() would bypass the proxy → no per-case transaction). @Lazy breaks the self-cycle. */
+    private final ExceptionCaseService self;
 
     public ExceptionCaseServiceImpl(ExceptionCaseRepository caseRepo, ExceptionActionRepository actionRepo,
                                     ShipmentLookupService shipmentLookup, ShipmentJourneyService journeyService,
                                     CourierOnShipmentPort courierPort, ShipmentContactPort contactPort,
-                                    ExceptionEventProducer producer, ExceptionProperties props) {
+                                    ExceptionEventProducer producer, ExceptionProperties props,
+                                    @Lazy ExceptionCaseService self) {
+        this.self = self;
         this.caseRepo = caseRepo;
         this.actionRepo = actionRepo;
         this.shipmentLookup = shipmentLookup;
@@ -175,7 +184,7 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
     @Override
     @Transactional(readOnly = true)
     public ExceptionSummaryResponse summary(String cityScope) {
-        long open = 0, reattemptable = 0, undeliverable = 0, returned = 0;
+        long open = 0, reattemptable = 0, undeliverable = 0, returned = 0, missing = 0;
         for (Object[] row : caseRepo.countOpenByDisposition(cityScope)) {
             Disposition d = (Disposition) row[0];
             long n = (Long) row[1];
@@ -184,10 +193,11 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
                 case REATTEMPTABLE -> reattemptable += n;
                 case UNDELIVERABLE -> undeliverable += n;
                 case RETURNED -> returned += n;
+                case MISSING -> missing += n;
                 case RESOLVED -> { /* resolved cases aren't in the live set */ }
             }
         }
-        return new ExceptionSummaryResponse(open, reattemptable, undeliverable, returned);
+        return new ExceptionSummaryResponse(open, reattemptable, undeliverable, returned, missing);
     }
 
     @Override
@@ -252,8 +262,38 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
             }
             case COMPLETE_RTO -> close(c, ExceptionStatus.RTO, Disposition.RETURNED);
             case MARK_RESOLVED -> close(c, ExceptionStatus.RESOLVED, Disposition.RESOLVED);
+            case MARK_MISSING -> {
+                // Lost in the network: keep the case live (no resolvedAt) so it stays in the queue/rollups.
+                c.setStatus(ExceptionStatus.IN_PROGRESS);
+                c.setDisposition(Disposition.MISSING);
+                caseRepo.save(c);
+            }
         }
         logAction(c.getId(), action.name(), userId, role, notes);
+    }
+
+    /** Not @Transactional: each per-id {@code self.resolve()} opens its own (REQUIRED) transaction, so one
+     *  bad case (closed / not found / not visible) is isolated and the rest still apply. */
+    @Override
+    public BatchResolveResponse batchResolve(BatchResolveRequest request, String cityScope,
+                                             String userId, String role) {
+        List<BatchResolveResponse.Item> results = new ArrayList<>();
+        for (UUID caseId : request.caseIds()) {
+            try {
+                self.resolve(caseId, request.action(), cityScope, userId, role, request.notes());
+                results.add(new BatchResolveResponse.Item(caseId, BatchResolveResponse.Status.OK, null));
+            } catch (ResponseStatusException e) {
+                BatchResolveResponse.Status status = switch (e.getStatusCode().value()) {
+                    case 404 -> BatchResolveResponse.Status.NOT_FOUND;
+                    case 409 -> BatchResolveResponse.Status.ALREADY_CLOSED;
+                    default -> BatchResolveResponse.Status.ERROR;
+                };
+                results.add(new BatchResolveResponse.Item(caseId, status, e.getReason()));
+            } catch (Exception e) {
+                results.add(new BatchResolveResponse.Item(caseId, BatchResolveResponse.Status.ERROR, e.getMessage()));
+            }
+        }
+        return new BatchResolveResponse(results);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@ public enum Disposition {
     UNDELIVERABLE,
     /** RTO in flight or done. */
     RETURNED,
+    /** Parcel can't be physically located (lost in the network) — stays live so ops keep chasing it. */
+    MISSING,
     /** Case closed successfully. */
     RESOLVED
 }

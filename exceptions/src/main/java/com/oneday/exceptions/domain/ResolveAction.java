@@ -13,7 +13,10 @@ public enum ResolveAction {
     INITIATE_RTO(ExceptionsEventType.RTO_INITIATED),
     COMPLETE_RTO(ExceptionsEventType.RTO_COMPLETED),
     /** Close the case without moving the shipment — the issue was handled offline. */
-    MARK_RESOLVED(null);
+    MARK_RESOLVED(null),
+    /** Flag the parcel as lost in the network. Publishes no M4 event and stays live (unresolved) so it
+     *  keeps rolling up in the header cards and ops keep chasing it. */
+    MARK_MISSING(null);
 
     private final ExceptionsEventType event;
 
