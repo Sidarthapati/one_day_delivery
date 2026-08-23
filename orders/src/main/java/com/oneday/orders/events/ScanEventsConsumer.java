@@ -99,20 +99,14 @@ public class ScanEventsConsumer {
         }
     }
 
-    /** Denormalize the latest scan onto the shipment so dwell (now − lastScanAt) is a cheap read. The
-     *  {@code isAfter} guard keeps an out-of-order older scan from clobbering a newer timestamp. */
+    /** Denormalize the latest scan onto the shipment so dwell (now − lastScanAt) is a cheap read. Atomic
+     *  newer-only UPDATE (guard is in the WHERE clause) — concurrent consumers can't lose a newer scan. */
     private void stampLastScan(ScanEvent event) {
         if (event.occurredAt() == null) {
             return;
         }
-        shipmentRepository.findById(event.shipmentId()).ifPresent(s -> {
-            if (s.getLastScanAt() == null || event.occurredAt().isAfter(s.getLastScanAt())) {
-                // Managed entity in the listener's tx — dirty-checking flushes on commit, no save() needed
-                // (same idiom as the state machine); avoids a double-write on the LABEL path.
-                s.setLastScanAt(event.occurredAt());
-                s.setLastScanType(event.eventType() != null ? event.eventType().name() : null);
-            }
-        });
+        shipmentRepository.updateLastScanIfNewer(event.shipmentId(), event.occurredAt(),
+                event.eventType() != null ? event.eventType().name() : null);
     }
 
     private void applyLabel(ScanEvent event) {
