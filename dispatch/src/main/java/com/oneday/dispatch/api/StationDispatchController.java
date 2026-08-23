@@ -7,6 +7,7 @@ import com.oneday.dispatch.dto.response.DeferredAssignResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
 import com.oneday.dispatch.service.DispatchMetricsService;
+import com.oneday.dispatch.service.GpsFixView;
 import com.oneday.dispatch.service.StationDispatchService;
 import com.oneday.grid.service.GridService;
 import jakarta.validation.Valid;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -71,6 +73,21 @@ public class StationDispatchController {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
         return dispatchMetricsService.daDetail(daId, date != null ? date : LocalDate.now(), scopeCityId);
+    }
+
+    /**
+     * A DA's GPS breadcrumb trail for a date (the station map on the DA-detail page), oldest first. Same
+     * city scope as {@link #daDetail} — a STATION_MANAGER can only see a DA with tasks in their city that
+     * day (else 404); ADMIN any. Distinct from the DA-self {@code /dispatch/da/{daId}/track}.
+     */
+    @GetMapping("/dispatch/da/{daId}/trail")
+    public List<GpsFixView> daTrail(
+            @PathVariable UUID daId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return dispatchMetricsService.daTrail(daId, date != null ? date : LocalDate.now(), scopeCityId);
     }
 
     @GetMapping("/dispatch/tiles/{tileId}/queue")

@@ -29,16 +29,22 @@ public record DaDetailResponse(
         List<DayStops> history) {
 
     /**
-     * @param urgency RED (failed / past-ETA active) · AMBER (in-progress on-track) · GREEN (queued
-     *                on-track) · DONE (completed) — derived from status + expectedEta vs now.
+     * @param shipmentRef    human ref (e.g. {@code 1DD-BLR-…}) for the parcel-detail link; null if unresolved
+     * @param urgency        RED · AMBER · GREEN · DONE — from the real M10 SLA colour when the shipment has an
+     *                       SLA row, else a dispatch-local expectedEta fallback (see {@code DispatchMetricsServiceImpl})
+     * @param actByAt        soonest SLA hard window (from M10); null when no SLA row / clock not started
+     * @param urgencyMinutes minutes past target (from M10); negative = slack; null when no SLA row
      */
     public record DaTaskItem(
             UUID taskId,
             UUID shipmentId,
+            String shipmentRef,
             String taskType,
             String status,
             Instant expectedEta,
-            String urgency) {
+            String urgency,
+            Instant actByAt,
+            Integer urgencyMinutes) {
     }
 
     public record DayStops(LocalDate date, long done, long failed) {
