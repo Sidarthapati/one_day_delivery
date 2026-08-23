@@ -40,7 +40,7 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
     public ShipmentPageResponse listShipments(String stateFilter, String cityScope, int page, int size) {
         int safePage = Math.max(0, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
-        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
 
         ShipmentState state = (stateFilter == null || stateFilter.isBlank())
                 ? null : parseState(stateFilter);
@@ -63,7 +63,7 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
 
         java.util.List<ShipmentSummaryResponse> out = new java.util.ArrayList<>();
         for (int page = 0; out.size() < EXPORT_MAX_ROWS; page++) {
-            Pageable pageable = PageRequest.of(page, EXPORT_PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt"));
+            Pageable pageable = PageRequest.of(page, EXPORT_PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
             Page<Shipment> batch = fetchPage(state, cityScope, pageable);
             batch.forEach(s -> out.add(toSummary(s, cityScope)));
             if (!batch.hasNext()) {

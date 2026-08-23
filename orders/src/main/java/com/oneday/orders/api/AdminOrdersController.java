@@ -118,7 +118,7 @@ class AdminOrdersController {
 
     static String toCsv(List<ShipmentSummaryResponse> rows) {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.join(",", CSV_HEADERS)).append('\n');
+        sb.append(String.join(",", CSV_HEADERS)).append("\r\n");
         for (ShipmentSummaryResponse r : rows) {
             sb.append(csv(r.shipmentRef())).append(',')
               .append(csv(r.customerType())).append(',')
@@ -136,17 +136,25 @@ class AdminOrdersController {
               .append(csv(r.totalPricePaise())).append(',')
               .append(csv(r.createdAt())).append(',')
               .append(csv(r.cancelledAt())).append(',')
-              .append(csv(r.custodyCity())).append('\n');
+              .append(csv(r.custodyCity())).append("\r\n");
         }
         return sb.toString();
     }
 
-    /** RFC-4180 cell: quote + double any embedded quote when the value has a comma/quote/newline. */
+    /**
+     * RFC-4180 cell + CSV-injection guard. A value beginning with {@code = + - @} (or a tab/CR that
+     * spreadsheets treat the same) is prefixed with an apostrophe so a sender/receiver name can't be
+     * evaluated as a formula when the export is opened in a spreadsheet; then it's quoted + quote-doubled
+     * if it contains a comma/quote/newline.
+     */
     static String csv(Object value) {
         if (value == null) {
             return "";
         }
         String s = String.valueOf(value);
+        if (!s.isEmpty() && "=+-@\t\r".indexOf(s.charAt(0)) >= 0) {
+            s = "'" + s;
+        }
         if (s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")) {
             return '"' + s.replace("\"", "\"\"") + '"';
         }
