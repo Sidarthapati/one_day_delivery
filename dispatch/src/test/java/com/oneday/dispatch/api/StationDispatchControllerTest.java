@@ -4,6 +4,7 @@ import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.dispatch.dto.request.AssignDeferredRequest;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
 import com.oneday.dispatch.service.AssignmentResult;
+import com.oneday.dispatch.service.DispatchMetricsService;
 import com.oneday.dispatch.service.StationDispatchService;
 import com.oneday.grid.service.GridService;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ import static org.mockito.Mockito.when;
 class StationDispatchControllerTest {
 
     private StationDispatchService stationDispatchService;
+    private DispatchMetricsService dispatchMetricsService;
     private GridService gridService;
     private StationDispatchController controller;
 
@@ -36,8 +38,9 @@ class StationDispatchControllerTest {
     @BeforeEach
     void setUp() {
         stationDispatchService = mock(StationDispatchService.class);
+        dispatchMetricsService = mock(DispatchMetricsService.class);
         gridService = mock(GridService.class);
-        controller = new StationDispatchController(stationDispatchService, gridService);
+        controller = new StationDispatchController(stationDispatchService, dispatchMetricsService, gridService);
         when(stationDispatchService.tileQueue(any(), any(), any()))
                 .thenReturn(new TileQueueResponse(tile, date, List.of(), 0, List.of()));
     }
