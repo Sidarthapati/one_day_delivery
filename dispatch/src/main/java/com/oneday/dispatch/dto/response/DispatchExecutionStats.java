@@ -21,6 +21,9 @@ public record DispatchExecutionStats(
         List<DaPace> das) {
 
     /**
+     * @param daId           the DA
+     * @param daName         DA name (null if not in the directory) — so the console shows a person, not a UUID
+     * @param daPhone        DA phone for a one-tap call (nullable)
      * @param stopsDone      tasks completed today
      * @param stopsLastHour  completed in the last hour — the current pace
      * @param stopsPending   still-open tasks (queued or in progress)
@@ -28,6 +31,8 @@ public record DispatchExecutionStats(
      */
     public record DaPace(
             UUID daId,
+            String daName,
+            String daPhone,
             long stopsDone,
             long stopsLastHour,
             long stopsPending,

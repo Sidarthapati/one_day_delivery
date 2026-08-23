@@ -1,5 +1,10 @@
 package com.oneday.dispatch.service.impl;
 
+import com.oneday.common.port.DaDirectoryPort.DaContact;
+import com.oneday.dispatch.domain.DispatchQueue;
+import com.oneday.dispatch.domain.TaskStatus;
+import com.oneday.dispatch.domain.TaskType;
+import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.repository.DaPaceRow;
 import com.oneday.dispatch.repository.DeliveryOutcome;
@@ -10,6 +15,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,7 +28,9 @@ import static org.mockito.Mockito.when;
 class DispatchMetricsServiceImplTest {
 
     private final DispatchQueueRepository repo = mock(DispatchQueueRepository.class);
-    private final DispatchMetricsServiceImpl svc = new DispatchMetricsServiceImpl(repo);
+    private final com.oneday.common.port.DaDirectoryPort directory =
+            mock(com.oneday.common.port.DaDirectoryPort.class);
+    private final DispatchMetricsServiceImpl svc = new DispatchMetricsServiceImpl(repo, directory);
     private final LocalDate date = LocalDate.now();
 
     private record Outcome(long completed, long failed) implements DeliveryOutcome {
@@ -37,6 +45,45 @@ class DispatchMetricsServiceImplTest {
         @Override public long getLastHour() { return lastHour; }
         @Override public long getPending() { return pending; }
         @Override public Instant getFirstAssigned() { return firstAssigned; }
+    }
+
+    private DispatchQueue task(UUID cityId, TaskStatus status, Instant eta) {
+        DispatchQueue t = new DispatchQueue();
+        t.setDaId(UUID.randomUUID());
+        t.setCityId(cityId);
+        t.setShipmentId(UUID.randomUUID());
+        t.setTaskType(TaskType.DELIVERY);
+        t.setStatus(status);
+        t.setExpectedEta(eta);
+        t.setQueuePosition(0);
+        t.setOperatingDate(date);
+        return t;
+    }
+
+    @Test
+    void daDetailSortsByUrgencyAndAttachesIdentity() {
+        UUID da = UUID.randomUUID();
+        UUID city = UUID.randomUUID();
+        Instant now = Instant.now();
+        when(repo.findByDaIdAndOperatingDateOrderByQueuePosition(da, date)).thenReturn(List.of(
+                task(city, TaskStatus.COMPLETED, null),                       // DONE
+                task(city, TaskStatus.FAILED, null),                          // RED
+                task(city, TaskStatus.IN_PROGRESS, now.plusSeconds(3600)),    // AMBER (on-track)
+                task(city, TaskStatus.QUEUED, now.minusSeconds(3600))));      // RED (past ETA)
+        when(repo.paceByDa(null, date)).thenReturn(List.of());
+        when(repo.paceByDaOverDays(eq(da), any(), eq(null))).thenReturn(List.of());
+        when(directory.contactsFor(List.of(da)))
+                .thenReturn(Map.of(da, new DaContact("Ravi Kumar", "+919000000000")));
+
+        DaDetailResponse d = svc.daDetail(da, date, null);
+
+        assertThat(d.name()).isEqualTo("Ravi Kumar");
+        assertThat(d.phone()).isEqualTo("+919000000000");
+        assertThat(d.completed()).isEqualTo(1);
+        assertThat(d.failed()).isEqualTo(1);
+        // stable sort: FAILED then past-ETA QUEUED (both RED), then AMBER, then DONE
+        assertThat(d.tasks()).extracting(DaDetailResponse.DaTaskItem::urgency)
+                .containsExactly("RED", "RED", "AMBER", "DONE");
     }
 
     @Test
