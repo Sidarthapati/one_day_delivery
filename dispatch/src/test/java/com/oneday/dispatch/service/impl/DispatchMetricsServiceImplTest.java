@@ -201,4 +201,21 @@ class DispatchMetricsServiceImplTest {
         assertThat(cards.get(1).attemptSuccessPct()).isNull();        // no attempts → null, not 0
         assertThat(cards.get(1).onTimePct()).isNull();
     }
+
+    @Test
+    void scorecardsBoundStopsPerHourToPastOperatingDate() {
+        java.time.ZoneId ist = java.time.ZoneId.of("Asia/Kolkata");
+        LocalDate pastDate = LocalDate.now(ist).minusDays(2);
+        UUID da = UUID.randomUUID();
+        // 8 stops, first assigned 09:00 IST on that past date → clock caps at that day's 00:00 next-day
+        // (~15h), so ~0.53/hr; a now-based clock (2 days later) would read ~0.15/hr.
+        Instant firstAssigned = pastDate.atStartOfDay(ist).plusHours(9).toInstant();
+        when(repo.scorecardByDa(null, pastDate)).thenReturn(List.of(new Score(da, 8, 0, 8, 0, firstAssigned)));
+        when(directory.contactsFor(List.of(da))).thenReturn(Map.of());
+
+        double perHour = svc.scorecards(pastDate, null).get(0).stopsPerHour();
+
+        assertThat(perHour).isGreaterThan(0.4);            // day-bounded, not spread across 2 days
+        assertThat(perHour).isCloseTo(8.0 / 15.0, within(0.05));
+    }
 }

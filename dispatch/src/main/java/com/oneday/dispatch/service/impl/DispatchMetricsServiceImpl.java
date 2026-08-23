@@ -24,6 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,7 @@ import java.util.stream.IntStream;
 class DispatchMetricsServiceImpl implements DispatchMetricsService {
 
     private static final int HISTORY_DAYS = 7;
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final DispatchQueueRepository queueRepository;
     private final DaDirectoryPort daDirectory;
@@ -105,11 +107,15 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
     @Override
     @Transactional(readOnly = true)
     public List<DaScorecard> scorecards(LocalDate date, UUID scopeCityId) {
+        // For a past date, stops/hr must measure that day's shift, not every hour since — cap the clock
+        // at the end of the operating date (IST); for today, that end is in the future, so `now` wins.
+        Instant dayEnd = date.plusDays(1).atStartOfDay(IST).toInstant();
         Instant now = Instant.now();
+        Instant cutoff = now.isBefore(dayEnd) ? now : dayEnd;
         List<DaScorecardRow> rows = queueRepository.scorecardByDa(scopeCityId, date);
         Map<UUID, DaContact> contacts = daDirectory.contactsFor(rows.stream().map(DaScorecardRow::getDaId).toList());
         return rows.stream()
-                .map(r -> toScorecard(r, now, contacts.get(r.getDaId())))
+                .map(r -> toScorecard(r, cutoff, contacts.get(r.getDaId())))
                 // busiest first: most stops done, then most still pending
                 .sorted(Comparator.comparingLong(DaScorecard::stopsDone).reversed()
                         .thenComparing(Comparator.comparingLong(DaScorecard::stopsPending).reversed()))

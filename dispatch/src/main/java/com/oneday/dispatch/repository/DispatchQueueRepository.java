@@ -129,7 +129,7 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
                    COUNT(*) FILTER (WHERE status = 'COMPLETED'
                                       AND expected_eta IS NOT NULL
                                       AND completed_at <= expected_eta) AS onTime,
-                   COUNT(*) FILTER (WHERE status IN ('QUEUED', 'IN_PROGRESS')) AS pending,
+                   COUNT(*) FILTER (WHERE status IN ('QUEUED', 'IN_PROGRESS', 'DEFERRED')) AS pending,
                    MIN(assigned_at) AS firstAssigned
             FROM dispatch_queue
             WHERE task_type = 'DELIVERY' AND operating_date = :date
