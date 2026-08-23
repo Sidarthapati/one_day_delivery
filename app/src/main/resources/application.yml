@@ -196,6 +196,10 @@ sla:
     DEST_HUB: 60           # dest hub processing
     LAST_MILE: 150         # hub out-scan → delivered   (Σ = 810m = 13.5h)
 
+# M11 exceptions — re-attempts before a failed pickup/delivery is flagged UNDELIVERABLE (recommend RTO).
+exceptions:
+  max-reattempts: 2
+
 # Object storage (Cloudflare R2, S3-compatible) for parcel-dimension evidence photos.
 # Credentials come from env ONLY — never commit. Blank locally → storage disabled, feature degrades.
 storage:

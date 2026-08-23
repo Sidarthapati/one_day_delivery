@@ -31,3 +31,4 @@ graphify-out/
 
 # Strix pentest run artifacts (may contain creds/logs)
 strix_runs/
+.env.bak*
