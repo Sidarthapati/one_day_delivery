@@ -9,6 +9,7 @@ import com.oneday.dispatch.dto.response.DaDetailResponse.DaTaskItem;
 import com.oneday.dispatch.dto.response.DaDetailResponse.DayStops;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats.DaPace;
+import com.oneday.dispatch.repository.DaDayStopsRow;
 import com.oneday.dispatch.repository.DaPaceRow;
 import com.oneday.dispatch.repository.DeliveryOutcome;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
@@ -25,6 +26,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @Service
 class DispatchMetricsServiceImpl implements DispatchMetricsService {
@@ -92,10 +95,7 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
                 .sorted(Comparator.comparingInt(i -> urgencyRank(i.urgency())))
                 .toList();
 
-        List<DayStops> history = queueRepository
-                .paceByDaOverDays(daId, date.minusDays(HISTORY_DAYS - 1L), scopeCityId).stream()
-                .map(h -> new DayStops(h.getDay(), h.getDone(), h.getFailed()))
-                .toList();
+        List<DayStops> history = buildHistory(daId, date, scopeCityId);
 
         return new DaDetailResponse(daId, name, phone, cityId, date, pace, completed, failed, items, history);
     }
@@ -110,6 +110,25 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
             case IN_PROGRESS -> pastEta ? "RED" : "AMBER";
             case QUEUED, DEFERRED -> pastEta ? "RED" : "GREEN";
         };
+    }
+
+    /**
+     * Exactly {@code HISTORY_DAYS} entries, from {@code date.minusDays(HISTORY_DAYS-1)} through
+     * {@code date}, oldest first: days a DA ran no tasks are filled with zeroes (so the trend chart
+     * has one bar per day), and the upper bound keeps a request for a past date from leaking later days.
+     */
+    private List<DayStops> buildHistory(UUID daId, LocalDate date, UUID scopeCityId) {
+        LocalDate from = date.minusDays(HISTORY_DAYS - 1L);
+        Map<LocalDate, DaDayStopsRow> byDay = queueRepository.paceByDaOverDays(daId, from, scopeCityId).stream()
+                .filter(r -> !r.getDay().isAfter(date))
+                .collect(Collectors.toMap(DaDayStopsRow::getDay, r -> r, (a, b) -> a));
+        return IntStream.range(0, HISTORY_DAYS)
+                .mapToObj(from::plusDays)
+                .map(d -> {
+                    DaDayStopsRow r = byDay.get(d);
+                    return r == null ? new DayStops(d, 0, 0) : new DayStops(d, r.getDone(), r.getFailed());
+                })
+                .toList();
     }
 
     private static int urgencyRank(String urgency) {

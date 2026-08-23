@@ -47,6 +47,13 @@ class DispatchMetricsServiceImplTest {
         @Override public Instant getFirstAssigned() { return firstAssigned; }
     }
 
+    private record Day(LocalDate day, long done, long failed)
+            implements com.oneday.dispatch.repository.DaDayStopsRow {
+        @Override public LocalDate getDay() { return day; }
+        @Override public long getDone() { return done; }
+        @Override public long getFailed() { return failed; }
+    }
+
     private DispatchQueue task(UUID cityId, TaskStatus status, Instant eta) {
         DispatchQueue t = new DispatchQueue();
         t.setDaId(UUID.randomUUID());
@@ -84,6 +91,32 @@ class DispatchMetricsServiceImplTest {
         // stable sort: FAILED then past-ETA QUEUED (both RED), then AMBER, then DONE
         assertThat(d.tasks()).extracting(DaDetailResponse.DaTaskItem::urgency)
                 .containsExactly("RED", "RED", "AMBER", "DONE");
+    }
+
+    @Test
+    void historyIsSevenDaysZeroFilledAndBounded() {
+        UUID da = UUID.randomUUID();
+        when(repo.findByDaIdAndOperatingDateOrderByQueuePosition(da, date)).thenReturn(List.of());
+        when(repo.paceByDa(null, date)).thenReturn(List.of());
+        when(directory.contactsFor(List.of(da))).thenReturn(Map.of());
+        // one in-range day with data + a later day the upper bound must exclude
+        when(repo.paceByDaOverDays(eq(da), any(), eq(null))).thenReturn(List.of(
+                new Day(date.minusDays(2), 4, 1),
+                new Day(date.plusDays(1), 9, 9)));
+
+        List<DaDetailResponse.DayStops> h = svc.daDetail(da, date, null).history();
+
+        assertThat(h).hasSize(7);
+        assertThat(h.get(0).date()).isEqualTo(date.minusDays(6));
+        assertThat(h.get(6).date()).isEqualTo(date);
+        assertThat(h).noneMatch(x -> x.date().isAfter(date));           // upper bound
+        DaDetailResponse.DayStops filled = h.stream()
+                .filter(x -> x.date().equals(date.minusDays(2))).findFirst().orElseThrow();
+        assertThat(filled.done()).isEqualTo(4);
+        assertThat(filled.failed()).isEqualTo(1);
+        DaDetailResponse.DayStops empty = h.stream()
+                .filter(x -> x.date().equals(date.minusDays(5))).findFirst().orElseThrow();
+        assertThat(empty.done()).isZero();                              // zero-filled, not missing
     }
 
     @Test
