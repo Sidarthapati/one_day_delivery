@@ -10,7 +10,10 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -72,6 +75,42 @@ class DispatchQueueRepositoryTest {
 
         var queue = repo.findByDaIdAndOperatingDateOrderByQueuePosition(da, today);
         assertThat(queue).extracting(DispatchQueue::getQueuePosition).containsExactly(1, 2);
+    }
+
+    @Test
+    void executionProjectionsBindAgainstRealPostgres() {
+        UUID da = UUID.randomUUID();
+        UUID city = UUID.randomUUID();
+        LocalDate today = LocalDate.now();
+        Instant now = Instant.now();
+
+        repo.saveAndFlush(delivery(da, city, today, TaskStatus.COMPLETED, now));                       // done + last hour
+        repo.saveAndFlush(delivery(da, city, today, TaskStatus.COMPLETED, now.minus(3, ChronoUnit.HOURS))); // done, not last hour
+        repo.saveAndFlush(delivery(da, city, today, TaskStatus.FAILED, null));                          // failed attempt
+        repo.saveAndFlush(delivery(da, city, today, TaskStatus.QUEUED, null));                          // pending
+
+        // paceByDa — the real test: proves the unquoted camelCase native aliases (daId / lastHour /
+        // firstAssigned) bind to DaPaceRow's getters under real Postgres (the auth DA-summary pattern).
+        List<DaPaceRow> rows = repo.paceByDa(city, today);
+        assertThat(rows).hasSize(1);
+        DaPaceRow r = rows.get(0);
+        assertThat(r.getDaId()).isEqualTo(da);
+        assertThat(r.getDone()).isEqualTo(2);
+        assertThat(r.getLastHour()).isEqualTo(1);
+        assertThat(r.getPending()).isEqualTo(1);
+        assertThat(r.getFirstAssigned()).isNotNull();
+
+        DeliveryOutcome outcome = repo.deliveryOutcome(city, today);
+        assertThat(outcome.getCompleted()).isEqualTo(2);
+        assertThat(outcome.getFailed()).isEqualTo(1);
+    }
+
+    private DispatchQueue delivery(UUID daId, UUID cityId, LocalDate date, TaskStatus status, Instant completedAt) {
+        DispatchQueue d = task(daId, UUID.randomUUID(), date, status, 0);
+        d.setCityId(cityId);
+        d.setTaskType(TaskType.DELIVERY);
+        d.setCompletedAt(completedAt);
+        return d;
     }
 
     private DispatchQueue task(UUID daId, UUID shipmentId, LocalDate date, TaskStatus status, int pos) {

@@ -3,7 +3,9 @@ package com.oneday.dispatch.api;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.dispatch.dto.request.AssignDeferredRequest;
 import com.oneday.dispatch.dto.response.DeferredAssignResponse;
+import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
+import com.oneday.dispatch.service.DispatchMetricsService;
 import com.oneday.dispatch.service.StationDispatchService;
 import com.oneday.grid.service.GridService;
 import jakarta.validation.Valid;
@@ -30,11 +32,29 @@ import java.util.UUID;
 public class StationDispatchController {
 
     private final StationDispatchService stationDispatchService;
+    private final DispatchMetricsService dispatchMetricsService;
     private final GridService gridService;
 
-    public StationDispatchController(StationDispatchService stationDispatchService, GridService gridService) {
+    public StationDispatchController(StationDispatchService stationDispatchService,
+                                     DispatchMetricsService dispatchMetricsService,
+                                     GridService gridService) {
         this.stationDispatchService = stationDispatchService;
+        this.dispatchMetricsService = dispatchMetricsService;
         this.gridService = gridService;
+    }
+
+    /**
+     * Control-tower execution view — the delivery attempt-success gauge and per-DA pace for a date
+     * (defaults to today). Same city scope as the tile views: STATION_MANAGER sees their own city,
+     * ADMIN all cities.
+     */
+    @GetMapping("/dispatch/execution")
+    public DispatchExecutionStats execution(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return dispatchMetricsService.execution(date != null ? date : LocalDate.now(), scopeCityId);
     }
 
     @GetMapping("/dispatch/tiles/{tileId}/queue")

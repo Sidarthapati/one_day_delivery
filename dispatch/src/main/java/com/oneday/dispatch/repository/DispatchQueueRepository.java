@@ -65,4 +65,36 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
             order by d.assignedAt desc
             """)
     List<DispatchQueue> findActiveByShipmentId(@Param("shipmentId") UUID shipmentId);
+
+    /**
+     * Delivery attempt outcome for a city/date — COMPLETED vs FAILED DELIVERY tasks (attempt-success
+     * gauge). Native (Postgres FILTER); status/task_type are EnumType.STRING so they compare as text.
+     * {@code city} null → all cities.
+     */
+    @Query(value = """
+            SELECT COUNT(*) FILTER (WHERE status = 'COMPLETED') AS completed,
+                   COUNT(*) FILTER (WHERE status = 'FAILED')    AS failed
+            FROM dispatch_queue
+            WHERE task_type = 'DELIVERY' AND operating_date = :date
+              AND (:city IS NULL OR city_id = :city)
+            """, nativeQuery = true)
+    DeliveryOutcome deliveryOutcome(@Param("city") UUID city, @Param("date") LocalDate date);
+
+    /**
+     * Per-DA pace for a city/date: stops done, stops in the last hour (current pace), open tasks, and the
+     * DA's first assignment time (for average-per-hour). Native (Postgres FILTER + interval).
+     * {@code city} null → all cities.
+     */
+    @Query(value = """
+            SELECT da_id AS daId,
+                   COUNT(*) FILTER (WHERE status = 'COMPLETED') AS done,
+                   COUNT(*) FILTER (WHERE status = 'COMPLETED'
+                                      AND completed_at >= now() - interval '1 hour') AS lastHour,
+                   COUNT(*) FILTER (WHERE status IN ('QUEUED', 'IN_PROGRESS')) AS pending,
+                   MIN(assigned_at) AS firstAssigned
+            FROM dispatch_queue
+            WHERE operating_date = :date AND (:city IS NULL OR city_id = :city)
+            GROUP BY da_id
+            """, nativeQuery = true)
+    List<DaPaceRow> paceByDa(@Param("city") UUID city, @Param("date") LocalDate date);
 }
