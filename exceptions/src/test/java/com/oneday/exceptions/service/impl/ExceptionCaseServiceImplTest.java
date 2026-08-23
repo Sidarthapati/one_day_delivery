@@ -150,6 +150,20 @@ class ExceptionCaseServiceImplTest {
     }
 
     @Test
+    void resolveReassignDeliveryPublishesTheReassignEvent() {
+        UUID caseId = UUID.randomUUID();
+        ExceptionCase c = new ExceptionCase();
+        c.setShipmentId(shipmentId);
+        when(caseRepo.findById(caseId)).thenReturn(Optional.of(c));
+        when(caseRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        resolveInTx(() -> svc.resolve(caseId, ResolveAction.REASSIGN_DELIVERY, null, "u1", "STATION_MANAGER", null));
+
+        verify(producer).publish(shipmentId, ExceptionsEventType.DELIVERY_REASSIGNED);
+        assertThat(c.getStatus()).isEqualTo(ExceptionStatus.RESCHEDULED);
+    }
+
+    @Test
     void markResolvedClosesWithoutPublishing() {
         UUID caseId = UUID.randomUUID();
         ExceptionCase c = new ExceptionCase();

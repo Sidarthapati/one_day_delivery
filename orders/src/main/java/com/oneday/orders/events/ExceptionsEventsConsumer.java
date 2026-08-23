@@ -29,6 +29,9 @@ public class ExceptionsEventsConsumer {
             case RTO_INITIATED        -> ShipmentState.RTO_INITIATED;
             case PICKUP_RESCHEDULED   -> ShipmentState.PICKUP_ASSIGNED;
             case DELIVERY_RESCHEDULED -> ShipmentState.DROP_ASSIGNED;
+            // Reassign re-drives the M5 assignment trigger (the failed DELIVERY task is already terminal,
+            // so dispatch assigns a fresh DA); reschedule above only flips M4 state (van-meeting redelivery).
+            case DELIVERY_REASSIGNED  -> ShipmentState.HANDED_TO_DROP_VAN;
             case RTO_COMPLETED        -> ShipmentState.RTO_COMPLETED;
         };
         stateMachine.transition(event.shipmentId(), target,

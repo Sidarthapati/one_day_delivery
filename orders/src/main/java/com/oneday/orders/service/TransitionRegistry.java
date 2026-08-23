@@ -100,6 +100,7 @@ public class TransitionRegistry {
         register(ShipmentState.DELIVERY_FAILED,       ShipmentState.RTO_INITIATED);
         register(ShipmentState.DELIVERY_FAILED,       ShipmentState.DROP_ASSIGNED);          // VAN_MEETING redelivery
         register(ShipmentState.DELIVERY_FAILED,       ShipmentState.HUB_DELIVERY_ASSIGNED);  // HUB_RETURN redelivery
+        register(ShipmentState.DELIVERY_FAILED,       ShipmentState.HANDED_TO_DROP_VAN);     // M11 reassign → re-run M5
 
         // ── RTO path (delivery_type branching at RTO_INITIATED) ──────────────
         // Both targets registered; impl filters to one at runtime.

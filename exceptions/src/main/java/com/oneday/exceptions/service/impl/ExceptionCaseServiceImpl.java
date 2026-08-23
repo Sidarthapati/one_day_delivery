@@ -251,7 +251,7 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
             c.setNotes(notes);
         }
         switch (action) {
-            case RESCHEDULE_PICKUP, RESCHEDULE_DELIVERY -> {
+            case RESCHEDULE_PICKUP, RESCHEDULE_DELIVERY, REASSIGN_DELIVERY -> {
                 c.setStatus(ExceptionStatus.RESCHEDULED);
                 caseRepo.save(c);
             }

@@ -10,6 +10,8 @@ import com.oneday.common.kafka.enums.ExceptionsEventType;
 public enum ResolveAction {
     RESCHEDULE_PICKUP(ExceptionsEventType.PICKUP_RESCHEDULED),
     RESCHEDULE_DELIVERY(ExceptionsEventType.DELIVERY_RESCHEDULED),
+    /** Re-dispatch to a (fresh-scored, usually different) DA — re-runs M5 assignment. */
+    REASSIGN_DELIVERY(ExceptionsEventType.DELIVERY_REASSIGNED),
     INITIATE_RTO(ExceptionsEventType.RTO_INITIATED),
     COMPLETE_RTO(ExceptionsEventType.RTO_COMPLETED),
     /** Close the case without moving the shipment — the issue was handled offline. */
