@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -16,6 +17,9 @@ import java.util.UUID;
 public interface SlaShipmentRepository extends JpaRepository<SlaShipment, UUID> {
 
     Optional<SlaShipment> findByShipmentId(UUID shipmentId);
+
+    /** Bulk SLA rows for a set of shipments — backs the {@code ShipmentSlaPort} batch read. */
+    List<SlaShipment> findByShipmentIdIn(Collection<UUID> shipmentIds);
 
     Optional<SlaShipment> findByShipmentRef(String shipmentRef);
 

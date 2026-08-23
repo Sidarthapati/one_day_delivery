@@ -4,6 +4,7 @@ import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -22,4 +23,11 @@ public interface DispatchMetricsService {
      * {@code date} (else 404) and only that city's tasks/history are returned.
      */
     DaDetailResponse daDetail(UUID daId, LocalDate date, UUID scopeCityId);
+
+    /**
+     * A DA's GPS breadcrumb trail for a date (station map), oldest first. Same city scope as
+     * {@link #daDetail}: a STATION_MANAGER can only inspect a DA with tasks in their city that day
+     * (else 404); {@code scopeCityId} null → any city (ADMIN).
+     */
+    List<GpsFixView> daTrail(UUID daId, LocalDate date, UUID scopeCityId);
 }

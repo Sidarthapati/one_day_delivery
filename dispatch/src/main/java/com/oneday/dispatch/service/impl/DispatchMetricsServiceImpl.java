@@ -2,6 +2,9 @@ package com.oneday.dispatch.service.impl;
 
 import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.common.port.DaDirectoryPort.DaContact;
+import com.oneday.common.port.ShipmentRefPort;
+import com.oneday.common.port.ShipmentSlaPort;
+import com.oneday.common.port.ShipmentSlaPort.SlaStatus;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.dto.response.DaDetailResponse;
@@ -13,7 +16,9 @@ import com.oneday.dispatch.repository.DaDayStopsRow;
 import com.oneday.dispatch.repository.DaPaceRow;
 import com.oneday.dispatch.repository.DeliveryOutcome;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
+import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DispatchMetricsService;
+import com.oneday.dispatch.service.GpsFixView;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -33,13 +39,22 @@ import java.util.stream.IntStream;
 class DispatchMetricsServiceImpl implements DispatchMetricsService {
 
     private static final int HISTORY_DAYS = 7;
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final DispatchQueueRepository queueRepository;
     private final DaDirectoryPort daDirectory;
+    private final ShipmentSlaPort shipmentSla;
+    private final ShipmentRefPort shipmentRef;
+    private final DaStatusService daStatus;
 
-    DispatchMetricsServiceImpl(DispatchQueueRepository queueRepository, DaDirectoryPort daDirectory) {
+    DispatchMetricsServiceImpl(DispatchQueueRepository queueRepository, DaDirectoryPort daDirectory,
+                               ShipmentSlaPort shipmentSla, ShipmentRefPort shipmentRef,
+                               DaStatusService daStatus) {
         this.queueRepository = queueRepository;
         this.daDirectory = daDirectory;
+        this.shipmentSla = shipmentSla;
+        this.shipmentRef = shipmentRef;
+        this.daStatus = daStatus;
     }
 
     @Override
@@ -66,13 +81,7 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
     @Override
     @Transactional(readOnly = true)
     public DaDetailResponse daDetail(UUID daId, LocalDate date, UUID scopeCityId) {
-        List<DispatchQueue> all = queueRepository.findByDaIdAndOperatingDateOrderByQueuePosition(daId, date);
-        // City scope: a station manager only inspects a DA operating in their city today.
-        List<DispatchQueue> tasks = scopeCityId == null ? all
-                : all.stream().filter(t -> scopeCityId.equals(t.getCityId())).toList();
-        if (scopeCityId != null && tasks.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No tasks for this DA in your city today");
-        }
+        List<DispatchQueue> tasks = scopedTasks(daId, date, scopeCityId);
 
         DaContact contact = daDirectory.contactsFor(List.of(daId)).get(daId);
         String name = contact != null ? contact.name() : null;
@@ -89,9 +98,19 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
         long completed = tasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
         long failed = tasks.stream().filter(t -> t.getStatus() == TaskStatus.FAILED).count();
 
+        List<UUID> shipmentIds = tasks.stream().map(DispatchQueue::getShipmentId).toList();
+        Map<UUID, SlaStatus> slaByShipment = shipmentSla.slaFor(shipmentIds);
+        Map<UUID, String> refByShipment = shipmentRef.refsFor(shipmentIds);
+
         List<DaTaskItem> items = tasks.stream()
-                .map(t -> new DaTaskItem(t.getId(), t.getShipmentId(), t.getTaskType().name(),
-                        t.getStatus().name(), t.getExpectedEta(), urgency(t, now)))
+                .map(t -> {
+                    SlaStatus sla = slaByShipment.get(t.getShipmentId());
+                    return new DaTaskItem(t.getId(), t.getShipmentId(), refByShipment.get(t.getShipmentId()),
+                            t.getTaskType().name(), t.getStatus().name(), t.getExpectedEta(),
+                            urgency(t, sla, now),
+                            sla != null ? sla.actByAt() : null,
+                            sla != null ? sla.urgencyMinutes() : null);
+                })
                 .sorted(Comparator.comparingInt(i -> urgencyRank(i.urgency())))
                 .toList();
 
@@ -100,9 +119,51 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
         return new DaDetailResponse(daId, name, phone, cityId, date, pace, completed, failed, items, history);
     }
 
-    /** RED = failed or an active task already past its ETA; AMBER = in-progress on-track; GREEN = queued
-     *  on-track; DONE = completed/cancelled. Uses expectedEta as the on-time signal dispatch owns. */
-    private static String urgency(DispatchQueue t, Instant now) {
+    @Override
+    @Transactional(readOnly = true)
+    public List<GpsFixView> daTrail(UUID daId, LocalDate date, UUID scopeCityId) {
+        scopedTasks(daId, date, scopeCityId); // same city guard as daDetail (da_gps_ping has no city column)
+        Instant from = date.atStartOfDay(IST).toInstant();
+        Instant to = date.plusDays(1).atStartOfDay(IST).toInstant();
+        return daStatus.listTrack(daId, from, to);
+    }
+
+    /**
+     * The DA's tasks for the date, city-scoped. {@code scopeCityId} null → all cities (ADMIN); otherwise
+     * only that city's rows — and a station manager inspecting a DA with no task in their city that day
+     * gets 404. The single scope authority both {@link #daDetail} and {@link #daTrail} route through.
+     */
+    private List<DispatchQueue> scopedTasks(UUID daId, LocalDate date, UUID scopeCityId) {
+        List<DispatchQueue> all = queueRepository.findByDaIdAndOperatingDateOrderByQueuePosition(daId, date);
+        List<DispatchQueue> tasks = scopeCityId == null ? all
+                : all.stream().filter(t -> scopeCityId.equals(t.getCityId())).toList();
+        if (scopeCityId != null && tasks.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No tasks for this DA in your city today");
+        }
+        return tasks;
+    }
+
+    /** Task RAG colour. Terminal tasks are DONE. Otherwise the authoritative M10 SLA colour drives it when
+     *  the shipment has an SLA row; before the SLA clock exists (e.g. pre-pickup) we fall back to the
+     *  dispatch-local expectedEta heuristic. */
+    private static String urgency(DispatchQueue t, SlaStatus sla, Instant now) {
+        if (t.getStatus() == TaskStatus.COMPLETED || t.getStatus() == TaskStatus.CANCELLED) {
+            return "DONE";
+        }
+        if (sla != null) {
+            return switch (sla.state()) {
+                case BREACHED, RED -> "RED";
+                case AMBER -> "AMBER";
+                case GREEN -> "GREEN";
+                case CLOSED -> "DONE";
+            };
+        }
+        return urgencyFromEta(t, now);
+    }
+
+    /** Fallback when M10 has no row yet: RED = failed or active-past-ETA; AMBER = in-progress on-track;
+     *  GREEN = queued on-track; DONE = completed/cancelled. */
+    private static String urgencyFromEta(DispatchQueue t, Instant now) {
         boolean pastEta = t.getExpectedEta() != null && now.isAfter(t.getExpectedEta());
         return switch (t.getStatus()) {
             case COMPLETED, CANCELLED -> "DONE";
