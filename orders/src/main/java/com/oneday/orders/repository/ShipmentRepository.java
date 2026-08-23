@@ -91,10 +91,11 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
      * Ageing rollup: live (non-terminal) shipments grouped by state and a dwell band. Dwell is
      * {@code now() − COALESCE(last_scan_at, created_at)} (a never-scanned parcel ages from booking).
      * Bands: 0 = {@code < t1}s, 1 = {@code < t2}s, 2 = {@code < t3}s, 3 = older. {@code city} null → all.
-     * Native (Postgres) — the enum column is compared as text and the interval math is DB-side.
+     * Native (Postgres). Uses {@code cast(state as text)} not {@code state::text} — Hibernate mis-parses
+     * the {@code ::} cast as a {@code :}-named parameter in native queries (verified failing at runtime).
      */
     @Query(value = """
-            SELECT s.state::text AS state,
+            SELECT cast(s.state as text) AS state,
                    CASE
                        WHEN EXTRACT(EPOCH FROM now() - COALESCE(s.last_scan_at, s.created_at)) < :t1 THEN 0
                        WHEN EXTRACT(EPOCH FROM now() - COALESCE(s.last_scan_at, s.created_at)) < :t2 THEN 1
@@ -103,7 +104,7 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
                    END AS band,
                    COUNT(*) AS cnt
             FROM shipments s
-            WHERE s.state::text NOT IN ('DROPPED', 'HUB_COLLECTED', 'RTO_COMPLETED', 'CANCELLED')
+            WHERE cast(s.state as text) NOT IN ('DROPPED', 'HUB_COLLECTED', 'RTO_COMPLETED', 'CANCELLED')
               AND (:city IS NULL OR s.origin_city = :city OR s.dest_city = :city)
             GROUP BY s.state, band
             """, nativeQuery = true)
