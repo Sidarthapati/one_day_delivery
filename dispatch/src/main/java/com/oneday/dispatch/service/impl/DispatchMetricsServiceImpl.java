@@ -109,7 +109,8 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
                             t.getTaskType().name(), t.getStatus().name(), t.getExpectedEta(),
                             urgency(t, sla, now),
                             sla != null ? sla.actByAt() : null,
-                            sla != null ? sla.urgencyMinutes() : null);
+                            sla != null ? sla.urgencyMinutes() : null,
+                            t.getAssignedAt(), t.getStartedAt(), t.getArrivedAt(), t.getCompletedAt());
                 })
                 .sorted(Comparator.comparingInt(i -> urgencyRank(i.urgency())))
                 .toList();
