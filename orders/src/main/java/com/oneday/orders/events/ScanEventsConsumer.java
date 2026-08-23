@@ -37,6 +37,8 @@ public class ScanEventsConsumer {
     @RabbitListener(queues = OrdersMessagingTopology.SCAN_QUEUE)
     @Transactional
     public void onScanEvent(ScanEvent event) {
+        // Every scan updates "when did this parcel last move" — the dwell/ageing primitive (issue #124).
+        stampLastScan(event);
         // LABEL_GENERATED is not a state transition — it carries the barcode M8 minted; stamp it.
         if (event.eventType() == ScanEventType.LABEL_GENERATED) {
             applyLabel(event);
@@ -95,6 +97,16 @@ public class ScanEventsConsumer {
                     .log();
             throw e;
         }
+    }
+
+    /** Denormalize the latest scan onto the shipment so dwell (now − lastScanAt) is a cheap read. Atomic
+     *  newer-only UPDATE (guard is in the WHERE clause) — concurrent consumers can't lose a newer scan. */
+    private void stampLastScan(ScanEvent event) {
+        if (event.occurredAt() == null) {
+            return;
+        }
+        shipmentRepository.updateLastScanIfNewer(event.shipmentId(), event.occurredAt(),
+                event.eventType() != null ? event.eventType().name() : null);
     }
 
     private void applyLabel(ScanEvent event) {

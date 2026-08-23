@@ -8,9 +8,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,6 +27,17 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Shipment s WHERE s.id = :id")
     Optional<Shipment> findByIdWithLock(@Param("id") UUID id);
+
+    /**
+     * Denormalize the latest scan (dwell/ageing primitive) atomically — the newer-only guard is in the
+     * WHERE clause, so concurrent scan consumers can't lose a newer timestamp (no read-check-write race).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Shipment s SET s.lastScanAt = :scannedAt, s.lastScanType = :scanType "
+            + "WHERE s.id = :id AND (s.lastScanAt IS NULL OR s.lastScanAt < :scannedAt)")
+    int updateLastScanIfNewer(@Param("id") UUID id,
+                              @Param("scannedAt") Instant scannedAt,
+                              @Param("scanType") String scanType);
 
     Optional<Shipment> findByShipmentRef(String shipmentRef);
 

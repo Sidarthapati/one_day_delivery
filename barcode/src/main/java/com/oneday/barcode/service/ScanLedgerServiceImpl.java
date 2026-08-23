@@ -8,6 +8,9 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+import java.util.UUID;
+
 @Service
 class ScanLedgerServiceImpl implements ScanLedgerService {
 
@@ -57,5 +60,11 @@ class ScanLedgerServiceImpl implements ScanLedgerService {
         events.publishEvent(new ScanRecorded(
                 entry.getShipmentId(), entry.getParcelId(), entry.getScanType(), entry.getScannedAt()));
         return entry;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ScanLedgerEntry> trail(UUID shipmentId) {
+        return repository.findByShipmentIdOrderByScannedAtAsc(shipmentId);
     }
 }

@@ -6,6 +6,8 @@ import com.oneday.barcode.service.ScanLedgerService;
 import com.oneday.common.kafka.enums.ScanEventType;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 
 /**
  * M8 scan entry doors. {@code /label} mints the parcel ID at first-mile pickup (PR2); the generic
@@ -49,6 +53,15 @@ class ScanController {
                 req.shipmentId(), req.parcelId(), req.bagId(), validScanType(req.scanType()),
                 req.locationType(), req.locationId(), req.actorId(), req.counterpartyId(),
                 req.scannedAt() != null ? req.scannedAt() : Instant.now(), req.clientScanId()));
+    }
+
+    /**
+     * The parcel's full scan trail, oldest first — powers the ops per-package timeline. ponytail:
+     * role-granular gating is deferred here too (see the class note); the app JWT filter authenticates.
+     */
+    @GetMapping("/shipment/{shipmentId}")
+    List<ScanLedgerView> trail(@PathVariable UUID shipmentId) {
+        return ledger.trail(shipmentId).stream().map(ScanLedgerView::from).toList();
     }
 
     /**

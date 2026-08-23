@@ -39,6 +39,18 @@ class ScanEventsConsumerTest {
     }
 
     @Test
+    void anyScan_stampsLastScanAtomically() {
+        UUID id = UUID.randomUUID();
+        Instant scannedAt = Instant.parse("2026-08-23T10:00:00Z");
+
+        consumer.onScanEvent(new ScanEvent(id, ScanEventType.HUB_ORIGIN_IN, null, scannedAt));
+
+        // Newer-only guard lives in the UPDATE's WHERE clause (no read-check-write race); the consumer
+        // just fires the atomic stamp with the scan's time + type.
+        verify(shipmentRepository).updateLastScanIfNewer(id, scannedAt, "HUB_ORIGIN_IN");
+    }
+
+    @Test
     void hubOriginIn_transitions_andNeverStampsParcelId() {
         UUID id = UUID.randomUUID();
 
