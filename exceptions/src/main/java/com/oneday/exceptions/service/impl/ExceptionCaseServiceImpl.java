@@ -233,18 +233,19 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
     @Transactional
     public void resolve(UUID caseId, ResolveAction action, String cityScope,
                         String userId, String role, String notes) {
+        // Authorize the restricted action BEFORE any lookup, so an unauthorized caller can't probe case
+        // existence/state (404/409) through this endpoint. Reassigning to a new DA re-runs M5 dispatch —
+        // an intraday change that needs ops (station-manager) approval, not a call-centre action.
+        if (action == ResolveAction.REASSIGN_DELIVERY
+                && !ADMIN.equals(role) && !STATION_MANAGER.equals(role) && !SUPERVISOR.equals(role)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "REASSIGN_DELIVERY requires station-manager approval");
+        }
         ExceptionCase c = caseRepo.findById(caseId)
                 .filter(x -> visible(x, cityScope))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Case not found"));
         if (c.getResolvedAt() != null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Case is already closed");
-        }
-        // Reassigning to a new DA re-runs M5 dispatch — an intraday operational change that needs ops
-        // (station-manager) approval, not a call-centre action (CLAUDE.md nightly-stability invariant).
-        if (action == ResolveAction.REASSIGN_DELIVERY
-                && !ADMIN.equals(role) && !STATION_MANAGER.equals(role) && !SUPERVISOR.equals(role)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "REASSIGN_DELIVERY requires station-manager approval");
         }
 
         // Drive M4 (and, downstream, M10) by publishing the matching event — the orders consumer transitions.

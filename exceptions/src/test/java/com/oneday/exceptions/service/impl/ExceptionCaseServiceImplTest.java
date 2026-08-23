@@ -166,17 +166,16 @@ class ExceptionCaseServiceImplTest {
     }
 
     @Test
-    void reassignDeliveryRejectsCallCentreAgent() {
+    void reassignDeliveryRejectsCallCentreAgentBeforeAnyLookup() {
         UUID caseId = UUID.randomUUID();
-        ExceptionCase c = new ExceptionCase();
-        c.setShipmentId(shipmentId);
-        when(caseRepo.findById(caseId)).thenReturn(Optional.of(c));
 
-        // Reassigning a DA is an intraday dispatch change — a call-centre agent must not trigger it.
+        // Reassigning a DA is an intraday dispatch change — a call-centre agent must not trigger it, and
+        // the 403 must come BEFORE the case lookup so it can't probe existence/state via this endpoint.
         assertThatThrownBy(() ->
                 svc.resolve(caseId, ResolveAction.REASSIGN_DELIVERY, null, "u1", "CALL_CENTER_AGENT", null))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        verify(caseRepo, never()).findById(any());
         verify(producer, never()).publish(any(), any());
     }
 
