@@ -2,6 +2,9 @@ package com.oneday.barcode.service;
 
 import com.oneday.barcode.domain.ScanLedgerEntry;
 
+import java.util.List;
+import java.util.UUID;
+
 /**
  * The append-only write engine (M8 §4.3) — built once, reused by every scan entry door: the label
  * path (PR2), the REST lifecycle scans (PR3), and the van custody port (PR4). Idempotent on
@@ -11,4 +14,7 @@ public interface ScanLedgerService {
 
     /** Append one immutable scan row (idempotent replay on {@code clientScanId}). */
     ScanLedgerEntry record(ScanCommand cmd);
+
+    /** The full ordered scan trail for a shipment (oldest first) — the read side of the ledger. */
+    List<ScanLedgerEntry> trail(UUID shipmentId);
 }

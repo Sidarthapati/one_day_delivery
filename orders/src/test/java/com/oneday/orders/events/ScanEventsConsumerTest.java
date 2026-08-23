@@ -39,6 +39,35 @@ class ScanEventsConsumerTest {
     }
 
     @Test
+    void anyScan_stampsLastScanAtAndType() {
+        UUID id = UUID.randomUUID();
+        Instant scannedAt = Instant.parse("2026-08-23T10:00:00Z");
+        Shipment shipment = mock(Shipment.class);
+        when(shipment.getLastScanAt()).thenReturn(null);
+        when(shipmentRepository.findById(id)).thenReturn(Optional.of(shipment));
+
+        consumer.onScanEvent(new ScanEvent(id, ScanEventType.HUB_ORIGIN_IN, null, scannedAt));
+
+        verify(shipment).setLastScanAt(scannedAt);
+        verify(shipment).setLastScanType("HUB_ORIGIN_IN");
+    }
+
+    @Test
+    void outOfOrderOlderScan_doesNotClobberNewerLastScanAt() {
+        UUID id = UUID.randomUUID();
+        Instant existing = Instant.parse("2026-08-23T12:00:00Z");
+        Instant older = Instant.parse("2026-08-23T09:00:00Z");
+        Shipment shipment = mock(Shipment.class);
+        when(shipment.getLastScanAt()).thenReturn(existing);
+        when(shipmentRepository.findById(id)).thenReturn(Optional.of(shipment));
+
+        consumer.onScanEvent(new ScanEvent(id, ScanEventType.HUB_ORIGIN_IN, null, older));
+
+        verify(shipment, never()).setLastScanAt(any());
+        verify(shipment, never()).setLastScanType(any());
+    }
+
+    @Test
     void hubOriginIn_transitions_andNeverStampsParcelId() {
         UUID id = UUID.randomUUID();
 
