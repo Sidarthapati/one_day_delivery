@@ -76,7 +76,7 @@ public class ExceptionController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Apply one action to many cases (manage-packages batch ops). Returns a per-case outcome — a closed
+    /** Apply one action to many cases at once (e.g. a whole missed-flight bag). Returns a per-case outcome — a closed
      *  or missing case in the batch is reported, not fatal — so this is 200, not 204. */
     @PostMapping("/resolve")
     public BatchResolveResponse batchResolve(
