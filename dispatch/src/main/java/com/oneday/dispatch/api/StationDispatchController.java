@@ -3,6 +3,7 @@ package com.oneday.dispatch.api;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.dispatch.dto.request.AssignDeferredRequest;
 import com.oneday.dispatch.dto.response.DaDetailResponse;
+import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DeferredAssignResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -56,6 +58,19 @@ public class StationDispatchController {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
         return dispatchMetricsService.execution(date != null ? date : LocalDate.now(), scopeCityId);
+    }
+
+    /**
+     * Per-DA delivery scorecards for a date (defaults to today): stops, stops/hr, attempt-success % and
+     * on-time %. Same city scope as {@link #execution} — STATION_MANAGER their own city, ADMIN all.
+     */
+    @GetMapping("/dispatch/scorecards")
+    public List<DaScorecard> scorecards(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return dispatchMetricsService.scorecards(date != null ? date : LocalDate.now(), scopeCityId);
     }
 
     /**

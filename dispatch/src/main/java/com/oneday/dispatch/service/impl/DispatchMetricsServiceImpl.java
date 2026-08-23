@@ -7,10 +7,12 @@ import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DaDetailResponse.DaTaskItem;
 import com.oneday.dispatch.dto.response.DaDetailResponse.DayStops;
+import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats.DaPace;
 import com.oneday.dispatch.repository.DaDayStopsRow;
 import com.oneday.dispatch.repository.DaPaceRow;
+import com.oneday.dispatch.repository.DaScorecardRow;
 import com.oneday.dispatch.repository.DeliveryOutcome;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DispatchMetricsService;
@@ -98,6 +100,32 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
         List<DayStops> history = buildHistory(daId, date, scopeCityId);
 
         return new DaDetailResponse(daId, name, phone, cityId, date, pace, completed, failed, items, history);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaScorecard> scorecards(LocalDate date, UUID scopeCityId) {
+        Instant now = Instant.now();
+        List<DaScorecardRow> rows = queueRepository.scorecardByDa(scopeCityId, date);
+        Map<UUID, DaContact> contacts = daDirectory.contactsFor(rows.stream().map(DaScorecardRow::getDaId).toList());
+        return rows.stream()
+                .map(r -> toScorecard(r, now, contacts.get(r.getDaId())))
+                // busiest first: most stops done, then most still pending
+                .sorted(Comparator.comparingLong(DaScorecard::stopsDone).reversed()
+                        .thenComparing(Comparator.comparingLong(DaScorecard::stopsPending).reversed()))
+                .toList();
+    }
+
+    private static DaScorecard toScorecard(DaScorecardRow r, Instant now, DaContact contact) {
+        long attempts = r.getDone() + r.getFailed();
+        Double attemptSuccess = attempts == 0 ? null : (double) r.getDone() / attempts;
+        Double onTime = r.getDone() == 0 ? null : (double) r.getOnTime() / r.getDone();
+        return new DaScorecard(r.getDaId(),
+                contact != null ? contact.name() : null,
+                contact != null ? contact.phone() : null,
+                r.getDone(), r.getFailed(), r.getPending(),
+                avgPerHour(r.getDone(), r.getFirstAssigned(), now),
+                attemptSuccess, onTime);
     }
 
     /** RED = failed or an active task already past its ETA; AMBER = in-progress on-track; GREEN = queued

@@ -115,4 +115,26 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
     List<DaDayStopsRow> paceByDaOverDays(@Param("daId") UUID daId,
                                          @Param("fromDate") LocalDate fromDate,
                                          @Param("city") UUID city);
+
+    /**
+     * Per-DA scorecard for a city/date: delivery stops done, failed, done on/before ETA (on-time), open
+     * tasks, and the DA's first assignment (for stops-per-hour). Delivery attempts only ({@code
+     * task_type='DELIVERY'}) so attempt-success/on-time are last-mile metrics. Native (Postgres FILTER);
+     * {@code city} null → all cities. camelCase aliases bind to {@link DaScorecardRow}.
+     */
+    @Query(value = """
+            SELECT da_id AS daId,
+                   COUNT(*) FILTER (WHERE status = 'COMPLETED') AS done,
+                   COUNT(*) FILTER (WHERE status = 'FAILED')    AS failed,
+                   COUNT(*) FILTER (WHERE status = 'COMPLETED'
+                                      AND expected_eta IS NOT NULL
+                                      AND completed_at <= expected_eta) AS onTime,
+                   COUNT(*) FILTER (WHERE status IN ('QUEUED', 'IN_PROGRESS')) AS pending,
+                   MIN(assigned_at) AS firstAssigned
+            FROM dispatch_queue
+            WHERE task_type = 'DELIVERY' AND operating_date = :date
+              AND (:city IS NULL OR city_id = :city)
+            GROUP BY da_id
+            """, nativeQuery = true)
+    List<DaScorecardRow> scorecardByDa(@Param("city") UUID city, @Param("date") LocalDate date);
 }
