@@ -24,6 +24,10 @@ import static org.springframework.http.HttpStatus.BAD_REQUEST;
 class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
 
     private static final int MAX_PAGE_SIZE = 200;
+    // ponytail: export pages 500 at a time and stops at 50k rows — a pilot city-day is well under this;
+    // raise the cap (or switch to a true streaming response) if a single export ever needs more.
+    private static final int EXPORT_PAGE_SIZE = 500;
+    private static final int EXPORT_MAX_ROWS = 50_000;
 
     private final ShipmentRepository shipmentRepository;
 
@@ -41,16 +45,7 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
         ShipmentState state = (stateFilter == null || stateFilter.isBlank())
                 ? null : parseState(stateFilter);
 
-        Page<Shipment> result;
-        if (cityScope == null) {                       // admin oversight — all cities
-            result = (state == null)
-                    ? shipmentRepository.findAll(pageable)
-                    : shipmentRepository.findByState(state, pageable);
-        } else {                                       // station manager — only their city's legs
-            result = (state == null)
-                    ? shipmentRepository.findByCityInvolved(cityScope, pageable)
-                    : shipmentRepository.findByCityInvolvedAndState(cityScope, state, pageable);
-        }
+        Page<Shipment> result = fetchPage(state, cityScope, pageable);
 
         return new ShipmentPageResponse(
                 result.map(s -> toSummary(s, cityScope)).getContent(),
@@ -58,6 +53,36 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
                 result.getSize(),
                 result.getTotalElements(),
                 result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public java.util.List<ShipmentSummaryResponse> exportShipments(String stateFilter, String cityScope) {
+        ShipmentState state = (stateFilter == null || stateFilter.isBlank())
+                ? null : parseState(stateFilter);
+
+        java.util.List<ShipmentSummaryResponse> out = new java.util.ArrayList<>();
+        for (int page = 0; out.size() < EXPORT_MAX_ROWS; page++) {
+            Pageable pageable = PageRequest.of(page, EXPORT_PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt"));
+            Page<Shipment> batch = fetchPage(state, cityScope, pageable);
+            batch.forEach(s -> out.add(toSummary(s, cityScope)));
+            if (!batch.hasNext()) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    private Page<Shipment> fetchPage(ShipmentState state, String cityScope, Pageable pageable) {
+        if (cityScope == null) {                       // admin oversight — all cities
+            return (state == null)
+                    ? shipmentRepository.findAll(pageable)
+                    : shipmentRepository.findByState(state, pageable);
+        }
+        // station manager — only their city's legs (origin OR dest)
+        return (state == null)
+                ? shipmentRepository.findByCityInvolved(cityScope, pageable)
+                : shipmentRepository.findByCityInvolvedAndState(cityScope, state, pageable);
     }
 
     private static ShipmentState parseState(String stateFilter) {

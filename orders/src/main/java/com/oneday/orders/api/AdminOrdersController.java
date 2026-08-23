@@ -4,11 +4,18 @@ import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.CancellationResponse;
 import com.oneday.orders.dto.ShipmentAgeingStats;
 import com.oneday.orders.dto.ShipmentPageResponse;
+import com.oneday.orders.dto.ShipmentSummaryResponse;
 import com.oneday.orders.dto.ShipmentSummaryStats;
 import com.oneday.orders.service.AdminOrderQueryService;
 import com.oneday.orders.service.AdminOrderSummaryService;
 import com.oneday.orders.service.CancellationService;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,6 +24,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Orders-database access for ops tooling. The counterpart to the customer booking endpoints — these
@@ -77,6 +88,69 @@ class AdminOrdersController {
     public ShipmentAgeingStats ageing(@AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, STATION_MANAGER);
         return adminOrderSummaryService.ageing(cityScope(principal));
+    }
+
+    /**
+     * Export every matching shipment as CSV (ops "export all"), same {@code state} filter + city scope as
+     * {@link #listShipments} but without the 200-row page cap. Streams a downloadable attachment.
+     */
+    @GetMapping(value = "/export", produces = "text/csv")
+    public ResponseEntity<Resource> exportShipments(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @RequestParam(value = "state", required = false) String state) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        List<ShipmentSummaryResponse> rows = adminOrderQueryService.exportShipments(state, cityScope(principal));
+
+        byte[] csv = toCsv(rows).getBytes(StandardCharsets.UTF_8);
+        String filename = "shipments-" + LocalDate.now() + (state == null || state.isBlank() ? "" : "-" + state) + ".csv";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename).build().toString())
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(new ByteArrayResource(csv));
+    }
+
+    private static final String[] CSV_HEADERS = {
+            "shipment_ref", "customer_type", "delivery_type", "state", "pickup_type", "payment_mode",
+            "origin_city", "origin_pincode", "dest_city", "dest_pincode", "sender_name", "receiver_name",
+            "chargeable_weight_grams", "total_price_paise", "created_at", "cancelled_at", "custody_city"
+    };
+
+    static String toCsv(List<ShipmentSummaryResponse> rows) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.join(",", CSV_HEADERS)).append('\n');
+        for (ShipmentSummaryResponse r : rows) {
+            sb.append(csv(r.shipmentRef())).append(',')
+              .append(csv(r.customerType())).append(',')
+              .append(csv(r.deliveryType())).append(',')
+              .append(csv(r.state())).append(',')
+              .append(csv(r.pickupType())).append(',')
+              .append(csv(r.paymentMode())).append(',')
+              .append(csv(r.originCity())).append(',')
+              .append(csv(r.originPincode())).append(',')
+              .append(csv(r.destCity())).append(',')
+              .append(csv(r.destPincode())).append(',')
+              .append(csv(r.senderName())).append(',')
+              .append(csv(r.receiverName())).append(',')
+              .append(csv(r.chargeableWeightGrams())).append(',')
+              .append(csv(r.totalPricePaise())).append(',')
+              .append(csv(r.createdAt())).append(',')
+              .append(csv(r.cancelledAt())).append(',')
+              .append(csv(r.custodyCity())).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** RFC-4180 cell: quote + double any embedded quote when the value has a comma/quote/newline. */
+    static String csv(Object value) {
+        if (value == null) {
+            return "";
+        }
+        String s = String.valueOf(value);
+        if (s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")) {
+            return '"' + s.replace("\"", "\"\"") + '"';
+        }
+        return s;
     }
 
     /** Null for ADMIN (all cities); the station manager's own city otherwise (403 if unassigned). */
