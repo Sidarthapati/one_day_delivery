@@ -1,5 +1,6 @@
 package com.oneday.orders.service;
 
+import com.oneday.orders.dto.ShipmentAgeingStats;
 import com.oneday.orders.dto.ShipmentSummaryStats;
 
 /**
@@ -16,4 +17,11 @@ public interface AdminOrderSummaryService {
      * @return per-bucket and per-state counts plus the in-scope total
      */
     ShipmentSummaryStats summary(String cityScope);
+
+    /**
+     * Ageing rollup: live (non-terminal) shipments grouped by {@code OpsBucket} stage and dwell band
+     * (time since last scan), so ops can spot parcels stuck before a flight/cron cutoff. Same city-scope
+     * rule as {@link #summary}.
+     */
+    ShipmentAgeingStats ageing(String cityScope);
 }

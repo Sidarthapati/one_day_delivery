@@ -1,7 +1,9 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.orders.dto.ShipmentAgeingStats;
 import com.oneday.orders.dto.ShipmentSummaryStats;
+import com.oneday.orders.repository.AgeingBandCount;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.StateCount;
 import com.oneday.orders.service.OpsBucket;
@@ -73,6 +75,33 @@ class AdminOrderSummaryServiceImplTest {
         svc.summary(null);
 
         verify(shipmentRepository, times(1)).countByState();
+    }
+
+    private record Band(String state, int band, long cnt) implements AgeingBandCount {
+        @Override public String getState() { return state; }
+        @Override public int getBand() { return band; }
+        @Override public long getCnt() { return cnt; }
+    }
+
+    @Test
+    void ageingRollsStatesIntoOpsBucketsAndBands() {
+        when(shipmentRepository.ageingByStateAndBand(null, 7200L, 14400L, 28800L)).thenReturn(List.of(
+                new Band("AT_AIRPORT", 0, 3),           // IN_TRANSIT, <2h
+                new Band("DEST_HUB_PROCESSING", 3, 2),  // IN_TRANSIT, >8h
+                new Band("DROP_ASSIGNED", 1, 4),        // OUT_FOR_DELIVERY, 2-4h
+                new Band("DELIVERY_FAILED", 3, 1)));    // EXCEPTIONS, >8h
+
+        AdminOrderSummaryServiceImpl svc = new AdminOrderSummaryServiceImpl(shipmentRepository);
+        ShipmentAgeingStats stats = svc.ageing(null);
+
+        assertThat(stats.total()).isEqualTo(10);
+        assertThat(stats.bands()).containsExactly("<2h", "2-4h", "4-8h", "8h+");
+        assertThat(stats.byBucket().get("IN_TRANSIT")).containsExactly(3L, 0L, 0L, 2L);
+        assertThat(stats.byBucket().get("OUT_FOR_DELIVERY")).containsExactly(0L, 4L, 0L, 0L);
+        assertThat(stats.byBucket().get("EXCEPTIONS")).containsExactly(0L, 0L, 0L, 1L);
+        // Terminal states are excluded by the query, so DELIVERED never appears.
+        assertThat(stats.byBucket()).doesNotContainKey("DELIVERED");
+        assertThat(stats.bandTotals()).containsExactly(3L, 4L, 0L, 3L);
     }
 
     @Test
