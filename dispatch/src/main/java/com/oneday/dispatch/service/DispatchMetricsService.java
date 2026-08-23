@@ -1,5 +1,6 @@
 package com.oneday.dispatch.service;
 
+import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 
 import java.time.LocalDate;
@@ -14,4 +15,11 @@ public interface DispatchMetricsService {
 
     /** @param scopeCityId null → all cities (ADMIN); otherwise restrict to that city. */
     DispatchExecutionStats execution(LocalDate date, UUID scopeCityId);
+
+    /**
+     * One DA's detail for a date: identity + pace + today's tasks (urgency-sorted) + a short history.
+     * {@code scopeCityId} null → any city (ADMIN); otherwise the DA must have a task in that city on
+     * {@code date} (else 404) and only that city's tasks/history are returned.
+     */
+    DaDetailResponse daDetail(UUID daId, LocalDate date, UUID scopeCityId);
 }

@@ -97,4 +97,22 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
             GROUP BY da_id
             """, nativeQuery = true)
     List<DaPaceRow> paceByDa(@Param("city") UUID city, @Param("date") LocalDate date);
+
+    /**
+     * Per-day stops (done/failed) for one DA from {@code fromDate} onward — the DA-detail mini history.
+     * {@code city} null → all cities. Native (Postgres FILTER); camelCase aliases bind to {@link DaDayStopsRow}.
+     */
+    @Query(value = """
+            SELECT operating_date AS day,
+                   COUNT(*) FILTER (WHERE status = 'COMPLETED') AS done,
+                   COUNT(*) FILTER (WHERE status = 'FAILED')    AS failed
+            FROM dispatch_queue
+            WHERE da_id = :daId AND operating_date >= :fromDate
+              AND (:city IS NULL OR city_id = :city)
+            GROUP BY operating_date
+            ORDER BY operating_date
+            """, nativeQuery = true)
+    List<DaDayStopsRow> paceByDaOverDays(@Param("daId") UUID daId,
+                                         @Param("fromDate") LocalDate fromDate,
+                                         @Param("city") UUID city);
 }

@@ -2,6 +2,7 @@ package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.dispatch.dto.request.AssignDeferredRequest;
+import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DeferredAssignResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
@@ -55,6 +56,21 @@ public class StationDispatchController {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
         return dispatchMetricsService.execution(date != null ? date : LocalDate.now(), scopeCityId);
+    }
+
+    /**
+     * One DA's detail (click-through from the control tower): identity + phone, today's pace, today's
+     * tasks urgency-sorted, and a short history. Same city scope — a STATION_MANAGER can only inspect a
+     * DA operating in their own city today (else 404); ADMIN any.
+     */
+    @GetMapping("/dispatch/da/{daId}")
+    public DaDetailResponse daDetail(
+            @PathVariable UUID daId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return dispatchMetricsService.daDetail(daId, date != null ? date : LocalDate.now(), scopeCityId);
     }
 
     @GetMapping("/dispatch/tiles/{tileId}/queue")
