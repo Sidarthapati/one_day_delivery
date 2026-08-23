@@ -86,4 +86,29 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     @Query("SELECT s.state AS state, COUNT(s) AS count FROM Shipment s "
             + "WHERE s.originCity = :city OR s.destCity = :city GROUP BY s.state")
     List<StateCount> countByStateForCity(@Param("city") String city);
+
+    /**
+     * Ageing rollup: live (non-terminal) shipments grouped by state and a dwell band. Dwell is
+     * {@code now() − COALESCE(last_scan_at, created_at)} (a never-scanned parcel ages from booking).
+     * Bands: 0 = {@code < t1}s, 1 = {@code < t2}s, 2 = {@code < t3}s, 3 = older. {@code city} null → all.
+     * Native (Postgres) — the enum column is compared as text and the interval math is DB-side.
+     */
+    @Query(value = """
+            SELECT s.state::text AS state,
+                   CASE
+                       WHEN EXTRACT(EPOCH FROM now() - COALESCE(s.last_scan_at, s.created_at)) < :t1 THEN 0
+                       WHEN EXTRACT(EPOCH FROM now() - COALESCE(s.last_scan_at, s.created_at)) < :t2 THEN 1
+                       WHEN EXTRACT(EPOCH FROM now() - COALESCE(s.last_scan_at, s.created_at)) < :t3 THEN 2
+                       ELSE 3
+                   END AS band,
+                   COUNT(*) AS cnt
+            FROM shipments s
+            WHERE s.state::text NOT IN ('DROPPED', 'HUB_COLLECTED', 'RTO_COMPLETED', 'CANCELLED')
+              AND (:city IS NULL OR s.origin_city = :city OR s.dest_city = :city)
+            GROUP BY s.state, band
+            """, nativeQuery = true)
+    List<AgeingBandCount> ageingByStateAndBand(@Param("city") String city,
+                                               @Param("t1") long t1Seconds,
+                                               @Param("t2") long t2Seconds,
+                                               @Param("t3") long t3Seconds);
 }

@@ -2,6 +2,7 @@ package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.CancellationResponse;
+import com.oneday.orders.dto.ShipmentAgeingStats;
 import com.oneday.orders.dto.ShipmentPageResponse;
 import com.oneday.orders.dto.ShipmentSummaryStats;
 import com.oneday.orders.service.AdminOrderQueryService;
@@ -66,6 +67,16 @@ class AdminOrdersController {
     public ShipmentSummaryStats summary(@AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, STATION_MANAGER);
         return adminOrderSummaryService.summary(cityScope(principal));
+    }
+
+    /**
+     * Ageing rollup — live shipments grouped by ops stage and how long since their last scan, so ops
+     * catch parcels stuck before a flight/cron cutoff. Same visibility as {@link #summary}.
+     */
+    @GetMapping("/ageing")
+    public ShipmentAgeingStats ageing(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        return adminOrderSummaryService.ageing(cityScope(principal));
     }
 
     /** Null for ADMIN (all cities); the station manager's own city otherwise (403 if unassigned). */
