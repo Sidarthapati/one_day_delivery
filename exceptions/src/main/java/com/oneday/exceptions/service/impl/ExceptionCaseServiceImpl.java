@@ -24,6 +24,8 @@ import com.oneday.exceptions.repository.ExceptionCaseRepository;
 import com.oneday.exceptions.service.ExceptionCaseService;
 import com.oneday.orders.service.ShipmentJourneyService;
 import com.oneday.orders.service.ShipmentLookupService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -43,7 +45,13 @@ import java.util.UUID;
 @Service
 class ExceptionCaseServiceImpl implements ExceptionCaseService {
 
+    private static final Logger log = LoggerFactory.getLogger(ExceptionCaseServiceImpl.class);
+
     private static final int MAX_PAGE_SIZE = 100;
+    // Roles allowed to trigger an intraday dispatch change (REASSIGN) — ops desk, not call-centre.
+    private static final String ADMIN = "ADMIN";
+    private static final String STATION_MANAGER = "STATION_MANAGER";
+    private static final String SUPERVISOR = "SUPERVISOR";
 
     private final ExceptionCaseRepository caseRepo;
     private final ExceptionActionRepository actionRepo;
@@ -231,6 +239,13 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
         if (c.getResolvedAt() != null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Case is already closed");
         }
+        // Reassigning to a new DA re-runs M5 dispatch — an intraday operational change that needs ops
+        // (station-manager) approval, not a call-centre action (CLAUDE.md nightly-stability invariant).
+        if (action == ResolveAction.REASSIGN_DELIVERY
+                && !ADMIN.equals(role) && !STATION_MANAGER.equals(role) && !SUPERVISOR.equals(role)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "REASSIGN_DELIVERY requires station-manager approval");
+        }
 
         // Drive M4 (and, downstream, M10) by publishing the matching event — the orders consumer transitions.
         // Publish only AFTER this tx commits (matches orders' ShipmentEventProducer): the broker send is
@@ -290,7 +305,9 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
                 };
                 results.add(new BatchResolveResponse.Item(caseId, status, e.getReason()));
             } catch (Exception e) {
-                results.add(new BatchResolveResponse.Item(caseId, BatchResolveResponse.Status.ERROR, e.getMessage()));
+                // Don't leak DB/broker/framework internals to the caller — log server-side, return generic.
+                log.error("Batch resolve failed for case {}", caseId, e);
+                results.add(new BatchResolveResponse.Item(caseId, BatchResolveResponse.Status.ERROR, "Resolution failed"));
             }
         }
         return new BatchResolveResponse(results);

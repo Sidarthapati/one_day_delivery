@@ -14,6 +14,6 @@ import java.util.UUID;
  */
 public record BatchResolveRequest(
         @NotNull ResolveAction action,
-        @NotEmpty List<UUID> caseIds,
+        @NotEmpty List<@NotNull UUID> caseIds,
         String notes) {
 }

@@ -19,6 +19,7 @@ import com.oneday.orders.service.ShipmentLookupService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
@@ -26,6 +27,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -161,6 +163,21 @@ class ExceptionCaseServiceImplTest {
 
         verify(producer).publish(shipmentId, ExceptionsEventType.DELIVERY_REASSIGNED);
         assertThat(c.getStatus()).isEqualTo(ExceptionStatus.RESCHEDULED);
+    }
+
+    @Test
+    void reassignDeliveryRejectsCallCentreAgent() {
+        UUID caseId = UUID.randomUUID();
+        ExceptionCase c = new ExceptionCase();
+        c.setShipmentId(shipmentId);
+        when(caseRepo.findById(caseId)).thenReturn(Optional.of(c));
+
+        // Reassigning a DA is an intraday dispatch change — a call-centre agent must not trigger it.
+        assertThatThrownBy(() ->
+                svc.resolve(caseId, ResolveAction.REASSIGN_DELIVERY, null, "u1", "CALL_CENTER_AGENT", null))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(403));
+        verify(producer, never()).publish(any(), any());
     }
 
     @Test
