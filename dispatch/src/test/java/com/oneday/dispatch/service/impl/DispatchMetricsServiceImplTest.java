@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -30,7 +31,14 @@ class DispatchMetricsServiceImplTest {
     private final DispatchQueueRepository repo = mock(DispatchQueueRepository.class);
     private final com.oneday.common.port.DaDirectoryPort directory =
             mock(com.oneday.common.port.DaDirectoryPort.class);
-    private final DispatchMetricsServiceImpl svc = new DispatchMetricsServiceImpl(repo, directory);
+    private final com.oneday.common.port.ShipmentSlaPort slaPort =
+            mock(com.oneday.common.port.ShipmentSlaPort.class);
+    private final com.oneday.common.port.ShipmentRefPort refPort =
+            mock(com.oneday.common.port.ShipmentRefPort.class);
+    private final com.oneday.dispatch.service.DaStatusService daStatus =
+            mock(com.oneday.dispatch.service.DaStatusService.class);
+    private final DispatchMetricsServiceImpl svc =
+            new DispatchMetricsServiceImpl(repo, directory, slaPort, refPort, daStatus);
     private final LocalDate date = LocalDate.now();
 
     private record Outcome(long completed, long failed) implements DeliveryOutcome {
@@ -127,6 +135,53 @@ class DispatchMetricsServiceImplTest {
         DaDetailResponse.DayStops empty = h.stream()
                 .filter(x -> x.date().equals(date.minusDays(5))).findFirst().orElseThrow();
         assertThat(empty.done()).isZero();                              // zero-filled, not missing
+    }
+
+    @Test
+    void daDetailUsesRealSlaColourOverEtaHeuristic() {
+        UUID da = UUID.randomUUID();
+        UUID city = UUID.randomUUID();
+        Instant now = Instant.now();
+        DispatchQueue breaching = task(city, TaskStatus.IN_PROGRESS, now.plusSeconds(3600)); // ETA on-track → AMBER
+        DispatchQueue noSla = task(city, TaskStatus.QUEUED, now.plusSeconds(3600));          // ETA on-track → GREEN
+        when(repo.findByDaIdAndOperatingDateOrderByQueuePosition(da, date))
+                .thenReturn(List.of(breaching, noSla));
+        when(repo.paceByDa(null, date)).thenReturn(List.of());
+        when(repo.paceByDaOverDays(eq(da), any(), eq(null))).thenReturn(List.of());
+        when(directory.contactsFor(List.of(da))).thenReturn(Map.of());
+        // Only the in-progress task has an SLA row, and it is BREACHED → RED, overriding the on-track ETA.
+        when(slaPort.slaFor(any())).thenReturn(Map.of(breaching.getShipmentId(),
+                new com.oneday.common.port.ShipmentSlaPort.SlaStatus(
+                        com.oneday.common.domain.enums.SlaState.BREACHED, true, 22, now.plusSeconds(600))));
+        when(refPort.refsFor(any())).thenReturn(Map.of(breaching.getShipmentId(), "1DD-BLR-1"));
+
+        DaDetailResponse d = svc.daDetail(da, date, null);
+
+        // BREACHED in-progress sorts RED (ahead of the no-SLA GREEN task, which falls back to the heuristic).
+        assertThat(d.tasks()).extracting(DaDetailResponse.DaTaskItem::urgency)
+                .containsExactly("RED", "GREEN");
+        DaDetailResponse.DaTaskItem top = d.tasks().get(0);
+        assertThat(top.shipmentRef()).isEqualTo("1DD-BLR-1");
+        assertThat(top.urgencyMinutes()).isEqualTo(22);
+        assertThat(top.actByAt()).isNotNull();
+    }
+
+    @Test
+    void daTrailGuardsCityAndDelegates() {
+        UUID da = UUID.randomUUID();
+        UUID city = UUID.randomUUID();
+        UUID otherCity = UUID.randomUUID();
+        when(repo.findByDaIdAndOperatingDateOrderByQueuePosition(da, date))
+                .thenReturn(List.of(task(city, TaskStatus.IN_PROGRESS, null)));
+        when(daStatus.listTrack(eq(da), any(), any()))
+                .thenReturn(List.of(new com.oneday.dispatch.service.GpsFixView(12.9, 77.6, Instant.now())));
+
+        // A manager scoped to another city can't see this DA's trail.
+        assertThatThrownBy(() -> svc.daTrail(da, date, otherCity))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        // In-scope, and admin (null scope), both delegate to listTrack.
+        assertThat(svc.daTrail(da, date, city)).hasSize(1);
+        assertThat(svc.daTrail(da, date, null)).hasSize(1);
     }
 
     @Test
