@@ -13,6 +13,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,6 +67,20 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
 
     // Customer "my shipments" view: every shipment a given M1 user booked, newest first.
     Page<Shipment> findByBookedByUserId(UUID bookedByUserId, Pageable pageable);
+
+    // Order → N Shipments: the child shipments of one order (booking order preserved).
+    List<Shipment> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
+
+    // Bulk rollup input: (orderId, state) pairs for a set of orders, to reduce each order's status
+    // in one query instead of N per-order lookups. See OrderStatusReducer.
+    @Query("SELECT s.orderId AS orderId, s.state AS state FROM Shipment s WHERE s.orderId IN :orderIds")
+    List<OrderChildState> findChildStatesByOrderIds(@Param("orderIds") Collection<UUID> orderIds);
+
+    /** Projection for the bulk order-status rollup. */
+    interface OrderChildState {
+        UUID getOrderId();
+        ShipmentState getState();
+    }
 
     // Admin orders-DB view, station-manager scope: every shipment whose origin OR destination
     // is the manager's city (custody model — a city role sees both legs touching its city).

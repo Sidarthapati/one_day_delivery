@@ -1,13 +1,18 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.enums.CustomerType;
+import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.Address;
 import com.oneday.orders.domain.B2bAccount;
+import com.oneday.orders.domain.ParcelOrder;
 import com.oneday.orders.domain.Shipment;
+import com.oneday.orders.dto.MyOrderDetailResponse;
 import com.oneday.orders.dto.MyShipmentDetailResponse;
 import com.oneday.orders.dto.MyShipmentSummaryResponse;
+import com.oneday.orders.dto.OrderSummaryResponse;
 import com.oneday.orders.dto.ShipmentLabelResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
+import com.oneday.orders.repository.ParcelOrderRepository;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.CustomerOrderQueryService;
 import com.oneday.orders.service.CustomerVisibleStateMapper;
@@ -19,8 +24,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * @see CustomerOrderQueryService
@@ -31,15 +38,18 @@ class CustomerOrderQueryServiceImpl implements CustomerOrderQueryService {
     private static final int MAX_LIMIT = 200;
 
     private final ShipmentRepository shipmentRepository;
+    private final ParcelOrderRepository parcelOrderRepository;
     private final CustomerVisibleStateMapper stateMapper;
     private final FlightTrackingPort flightTrackingPort;
     private final B2bAccountRepository b2bAccountRepository;
 
     CustomerOrderQueryServiceImpl(ShipmentRepository shipmentRepository,
+                                  ParcelOrderRepository parcelOrderRepository,
                                   CustomerVisibleStateMapper stateMapper,
                                   FlightTrackingPort flightTrackingPort,
                                   B2bAccountRepository b2bAccountRepository) {
         this.shipmentRepository = shipmentRepository;
+        this.parcelOrderRepository = parcelOrderRepository;
         this.stateMapper = stateMapper;
         this.flightTrackingPort = flightTrackingPort;
         this.b2bAccountRepository = b2bAccountRepository;
@@ -57,6 +67,52 @@ class CustomerOrderQueryServiceImpl implements CustomerOrderQueryService {
         return shipmentRepository.findByBookedByUserId(id, pageable)
                 .map(this::toSummary)
                 .getContent();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<OrderSummaryResponse> myOrders(String userId, int limit) {
+        UUID id = UserIds.parse(userId);
+        if (id == null) {
+            return List.of();
+        }
+        int safeLimit = Math.min(Math.max(1, limit), MAX_LIMIT);
+        Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<ParcelOrder> orders = parcelOrderRepository.findByBookedByUserId(id, pageable).getContent();
+        Map<UUID, List<ShipmentState>> statesByOrder = childStates(orders);
+        return orders.stream()
+                .map(o -> OrderSummaries.toSummary(o, statesByOrder.getOrDefault(o.getId(), List.of())))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<MyOrderDetailResponse> myOrderDetail(String userId, String orderRef) {
+        UUID id = UserIds.parse(userId);
+        if (id == null) {
+            return Optional.empty();
+        }
+        return parcelOrderRepository.findByOrderRef(orderRef)
+                .filter(o -> id.equals(o.getBookedByUserId()))   // ownership scope: not yours → not found
+                .map(o -> {
+                    List<Shipment> ships = shipmentRepository.findByOrderIdOrderByCreatedAtAsc(o.getId());
+                    List<ShipmentState> states = ships.stream().map(Shipment::getState).toList();
+                    OrderSummaryResponse header = OrderSummaries.toSummary(o, states);
+                    List<MyShipmentSummaryResponse> children = ships.stream().map(this::toSummary).toList();
+                    return new MyOrderDetailResponse(header, children);
+                });
+    }
+
+    /** Bulk-fetch the child states for a set of orders and group them by order id (one query). */
+    private Map<UUID, List<ShipmentState>> childStates(List<ParcelOrder> orders) {
+        if (orders.isEmpty()) {
+            return Map.of();
+        }
+        List<UUID> ids = orders.stream().map(ParcelOrder::getId).toList();
+        return shipmentRepository.findChildStatesByOrderIds(ids).stream()
+                .collect(Collectors.groupingBy(
+                        ShipmentRepository.OrderChildState::getOrderId,
+                        Collectors.mapping(ShipmentRepository.OrderChildState::getState, Collectors.toList())));
     }
 
     @Override

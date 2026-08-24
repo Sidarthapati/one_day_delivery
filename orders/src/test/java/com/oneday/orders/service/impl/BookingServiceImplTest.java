@@ -24,6 +24,7 @@ import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.CustomerVisibleStateMapper;
+import com.oneday.orders.service.OrderService;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.ShipmentRefService;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -54,6 +55,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -66,6 +68,7 @@ class BookingServiceImplTest {
     @Mock private PaymentPort paymentPort;
     @Mock private EtaPort etaPort;
     @Mock private ShipmentRefService shipmentRefService;
+    @Mock private OrderService orderService;
     @Mock private ShipmentRepository shipmentRepository;
     @Mock private PaymentTransactionRepository paymentTransactionRepository;
     @Mock private ShipmentStateHistoryRepository historyRepository;
@@ -97,9 +100,14 @@ class BookingServiceImplTest {
     void setUp() {
         scheduler = Executors.newSingleThreadScheduledExecutor();
 
+        // Every booking mints a parent order of one; lenient so the not-serviceable / bad-request
+        // tests that never reach persist don't trip strict-stub checks.
+        lenient().when(orderService.createOrder(any(), any(), anyString(), anyString(), any()))
+                .thenReturn(new OrderService.CreatedOrder(UUID.randomUUID(), "1DD-ORD-BLR-20260530-00001"));
+
         service = new BookingServiceImpl(
                 serviceabilityPort, pricingPort, paymentPort, etaPort,
-                shipmentRefService, shipmentRepository, paymentTransactionRepository,
+                shipmentRefService, orderService, shipmentRepository, paymentTransactionRepository,
                 historyRepository, stateMapper, new TransactionTemplate(NO_OP_TX),
                 CircuitBreakerRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),
@@ -145,6 +153,61 @@ class BookingServiceImplTest {
         assertThat(resp.getLabelStatus()).isEqualTo("PENDING");
         assertThat(resp.getPayment().getStatus()).isEqualTo("CAPTURED");
         assertThat(resp.getTrackingUrl()).contains(SHIPMENT_REF);
+    }
+
+    // ── book() attaches a parent order (Order → N Shipments) ────────────────
+
+    @Test
+    void book_attachesParentOrder_andRollsUp() {
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
+        UUID orderId = UUID.randomUUID();
+        when(orderService.createOrder(any(), any(), anyString(), anyString(), any()))
+                .thenReturn(new OrderService.CreatedOrder(orderId, "1DD-ORD-BLR-20260530-00007"));
+        ArgumentCaptor<Shipment> savedShipment = ArgumentCaptor.forClass(Shipment.class);
+        when(shipmentRepository.save(savedShipment.capture())).thenAnswer(inv -> {
+            Shipment s = inv.getArgument(0);
+            ReflectionTestUtils.setField(s, "id", SHIPMENT_ID);
+            return s;
+        });
+        when(paymentTransactionRepository.save(any())).thenAnswer(inv -> {
+            PaymentTransaction pt = inv.getArgument(0);
+            ReflectionTestUtils.setField(pt, "id", PAYMENT_ID);
+            return pt;
+        });
+        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(etaPort.fetchEta(any())).thenReturn(new EtaResult(Instant.now().plusSeconds(86400), 1440));
+
+        BookingResponse resp = service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID);
+
+        // A single booking mints its own order of one and echoes the order ref.
+        assertThat(resp.getOrderRef()).isEqualTo("1DD-ORD-BLR-20260530-00007");
+        assertThat(savedShipment.getValue().getOrderId()).isEqualTo(orderId);
+        verify(orderService).addShipment(orderId, 4720L);
+    }
+
+    @Test
+    void bookSettled_attachesToProvidedOrder_withoutCreatingOne() {
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
+        UUID cartOrderId = UUID.randomUUID();
+        ArgumentCaptor<Shipment> savedShipment = ArgumentCaptor.forClass(Shipment.class);
+        when(shipmentRepository.save(savedShipment.capture())).thenAnswer(inv -> {
+            Shipment s = inv.getArgument(0);
+            ReflectionTestUtils.setField(s, "id", SHIPMENT_ID);
+            return s;
+        });
+        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(etaPort.fetchEta(any())).thenReturn(new EtaResult(Instant.now().plusSeconds(86400), 1440));
+
+        service.bookSettled(bookingRequest(), IDEMPOTENCY_KEY, USER_ID, CustomerType.B2C, cartOrderId);
+
+        // Cart path uses the shared order — no new order minted, shipment attaches to it.
+        verify(orderService, never()).createOrder(any(), any(), anyString(), anyString(), any());
+        assertThat(savedShipment.getValue().getOrderId()).isEqualTo(cartOrderId);
+        verify(orderService).addShipment(cartOrderId, 4720L);
     }
 
     @Test

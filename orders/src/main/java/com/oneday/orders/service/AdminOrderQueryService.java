@@ -1,5 +1,7 @@
 package com.oneday.orders.service;
 
+import com.oneday.orders.dto.AdminOrderDetailResponse;
+import com.oneday.orders.dto.OrderPageResponse;
 import com.oneday.orders.dto.ShipmentPageResponse;
 import com.oneday.orders.dto.ShipmentSummaryResponse;
 import com.oneday.orders.dto.ShipmentTimelineResponse;
@@ -38,4 +40,17 @@ public interface AdminOrderQueryService {
      * An unknown ref 404s.
      */
     ShipmentTimelineResponse timeline(String shipmentRef, String cityScope);
+
+    /**
+     * A page of orders (Order → N Shipments), newest first — the business/admin console's order view.
+     * {@code cityScope} null → all cities (ADMIN); otherwise restrict to orders placed in that origin
+     * city (station-manager scope). Each row carries the rollup status over its child shipments.
+     */
+    OrderPageResponse listOrders(String cityScope, int page, int size);
+
+    /**
+     * One order with its shipments expanded, by order ref. {@code cityScope} null → any city (ADMIN);
+     * otherwise the order's origin city must match or it 404s. An unknown ref 404s.
+     */
+    AdminOrderDetailResponse orderDetail(String orderRef, String cityScope);
 }

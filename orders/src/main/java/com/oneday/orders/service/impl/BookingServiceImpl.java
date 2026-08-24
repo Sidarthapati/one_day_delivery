@@ -27,6 +27,7 @@ import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.CustomerVisibleStateMapper;
+import com.oneday.orders.service.OrderService;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.ShipmentRefService;
 import com.oneday.orders.service.TransitionContext;
@@ -42,6 +43,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.ScheduledExecutorService;
@@ -61,6 +63,7 @@ class BookingServiceImpl implements BookingService {
     private final PaymentPort paymentPort;
     private final EtaPort etaPort;
     private final ShipmentRefService shipmentRefService;
+    private final OrderService orderService;
     private final ShipmentRepository shipmentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final ShipmentStateHistoryRepository historyRepository;
@@ -83,6 +86,7 @@ class BookingServiceImpl implements BookingService {
                        PaymentPort paymentPort,
                        EtaPort etaPort,
                        ShipmentRefService shipmentRefService,
+                       OrderService orderService,
                        ShipmentRepository shipmentRepository,
                        PaymentTransactionRepository paymentTransactionRepository,
                        ShipmentStateHistoryRepository historyRepository,
@@ -97,6 +101,7 @@ class BookingServiceImpl implements BookingService {
         this.paymentPort = paymentPort;
         this.etaPort = etaPort;
         this.shipmentRefService = shipmentRefService;
+        this.orderService = orderService;
         this.shipmentRepository = shipmentRepository;
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.historyRepository = historyRepository;
@@ -121,14 +126,15 @@ class BookingServiceImpl implements BookingService {
 
     @Override
     public BookingResponse bookSettled(BookingRequest req, String idempotencyKey, String userId,
-                                       CustomerType customerType) {
+                                       CustomerType customerType, UUID orderId) {
         // Cart checkout already settled payment once for the whole cart, so we re-price (to catch
         // staleness) and persist — but write NO per-shipment PaymentTransaction and take no payment.
+        // The parent order was minted by cart checkout; every item attaches to the same orderId.
         Priced priced = priceRequest(req, customerType);
         return tx.execute(status ->
                 persist(req, idempotencyKey, userId, customerType, priced.serviceability(),
                         priced.volumetricWeightGrams(), priced.chargeableWeightGrams(), priced.quote(),
-                        /* recordPayment */ false));
+                        /* recordPayment */ false, orderId));
     }
 
     // Steps 1-3 of booking, with no payment or DB write — reused by book() and quote()
@@ -213,7 +219,8 @@ class BookingServiceImpl implements BookingService {
         try {
             return tx.execute(status ->
                     persist(req, idempotencyKey, userId, customerType, serviceability,
-                            finalVolumetricWeight, finalChargeableWeight, quote, /* recordPayment */ true));
+                            finalVolumetricWeight, finalChargeableWeight, quote, /* recordPayment */ true,
+                            /* orderId */ null));
         } catch (RuntimeException dbEx) {
             if (isPrepaid) {
                 try {
@@ -249,12 +256,22 @@ class BookingServiceImpl implements BookingService {
     private BookingResponse persist(BookingRequest req, String idempotencyKey, String userId,
                                     CustomerType customerType, ServiceabilityResult serviceability,
                                     int volumetricWeightGrams, int chargeableWeightGrams,
-                                    QuoteResult quote, boolean recordPayment) {
+                                    QuoteResult quote, boolean recordPayment, UUID orderId) {
         Instant bookedAt = Instant.now();
         String shipmentRef = shipmentRefService.generateRef(req.getOriginCity());
 
+        // Attach to a parent order. A single booking (orderId == null) mints its own order of one;
+        // a cart checkout passes the shared orderId so every item joins the same order.
+        OrderService.CreatedOrder createdOrder = null;
+        UUID effectiveOrderId = orderId;
+        if (effectiveOrderId == null) {
+            createdOrder = orderService.createOrder(customerType, null, userId, req.getOriginCity(), null);
+            effectiveOrderId = createdOrder.id();
+        }
+
         Shipment shipment = new Shipment();
         shipment.setShipmentRef(shipmentRef);
+        shipment.setOrderId(effectiveOrderId);
         shipment.setCustomerType(customerType);
         shipment.setDeliveryType(serviceability.deliveryType());
         shipment.setSenderName(req.getSenderName());
@@ -292,6 +309,9 @@ class BookingServiceImpl implements BookingService {
         shipment.setBookedByUserId(UserIds.parse(userId));
 
         shipment = shipmentRepository.save(shipment);
+
+        // Fold this shipment into the parent order rollup (count + 1, total += this shipment's total).
+        orderService.addShipment(effectiveOrderId, quote.totalPricePaise());
 
         if (recordPayment && PaymentMode.PREPAID == req.getPaymentMode()) {
             PaymentTransaction payment = new PaymentTransaction();
@@ -371,6 +391,9 @@ class BookingServiceImpl implements BookingService {
 
         BookingResponse response = new BookingResponse();
         response.setShipmentRef(shipment.getShipmentRef());
+        // Echo the order ref for a single booking; on a cart item it stays null (the cart response
+        // carries the one shared order ref).
+        response.setOrderRef(createdOrder != null ? createdOrder.orderRef() : null);
         response.setCustomerType(customerType);
         response.setState(ShipmentState.BOOKED);
         response.setStateLabel(stateMapper.labelFor(ShipmentState.BOOKED));

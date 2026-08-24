@@ -11,6 +11,7 @@ public record CartCheckoutResponse(
         int booked,
         int failed,
         long chargedTotalPaise,
+        String orderRef,          // the single parent order all booked items belong to (null if none booked)
         String cartStatus,
         List<Result> results
 ) {

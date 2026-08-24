@@ -12,6 +12,8 @@ import java.util.Map;
 public class BookingResponse {
 
     private String shipmentRef;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String orderRef;                   // parent order (Order → N Shipments); null on cart items
     private CustomerType customerType;         // B2C, C2C, or B2B — what the booker actually is
     private ShipmentState state;               // machine-readable (BOOKED)
     private String stateLabel;                 // human-readable ("Order confirmed")
@@ -76,6 +78,9 @@ public class BookingResponse {
 
     public String getShipmentRef()                     { return shipmentRef; }
     public void setShipmentRef(String v)               { this.shipmentRef = v; }
+
+    public String getOrderRef()                        { return orderRef; }
+    public void setOrderRef(String v)                  { this.orderRef = v; }
 
     public CustomerType getCustomerType()              { return customerType; }
     public void setCustomerType(CustomerType v)        { this.customerType = v; }
