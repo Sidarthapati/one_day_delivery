@@ -8,6 +8,7 @@ import com.oneday.common.kafka.events.ShipmentCreatedEvent;
 import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.Shipment;
+import com.oneday.orders.repository.ParcelOrderRepository;
 import com.oneday.orders.repository.ShipmentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,10 +40,21 @@ public class ShipmentEventProducer {
 
     private final EventPublisher eventPublisher;
     private final ShipmentRepository shipmentRepository;
+    private final ParcelOrderRepository parcelOrderRepository;
 
-    ShipmentEventProducer(EventPublisher eventPublisher, ShipmentRepository shipmentRepository) {
+    ShipmentEventProducer(EventPublisher eventPublisher, ShipmentRepository shipmentRepository,
+                          ParcelOrderRepository parcelOrderRepository) {
         this.eventPublisher = eventPublisher;
         this.shipmentRepository = shipmentRepository;
+        this.parcelOrderRepository = parcelOrderRepository;
+    }
+
+    /** Resolve the display order ref for a parent order id (best-effort; null id or missing order → null). */
+    private String orderRefFor(UUID orderId) {
+        if (orderId == null) {
+            return null;
+        }
+        return parcelOrderRepository.findById(orderId).map(o -> o.getOrderRef()).orElse(null);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -68,6 +80,9 @@ public class ShipmentEventProducer {
                     event.setDestLat(s.getDestAddress().getLatitude());
                     event.setDestLon(s.getDestAddress().getLongitude());
                 }
+                // Carry the parent order so M5 can group same-order/same-location drops into one stop.
+                event.setOrderId(s.getOrderId());
+                event.setOrderRef(orderRefFor(s.getOrderId()));
             });
         }
 
@@ -119,6 +134,9 @@ public class ShipmentEventProducer {
         event.setReceiverAddressLine(s.getDestAddress() != null ? s.getDestAddress().getLine1() : null);
         event.setScheduledPickupStart(s.getScheduledPickupStart());
         event.setScheduledPickupEnd(s.getScheduledPickupEnd());
+        // Parent order (M4 Order → N shipments) so M5 groups same-order/same-location pickups into one stop.
+        event.setOrderId(s.getOrderId());
+        event.setOrderRef(orderRefFor(s.getOrderId()));
 
         log.debug("Publishing CREATED shipmentId={} ref={}", s.getId(), s.getShipmentRef());
         eventPublisher.publish(EventStreams.SHIPMENTS_EVENTS, event);

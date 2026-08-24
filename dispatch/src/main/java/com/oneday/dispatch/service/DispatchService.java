@@ -14,13 +14,19 @@ public interface DispatchService {
 
     /**
      * Assign a first-mile pickup. {@code originTileId} may be null (resolved from {@code lat/lon} via
-     * M3); {@code paymentMode} is stored for COD-aware handling and may be null.
+     * M3); {@code paymentMode} is stored for COD-aware handling and may be null. {@code orderId}/
+     * {@code orderRef} are the parent order (M4 Order → N shipments), denormalised onto the task so the
+     * DA app can group same-order/same-location tasks; both null for legacy/pre-Order shipments.
      */
     AssignmentResult assignPickup(UUID shipmentId, UUID cityId, double lat, double lon,
-                                  UUID originTileId, String paymentMode);
+                                  UUID originTileId, String paymentMode, UUID orderId, String orderRef);
 
-    /** Assign a last-mile delivery. {@code destTileId} may be null (resolved from {@code lat/lon}). */
-    AssignmentResult assignDelivery(UUID shipmentId, UUID cityId, double lat, double lon, UUID destTileId);
+    /**
+     * Assign a last-mile delivery. {@code destTileId} may be null (resolved from {@code lat/lon}).
+     * {@code orderId}/{@code orderRef} carry the parent order for stop grouping (both may be null).
+     */
+    AssignmentResult assignDelivery(UUID shipmentId, UUID cityId, double lat, double lon, UUID destTileId,
+                                    UUID orderId, String orderRef);
 
     /**
      * Cancel a shipment's active task and resequence the DA's queue. A QUEUED task is simply removed.

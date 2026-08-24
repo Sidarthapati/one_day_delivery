@@ -124,13 +124,15 @@ public class ShipmentEventsConsumer {
         // Scheduled / off-hours pickups wait out of the queue until ~60 min before their slot; the
         // release job then assigns them. Only assign now if the order is already due.
         if (scheduledPickupService.holdIfNotDue(shipmentId, loc.cityId(), tileId, lat, lon, paymentMode,
-                event.getScheduledPickupStart(), event.getScheduledPickupEnd())) {
+                event.getScheduledPickupStart(), event.getScheduledPickupEnd(),
+                event.getOrderId(), event.getOrderRef())) {
             log.debug("Shipment {} held for scheduled pickup (not yet due)", shipmentId);
             return;
         }
 
         AssignmentResult result = dispatchService.assignPickup(
-                shipmentId, loc.cityId(), lat, lon, tileId, paymentMode);
+                shipmentId, loc.cityId(), lat, lon, tileId, paymentMode,
+                event.getOrderId(), event.getOrderRef());
         log.debug("Pickup assignment for shipment {}: {}", shipmentId, result.outcome());
     }
 
@@ -165,7 +167,8 @@ public class ShipmentEventsConsumer {
             return;
         }
         UUID tileId = event.getDestTileId() != null ? event.getDestTileId() : loc.hexId();
-        AssignmentResult result = dispatchService.assignDelivery(shipmentId, loc.cityId(), lat, lon, tileId);
+        AssignmentResult result = dispatchService.assignDelivery(shipmentId, loc.cityId(), lat, lon, tileId,
+                event.getOrderId(), event.getOrderRef());
         log.debug("Delivery assignment for shipment {}: {}", shipmentId, result.outcome());
     }
 

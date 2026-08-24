@@ -27,6 +27,13 @@ public class DeferredDispatch extends MutableBaseEntity {
     @Column(name = "shipment_id", nullable = false, updatable = false)
     private UUID shipmentId;
 
+    // Parent order carried through the defer so a retried pickup still groups with its siblings (M4 Order → N).
+    @Column(name = "order_id", updatable = false)
+    private UUID orderId;
+
+    @Column(name = "order_ref", length = 30, updatable = false)
+    private String orderRef;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "task_type", nullable = false, updatable = false, length = 20)
     private TaskType taskType;

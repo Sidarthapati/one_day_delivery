@@ -10,10 +10,12 @@ public interface ScheduledPickupService {
      * Decide whether an incoming pickup should wait. If it has a future slot (or is an ASAP order booked
      * off-hours) a HELD row is created and {@code true} is returned; otherwise it is due now and
      * {@code false} is returned so the caller assigns immediately. {@code slotStart}/{@code slotEnd} are
-     * null for ASAP orders.
+     * null for ASAP orders. {@code orderId}/{@code orderRef} carry the parent order (M4 Order → N
+     * shipments) so a released bulk pickup still groups with its siblings; both may be null.
      */
     boolean holdIfNotDue(UUID shipmentId, UUID cityId, UUID tileId, double lat, double lon,
-                         String paymentMode, Instant slotStart, Instant slotEnd);
+                         String paymentMode, Instant slotStart, Instant slotEnd,
+                         UUID orderId, String orderRef);
 
     /** Cancel a live HELD hold for a shipment (it was cancelled while waiting). No-op if none. */
     void cancel(UUID shipmentId);

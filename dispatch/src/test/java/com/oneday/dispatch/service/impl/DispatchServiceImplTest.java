@@ -117,7 +117,7 @@ class DispatchServiceImplTest {
         feasibleAt(0);
         UUID shipment = UUID.randomUUID();
 
-        AssignmentResult r = service.assignPickup(shipment, city, 12.98, 77.62, tile, "PREPAID");
+        AssignmentResult r = service.assignPickup(shipment, city, 12.98, 77.62, tile, "PREPAID", null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.ASSIGNED);
         assertThat(r.daId()).isEqualTo(da);
@@ -132,7 +132,7 @@ class DispatchServiceImplTest {
         UUID idle = readyDa(0);
         feasibleAt(0);
 
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.daId()).isEqualTo(idle);
         assertThat(r.daId()).isNotEqualTo(busy);
@@ -147,7 +147,7 @@ class DispatchServiceImplTest {
         persistCron(da, CronAssignmentStatus.SCHEDULED, Instant.now().plus(3, ChronoUnit.HOURS));
 
         UUID shipment = UUID.randomUUID();
-        AssignmentResult r = service.assignPickup(shipment, city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(shipment, city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.queuePosition()).isEqualTo(1);
         List<DispatchQueue> queue = queueRepo.findByDaIdAndOperatingDateOrderByQueuePosition(da, today);
@@ -158,7 +158,7 @@ class DispatchServiceImplTest {
 
     @Test
     void defersWhenNoDaServesTile() {
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);
         assertThat(r.deferReason()).isEqualTo(com.oneday.dispatch.domain.DeferReason.NO_DA_AVAILABLE);
@@ -171,7 +171,7 @@ class DispatchServiceImplTest {
         daStatus.updateStatus(da, DaStatusEnum.CRON_LOCKED);
         persistCron(da, CronAssignmentStatus.SCHEDULED, Instant.now().plus(20, ChronoUnit.MINUTES));
 
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);
         assertThat(r.deferReason()).isEqualTo(com.oneday.dispatch.domain.DeferReason.CRON_LOCKED);
@@ -185,7 +185,7 @@ class DispatchServiceImplTest {
         when(feasibility.checkFeasibility(any()))
                 .thenReturn(new FeasibilityResult(false, 0, -100, 9999, false));
 
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);
         assertThat(r.deferReason()).isEqualTo(com.oneday.dispatch.domain.DeferReason.CRON_INFEASIBLE);
@@ -196,7 +196,7 @@ class DispatchServiceImplTest {
         UUID da = readyDa(0);
         persistCron(da, CronAssignmentStatus.COMPLETED, Instant.now().minus(1, ChronoUnit.HOURS));
 
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.ASSIGNED);   // no cron gate post-handoff
     }
@@ -207,8 +207,8 @@ class DispatchServiceImplTest {
         feasibleAt(0);
         UUID keep = UUID.randomUUID();
         UUID drop = UUID.randomUUID();
-        service.assignPickup(keep, city, 12.98, 77.62, tile, null);
-        service.assignPickup(drop, city, 12.99, 77.63, tile, null);
+        service.assignPickup(keep, city, 12.98, 77.62, tile, null, null, null);
+        service.assignPickup(drop, city, 12.99, 77.63, tile, null, null, null);
 
         service.cancelTask(drop, TaskType.PICKUP);
 
@@ -241,7 +241,7 @@ class DispatchServiceImplTest {
         feasibleAt(0);
         // first attempt: no DA serves the tile yet → deferred
         daStatus.setTerritory(da, List.of());   // withdraw territory
-        AssignmentResult deferred = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult deferred = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
         assertThat(deferred.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);
 
         // now the DA serves the tile → retry succeeds
@@ -270,7 +270,7 @@ class DispatchServiceImplTest {
         when(adjacent.candidates(eq(city), eq(tile), any()))
                 .thenReturn(List.of(new AdjacentDaProvider.Candidate(neighbourDa, neighbourTile)));
 
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.CROSS_TERRITORY_ASSIGNED);
         assertThat(r.daId()).isEqualTo(neighbourDa);
@@ -285,7 +285,7 @@ class DispatchServiceImplTest {
         when(feasibility.checkFeasibility(any())).thenReturn(new FeasibilityResult(false, 0, -1, 1, false));
         when(loadScore.getLoadScore(any(), any())).thenThrow(new RuntimeException("M3 down"));
 
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);   // skipped spill-over, didn't blow up
         assertThat(r.deferReason()).isEqualTo(com.oneday.dispatch.domain.DeferReason.CRON_INFEASIBLE);
@@ -299,7 +299,7 @@ class DispatchServiceImplTest {
         when(feasibility.checkFeasibility(any())).thenReturn(new FeasibilityResult(false, 0, -1, 1, false));
         when(loadScore.getLoadScore(eq(tile), any())).thenReturn(score(tile, 0.5));   // NOT overloaded
 
-        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null);
+        AssignmentResult r = service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null);
 
         assertThat(r.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);
     }
@@ -314,7 +314,7 @@ class DispatchServiceImplTest {
         try {
             List<Callable<AssignmentResult>> jobs = IntStream.range(0, n)
                     .mapToObj(i -> (Callable<AssignmentResult>) () ->
-                            service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null))
+                            service.assignPickup(UUID.randomUUID(), city, 12.98, 77.62, tile, null, null, null))
                     .toList();
             List<Future<AssignmentResult>> done = pool.invokeAll(jobs);
             for (Future<AssignmentResult> f : done) {

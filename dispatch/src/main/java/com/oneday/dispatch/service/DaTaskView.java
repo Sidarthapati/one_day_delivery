@@ -22,6 +22,8 @@ public record DaTaskView(
         UUID taskId,
         UUID shipmentId,
         String shipmentRef,
+        UUID orderId,
+        String orderRef,
         TaskType taskType,
         TaskStatus status,
         int queuePosition,
@@ -41,7 +43,8 @@ public record DaTaskView(
     }
 
     public static DaTaskView of(DispatchQueue row, String shipmentRef) {
-        return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef, row.getTaskType(),
+        return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef,
+                row.getOrderId(), row.getOrderRef(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
                 null, null, null, null, row.isPickedUp());
@@ -54,7 +57,8 @@ public record DaTaskView(
         String phone = c == null ? null : pickup ? c.senderPhone() : c.receiverPhone();
         String addr = c == null ? null : pickup ? c.originAddress() : c.destAddress();
         Long cod = c == null ? null : c.codAmountPaise();
-        return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef, row.getTaskType(),
+        return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef,
+                row.getOrderId(), row.getOrderRef(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
                 name, phone, addr, cod, row.isPickedUp());

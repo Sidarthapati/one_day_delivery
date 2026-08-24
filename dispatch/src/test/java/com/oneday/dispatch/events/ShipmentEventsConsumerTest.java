@@ -46,6 +46,8 @@ class ShipmentEventsConsumerTest {
     private final UUID cityId = UUID.randomUUID();
     private final UUID tileId = UUID.randomUUID();
     private final UUID hexFromCoords = UUID.randomUUID();
+    private final UUID orderId = UUID.randomUUID();
+    private final String orderRef = "1DD-ORD-BLR-20260824-00001";
 
     @BeforeEach
     void setUp() {
@@ -59,7 +61,7 @@ class ShipmentEventsConsumerTest {
                 .thenReturn(Optional.empty());
         lenient().when(gridService.serviceableAt(anyDouble(), anyDouble()))
                 .thenReturn(new ServiceableAtResponse(true, "bengaluru", cityId, hexFromCoords, "h3idx"));
-        lenient().when(dispatchService.assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any()))
+        lenient().when(dispatchService.assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any(), any(), any()))
                 .thenReturn(AssignmentResult.assigned(UUID.randomUUID(), 0));
     }
 
@@ -68,19 +70,34 @@ class ShipmentEventsConsumerTest {
         UUID shipment = UUID.randomUUID();
         consumer.onShipmentEvent(created(shipment, PickupType.DA_PICKUP, 12.97, 77.61, tileId, PaymentMode.PREPAID));
 
-        verify(dispatchService).assignPickup(eq(shipment), eq(cityId), eq(12.97), eq(77.61), eq(tileId), eq("PREPAID"));
+        // The parent order (orderId/orderRef) rides through to the assignment so the DA app can group stops.
+        verify(dispatchService).assignPickup(eq(shipment), eq(cityId), eq(12.97), eq(77.61), eq(tileId),
+                eq("PREPAID"), eq(orderId), eq(orderRef));
     }
 
     @Test
     void scheduledPickupIsHeldNotAssigned() {
         UUID shipment = UUID.randomUUID();
         // The hold service parks it (not yet due) → the consumer must NOT assign.
-        when(scheduledPickupService.holdIfNotDue(eq(shipment), any(), any(), anyDouble(), anyDouble(), any(), any(), any()))
+        when(scheduledPickupService.holdIfNotDue(eq(shipment), any(), any(), anyDouble(), anyDouble(), any(), any(), any(), any(), any()))
                 .thenReturn(true);
 
         consumer.onShipmentEvent(created(shipment, PickupType.DA_PICKUP, 12.97, 77.61, tileId, PaymentMode.PREPAID));
 
-        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any());
+        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any(), any(), any());
+    }
+
+    @Test
+    void scheduledPickupHoldReceivesParentOrder() {
+        UUID shipment = UUID.randomUUID();
+        when(scheduledPickupService.holdIfNotDue(any(), any(), any(), anyDouble(), anyDouble(), any(), any(), any(), any(), any()))
+                .thenReturn(true);
+
+        consumer.onShipmentEvent(created(shipment, PickupType.DA_PICKUP, 12.97, 77.61, tileId, PaymentMode.PREPAID));
+
+        // A held bulk pickup must carry its order so it still groups with its siblings on release.
+        verify(scheduledPickupService).holdIfNotDue(eq(shipment), eq(cityId), eq(tileId), eq(12.97), eq(77.61),
+                eq("PREPAID"), any(), any(), eq(orderId), eq(orderRef));
     }
 
     @Test
@@ -97,13 +114,13 @@ class ShipmentEventsConsumerTest {
 
         consumer.onShipmentEvent(created(shipment, PickupType.DA_PICKUP, 12.97, 77.61, tileId, PaymentMode.PREPAID));
 
-        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any());
+        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any(), any(), any());
     }
 
     @Test
     void missingCoordinatesAreNotAssigned() {
         consumer.onShipmentEvent(created(UUID.randomUUID(), PickupType.DA_PICKUP, null, null, tileId, PaymentMode.COD));
-        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any());
+        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any(), any(), any());
     }
 
     @Test
@@ -113,7 +130,7 @@ class ShipmentEventsConsumerTest {
 
         consumer.onShipmentEvent(created(UUID.randomUUID(), PickupType.DA_PICKUP, 0.0, 0.0, tileId, PaymentMode.PREPAID));
 
-        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any());
+        verify(dispatchService, never()).assignPickup(any(), any(), anyDouble(), anyDouble(), any(), any(), any(), any());
     }
 
     @Test
@@ -121,7 +138,8 @@ class ShipmentEventsConsumerTest {
         UUID shipment = UUID.randomUUID();
         consumer.onShipmentEvent(created(shipment, PickupType.DA_PICKUP, 12.97, 77.61, null, PaymentMode.PREPAID));
 
-        verify(dispatchService).assignPickup(eq(shipment), eq(cityId), eq(12.97), eq(77.61), eq(hexFromCoords), eq("PREPAID"));
+        verify(dispatchService).assignPickup(eq(shipment), eq(cityId), eq(12.97), eq(77.61), eq(hexFromCoords),
+                eq("PREPAID"), eq(orderId), eq(orderRef));
     }
 
     @Test
@@ -157,7 +175,7 @@ class ShipmentEventsConsumerTest {
 
         consumer.onShipmentEvent(e);
 
-        verify(dispatchService, never()).assignDelivery(any(), any(), anyDouble(), anyDouble(), any());
+        verify(dispatchService, never()).assignDelivery(any(), any(), anyDouble(), anyDouble(), any(), any(), any());
     }
 
     private ShipmentCancelledEvent cancelled(UUID shipmentId, ShipmentState at) {
@@ -178,6 +196,8 @@ class ShipmentEventsConsumerTest {
         e.setOriginLon(lon);
         e.setOriginTileId(originTileId);
         e.setPaymentMode(paymentMode);
+        e.setOrderId(orderId);
+        e.setOrderRef(orderRef);
         return e;
     }
 }
