@@ -10,10 +10,12 @@ import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DaDetailResponse.DaTaskItem;
 import com.oneday.dispatch.dto.response.DaDetailResponse.DayStops;
+import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats.DaPace;
 import com.oneday.dispatch.repository.DaDayStopsRow;
 import com.oneday.dispatch.repository.DaPaceRow;
+import com.oneday.dispatch.repository.DaScorecardRow;
 import com.oneday.dispatch.repository.DeliveryOutcome;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaStatusService;
@@ -127,6 +129,36 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
         Instant from = date.atStartOfDay(IST).toInstant();
         Instant to = date.plusDays(1).atStartOfDay(IST).toInstant();
         return daStatus.listTrack(daId, from, to);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaScorecard> scorecards(LocalDate date, UUID scopeCityId) {
+        // For a past date, stops/hr must measure that day's shift, not every hour since — cap the clock
+        // at the end of the operating date (IST); for today, that end is in the future, so `now` wins.
+        Instant dayEnd = date.plusDays(1).atStartOfDay(IST).toInstant();
+        Instant now = Instant.now();
+        Instant cutoff = now.isBefore(dayEnd) ? now : dayEnd;
+        List<DaScorecardRow> rows = queueRepository.scorecardByDa(scopeCityId, date);
+        Map<UUID, DaContact> contacts = daDirectory.contactsFor(rows.stream().map(DaScorecardRow::getDaId).toList());
+        return rows.stream()
+                .map(r -> toScorecard(r, cutoff, contacts.get(r.getDaId())))
+                // busiest first: most stops done, then most still pending
+                .sorted(Comparator.comparingLong(DaScorecard::stopsDone).reversed()
+                        .thenComparing(Comparator.comparingLong(DaScorecard::stopsPending).reversed()))
+                .toList();
+    }
+
+    private static DaScorecard toScorecard(DaScorecardRow r, Instant now, DaContact contact) {
+        long attempts = r.getDone() + r.getFailed();
+        Double attemptSuccess = attempts == 0 ? null : (double) r.getDone() / attempts;
+        Double onTime = r.getDone() == 0 ? null : (double) r.getOnTime() / r.getDone();
+        return new DaScorecard(r.getDaId(),
+                contact != null ? contact.name() : null,
+                contact != null ? contact.phone() : null,
+                r.getDone(), r.getFailed(), r.getPending(),
+                avgPerHour(r.getDone(), r.getFirstAssigned(), now),
+                attemptSuccess, onTime);
     }
 
     /**
