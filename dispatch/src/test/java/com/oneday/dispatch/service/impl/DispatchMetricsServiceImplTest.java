@@ -47,6 +47,16 @@ class DispatchMetricsServiceImplTest {
         @Override public Instant getFirstAssigned() { return firstAssigned; }
     }
 
+    private record Score(UUID daId, long done, long failed, long onTime, long pending, Instant firstAssigned)
+            implements com.oneday.dispatch.repository.DaScorecardRow {
+        @Override public UUID getDaId() { return daId; }
+        @Override public long getDone() { return done; }
+        @Override public long getFailed() { return failed; }
+        @Override public long getOnTime() { return onTime; }
+        @Override public long getPending() { return pending; }
+        @Override public Instant getFirstAssigned() { return firstAssigned; }
+    }
+
     private record Day(LocalDate day, long done, long failed)
             implements com.oneday.dispatch.repository.DaDayStopsRow {
         @Override public LocalDate getDay() { return day; }
@@ -166,5 +176,49 @@ class DispatchMetricsServiceImplTest {
                 new Pace(UUID.randomUUID(), 1, 1, 3, now.minus(60, ChronoUnit.SECONDS)))); // <6min
 
         assertThat(svc.execution(date, null).das().get(0).avgPerHour()).isEqualTo(0.0);
+    }
+
+    @Test
+    void scorecardsComputeSuccessOnTimeAndSortBusiestFirst() {
+        Instant now = Instant.now();
+        // stops/hr is clock-bounded at the IST end of the operating day, so "today" must be today in
+        // IST for that end to still be in the future (else a UTC-evening CI run clamps the 4h window).
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
+        UUID busy = UUID.randomUUID(), idle = UUID.randomUUID();
+        when(repo.scorecardByDa(null, today)).thenReturn(List.of(
+                // 8 done / 2 failed → success 0.8; 6 on-time of 8 → 0.75; 8 stops over 4h → 2/hr
+                new Score(busy, 8, 2, 6, 1, now.minus(4, ChronoUnit.HOURS)),
+                // no attempts → both pcts null (not 0), stays visible
+                new Score(idle, 0, 0, 0, 3, now.minus(1, ChronoUnit.HOURS))));
+        when(directory.contactsFor(List.of(busy, idle)))
+                .thenReturn(Map.of(busy, new DaContact("Ravi", "+9111")));
+
+        List<com.oneday.dispatch.dto.response.DaScorecard> cards = svc.scorecards(today, null);
+
+        assertThat(cards).hasSize(2);
+        assertThat(cards.get(0).daId()).isEqualTo(busy);              // most done sorts first
+        assertThat(cards.get(0).daName()).isEqualTo("Ravi");
+        assertThat(cards.get(0).attemptSuccessPct()).isEqualTo(0.8);
+        assertThat(cards.get(0).onTimePct()).isEqualTo(0.75);
+        assertThat(cards.get(0).stopsPerHour()).isCloseTo(2.0, within(0.05));
+        assertThat(cards.get(1).attemptSuccessPct()).isNull();        // no attempts → null, not 0
+        assertThat(cards.get(1).onTimePct()).isNull();
+    }
+
+    @Test
+    void scorecardsBoundStopsPerHourToPastOperatingDate() {
+        java.time.ZoneId ist = java.time.ZoneId.of("Asia/Kolkata");
+        LocalDate pastDate = LocalDate.now(ist).minusDays(2);
+        UUID da = UUID.randomUUID();
+        // 8 stops, first assigned 09:00 IST on that past date → clock caps at that day's 00:00 next-day
+        // (~15h), so ~0.53/hr; a now-based clock (2 days later) would read ~0.15/hr.
+        Instant firstAssigned = pastDate.atStartOfDay(ist).plusHours(9).toInstant();
+        when(repo.scorecardByDa(null, pastDate)).thenReturn(List.of(new Score(da, 8, 0, 8, 0, firstAssigned)));
+        when(directory.contactsFor(List.of(da))).thenReturn(Map.of());
+
+        double perHour = svc.scorecards(pastDate, null).get(0).stopsPerHour();
+
+        assertThat(perHour).isGreaterThan(0.4);            // day-bounded, not spread across 2 days
+        assertThat(perHour).isCloseTo(8.0 / 15.0, within(0.05));
     }
 }

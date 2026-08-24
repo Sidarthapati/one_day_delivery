@@ -1,9 +1,11 @@
 package com.oneday.dispatch.service;
 
 import com.oneday.dispatch.dto.response.DaDetailResponse;
+import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -22,4 +24,10 @@ public interface DispatchMetricsService {
      * {@code date} (else 404) and only that city's tasks/history are returned.
      */
     DaDetailResponse daDetail(UUID daId, LocalDate date, UUID scopeCityId);
+
+    /**
+     * Per-DA delivery scorecards for a date: stops, stops/hr, attempt-success % and on-time %, most-active
+     * first. {@code scopeCityId} null → all cities (ADMIN); otherwise restrict to that city.
+     */
+    List<DaScorecard> scorecards(LocalDate date, UUID scopeCityId);
 }

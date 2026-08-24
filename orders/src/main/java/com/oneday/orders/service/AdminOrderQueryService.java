@@ -1,7 +1,10 @@
 package com.oneday.orders.service;
 
 import com.oneday.orders.dto.ShipmentPageResponse;
+import com.oneday.orders.dto.ShipmentSummaryResponse;
 import com.oneday.orders.dto.ShipmentTimelineResponse;
+
+import java.util.List;
 
 /**
  * Read-only orders-database access for ADMIN tooling. Lists shipments across all customers
@@ -20,6 +23,13 @@ public interface AdminOrderQueryService {
      * @return a page of shipment summaries, newest first
      */
     ShipmentPageResponse listShipments(String stateFilter, String cityScope, int page, int size);
+
+    /**
+     * Every shipment matching the same {@code stateFilter} + {@code cityScope} as {@link #listShipments},
+     * newest first, without the page cap — backs the ops "export all matching" CSV. Bounded by a hard
+     * safety ceiling in the implementation.
+     */
+    List<ShipmentSummaryResponse> exportShipments(String stateFilter, String cityScope);
 
     /**
      * One parcel's full ops timeline by human ref: header + M4 state history merged with the M8 scan

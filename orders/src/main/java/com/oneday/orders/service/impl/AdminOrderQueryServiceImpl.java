@@ -17,6 +17,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -34,6 +35,10 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
 
     private static final int MAX_PAGE_SIZE = 200;
+    // ponytail: export pages 500 at a time and stops at 50k rows — a pilot city-day is well under this;
+    // raise the cap (or switch to a true streaming response) if a single export ever needs more.
+    private static final int EXPORT_PAGE_SIZE = 500;
+    private static final int EXPORT_MAX_ROWS = 50_000;
 
     private final ShipmentRepository shipmentRepository;
     private final ShipmentStateHistoryRepository stateHistoryRepository;
@@ -52,21 +57,12 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
     public ShipmentPageResponse listShipments(String stateFilter, String cityScope, int page, int size) {
         int safePage = Math.max(0, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
-        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
 
         ShipmentState state = (stateFilter == null || stateFilter.isBlank())
                 ? null : parseState(stateFilter);
 
-        Page<Shipment> result;
-        if (cityScope == null) {                       // admin oversight — all cities
-            result = (state == null)
-                    ? shipmentRepository.findAll(pageable)
-                    : shipmentRepository.findByState(state, pageable);
-        } else {                                       // station manager — only their city's legs
-            result = (state == null)
-                    ? shipmentRepository.findByCityInvolved(cityScope, pageable)
-                    : shipmentRepository.findByCityInvolvedAndState(cityScope, state, pageable);
-        }
+        Page<Shipment> result = fetchPage(state, cityScope, pageable);
 
         return new ShipmentPageResponse(
                 result.map(s -> toSummary(s, cityScope)).getContent(),
@@ -74,6 +70,27 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
                 result.getSize(),
                 result.getTotalElements(),
                 result.getTotalPages());
+    }
+
+    @Override
+    // REPEATABLE_READ gives the whole paged export one stable snapshot, so shipments booked or
+    // transitioning state between the per-page OFFSET queries can't duplicate or drop rows (the id
+    // tiebreaker only orders within a single query's snapshot). Read-only + short-lived, so cheap.
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public java.util.List<ShipmentSummaryResponse> exportShipments(String stateFilter, String cityScope) {
+        ShipmentState state = (stateFilter == null || stateFilter.isBlank())
+                ? null : parseState(stateFilter);
+
+        java.util.List<ShipmentSummaryResponse> out = new java.util.ArrayList<>();
+        for (int page = 0; out.size() < EXPORT_MAX_ROWS; page++) {
+            Pageable pageable = PageRequest.of(page, EXPORT_PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
+            Page<Shipment> batch = fetchPage(state, cityScope, pageable);
+            batch.forEach(s -> out.add(toSummary(s, cityScope)));
+            if (!batch.hasNext()) {
+                break;
+            }
+        }
+        return out;
     }
 
     @Override
@@ -107,6 +124,18 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
                 s.getOriginCity(), s.getDestCity(), s.getSenderName(), s.getReceiverName(),
                 s.getChargeableWeightGrams(), s.getEtaPromised(), s.getLastScanAt(), s.getCreatedAt(),
                 events);
+    }
+
+    private Page<Shipment> fetchPage(ShipmentState state, String cityScope, Pageable pageable) {
+        if (cityScope == null) {                       // admin oversight — all cities
+            return (state == null)
+                    ? shipmentRepository.findAll(pageable)
+                    : shipmentRepository.findByState(state, pageable);
+        }
+        // station manager — only their city's legs (origin OR dest)
+        return (state == null)
+                ? shipmentRepository.findByCityInvolved(cityScope, pageable)
+                : shipmentRepository.findByCityInvolvedAndState(cityScope, state, pageable);
     }
 
     private static ShipmentState parseState(String stateFilter) {
