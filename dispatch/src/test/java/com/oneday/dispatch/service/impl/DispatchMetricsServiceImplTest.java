@@ -181,8 +181,11 @@ class DispatchMetricsServiceImplTest {
     @Test
     void scorecardsComputeSuccessOnTimeAndSortBusiestFirst() {
         Instant now = Instant.now();
+        // stops/hr is clock-bounded at the IST end of the operating day, so "today" must be today in
+        // IST for that end to still be in the future (else a UTC-evening CI run clamps the 4h window).
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
         UUID busy = UUID.randomUUID(), idle = UUID.randomUUID();
-        when(repo.scorecardByDa(null, date)).thenReturn(List.of(
+        when(repo.scorecardByDa(null, today)).thenReturn(List.of(
                 // 8 done / 2 failed → success 0.8; 6 on-time of 8 → 0.75; 8 stops over 4h → 2/hr
                 new Score(busy, 8, 2, 6, 1, now.minus(4, ChronoUnit.HOURS)),
                 // no attempts → both pcts null (not 0), stays visible
@@ -190,7 +193,7 @@ class DispatchMetricsServiceImplTest {
         when(directory.contactsFor(List.of(busy, idle)))
                 .thenReturn(Map.of(busy, new DaContact("Ravi", "+9111")));
 
-        List<com.oneday.dispatch.dto.response.DaScorecard> cards = svc.scorecards(date, null);
+        List<com.oneday.dispatch.dto.response.DaScorecard> cards = svc.scorecards(today, null);
 
         assertThat(cards).hasSize(2);
         assertThat(cards.get(0).daId()).isEqualTo(busy);              // most done sorts first
