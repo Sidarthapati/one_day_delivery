@@ -2,6 +2,7 @@ package com.oneday.orders.service;
 
 import com.oneday.orders.dto.ShipmentPageResponse;
 import com.oneday.orders.dto.ShipmentSummaryResponse;
+import com.oneday.orders.dto.ShipmentTimelineResponse;
 
 import java.util.List;
 
@@ -29,4 +30,12 @@ public interface AdminOrderQueryService {
      * safety ceiling in the implementation.
      */
     List<ShipmentSummaryResponse> exportShipments(String stateFilter, String cityScope);
+
+    /**
+     * One parcel's full ops timeline by human ref: header + M4 state history merged with the M8 scan
+     * trail, oldest first. {@code cityScope} null → any city (ADMIN); otherwise the shipment must touch
+     * that city (origin or destination) or it 404s — the same read rule as {@link #listShipments}.
+     * An unknown ref 404s.
+     */
+    ShipmentTimelineResponse timeline(String shipmentRef, String cityScope);
 }
