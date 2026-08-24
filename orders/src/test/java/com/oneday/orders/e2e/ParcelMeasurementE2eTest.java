@@ -1,15 +1,12 @@
 package com.oneday.orders.e2e;
 
 import com.oneday.common.domain.enums.PaymentMode;
-import com.oneday.common.port.ObjectStoragePort;
 import com.oneday.orders.domain.ParcelMeasurement;
 import com.oneday.orders.repository.ParcelMeasurementRepository;
-import com.oneday.vision.DimensionEngine;
 import com.oneday.vision.MeasurementResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
 
 import java.util.List;
 import java.util.Map;
@@ -33,19 +30,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 class ParcelMeasurementE2eTest extends OrdersE2eSupport {
 
-    @MockBean protected ObjectStoragePort storage;
-    @MockBean protected DimensionEngine engine;
+    // objectStoragePort + dimensionEngine are inherited @MockBeans from OrdersE2eSupport (declared
+    // once there so every e2e context boots); this test stubs them for the measurement flow.
     @Autowired protected ParcelMeasurementRepository measurementRepository;
 
     @BeforeEach
     void storageAndEngineStubs() {
-        lenient().when(storage.isAvailable()).thenReturn(true);
-        lenient().when(storage.presignPut(anyString(), anyString(), any())).thenReturn("https://r2.example/put");
-        lenient().when(storage.presignGet(anyString(), any())).thenReturn("https://r2.example/get");
-        lenient().when(storage.exists(anyString())).thenReturn(true);
-        lenient().when(storage.size(anyString())).thenReturn(1_000L);
-        lenient().when(storage.getBytes(anyString())).thenReturn(new byte[]{1, 2, 3});
-        lenient().when(engine.isAvailable()).thenReturn(true);
+        lenient().when(objectStoragePort.isAvailable()).thenReturn(true);
+        lenient().when(objectStoragePort.presignPut(anyString(), anyString(), any())).thenReturn("https://r2.example/put");
+        lenient().when(objectStoragePort.presignGet(anyString(), any())).thenReturn("https://r2.example/get");
+        lenient().when(objectStoragePort.exists(anyString())).thenReturn(true);
+        lenient().when(objectStoragePort.size(anyString())).thenReturn(1_000L);
+        lenient().when(objectStoragePort.getBytes(anyString())).thenReturn(new byte[]{1, 2, 3});
+        lenient().when(dimensionEngine.isAvailable()).thenReturn(true);
     }
 
     private String daToken() {
@@ -71,7 +68,7 @@ class ParcelMeasurementE2eTest extends OrdersE2eSupport {
         String ref = bookB2c(custToken, PaymentMode.PREPAID);   // declared 20x15x10 (3000 cm³)
 
         // Measured 40x30x25 (30000 cm³) — grossly over-declared.
-        when(engine.measure(any())).thenReturn(MeasurementResult.ok(40.0, 30.0, 25.0, 0.9, "top+side"));
+        when(dimensionEngine.measure(any())).thenReturn(MeasurementResult.ok(40.0, 30.0, 25.0, 0.9, "top+side"));
 
         String body = json.writeValueAsString(Map.of("captures", List.of(
                 Map.of("object_key", key(ref, "top"), "view", "TOP"),
@@ -103,7 +100,7 @@ class ParcelMeasurementE2eTest extends OrdersE2eSupport {
         String custToken = tokenFor("C2C_CUSTOMER", randomUserId());
         String ref = bookB2c(custToken, PaymentMode.PREPAID);   // declared 20x15x10
 
-        when(engine.measure(any())).thenReturn(MeasurementResult.ok(20.5, 15.0, 10.0, 0.9, "top+side"));
+        when(dimensionEngine.measure(any())).thenReturn(MeasurementResult.ok(20.5, 15.0, 10.0, 0.9, "top+side"));
 
         String body = json.writeValueAsString(Map.of("captures", List.of(
                 Map.of("object_key", key(ref, "top"), "view", "TOP"))));
@@ -119,7 +116,7 @@ class ParcelMeasurementE2eTest extends OrdersE2eSupport {
     void degradesWhenEngineUnavailableButStillRecords() throws Exception {
         String custToken = tokenFor("C2C_CUSTOMER", randomUserId());
         String ref = bookB2c(custToken, PaymentMode.PREPAID);
-        when(engine.isAvailable()).thenReturn(false);   // CV offline
+        when(dimensionEngine.isAvailable()).thenReturn(false);   // CV offline
 
         String body = json.writeValueAsString(Map.of("captures", List.of(
                 Map.of("object_key", key(ref, "top"), "view", "TOP"))));
@@ -175,7 +172,7 @@ class ParcelMeasurementE2eTest extends OrdersE2eSupport {
     void oversizedEvidenceIsRejectedNotBuffered() throws Exception {
         String custToken = tokenFor("C2C_CUSTOMER", randomUserId());
         String ref = bookB2c(custToken, PaymentMode.PREPAID);
-        when(storage.size(anyString())).thenReturn(50L * 1024 * 1024);   // 50MB, over the 15MB cap
+        when(objectStoragePort.size(anyString())).thenReturn(50L * 1024 * 1024);   // 50MB, over the 15MB cap
 
         String body = json.writeValueAsString(Map.of("captures", List.of(
                 Map.of("object_key", key(ref, "top"), "view", "TOP"))));
@@ -185,7 +182,7 @@ class ParcelMeasurementE2eTest extends OrdersE2eSupport {
                         .contentType("application/json").content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ok").value(false));   // not measured; oversized object never buffered
-        verify(storage, never()).getBytes(anyString());
+        verify(objectStoragePort, never()).getBytes(anyString());
     }
 
     private static String key(String ref, String tag) {

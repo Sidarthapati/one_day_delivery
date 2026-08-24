@@ -11,9 +11,12 @@ import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.PickupType;
 import com.oneday.common.kafka.EventPublisher;
 import com.oneday.common.port.EtaPort;
+import com.oneday.common.port.ObjectStoragePort;
 import com.oneday.common.port.PickupAssignmentPort;
 import com.oneday.common.port.PricingPort;
 import com.oneday.common.port.ServiceabilityPort;
+import com.oneday.common.port.ShipmentScanTrailPort;
+import com.oneday.vision.DimensionEngine;
 import com.oneday.common.port.dto.EtaResult;
 import com.oneday.common.port.dto.QuoteResult;
 import com.oneday.common.port.dto.ServiceabilityResult;
@@ -87,6 +90,13 @@ abstract class OrdersE2eSupport {
     @MockBean protected EventPublisher eventPublisher;
     // Implemented in dispatch (off the orders test classpath) — mock so the context boots.
     @MockBean protected PickupAssignmentPort pickupAssignmentPort;
+    // Implemented in barcode/M8 (off the orders test classpath) — mock so the context boots.
+    @MockBean protected ShipmentScanTrailPort shipmentScanTrailPort;
+    // Implemented in the vision module (off the orders test classpath) — mock so the context boots.
+    // ParcelMeasurementServiceImpl (wired into MyShipmentsController) depends on both; measurement
+    // tests stub them, everyone else just needs the beans present.
+    @MockBean protected ObjectStoragePort objectStoragePort;
+    @MockBean protected DimensionEngine dimensionEngine;
 
     /** Default happy-path stubs for the external ports; individual tests override as needed. */
     @BeforeEach
@@ -104,6 +114,8 @@ abstract class OrdersE2eSupport {
         lenient().when(paymentPort.initiateRefund(anyString(), anyLong())).thenReturn("rfnd_test_1");
         // Pickup assignment: the DA is assigned by default; measurement-auth tests override.
         lenient().when(pickupAssignmentPort.isActivePickupDa(any(), any())).thenReturn(true);
+        // M8 scan trail: empty by default (no scans in the orders test context).
+        lenient().when(shipmentScanTrailPort.trailFor(any())).thenReturn(java.util.List.of());
     }
 
     // ── Auth helpers ────────────────────────────────────────────────────────
