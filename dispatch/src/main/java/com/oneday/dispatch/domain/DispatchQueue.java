@@ -35,6 +35,15 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "shipment_id", nullable = false, updatable = false)
     private UUID shipmentId;
 
+    // Parent order (M4 Order → N shipments), denormalised at assignment. Nullable for legacy/pre-Order
+    // tasks. Lets the DA app collapse same-order tasks at one location into a single stop. order_ref is
+    // display-only. Immutable once assigned, like shipmentId.
+    @Column(name = "order_id", updatable = false)
+    private UUID orderId;
+
+    @Column(name = "order_ref", length = 30, updatable = false)
+    private String orderRef;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "task_type", nullable = false, updatable = false, length = 20)
     private TaskType taskType;

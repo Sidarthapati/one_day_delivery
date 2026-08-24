@@ -84,8 +84,11 @@ public class HubDeliveryFeedConsumer {
                     e.parcelId(), e.destinationHexId(), e.validDate());
             return;
         }
+        // Order grouping: the hub event carries no parent order, so HUB_RETURN deliveries assign with a
+        // null order (rendered as singleton stops). The primary VAN_MEETING delivery path groups via the
+        // HANDED_TO_DROP_VAN event; enrich ParcelSortedForDeliveryEvent with the order to group these too.
         AssignmentResult result = dispatchService.assignDelivery(
-                e.parcelId(), e.cityId(), coords[0], coords[1], e.destinationHexId());
+                e.parcelId(), e.cityId(), coords[0], coords[1], e.destinationHexId(), null, null);
         log.debug("HUB_RETURN delivery assignment for parcel {}: {}", e.parcelId(), result.outcome());
     }
 

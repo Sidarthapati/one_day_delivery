@@ -48,4 +48,10 @@ public class ShipmentCreatedEvent extends BaseShipmentEvent {
     // Scheduled pickup window (null = ASAP). M5 holds the order until ~60 min before the start.
     private Instant scheduledPickupStart;
     private Instant scheduledPickupEnd;
+
+    // Order grouping (M4 Order → N shipments): the parent order this shipment belongs to. Carried so M5
+    // denormalises it onto dispatch_queue and the DA app can collapse same-order/same-location tasks into
+    // one stop. Null on legacy shipments booked before the Order abstraction.
+    private UUID orderId;
+    private String orderRef;
 }

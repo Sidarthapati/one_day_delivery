@@ -95,6 +95,32 @@ class DaTaskServiceImplTest {
     }
 
     @Test
+    void listTasksSurfacesParentOrder() {
+        // The denormalised order (id + ref) persists on the task and flows onto DaTaskView so the DA app
+        // can collapse same-order/same-location tasks into one stop. V5_13 adds the columns.
+        UUID orderId = UUID.randomUUID();
+        DispatchQueue d = new DispatchQueue();   // order_id is updatable=false → set before first insert
+        d.setDaId(da);
+        d.setCityId(city);
+        d.setShipmentId(UUID.randomUUID());
+        d.setOrderId(orderId);
+        d.setOrderRef("1DD-ORD-BLR-20260824-00001");
+        d.setTaskType(TaskType.PICKUP);
+        d.setTaskLat(12.97);
+        d.setTaskLon(77.61);
+        d.setTileId(tile);
+        d.setQueuePosition(0);
+        d.setStatus(TaskStatus.QUEUED);
+        d.setCronSafe(true);
+        d.setOperatingDate(today);
+        queueRepo.saveAndFlush(d);
+
+        DaTaskView v = service.listTasks(da, today).get(0);
+        assertThat(v.orderId()).isEqualTo(orderId);
+        assertThat(v.orderRef()).isEqualTo("1DD-ORD-BLR-20260824-00001");
+    }
+
+    @Test
     void enRouteOnWrongStatusIs409() {
         DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.IN_PROGRESS);
         assertThatThrownBy(() -> service.markEnRoute(da, task.getId()))

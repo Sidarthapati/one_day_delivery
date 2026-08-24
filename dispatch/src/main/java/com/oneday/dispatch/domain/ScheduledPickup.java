@@ -26,6 +26,13 @@ public class ScheduledPickup extends MutableBaseEntity {
     @Column(name = "shipment_id", nullable = false, updatable = false)
     private UUID shipmentId;
 
+    // Parent order carried through the hold so the released pickup groups with its siblings (M4 Order → N).
+    @Column(name = "order_id", updatable = false)
+    private UUID orderId;
+
+    @Column(name = "order_ref", length = 30, updatable = false)
+    private String orderRef;
+
     @Column(name = "city_id", nullable = false, updatable = false)
     private UUID cityId;
 

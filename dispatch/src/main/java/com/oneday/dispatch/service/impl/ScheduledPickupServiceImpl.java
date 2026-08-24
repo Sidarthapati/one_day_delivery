@@ -37,7 +37,8 @@ class ScheduledPickupServiceImpl implements ScheduledPickupService {
     @Override
     @Transactional
     public boolean holdIfNotDue(UUID shipmentId, UUID cityId, UUID tileId, double lat, double lon,
-                                String paymentMode, Instant slotStart, Instant slotEnd) {
+                                String paymentMode, Instant slotStart, Instant slotEnd,
+                                UUID orderId, String orderRef) {
         Instant now = Instant.now();
         Instant releaseAt = slotStart != null
                 ? slotStart.minus(props.getPickup().getReleaseLeadMinutes(), ChronoUnit.MINUTES)
@@ -52,6 +53,8 @@ class ScheduledPickupServiceImpl implements ScheduledPickupService {
         }
         ScheduledPickup sp = new ScheduledPickup();
         sp.setShipmentId(shipmentId);
+        sp.setOrderId(orderId);
+        sp.setOrderRef(orderRef);
         sp.setCityId(cityId);
         sp.setTileId(tileId);
         sp.setPickupLat(lat);
@@ -82,7 +85,8 @@ class ScheduledPickupServiceImpl implements ScheduledPickupService {
         List<ScheduledPickup> due = repository.findByStatusAndReleaseAtLessThanEqual(HELD, now);
         for (ScheduledPickup sp : due) {
             dispatchService.assignPickup(sp.getShipmentId(), sp.getCityId(),
-                    sp.getPickupLat(), sp.getPickupLon(), sp.getTileId(), sp.getPaymentMode());
+                    sp.getPickupLat(), sp.getPickupLon(), sp.getTileId(), sp.getPaymentMode(),
+                    sp.getOrderId(), sp.getOrderRef());
             sp.setStatus("RELEASED");
             sp.setReleasedAt(now);
         }

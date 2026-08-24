@@ -107,16 +107,19 @@ class DispatchServiceImpl implements DispatchService {
     @Override
     @Transactional
     public AssignmentResult assignPickup(UUID shipmentId, UUID cityId, double lat, double lon,
-                                         UUID originTileId, String paymentMode) {
+                                         UUID originTileId, String paymentMode, UUID orderId, String orderRef) {
         return tracked(shipmentId, cityId,
-                () -> assign(new Request(shipmentId, cityId, TaskType.PICKUP, lat, lon, originTileId, paymentMode), true));
+                () -> assign(new Request(shipmentId, cityId, TaskType.PICKUP, lat, lon, originTileId,
+                        paymentMode, orderId, orderRef), true));
     }
 
     @Override
     @Transactional
-    public AssignmentResult assignDelivery(UUID shipmentId, UUID cityId, double lat, double lon, UUID destTileId) {
+    public AssignmentResult assignDelivery(UUID shipmentId, UUID cityId, double lat, double lon, UUID destTileId,
+                                           UUID orderId, String orderRef) {
         return tracked(shipmentId, cityId,
-                () -> assign(new Request(shipmentId, cityId, TaskType.DELIVERY, lat, lon, destTileId, null), true));
+                () -> assign(new Request(shipmentId, cityId, TaskType.DELIVERY, lat, lon, destTileId,
+                        null, orderId, orderRef), true));
     }
 
     /** Wrap an assignment in MDC (shipment/city correlation) + record its outcome (metric + audit line). */
@@ -183,7 +186,7 @@ class DispatchServiceImpl implements DispatchService {
         // paymentMode is not carried on the deferred row → null on retry (COD prioritisation is later).
         AssignmentResult result = assign(new Request(deferred.getShipmentId(), deferred.getCityId(),
                 deferred.getTaskType(), deferred.getTaskLat(), deferred.getTaskLon(),
-                deferred.getTileId(), null), false);
+                deferred.getTileId(), null, deferred.getOrderId(), deferred.getOrderRef()), false);
         if (result.outcome() != com.oneday.dispatch.service.AssignmentOutcome.DEFERRED) {
             deferred.setStatus("ASSIGNED");
             deferred.setAssignedAt(Instant.now());
@@ -342,6 +345,8 @@ class DispatchServiceImpl implements DispatchService {
             DeferredDispatch d = new DeferredDispatch();
             d.setCityId(req.cityId());
             d.setShipmentId(req.shipmentId());
+            d.setOrderId(req.orderId());
+            d.setOrderRef(req.orderRef());
             d.setTaskType(req.taskType());
             d.setTileId(tileId);
             d.setTaskLat(req.lat());
@@ -370,7 +375,8 @@ class DispatchServiceImpl implements DispatchService {
         }
 
         Request req = new Request(deferred.getShipmentId(), deferred.getCityId(), deferred.getTaskType(),
-                deferred.getTaskLat(), deferred.getTaskLon(), deferred.getTileId(), null);
+                deferred.getTaskLat(), deferred.getTaskLon(), deferred.getTileId(), null,
+                deferred.getOrderId(), deferred.getOrderRef());
         Optional<AssignmentResult> result = daStatusService.withDaLock(daId,
                 () -> attemptOnDa(daId, req, deferred.getTileId(), deferred.getOperatingDate(), false, true));
 
@@ -456,6 +462,8 @@ class DispatchServiceImpl implements DispatchService {
         row.setDaId(daId);
         row.setCityId(req.cityId());
         row.setShipmentId(req.shipmentId());
+        row.setOrderId(req.orderId());
+        row.setOrderRef(req.orderRef());
         row.setTaskType(req.taskType());
         row.setTaskLat(req.lat());
         row.setTaskLon(req.lon());
@@ -551,5 +559,5 @@ class DispatchServiceImpl implements DispatchService {
 
     /** Immutable bundle of one assignment request's inputs. */
     private record Request(UUID shipmentId, UUID cityId, TaskType taskType, double lat, double lon,
-                           UUID tileId, String paymentMode) {}
+                           UUID tileId, String paymentMode, UUID orderId, String orderRef) {}
 }

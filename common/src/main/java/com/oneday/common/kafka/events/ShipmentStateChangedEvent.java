@@ -30,4 +30,9 @@ public class ShipmentStateChangedEvent extends BaseShipmentEvent {
     private Double destLon;
     private UUID destTileId;
     private DropType dropType;
+
+    // Order grouping — populated alongside the dest data on HANDED_TO_DROP_VAN so M5 can carry the parent
+    // order onto the DELIVERY dispatch task (lets the DA app collapse same-order/same-location drops).
+    private UUID orderId;
+    private String orderRef;
 }
