@@ -24,10 +24,12 @@ import static org.mockito.Mockito.when;
 class AdminOrderQueryServiceTimelineTest {
 
     private final ShipmentRepository shipmentRepo = mock(ShipmentRepository.class);
+    private final com.oneday.orders.repository.ParcelOrderRepository parcelOrderRepo =
+            mock(com.oneday.orders.repository.ParcelOrderRepository.class);
     private final ShipmentStateHistoryRepository historyRepo = mock(ShipmentStateHistoryRepository.class);
     private final ShipmentScanTrailPort scanTrail = mock(ShipmentScanTrailPort.class);
     private final AdminOrderQueryServiceImpl svc =
-            new AdminOrderQueryServiceImpl(shipmentRepo, historyRepo, scanTrail);
+            new AdminOrderQueryServiceImpl(shipmentRepo, parcelOrderRepo, historyRepo, scanTrail);
 
     private Shipment shipment(UUID id, String ref) {
         Shipment s = mock(Shipment.class);

@@ -44,9 +44,11 @@ public interface BookingService {
      * shipment PREPAID, but writes <b>no</b> per-shipment {@code PaymentTransaction} and performs
      * no gateway call. Used by cart checkout; re-prices the request so cart staleness is caught.
      *
+     * @param orderId the parent order to attach this shipment to (all items of one cart share it)
      * @throws ServiceabilityException if the route is no longer serviceable at checkout time
      */
-    BookingResponse bookSettled(BookingRequest request, String idempotencyKey, String userId, CustomerType customerType);
+    BookingResponse bookSettled(BookingRequest request, String idempotencyKey, String userId,
+                                CustomerType customerType, java.util.UUID orderId);
 
     /**
      * Prices a request without booking or taking payment (serviceability → pricing).

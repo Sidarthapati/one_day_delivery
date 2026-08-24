@@ -29,6 +29,7 @@ import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.B2bBookingService;
 import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.CustomerVisibleStateMapper;
+import com.oneday.orders.service.OrderService;
 import com.oneday.orders.service.ShipmentRefService;
 import com.oneday.orders.service.TransitionContext;
 import com.oneday.orders.service.WalletService;
@@ -61,6 +62,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private final PricingPort pricingPort;
     private final EtaPort etaPort;
     private final ShipmentRefService shipmentRefService;
+    private final OrderService orderService;
     private final ShipmentRepository shipmentRepository;
     private final ShipmentStateHistoryRepository historyRepository;
     private final CodCollectionRepository codCollectionRepository;
@@ -82,6 +84,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
                           PricingPort pricingPort,
                           EtaPort etaPort,
                           ShipmentRefService shipmentRefService,
+                          OrderService orderService,
                           ShipmentRepository shipmentRepository,
                           ShipmentStateHistoryRepository historyRepository,
                           CodCollectionRepository codCollectionRepository,
@@ -97,6 +100,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         this.pricingPort          = pricingPort;
         this.etaPort              = etaPort;
         this.shipmentRefService   = shipmentRefService;
+        this.orderService         = orderService;
         this.shipmentRepository   = shipmentRepository;
         this.historyRepository    = historyRepository;
         this.codCollectionRepository = codCollectionRepository;
@@ -113,6 +117,12 @@ class B2bBookingServiceImpl implements B2bBookingService {
 
     @Override
     public BookingResponse book(B2bBookingRequest req, String idempotencyKey, String userId) {
+        return book(req, idempotencyKey, userId, null);
+    }
+
+    @Override
+    public BookingResponse book(B2bBookingRequest req, String idempotencyKey, String userId,
+                                java.util.UUID orderId) {
         // ── 1. Fetch account (outside TX) ─────────────────────────────────────
         B2bAccount account = b2bAccountRepository.findById(req.getB2bAccountId())
                 .orElseThrow(() -> new AccountNotFoundException(
@@ -160,7 +170,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         final int finalChargeable = chargeableWeightGrams;
         return tx.execute(status ->
                 persistB2b(req, idempotencyKey, userId, account, serviceability,
-                        finalVolumetric, finalChargeable, quote));
+                        finalVolumetric, finalChargeable, quote, orderId));
     }
 
     /** Resolve an optional pickup slot (date + IST start hour) to absolute instants on the shipment. */
@@ -181,8 +191,18 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private BookingResponse persistB2b(B2bBookingRequest req, String idempotencyKey, String userId,
                                        B2bAccount accountSnapshot, ServiceabilityResult serviceability,
                                        int volumetricWeightGrams, int chargeableWeightGrams,
-                                       QuoteResult quote) {
+                                       QuoteResult quote, java.util.UUID orderId) {
         Instant bookedAt = Instant.now();
+
+        // Attach to a parent order. A single B2B booking (orderId == null) mints its own order of one
+        // (carrying the merchant's purchaseOrderRef); a cart checkout passes the shared orderId.
+        OrderService.CreatedOrder createdOrder = null;
+        java.util.UUID effectiveOrderId = orderId;
+        if (effectiveOrderId == null) {
+            createdOrder = orderService.createOrder(CustomerType.B2B, req.getB2bAccountId(), userId,
+                    req.getOriginCity(), req.getPurchaseOrderRef());
+            effectiveOrderId = createdOrder.id();
+        }
 
         // ── 5a. SELECT FOR UPDATE — re-fetch account inside TX ─────────────────
         B2bAccount account = b2bAccountRepository.findByIdForUpdate(req.getB2bAccountId())
@@ -214,6 +234,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
 
         Shipment shipment = new Shipment();
         shipment.setShipmentRef(shipmentRef);
+        shipment.setOrderId(effectiveOrderId);
         shipment.setCustomerType(CustomerType.B2B);
         shipment.setB2bAccountId(req.getB2bAccountId());
         shipment.setDeliveryType(serviceability.deliveryType());
@@ -258,6 +279,9 @@ class B2bBookingServiceImpl implements B2bBookingService {
         shipment.setBookedByUserId(UserIds.parse(userId));
 
         shipment = shipmentRepository.save(shipment);
+
+        // Fold into the parent order rollup (count + 1, total += this shipment's total).
+        orderService.addShipment(effectiveOrderId, quote.totalPricePaise());
 
         // ── 5c-COD. Open the COD collection ledger row (AWAITING_COLLECTION) ────
         // Shipping stays credit-billed above; this is the separate buyer→vendor money we will
@@ -335,6 +359,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
 
         BookingResponse response = new BookingResponse();
         response.setShipmentRef(shipment.getShipmentRef());
+        response.setOrderRef(createdOrder != null ? createdOrder.orderRef() : null);
         response.setCustomerType(CustomerType.B2B);
         response.setState(ShipmentState.BOOKED);
         response.setStateLabel(stateMapper.labelFor(ShipmentState.BOOKED));

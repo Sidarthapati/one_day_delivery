@@ -5,7 +5,15 @@ import com.oneday.orders.dto.BookingResponse;
 
 public interface B2bBookingService {
 
+    /** Single B2B booking — mints its own parent order of one. */
     BookingResponse book(B2bBookingRequest request, String idempotencyKey, String userId);
+
+    /**
+     * Books a B2B shipment onto an existing parent order (cart checkout — all items share one order).
+     * When {@code orderId} is null this behaves like the single-booking overload.
+     */
+    BookingResponse book(B2bBookingRequest request, String idempotencyKey, String userId,
+                         java.util.UUID orderId);
 
     class AccountNotFoundException extends RuntimeException {
         public AccountNotFoundException(String message) { super(message); }

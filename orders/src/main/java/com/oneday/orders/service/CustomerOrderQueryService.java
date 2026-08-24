@@ -1,7 +1,9 @@
 package com.oneday.orders.service;
 
+import com.oneday.orders.dto.MyOrderDetailResponse;
 import com.oneday.orders.dto.MyShipmentDetailResponse;
 import com.oneday.orders.dto.MyShipmentSummaryResponse;
+import com.oneday.orders.dto.OrderSummaryResponse;
 import com.oneday.orders.dto.ShipmentLabelResponse;
 
 import java.util.List;
@@ -41,4 +43,19 @@ public interface CustomerOrderQueryService {
      * @return the label data, or empty if no such ref exists for this caller
      */
     Optional<ShipmentLabelResponse> shipmentLabel(String userId, String shipmentRef);
+
+    /**
+     * The caller's orders (Order → N Shipments), newest first — each a booking grouping the client
+     * renders as a card that expands to its parcels.
+     *
+     * @param userId the authenticated caller's id (M1 user UUID, as a string)
+     * @param limit  maximum orders to return, newest first (clamped)
+     */
+    List<OrderSummaryResponse> myOrders(String userId, int limit);
+
+    /**
+     * One of the caller's orders with its shipments expanded, by order ref. Scoped to the caller —
+     * an order they did not place is treated as not found.
+     */
+    Optional<MyOrderDetailResponse> myOrderDetail(String userId, String orderRef);
 }

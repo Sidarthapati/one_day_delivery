@@ -45,6 +45,11 @@ public class Shipment extends MutableBaseEntity {
     @Column(name = "b2b_account_id", updatable = false)
     private UUID b2bAccountId;
 
+    // Parent order (Order → N Shipments). Nullable for rows booked before this feature; a bare
+    // UUID by cross-module convention, not a DB foreign key.
+    @Column(name = "order_id", updatable = false)
+    private UUID orderId;
+
     // ── Sender ────────────────────────────────────────────────────────────
 
     @Column(name = "sender_name", length = 100, nullable = false, updatable = false)

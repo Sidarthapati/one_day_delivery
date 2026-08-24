@@ -19,6 +19,7 @@ import com.oneday.orders.repository.CartRepository;
 import com.oneday.orders.service.B2bBookingService;
 import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.CartService;
+import com.oneday.orders.service.OrderService;
 import com.oneday.orders.service.PaymentPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,18 +43,20 @@ class CartServiceImpl implements CartService {
     private final CartItemRepository cartItemRepository;
     private final BookingService bookingService;
     private final B2bBookingService b2bBookingService;
+    private final OrderService orderService;
     private final PaymentPort paymentPort;
     private final TransactionTemplate txTemplate;
     private final ExecutorService bulkPricingExecutor;
 
     CartServiceImpl(CartRepository cartRepository, CartItemRepository cartItemRepository,
                     BookingService bookingService, B2bBookingService b2bBookingService,
-                    PaymentPort paymentPort, TransactionTemplate txTemplate,
+                    OrderService orderService, PaymentPort paymentPort, TransactionTemplate txTemplate,
                     @Qualifier("bulkPricingExecutor") ExecutorService bulkPricingExecutor) {
         this.cartRepository = cartRepository;
         this.cartItemRepository = cartItemRepository;
         this.bookingService = bookingService;
         this.b2bBookingService = b2bBookingService;
+        this.orderService = orderService;
         this.paymentPort = paymentPort;
         this.txTemplate = txTemplate;
         this.bulkPricingExecutor = bulkPricingExecutor;
@@ -186,7 +189,7 @@ class CartServiceImpl implements CartService {
             }
         }
         if (payable.isEmpty()) {
-            return finish(cart, items.size(), null, null, 0L, results); // nothing to capture
+            return finish(cart, items.size(), null, null, 0L, null, results); // nothing to capture
         }
 
         // 2. Settle the single aggregate payment for the whole serviceable cart.
@@ -194,11 +197,15 @@ class CartServiceImpl implements CartService {
         paymentPort.verifySignature(req.getRazorpayOrderId(), req.getRazorpayPaymentId(), req.getRazorpaySignature());
         paymentPort.capture(req.getRazorpayPaymentId(), total);
 
-        // 3. Persist each shipment without re-capturing.
+        // 3. Mint the single parent order (committed before the loop so each item's own transaction
+        //    can fold into its rollup), then persist each shipment onto it without re-capturing.
+        OrderService.CreatedOrder order = txTemplate.execute(s -> orderService.createOrder(
+                customerType, null, cart.getUserId().toString(), payable.get(0).getOriginCity(), null));
         for (CartItem item : payable) {
             try {
                 BookingResponse r = bookingService.bookSettled(
-                        toBookingRequest(item), "cart-" + item.getId(), cart.getUserId().toString(), customerType);
+                        toBookingRequest(item), "cart-" + item.getId(), cart.getUserId().toString(),
+                        customerType, order.id());
                 results.add(CartCheckoutResponse.Result.ok(item.getId(), r.getShipmentRef()));
                 cartItemRepository.delete(item);
             } catch (RuntimeException e) {
@@ -208,7 +215,8 @@ class CartServiceImpl implements CartService {
         }
         cart.setCheckoutRazorpayOrderId(req.getRazorpayOrderId());
         cart.setCheckoutRazorpayPaymentId(req.getRazorpayPaymentId());
-        return finish(cart, items.size(), req.getRazorpayOrderId(), req.getRazorpayPaymentId(), total, results);
+        return finish(cart, items.size(), req.getRazorpayOrderId(), req.getRazorpayPaymentId(),
+                total, order.orderRef(), results);
     }
 
     private CartCheckoutResponse checkoutB2b(Cart cart, List<CartItem> items, CartCheckoutRequest req) {
@@ -217,10 +225,15 @@ class CartServiceImpl implements CartService {
         }
         List<CartCheckoutResponse.Result> results = new ArrayList<>();
         long charged = 0L;
+        // Mint the single parent order (committed before the loop so each item folds into its rollup).
+        OrderService.CreatedOrder order = txTemplate.execute(s -> orderService.createOrder(
+                CustomerType.B2B, req.getB2bAccountId(), cart.getUserId().toString(),
+                items.get(0).getOriginCity(), null));
         for (CartItem item : items) {
             try {
                 BookingResponse r = b2bBookingService.book(
-                        toB2bRequest(item, req.getB2bAccountId()), "cart-" + item.getId(), cart.getUserId().toString());
+                        toB2bRequest(item, req.getB2bAccountId()), "cart-" + item.getId(),
+                        cart.getUserId().toString(), order.id());
                 charged += r.getPricing().getTotalPricePaise();
                 results.add(CartCheckoutResponse.Result.ok(item.getId(), r.getShipmentRef()));
                 cartItemRepository.delete(item);
@@ -228,21 +241,22 @@ class CartServiceImpl implements CartService {
                 results.add(CartCheckoutResponse.Result.fail(item.getId(), reasonOf(e)));
             }
         }
-        return finish(cart, items.size(), null, null, charged, results);
+        return finish(cart, items.size(), null, null, charged, order.orderRef(), results);
     }
 
     /** Marks the cart CHECKED_OUT only if every item booked; otherwise it stays OPEN with the failures. */
-    private CartCheckoutResponse finish(Cart cart, int originalCount, String orderId, String paymentId,
-                                        long charged, List<CartCheckoutResponse.Result> results) {
+    private CartCheckoutResponse finish(Cart cart, int originalCount, String razorpayOrderId, String paymentId,
+                                        long charged, String orderRef,
+                                        List<CartCheckoutResponse.Result> results) {
         int booked = (int) results.stream().filter(CartCheckoutResponse.Result::success).count();
         int failed = results.size() - booked;
         cart.setCheckoutTotalPaise(charged);
-        cart.setCheckoutRazorpayOrderId(orderId);
+        cart.setCheckoutRazorpayOrderId(razorpayOrderId);
         cart.setCheckoutRazorpayPaymentId(paymentId);
         boolean allBooked = booked == originalCount && failed == 0;
         cart.setStatus(allBooked ? CartStatus.CHECKED_OUT : CartStatus.OPEN);
         cartRepository.save(cart);
-        return new CartCheckoutResponse(booked, failed, charged, cart.getStatus().name(), results);
+        return new CartCheckoutResponse(booked, failed, charged, orderRef, cart.getStatus().name(), results);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────

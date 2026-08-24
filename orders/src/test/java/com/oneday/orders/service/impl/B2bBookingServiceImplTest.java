@@ -23,6 +23,7 @@ import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.B2bBookingService;
 import com.oneday.orders.service.CustomerVisibleStateMapper;
+import com.oneday.orders.service.OrderService;
 import com.oneday.orders.service.ShipmentRefService;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
@@ -50,6 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -62,6 +64,7 @@ class B2bBookingServiceImplTest {
     @Mock private PricingPort pricingPort;
     @Mock private EtaPort etaPort;
     @Mock private ShipmentRefService shipmentRefService;
+    @Mock private OrderService orderService;
     @Mock private ShipmentRepository shipmentRepository;
     @Mock private ShipmentStateHistoryRepository historyRepository;
     @Mock private com.oneday.orders.repository.CodCollectionRepository codCollectionRepository;
@@ -92,9 +95,13 @@ class B2bBookingServiceImplTest {
     @BeforeEach
     void setUp() {
         scheduler = Executors.newSingleThreadScheduledExecutor();
+        // Every B2B booking mints a parent order of one; lenient so failure-path tests that never
+        // reach persist don't trip strict-stub checks.
+        lenient().when(orderService.createOrder(any(), any(), anyString(), anyString(), any()))
+                .thenReturn(new OrderService.CreatedOrder(UUID.randomUUID(), "1DD-ORD-BLR-20260530-00001"));
         service = new B2bBookingServiceImpl(
                 b2bAccountRepository, serviceabilityPort, pricingPort, etaPort,
-                shipmentRefService, shipmentRepository, historyRepository,
+                shipmentRefService, orderService, shipmentRepository, historyRepository,
                 codCollectionRepository, stateMapper, walletService, new TransactionTemplate(NO_OP_TX),
                 applicationEventPublisher,
                 CircuitBreakerRegistry.ofDefaults(),

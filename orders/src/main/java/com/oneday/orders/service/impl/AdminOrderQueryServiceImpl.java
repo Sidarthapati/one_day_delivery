@@ -2,12 +2,16 @@ package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.port.ShipmentScanTrailPort;
+import com.oneday.orders.domain.ParcelOrder;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.domain.ShipmentStateHistory;
+import com.oneday.orders.dto.AdminOrderDetailResponse;
+import com.oneday.orders.dto.OrderPageResponse;
 import com.oneday.orders.dto.ShipmentPageResponse;
 import com.oneday.orders.dto.ShipmentSummaryResponse;
 import com.oneday.orders.dto.ShipmentTimelineResponse;
 import com.oneday.orders.dto.ShipmentTimelineResponse.TimelineEvent;
+import com.oneday.orders.repository.ParcelOrderRepository;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.AdminOrderQueryService;
@@ -41,13 +45,16 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
     private static final int EXPORT_MAX_ROWS = 50_000;
 
     private final ShipmentRepository shipmentRepository;
+    private final ParcelOrderRepository parcelOrderRepository;
     private final ShipmentStateHistoryRepository stateHistoryRepository;
     private final ShipmentScanTrailPort scanTrail;
 
     AdminOrderQueryServiceImpl(ShipmentRepository shipmentRepository,
+                               ParcelOrderRepository parcelOrderRepository,
                                ShipmentStateHistoryRepository stateHistoryRepository,
                                ShipmentScanTrailPort scanTrail) {
         this.shipmentRepository = shipmentRepository;
+        this.parcelOrderRepository = parcelOrderRepository;
         this.stateHistoryRepository = stateHistoryRepository;
         this.scanTrail = scanTrail;
     }
@@ -124,6 +131,57 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
                 s.getOriginCity(), s.getDestCity(), s.getSenderName(), s.getReceiverName(),
                 s.getChargeableWeightGrams(), s.getEtaPromised(), s.getLastScanAt(), s.getCreatedAt(),
                 events);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public OrderPageResponse listOrders(String cityScope, int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        Pageable pageable = PageRequest.of(safePage, safeSize);   // repositories sort by createdAt desc
+
+        Page<ParcelOrder> result = (cityScope == null)
+                ? parcelOrderRepository.findAllByOrderByCreatedAtDesc(pageable)
+                : parcelOrderRepository.findByCityIdOrderByCreatedAtDesc(cityScope, pageable);
+
+        java.util.Map<java.util.UUID, List<ShipmentState>> statesByOrder = childStates(result.getContent());
+        return new OrderPageResponse(
+                result.map(o -> OrderSummaries.toSummary(
+                        o, statesByOrder.getOrDefault(o.getId(), List.of()))).getContent(),
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AdminOrderDetailResponse orderDetail(String orderRef, String cityScope) {
+        ParcelOrder order = parcelOrderRepository.findByOrderRef(orderRef)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Unknown order: " + orderRef));
+        // Station-manager scope: only orders placed in their own city (origin). ADMIN → any.
+        if (cityScope != null && !cityScope.equals(order.getCityId())) {
+            throw new ResponseStatusException(NOT_FOUND, "Unknown order: " + orderRef);
+        }
+        List<Shipment> ships = shipmentRepository.findByOrderIdOrderByCreatedAtAsc(order.getId());
+        List<ShipmentState> states = ships.stream().map(Shipment::getState).toList();
+        var header = OrderSummaries.toSummary(order, states);
+        List<ShipmentSummaryResponse> children = ships.stream().map(s -> toSummary(s, cityScope)).toList();
+        return new AdminOrderDetailResponse(header, children);
+    }
+
+    /** Bulk-fetch child states for a set of orders and group by order id (one query). */
+    private java.util.Map<java.util.UUID, List<ShipmentState>> childStates(List<ParcelOrder> orders) {
+        if (orders.isEmpty()) {
+            return java.util.Map.of();
+        }
+        List<java.util.UUID> ids = orders.stream().map(ParcelOrder::getId).toList();
+        return shipmentRepository.findChildStatesByOrderIds(ids).stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        ShipmentRepository.OrderChildState::getOrderId,
+                        java.util.stream.Collectors.mapping(
+                                ShipmentRepository.OrderChildState::getState,
+                                java.util.stream.Collectors.toList())));
     }
 
     private Page<Shipment> fetchPage(ShipmentState state, String cityScope, Pageable pageable) {
