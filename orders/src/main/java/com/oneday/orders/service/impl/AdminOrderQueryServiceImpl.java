@@ -12,6 +12,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -56,7 +57,10 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    // REPEATABLE_READ gives the whole paged export one stable snapshot, so shipments booked or
+    // transitioning state between the per-page OFFSET queries can't duplicate or drop rows (the id
+    // tiebreaker only orders within a single query's snapshot). Read-only + short-lived, so cheap.
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public java.util.List<ShipmentSummaryResponse> exportShipments(String stateFilter, String cityScope) {
         ShipmentState state = (stateFilter == null || stateFilter.isBlank())
                 ? null : parseState(stateFilter);
