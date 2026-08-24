@@ -8,20 +8,20 @@ WORKDIR /build
 # Copy the whole reactor and build only the app module plus the modules it needs.
 COPY . .
 
-# Maven Central rate-limits anonymous, cache-less build boxes (HTTP 429), which fails an otherwise
-# valid build. Two mitigations:
-#  1. A BuildKit cache mount for the local ~/.m2 repo — artifacts already fetched persist across
-#     builds and across retries within a build, so each attempt hits Central for less and less.
-#  2. A retry loop with backoff — a 429 is time-windowed, so waiting and retrying rides it out.
-#     Maven's own wagon retry handler is also enabled for within-attempt transient failures.
+# Maven Central (repo.maven.apache.org) IP-rate-limits cache-less build boxes with HTTP 429, which
+# intermittently fails an otherwise valid build. Mitigations, in order of effect:
+#  1. settings.xml mirrors Central → Google's GCS CDN mirror, which serves the identical artifacts
+#     without the per-IP throttle — this is the actual fix for the 429.
+#  2. A BuildKit cache mount for the local ~/.m2 repo — fetched artifacts persist across builds/retries.
+#  3. A retry loop with backoff as a safety net if the mirror ever hiccups.
 RUN --mount=type=cache,target=/root/.m2/repository \
     ok=0; \
     for i in 1 2 3 4 5 6; do \
       echo "── Maven build attempt $i ──"; \
-      if mvn -B -ntp -pl app -am clean package -DskipTests \
+      if mvn -B -ntp -s settings.xml -pl app -am clean package -DskipTests \
              -Dmaven.wagon.http.retryHandler.count=5 \
              -Dmaven.wagon.httpconnectionManager.ttlSeconds=120; then ok=1; break; fi; \
-      echo "Attempt $i failed (likely Central 429); sleeping $((i*20))s before retry"; \
+      echo "Attempt $i failed; sleeping $((i*20))s before retry"; \
       sleep $((i*20)); \
     done; \
     [ "$ok" = "1" ]

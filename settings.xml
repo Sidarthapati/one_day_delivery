@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Build-time Maven settings for the Docker/Render image.
+
+  Maven Central (repo.maven.apache.org) IP-rate-limits cache-less CI build boxes with HTTP 429,
+  which intermittently fails an otherwise valid build. Route all Central traffic through Google's
+  Cloud Storage mirror of Central instead — a CDN that serves the identical artifacts (verified:
+  parent POM, plugins, and the heavy bytedeco/OpenCV deps all resolve) without the per-IP throttle.
+
+  Only `central` is mirrored; the project uses no other repositories, and version-pinned deps mean
+  no metadata/range resolution is needed. If the mirror is ever unreachable, the Dockerfile's retry
+  loop is the safety net.
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <mirrors>
+    <mirror>
+      <id>gcs-maven-central</id>
+      <name>Google Cloud Storage mirror of Maven Central</name>
+      <url>https://maven-central.storage-download.googleapis.com/maven2/</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>
