@@ -88,7 +88,7 @@ class B2bShipmentController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment().filename(filename).build().toString())
-                .contentType(MediaType.parseMediaType("text/csv"))
+                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
                 .body(new ByteArrayResource(csv));
     }
 
