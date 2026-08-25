@@ -70,9 +70,10 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
                 ? null : parseState(stateFilter);
 
         Page<Shipment> result = fetchPage(state, cityScope, pageable);
+        java.util.Map<java.util.UUID, String> refs = orderRefsFor(result.getContent());
 
         return new ShipmentPageResponse(
-                result.map(s -> toSummary(s, cityScope)).getContent(),
+                result.map(s -> toSummary(s, cityScope, orderRefOf(s, refs))).getContent(),
                 result.getNumber(),
                 result.getSize(),
                 result.getTotalElements(),
@@ -92,7 +93,8 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
         for (int page = 0; out.size() < EXPORT_MAX_ROWS; page++) {
             Pageable pageable = PageRequest.of(page, EXPORT_PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
             Page<Shipment> batch = fetchPage(state, cityScope, pageable);
-            batch.forEach(s -> out.add(toSummary(s, cityScope)));
+            java.util.Map<java.util.UUID, String> refs = orderRefsFor(batch.getContent());
+            batch.forEach(s -> out.add(toSummary(s, cityScope, orderRefOf(s, refs))));
             if (!batch.hasNext()) {
                 break;
             }
@@ -126,8 +128,10 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
         events.sort(Comparator.comparing(TimelineEvent::at,
                 Comparator.nullsLast(Comparator.naturalOrder())));
 
+        String orderRef = s.getOrderId() == null ? null
+                : parcelOrderRepository.findOrderRefById(s.getOrderId()).orElse(null);
         return new ShipmentTimelineResponse(
-                s.getShipmentRef(), s.getId(), s.getState(), s.getCustomerType(), s.getDeliveryType(),
+                s.getShipmentRef(), orderRef, s.getId(), s.getState(), s.getCustomerType(), s.getDeliveryType(),
                 s.getOriginCity(), s.getDestCity(), s.getSenderName(), s.getReceiverName(),
                 s.getChargeableWeightGrams(), s.getEtaPromised(), s.getLastScanAt(), s.getCreatedAt(),
                 events);
@@ -166,8 +170,30 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
         List<Shipment> ships = shipmentRepository.findByOrderIdOrderByCreatedAtAsc(order.getId());
         List<ShipmentState> states = ships.stream().map(Shipment::getState).toList();
         var header = OrderSummaries.toSummary(order, states);
-        List<ShipmentSummaryResponse> children = ships.stream().map(s -> toSummary(s, cityScope)).toList();
+        // Children all share this order's ref — no lookup needed.
+        List<ShipmentSummaryResponse> children =
+                ships.stream().map(s -> toSummary(s, cityScope, order.getOrderRef())).toList();
         return new AdminOrderDetailResponse(header, children);
+    }
+
+    /** Batched (order_id → order_ref) map for the orders referenced by a page of shipments (one query). */
+    private java.util.Map<java.util.UUID, String> orderRefsFor(List<Shipment> ships) {
+        List<java.util.UUID> ids = ships.stream()
+                .map(Shipment::getOrderId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return parcelOrderRepository.findOrderRefsByIds(ids).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        ParcelOrderRepository.OrderRefRow::getId,
+                        ParcelOrderRepository.OrderRefRow::getOrderRef));
+    }
+
+    private static String orderRefOf(Shipment s, java.util.Map<java.util.UUID, String> refs) {
+        return s.getOrderId() == null ? null : refs.get(s.getOrderId());
     }
 
     /** Bulk-fetch child states for a set of orders and group by order id (one query). */
@@ -204,7 +230,7 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
         }
     }
 
-    private static ShipmentSummaryResponse toSummary(Shipment s, String requesterCity) {
+    private static ShipmentSummaryResponse toSummary(Shipment s, String requesterCity, String orderRef) {
         // Custody city = origin or dest depending on the parcel's current phase (ShipmentCustody).
         String custodyCity = ShipmentCustody.custodian(s.getState()) == ShipmentCustody.Custodian.ORIGIN
                 ? s.getOriginCity()
@@ -213,6 +239,7 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
         boolean canAct = requesterCity != null && requesterCity.equals(custodyCity);
         return new ShipmentSummaryResponse(
                 s.getShipmentRef(),
+                orderRef,
                 s.getCustomerType(),
                 s.getDeliveryType(),
                 s.getState(),

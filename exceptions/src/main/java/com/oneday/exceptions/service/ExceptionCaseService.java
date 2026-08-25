@@ -40,4 +40,11 @@ public interface ExceptionCaseService {
 
     /** Apply one action to many cases, each in its own transaction; returns a per-case outcome. */
     BatchResolveResponse batchResolve(BatchResolveRequest request, String cityScope, String userId, String role);
+
+    /**
+     * Apply one action to every live case of one parent order — the batch-RTO-a-whole-failed-order path.
+     * Resolves each visible sibling in its own transaction (same isolation as {@link #batchResolve}).
+     */
+    BatchResolveResponse resolveByOrder(String orderRef, ResolveAction action, String cityScope,
+                                        String userId, String role, String notes);
 }

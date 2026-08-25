@@ -18,8 +18,8 @@ class AdminOrdersControllerCsvTest {
     @Test
     void escapesCommasAndQuotesAndWritesHeaderPlusRow() {
         ShipmentSummaryResponse row = new ShipmentSummaryResponse(
-                "1DD-BLR-1", CustomerType.B2C, DeliveryType.INTERCITY, ShipmentState.BOOKED,
-                PickupType.DA_PICKUP, PaymentMode.PREPAID,
+                "1DD-BLR-1", "1DD-ORD-BLR-20260824-00001", CustomerType.B2C, DeliveryType.INTERCITY,
+                ShipmentState.BOOKED, PickupType.DA_PICKUP, PaymentMode.PREPAID,
                 "Bengaluru", "560001", "Delhi", "110001",
                 "Sharma, Rao & Co", "Priya \"Pri\" N", 1200, 25000L,
                 Instant.parse("2026-08-24T10:00:00Z"), null, "Bengaluru", true);
@@ -27,11 +27,12 @@ class AdminOrdersControllerCsvTest {
         String csv = AdminOrdersController.toCsv(List.of(row));
         String[] lines = csv.split("\n", -1);
 
-        assertThat(lines[0]).startsWith("shipment_ref,customer_type,delivery_type,state");
+        assertThat(lines[0]).startsWith("shipment_ref,order_ref,customer_type,delivery_type,state");
         // comma-bearing sender is quoted; embedded quotes are doubled
         assertThat(lines[1]).contains("\"Sharma, Rao & Co\"");
         assertThat(lines[1]).contains("\"Priya \"\"Pri\"\" N\"");
         assertThat(lines[1]).contains("1DD-BLR-1");
+        assertThat(lines[1]).contains("1DD-ORD-BLR-20260824-00001");
         assertThat(lines[1]).contains("560001");
     }
 
@@ -58,7 +59,7 @@ class AdminOrdersControllerCsvTest {
     @Test
     void usesCrlfRecordDelimiter() {
         ShipmentSummaryResponse row = new ShipmentSummaryResponse(
-                "1DD-BLR-2", CustomerType.B2C, DeliveryType.INTERCITY, ShipmentState.BOOKED,
+                "1DD-BLR-2", null, CustomerType.B2C, DeliveryType.INTERCITY, ShipmentState.BOOKED,
                 PickupType.DA_PICKUP, PaymentMode.PREPAID, "Bengaluru", "560001", "Delhi", "110001",
                 "A", "B", 1000, 100L, Instant.parse("2026-08-24T10:00:00Z"), null, "Bengaluru", true);
         String csv = AdminOrdersController.toCsv(List.of(row));

@@ -10,8 +10,14 @@ import java.util.List;
  * At 1000/day the failures correlate (one late flight puts a dozen parcels RED); ranking the causes
  * instead of the individual cards turns ~200 rows into ~10 calls. Clusters are ordered worst-band
  * first (never a band-jump), then by size (12 affected beats 1), then soonest act-by.
+ *
+ * <p>{@code orderClusters} is a parallel correlation axis: the same at-risk set re-grouped by parent
+ * order, keeping only orders with 2+ parcels at risk. When a whole B2B booking breaches together, that
+ * is one merchant call rather than one-per-parcel — {@code stage = "ORDER"}, {@code scope} = the order
+ * ref. It overlaps the stage/geo clusters by design (a different lens on the same rows), never replaces
+ * them.</p>
  */
-public record SlaClusterResponse(List<Cluster> clusters) {
+public record SlaClusterResponse(List<Cluster> clusters, List<Cluster> orderClusters) {
 
     public record Cluster(
             String stage,                       // PICKUP | HUB | AIR | DELIVERY

@@ -14,7 +14,10 @@ public record ExceptionCaseDetail(
         List<ExceptionActionView> actions,
         List<JourneyStep> journey,
         Contact handler,
-        Contact receiver) {
+        Contact receiver,
+        // Live cases in the same parent order (this one included) — powers the "N open in this order"
+        // badge and the batch-RTO-by-order action. 0 when the case carries no order back-ref.
+        long openOrderSiblings) {
 
     /** A callable person: name + phone (+ role for the handler). */
     public record Contact(String name, String phone, String role) {}

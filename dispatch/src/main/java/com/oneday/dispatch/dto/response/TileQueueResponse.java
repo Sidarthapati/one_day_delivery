@@ -27,6 +27,7 @@ public record TileQueueResponse(
     public record TaskView(
             UUID taskId,
             UUID shipmentId,
+            String orderRef,          // parent order back-ref (null for legacy/pre-order tasks)
             int queuePosition,
             String status,
             Instant expectedEta,
@@ -38,6 +39,7 @@ public record TileQueueResponse(
     public record DeferredTaskView(
             UUID deferredId,
             UUID shipmentId,
+            String orderRef,          // parent order back-ref (null for legacy/pre-order tasks)
             String taskType,
             String deferReason,
             Instant deferredAt,

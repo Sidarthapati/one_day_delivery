@@ -15,6 +15,8 @@ import java.util.UUID;
  */
 public record ShipmentTimelineResponse(
         String shipmentRef,
+        // Parent order back-ref (null for legacy/pre-order shipments) — powers the "view order siblings" link.
+        String orderRef,
         UUID shipmentId,
         ShipmentState state,
         CustomerType customerType,

@@ -26,5 +26,9 @@ public record ShipmentInfo(
         String destCity,
         String destPincode,
         UUID destTileId,
-        Instant slaDeadline) {
+        Instant slaDeadline,
+        // Order back-reference (null for legacy shipments booked before the Order → N abstraction).
+        // Lets downstream ops modules (M11 exceptions/RTO) group a parcel with its order siblings.
+        UUID orderId,
+        String orderRef) {
 }

@@ -15,6 +15,20 @@ public interface ParcelOrderRepository extends JpaRepository<ParcelOrder, UUID> 
 
     Optional<ParcelOrder> findByOrderRef(String orderRef);
 
+    /** Cheap order-ref lookup by id (no entity load) for read projections that carry an order back-ref. */
+    @Query("SELECT o.orderRef FROM ParcelOrder o WHERE o.id = :id")
+    Optional<String> findOrderRefById(@Param("id") UUID id);
+
+    /** Batched (id → order_ref) resolve for a page of shipments — avoids N+1 when a list carries order refs. */
+    @Query("SELECT o.id AS id, o.orderRef AS orderRef FROM ParcelOrder o WHERE o.id IN :ids")
+    java.util.List<OrderRefRow> findOrderRefsByIds(@Param("ids") java.util.Collection<UUID> ids);
+
+    /** Projection for {@link #findOrderRefsByIds}. */
+    interface OrderRefRow {
+        UUID getId();
+        String getOrderRef();
+    }
+
     /** Customer "my orders" — every order a given M1 user placed, newest first. */
     Page<ParcelOrder> findByBookedByUserId(UUID bookedByUserId, Pageable pageable);
 

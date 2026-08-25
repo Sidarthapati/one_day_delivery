@@ -108,6 +108,7 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
                 .map(t -> {
                     SlaStatus sla = slaByShipment.get(t.getShipmentId());
                     return new DaTaskItem(t.getId(), t.getShipmentId(), refByShipment.get(t.getShipmentId()),
+                            t.getOrderRef(),
                             t.getTaskType().name(), t.getStatus().name(), t.getExpectedEta(),
                             urgency(t, sla, now),
                             sla != null ? sla.actByAt() : null,
