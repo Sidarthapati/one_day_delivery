@@ -88,13 +88,26 @@ class AdminOrderQueryServiceImpl implements AdminOrderQueryService {
     public java.util.List<ShipmentSummaryResponse> exportShipments(String stateFilter, String cityScope) {
         ShipmentState state = (stateFilter == null || stateFilter.isBlank())
                 ? null : parseState(stateFilter);
+        return exportPaged(pageable -> fetchPage(state, cityScope, pageable), cityScope);
+    }
 
+    @Override
+    // Same stable-snapshot rationale as exportShipments. Merchant scope: only this account's shipments,
+    // and no custody canAct (null requesterCity — a merchant isn't a city custodian).
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public java.util.List<ShipmentSummaryResponse> exportForAccount(java.util.UUID accountId) {
+        return exportPaged(pageable -> shipmentRepository.findByB2bAccountId(accountId, pageable), null);
+    }
+
+    /** Shared paged export: walk pages of {@code fetch} until exhausted or the safety ceiling, mapping each. */
+    private java.util.List<ShipmentSummaryResponse> exportPaged(
+            java.util.function.Function<Pageable, Page<Shipment>> fetch, String requesterCity) {
         java.util.List<ShipmentSummaryResponse> out = new java.util.ArrayList<>();
         for (int page = 0; out.size() < EXPORT_MAX_ROWS; page++) {
             Pageable pageable = PageRequest.of(page, EXPORT_PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.ASC, "id")));
-            Page<Shipment> batch = fetchPage(state, cityScope, pageable);
+            Page<Shipment> batch = fetch.apply(pageable);
             java.util.Map<java.util.UUID, String> refs = orderRefsFor(batch.getContent());
-            batch.forEach(s -> out.add(toSummary(s, cityScope, orderRefOf(s, refs))));
+            batch.forEach(s -> out.add(toSummary(s, requesterCity, orderRefOf(s, refs))));
             if (!batch.hasNext()) {
                 break;
             }

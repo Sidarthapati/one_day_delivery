@@ -34,6 +34,13 @@ public interface AdminOrderQueryService {
     List<ShipmentSummaryResponse> exportShipments(String stateFilter, String cityScope);
 
     /**
+     * Every shipment booked against one B2B account, newest first, without the page cap — backs the
+     * merchant's self-service CSV export. Same row shape as {@link #exportShipments}. The caller
+     * (a B2B controller) resolves and enforces account ownership, so this is not gated here.
+     */
+    List<ShipmentSummaryResponse> exportForAccount(java.util.UUID accountId);
+
+    /**
      * One parcel's full ops timeline by human ref: header + M4 state history merged with the M8 scan
      * trail, oldest first. {@code cityScope} null → any city (ADMIN); otherwise the shipment must touch
      * that city (origin or destination) or it 404s — the same read rule as {@link #listShipments}.
