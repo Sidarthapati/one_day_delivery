@@ -169,7 +169,8 @@ class B2bBookingServiceImpl implements B2bBookingService {
                         null)));  // B2B is credit-billed — no COD surcharge
 
         // ── 4b. Pickup-slot capacity (before opening the TX; a full slot rejects cleanly) ──
-        pickupSlotCapacity.ensureRoom(req.getOriginCity(), req.getPickupSlotDate(), req.getPickupSlotStartHour());
+        pickupSlotCapacity.ensureRoom(req.getOriginCity(), req.getPickupSlotDate(),
+                req.getPickupSlotStartHour(), req.getPickupType());
 
         // ── 5. DB transaction: credit check → persist → balance increment ──────
         final int finalVolumetric = volumetricWeightGrams;

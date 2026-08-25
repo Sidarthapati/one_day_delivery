@@ -1,5 +1,6 @@
 package com.oneday.orders.service.impl;
 
+import com.oneday.common.domain.enums.PickupType;
 import com.oneday.orders.config.PickupSlotProperties;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.BookingService;
@@ -34,31 +35,41 @@ class PickupSlotCapacityTest {
 
     @Test
     void asapBookingSkipsTheCapEntirely() {
-        assertThatCode(() -> capacity.ensureRoom("DEL", null, null)).doesNotThrowAnyException();
-        verify(repo, never()).countByOriginCityAndScheduledPickupStartAndCancelledAtIsNull(any(), any());
+        assertThatCode(() -> capacity.ensureRoom("DEL", null, null, PickupType.DA_PICKUP))
+                .doesNotThrowAnyException();
+        verify(repo, never()).countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(any(), any(), any());
     }
 
     @Test
     void allowsWhenSlotHasRoom() {
         when(props.getMaxPerSlot()).thenReturn(2);
-        when(repo.countByOriginCityAndScheduledPickupStartAndCancelledAtIsNull(eq("DEL"), any(Instant.class)))
-                .thenReturn(1);
-        assertThatCode(() -> capacity.ensureRoom("del", DATE, VALID_HOUR)).doesNotThrowAnyException();
+        when(repo.countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(
+                eq("DEL"), any(Instant.class), eq(PickupType.DA_PICKUP))).thenReturn(1);
+        assertThatCode(() -> capacity.ensureRoom("del", DATE, VALID_HOUR, PickupType.DA_PICKUP))
+                .doesNotThrowAnyException();
     }
 
     @Test
     void rejectsWhenSlotIsFull() {
         when(props.getMaxPerSlot()).thenReturn(2);
-        when(repo.countByOriginCityAndScheduledPickupStartAndCancelledAtIsNull(eq("DEL"), any(Instant.class)))
-                .thenReturn(2);
-        assertThatThrownBy(() -> capacity.ensureRoom("DEL", DATE, VALID_HOUR))
+        when(repo.countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(
+                eq("DEL"), any(Instant.class), eq(PickupType.DA_PICKUP))).thenReturn(2);
+        assertThatThrownBy(() -> capacity.ensureRoom("DEL", DATE, VALID_HOUR, PickupType.DA_PICKUP))
                 .isInstanceOf(PickupSlotFullException.class);
     }
 
     @Test
+    void selfDropWithASlotNeverConsumesPickupCapacity() {
+        // A self-drop parcel needs no DA pickup, so it must not count against (or be capped by) the slot.
+        assertThatCode(() -> capacity.ensureRoom("DEL", DATE, VALID_HOUR, PickupType.SELF_DROP))
+                .doesNotThrowAnyException();
+        verify(repo, never()).countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(any(), any(), any());
+    }
+
+    @Test
     void rejectsAnInvalidStartHourBeforeAnyCapLookup() {
-        assertThatThrownBy(() -> capacity.ensureRoom("DEL", DATE, 8))   // 8 is not a valid slot start
+        assertThatThrownBy(() -> capacity.ensureRoom("DEL", DATE, 8, PickupType.DA_PICKUP))   // 8 not a valid slot start
                 .isInstanceOf(BookingService.InvalidBookingRequestException.class);
-        verify(repo, never()).countByOriginCityAndScheduledPickupStartAndCancelledAtIsNull(any(), any());
+        verify(repo, never()).countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(any(), any(), any());
     }
 }

@@ -1,6 +1,7 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.PickupSlots;
+import com.oneday.common.domain.enums.PickupType;
 import com.oneday.orders.config.PickupSlotProperties;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.BookingService;
@@ -30,11 +31,14 @@ class PickupSlotCapacity {
      * {@link PickupSlotFullException} if the (origin city, slot) already holds {@code maxPerSlot} active
      * reservations.
      *
+     * <p>Only {@code DA_PICKUP} shipments consume a pickup slot — a {@code SELF_DROP} parcel is dropped
+     * by the customer and needs no DA, so it neither counts against the cap nor is capped.
+     *
      * <p>ponytail: soft cap — the count-then-book gap lets concurrent writers overbook a slot by up to
      * (concurrent bookings − 1). A hard cap needs a per-slot counter row + row lock (mirror
      * {@code VanManifestServiceImpl}); add it only if overbooking actually bites at pilot volume.
      */
-    void ensureRoom(String originCity, LocalDate slotDate, Integer startHour) {
+    void ensureRoom(String originCity, LocalDate slotDate, Integer startHour, PickupType pickupType) {
         if (slotDate == null && startHour == null) {
             return;   // ASAP — no slot to cap
         }
@@ -43,10 +47,14 @@ class PickupSlotCapacity {
             throw new BookingService.InvalidBookingRequestException(
                     "pickupSlotDate and a valid pickupSlotStartHour (7/9/11/13/15/17/19) are both required");
         }
+        if (pickupType != PickupType.DA_PICKUP) {
+            return;   // self-drop consumes no DA pickup slot
+        }
         String city = originCity.toUpperCase();
         Instant slotStart = PickupSlots.resolve(slotDate, startHour).start();
         int booked = shipmentRepository
-                .countByOriginCityAndScheduledPickupStartAndCancelledAtIsNull(city, slotStart);
+                .countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(
+                        city, slotStart, PickupType.DA_PICKUP);
         if (booked >= props.getMaxPerSlot()) {
             throw new PickupSlotFullException(
                     "The " + startHour + ":00 pickup slot for " + city + " is full. Please choose another slot.");

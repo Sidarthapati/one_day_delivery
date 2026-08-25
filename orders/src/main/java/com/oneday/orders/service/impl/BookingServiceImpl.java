@@ -198,7 +198,8 @@ class BookingServiceImpl implements BookingService {
         QuoteResult quote = priced.quote();
 
         // ── 3b. Pickup-slot capacity (before payment, so a full slot never charges) ──
-        pickupSlotCapacity.ensureRoom(req.getOriginCity(), req.getPickupSlotDate(), req.getPickupSlotStartHour());
+        pickupSlotCapacity.ensureRoom(req.getOriginCity(), req.getPickupSlotDate(),
+                req.getPickupSlotStartHour(), req.getPickupType());
 
         // ── 4. Payment verify + capture (PREPAID only, outside DB transaction) ──
         boolean isPrepaid = PaymentMode.PREPAID == req.getPaymentMode();
