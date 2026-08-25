@@ -14,6 +14,8 @@ import java.util.UUID;
 public record SlaShipmentSummary(
         UUID shipmentId,
         String shipmentRef,
+        // Parent order back-ref (null for legacy/pre-order rows) — lets the tower group order siblings.
+        String orderRef,
         String originCity,
         String destCity,
         String lane,
@@ -57,7 +59,8 @@ public record SlaShipmentSummary(
                                           ShipmentContactPort.ShipmentContact contact,
                                           boolean weatherExposed) {
         return new SlaShipmentSummary(
-                s.getShipmentId(), s.getShipmentRef(), s.getOriginCity(), s.getDestCity(), s.getLane(),
+                s.getShipmentId(), s.getShipmentRef(), s.getOrderRef(),
+                s.getOriginCity(), s.getDestCity(), s.getLane(),
                 s.getDeliveryType(), s.getOverallState(), s.getCurrentLeg(), s.isBreached(),
                 s.getBookedAt(), s.getInternalTargetAt(), s.getPublicPromiseAt(),
                 s.getProjectedFinishAt(), s.getDeliveredAt(),

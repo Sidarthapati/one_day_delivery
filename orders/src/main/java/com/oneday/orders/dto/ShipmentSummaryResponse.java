@@ -15,6 +15,8 @@ import java.time.Instant;
  */
 public record ShipmentSummaryResponse(
         String shipmentRef,
+        // Parent order back-ref (null for legacy/pre-order shipments) — the sibling-order link in ops views.
+        String orderRef,
         CustomerType customerType,
         DeliveryType deliveryType,
         ShipmentState state,

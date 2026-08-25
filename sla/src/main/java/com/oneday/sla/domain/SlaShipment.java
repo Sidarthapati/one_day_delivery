@@ -30,6 +30,13 @@ public class SlaShipment extends MutableBaseEntity {
     @Column(name = "shipment_ref")
     private String shipmentRef;
 
+    // Order back-reference (Order → N shipments) — null for legacy/pre-order rows.
+    @Column(name = "order_id")
+    private UUID orderId;
+
+    @Column(name = "order_ref")
+    private String orderRef;
+
     @Column(name = "origin_city")
     private String originCity;
 

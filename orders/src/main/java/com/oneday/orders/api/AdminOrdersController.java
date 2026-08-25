@@ -125,7 +125,7 @@ class AdminOrdersController {
     }
 
     private static final String[] CSV_HEADERS = {
-            "shipment_ref", "customer_type", "delivery_type", "state", "pickup_type", "payment_mode",
+            "shipment_ref", "order_ref", "customer_type", "delivery_type", "state", "pickup_type", "payment_mode",
             "origin_city", "origin_pincode", "dest_city", "dest_pincode", "sender_name", "receiver_name",
             "chargeable_weight_grams", "total_price_paise", "created_at", "cancelled_at", "custody_city"
     };
@@ -135,6 +135,7 @@ class AdminOrdersController {
         sb.append(String.join(",", CSV_HEADERS)).append("\r\n");
         for (ShipmentSummaryResponse r : rows) {
             sb.append(csv(r.shipmentRef())).append(',')
+              .append(csv(r.orderRef())).append(',')
               .append(csv(r.customerType())).append(',')
               .append(csv(r.deliveryType())).append(',')
               .append(csv(r.state())).append(',')

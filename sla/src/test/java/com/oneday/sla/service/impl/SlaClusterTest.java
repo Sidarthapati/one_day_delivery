@@ -87,4 +87,34 @@ class SlaClusterTest {
         assertThat(hub.size()).isEqualTo(3);
         assertThat(hub.contact().role()).isEqualTo("HUB_OPERATOR");
     }
+
+    @Test
+    void orderClustersGroupBreachingSiblingsOfTheSameBooking() {
+        when(stageContactPort.hubDesk(any())).thenReturn(Optional.empty());
+        when(stageContactPort.ghaDesk()).thenReturn(Optional.empty());
+
+        // Booking ORD-1 has three at-risk parcels spread across stages/cities; a lone parcel of ORD-2.
+        SlaShipment o1a = ship("O1A", "BLR", "DEL", SlaLegType.LAST_MILE, SlaState.BREACHED, PriorityBand.CRITICAL, true, 3_000_100);
+        SlaShipment o1b = ship("O1B", "HYD", "MAA", SlaLegType.ORIGIN_HUB, SlaState.RED, PriorityBand.HIGH, false, 2_000_050);
+        SlaShipment o1c = ship("O1C", "BLR", "DEL", SlaLegType.AIR, SlaState.RED, PriorityBand.HIGH, false, 2_000_010);
+        SlaShipment o2 = ship("O2A", "BLR", "DEL", SlaLegType.LAST_MILE, SlaState.RED, PriorityBand.HIGH, false, 2_000_000);
+        o1a.setOrderRef("1DD-ORD-1");
+        o1b.setOrderRef("1DD-ORD-1");
+        o1c.setOrderRef("1DD-ORD-1");
+        o2.setOrderRef("1DD-ORD-2");
+        when(shipmentRepo.findByClosedAtIsNull()).thenReturn(List.of(o1a, o1b, o1c, o2));
+
+        List<SlaClusterResponse.Cluster> orderClusters = svc.clusters(null).orderClusters();
+
+        // Only ORD-1 qualifies (2+ at-risk parcels); ORD-2's single parcel is not an order cluster.
+        assertThat(orderClusters).hasSize(1);
+        SlaClusterResponse.Cluster ord = orderClusters.get(0);
+        assertThat(ord.stage()).isEqualTo("ORDER");
+        assertThat(ord.scope()).isEqualTo("1DD-ORD-1");
+        assertThat(ord.size()).isEqualTo(3);
+        assertThat(ord.band()).isEqualTo(PriorityBand.CRITICAL); // worst member floats up
+        assertThat(ord.breachedCount()).isEqualTo(1);
+        assertThat(ord.refs()).containsExactly("O1A", "O1B", "O1C"); // worst score first
+        assertThat(ord.contact()).isNull(); // an order spans cities — no single desk; call the merchant
+    }
 }

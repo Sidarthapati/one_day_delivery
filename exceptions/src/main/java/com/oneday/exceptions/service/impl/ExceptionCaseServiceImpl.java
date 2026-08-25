@@ -131,6 +131,8 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
                 c.setOriginCity(info.originCity());
                 c.setDestCity(info.destCity());
                 c.setDeliveryType(info.deliveryType());
+                c.setOrderId(info.orderId());
+                c.setOrderRef(info.orderRef());
             });
         }
         return c;
@@ -224,7 +226,9 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
                 contactPort.contactsFor(List.of(c.getShipmentId())).get(c.getShipmentId());
         ExceptionCaseDetail.Contact receiver = contact == null ? null
                 : new ExceptionCaseDetail.Contact(contact.receiverName(), contact.receiverPhone(), "CUSTOMER");
-        return new ExceptionCaseDetail(ExceptionCaseSummary.from(c), actions, journey, handler, receiver);
+        long siblings = c.getOrderRef() == null ? 0
+                : caseRepo.countByOrderRefAndResolvedAtIsNull(c.getOrderRef());
+        return new ExceptionCaseDetail(ExceptionCaseSummary.from(c), actions, journey, handler, receiver, siblings);
     }
 
     // ── Resolve ───────────────────────────────────────────────────────────────────────────────────
@@ -312,6 +316,22 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
             }
         }
         return new BatchResolveResponse(results);
+    }
+
+    /** Not @Transactional for the same reason as {@link #batchResolve} — each sibling resolves in its own tx. */
+    @Override
+    public BatchResolveResponse resolveByOrder(String orderRef, ResolveAction action, String cityScope,
+                                               String userId, String role, String notes) {
+        // Only the caller's visible siblings (own-city for a station manager; all for admin) are acted on,
+        // so a cross-city sibling isn't silently RTO'd nor reported as NOT_FOUND noise.
+        List<UUID> ids = caseRepo.findByOrderRefAndResolvedAtIsNull(orderRef).stream()
+                .filter(c -> visible(c, cityScope))
+                .map(ExceptionCase::getId)
+                .toList();
+        if (ids.isEmpty()) {
+            return new BatchResolveResponse(List.of());
+        }
+        return self.batchResolve(new BatchResolveRequest(action, ids, notes), cityScope, userId, role);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────────────────

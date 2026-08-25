@@ -86,4 +86,16 @@ public class ExceptionController {
         return service.batchResolve(body, Authz.cityScope(principal),
                 Authz.requireUserId(principal), Authz.role(principal));
     }
+
+    /** Apply one action to every live case of a parent order — the "RTO the whole failed order" shortcut.
+     *  Returns the same per-case outcome as {@link #batchResolve}; an order with no live cases is 200 + empty. */
+    @PostMapping("/orders/{orderRef}/resolve")
+    public BatchResolveResponse resolveByOrder(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable String orderRef,
+            @Valid @RequestBody ResolveRequest body) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR, Authz.CALL_CENTER_AGENT);
+        return service.resolveByOrder(orderRef, body.action(), Authz.cityScope(principal),
+                Authz.requireUserId(principal), Authz.role(principal), body.notes());
+    }
 }

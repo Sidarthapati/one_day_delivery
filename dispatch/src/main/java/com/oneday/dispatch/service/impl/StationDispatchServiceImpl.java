@@ -82,7 +82,7 @@ class StationDispatchServiceImpl implements StationDispatchService {
         }
         List<DeferredTaskView> deferredTasks = deferredRepository
                 .findByTileIdAndOperatingDateAndStatus(tileId, date, PENDING).stream()
-                .map(d -> new DeferredTaskView(d.getId(), d.getShipmentId(), d.getTaskType().name(),
+                .map(d -> new DeferredTaskView(d.getId(), d.getShipmentId(), d.getOrderRef(), d.getTaskType().name(),
                         d.getDeferReason().name(), d.getDeferredAt(), d.getRetryAfter(), d.getRetryCount()))
                 .toList();
         return new TileQueueResponse(tileId, date, das, deferredTasks.size(), deferredTasks);
@@ -138,7 +138,7 @@ class StationDispatchServiceImpl implements StationDispatchService {
                 .orElse(null);
 
         List<TaskView> queue = rows.stream()
-                .map(r -> new TaskView(r.getId(), r.getShipmentId(), r.getQueuePosition(),
+                .map(r -> new TaskView(r.getId(), r.getShipmentId(), r.getOrderRef(), r.getQueuePosition(),
                         r.getStatus().name(), r.getExpectedEta(), r.isCrossTerritory(), r.getTaskType().name()))
                 .toList();
         return new DaQueueView(daId, status, queue.size(), cronSlack, queue);

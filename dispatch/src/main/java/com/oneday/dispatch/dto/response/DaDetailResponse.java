@@ -44,6 +44,7 @@ public record DaDetailResponse(
             UUID taskId,
             UUID shipmentId,
             String shipmentRef,
+            String orderRef,          // parent order back-ref (null for legacy/pre-order tasks)
             String taskType,
             String status,
             Instant expectedEta,

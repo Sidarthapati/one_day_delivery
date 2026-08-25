@@ -152,34 +152,58 @@ public class SlaQueryServiceImpl implements SlaQueryService {
         // The actionable set = the fire bands (CRITICAL/HIGH). WATCH is "keep an eye, no fire" — and this
         // is the band, not the colour: a parcel that's colour-GREEN but racing a 60-min flight cutoff is
         // a HIGH-band fire and belongs here, while a slack AMBER (WATCH band) does not.
-        Map<Cause, List<SlaShipment>> grouped = shipmentRepo.findByClosedAtIsNull().stream()
+        List<SlaShipment> atRisk = shipmentRepo.findByClosedAtIsNull().stream()
                 .filter(ss -> visible(ss, cityScope))
                 .filter(ss -> ss.getBand() != null && ss.getBand() != PriorityBand.WATCH)
-                .collect(Collectors.groupingBy(SlaQueryServiceImpl::causeOf));
-
-        List<SlaClusterResponse.Cluster> clusters = grouped.entrySet().stream()
-                .map(e -> {
-                    Cause c = e.getKey();
-                    List<SlaShipment> members = e.getValue().stream()
-                            .sorted(Comparator.comparingDouble(SlaShipment::getPriorityScore).reversed())
-                            .toList();
-                    PriorityBand band = members.stream()
-                            .map(SlaShipment::getBand).filter(java.util.Objects::nonNull)
-                            .max(Comparator.comparingInt(PriorityBand::rank)).orElse(PriorityBand.WATCH);
-                    int breached = (int) members.stream().filter(SlaShipment::isBreached).count();
-                    Instant earliestActBy = members.stream()
-                            .map(SlaShipment::getActByAt).filter(java.util.Objects::nonNull)
-                            .min(Comparator.naturalOrder()).orElse(null);
-                    List<String> refs = members.stream().map(SlaShipment::getShipmentRef).limit(50).toList();
-                    return new SlaClusterResponse.Cluster(c.stage(), c.scope(), c.label(), band,
-                            members.size(), breached, earliestActBy, refs, deskFor(c));
-                })
-                // Worst band first (never a band-jump), then bigger cluster, then soonest deadline.
-                .sorted(Comparator.comparingInt((SlaClusterResponse.Cluster cl) -> cl.band().rank()).reversed()
-                        .thenComparing(Comparator.comparingInt(SlaClusterResponse.Cluster::size).reversed())
-                        .thenComparing(cl -> cl.earliestActBy() == null ? Instant.MAX : cl.earliestActBy()))
                 .toList();
-        return new SlaClusterResponse(clusters);
+
+        // Primary axis: the operational cause (stage + city/lane).
+        List<SlaClusterResponse.Cluster> clusters = atRisk.stream()
+                .collect(Collectors.groupingBy(SlaQueryServiceImpl::causeOf))
+                .entrySet().stream()
+                .map(e -> toCluster(e.getKey().stage(), e.getKey().scope(), e.getKey().label(),
+                        e.getValue(), deskFor(e.getKey())))
+                .sorted(clusterOrder())
+                .toList();
+
+        // Parallel axis: same rows re-grouped by parent order — only orders with 2+ at-risk parcels
+        // (a single-parcel "order cluster" is just that parcel's row, no correlation value).
+        List<SlaClusterResponse.Cluster> orderClusters = atRisk.stream()
+                .filter(ss -> ss.getOrderRef() != null)
+                .collect(Collectors.groupingBy(SlaShipment::getOrderRef))
+                .entrySet().stream()
+                .filter(e -> e.getValue().size() >= 2)
+                // No single desk owns a whole order (it spans cities) — the merchant is the callee, so contact=null.
+                .map(e -> toCluster("ORDER", e.getKey(), "Order " + e.getKey(), e.getValue(), null))
+                .sorted(clusterOrder())
+                .toList();
+
+        return new SlaClusterResponse(clusters, orderClusters);
+    }
+
+    /** Fold a set of at-risk members into one cluster card (worst band, breach count, soonest act-by, refs). */
+    private static SlaClusterResponse.Cluster toCluster(String stage, String scope, String label,
+                                                        List<SlaShipment> group, SlaShipmentSummary.Handler desk) {
+        List<SlaShipment> members = group.stream()
+                .sorted(Comparator.comparingDouble(SlaShipment::getPriorityScore).reversed())
+                .toList();
+        PriorityBand band = members.stream()
+                .map(SlaShipment::getBand).filter(java.util.Objects::nonNull)
+                .max(Comparator.comparingInt(PriorityBand::rank)).orElse(PriorityBand.WATCH);
+        int breached = (int) members.stream().filter(SlaShipment::isBreached).count();
+        Instant earliestActBy = members.stream()
+                .map(SlaShipment::getActByAt).filter(java.util.Objects::nonNull)
+                .min(Comparator.naturalOrder()).orElse(null);
+        List<String> refs = members.stream().map(SlaShipment::getShipmentRef).limit(50).toList();
+        return new SlaClusterResponse.Cluster(stage, scope, label, band,
+                members.size(), breached, earliestActBy, refs, desk);
+    }
+
+    /** Worst band first (never a band-jump), then bigger cluster, then soonest deadline. */
+    private static Comparator<SlaClusterResponse.Cluster> clusterOrder() {
+        return Comparator.comparingInt((SlaClusterResponse.Cluster cl) -> cl.band().rank()).reversed()
+                .thenComparing(Comparator.comparingInt(SlaClusterResponse.Cluster::size).reversed())
+                .thenComparing(cl -> cl.earliestActBy() == null ? Instant.MAX : cl.earliestActBy());
     }
 
     @Override

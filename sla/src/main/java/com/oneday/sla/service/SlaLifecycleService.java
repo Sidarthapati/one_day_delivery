@@ -68,6 +68,8 @@ public class SlaLifecycleService {
         SlaShipment ss = new SlaShipment();
         ss.setShipmentId(e.getShipmentId());
         ss.setShipmentRef(e.getShipmentRef());
+        ss.setOrderId(e.getOrderId());
+        ss.setOrderRef(e.getOrderRef());
         ss.setOriginCity(e.getOriginCity());
         ss.setDestCity(e.getDestCity());
         ss.setLane(lane(e.getOriginCity(), e.getDestCity()));

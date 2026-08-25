@@ -16,6 +16,12 @@ public interface ExceptionCaseRepository extends JpaRepository<ExceptionCase, UU
     /** The one live (unresolved) case for a shipment, if any — the idempotency key for open/bump. */
     Optional<ExceptionCase> findFirstByShipmentIdAndResolvedAtIsNull(UUID shipmentId);
 
+    /** All live cases belonging to one parent order — sibling view + batch-RTO-by-order. */
+    List<ExceptionCase> findByOrderRefAndResolvedAtIsNull(String orderRef);
+
+    /** How many live cases the order still has — the "N open in this order" badge on the detail. */
+    long countByOrderRefAndResolvedAtIsNull(String orderRef);
+
     /**
      * The problem-solve queue: live cases, city-scoped (origin or dest matches), optional type filter,
      * freshest first. {@code city == null} = admin (all cities).

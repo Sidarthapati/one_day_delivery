@@ -29,6 +29,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -257,6 +258,74 @@ class ExceptionCaseServiceImplTest {
         assertThat(live.getDisposition()).isEqualTo(Disposition.RETURNED);
         assertThat(live.getAttemptNo()).isEqualTo(3);
         verify(caseRepo, never()).save(any()); // trail-only; no mutation of the case
+    }
+
+    @Test
+    void openCaseStampsTheOrderBackRefFromShipmentInfo() {
+        UUID orderId = UUID.randomUUID();
+        when(caseRepo.findFirstByShipmentIdAndResolvedAtIsNull(shipmentId)).thenReturn(Optional.empty());
+        when(caseRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(lookup.findByRef("1DD-BLR-1")).thenReturn(Optional.of(new com.oneday.orders.dto.ShipmentInfo(
+                shipmentId, "1DD-BLR-1", ShipmentState.PICKED_UP, 1000, null,
+                com.oneday.common.domain.enums.DeliveryType.INTERCITY, "BLR", "DEL", "110001", null, null,
+                orderId, "1DD-ORD-BLR-20260824-00001")));
+
+        svc.captureDaFailure(shipmentId, "1DD-BLR-1", ExceptionType.DELIVERY_FAILED, ExceptionReason.UNKNOWN, false);
+
+        ExceptionCase c = saved();
+        assertThat(c.getOrderId()).isEqualTo(orderId);
+        assertThat(c.getOrderRef()).isEqualTo("1DD-ORD-BLR-20260824-00001");
+    }
+
+    @Test
+    void resolveByOrderBatchesEveryVisibleLiveSibling() {
+        UUID id1 = UUID.randomUUID(), id2 = UUID.randomUUID();
+        ExceptionCase c1 = mock(ExceptionCase.class);
+        when(c1.getId()).thenReturn(id1);
+        when(c1.getOriginCity()).thenReturn("BLR");
+        ExceptionCase c2 = mock(ExceptionCase.class);
+        when(c2.getId()).thenReturn(id2);
+        when(c2.getOriginCity()).thenReturn("BLR");
+        when(caseRepo.findByOrderRefAndResolvedAtIsNull("1DD-ORD-1")).thenReturn(List.of(c1, c2));
+        when(self.batchResolve(any(), any(), any(), any())).thenReturn(new BatchResolveResponse(List.of()));
+
+        svc.resolveByOrder("1DD-ORD-1", ResolveAction.INITIATE_RTO, null, "u1", "STATION_MANAGER", "bulk rto");
+
+        ArgumentCaptor<BatchResolveRequest> cap = ArgumentCaptor.forClass(BatchResolveRequest.class);
+        verify(self).batchResolve(cap.capture(), eq(null), eq("u1"), eq("STATION_MANAGER"));
+        assertThat(cap.getValue().action()).isEqualTo(ResolveAction.INITIATE_RTO);
+        assertThat(cap.getValue().caseIds()).containsExactlyInAnyOrder(id1, id2);
+    }
+
+    @Test
+    void resolveByOrderSkipsSiblingsOutsideTheCallersCity() {
+        UUID inCity = UUID.randomUUID(), otherCity = UUID.randomUUID();
+        ExceptionCase mine = mock(ExceptionCase.class);
+        when(mine.getId()).thenReturn(inCity);
+        when(mine.getOriginCity()).thenReturn("BLR");
+        when(mine.getDestCity()).thenReturn("DEL");
+        ExceptionCase foreign = mock(ExceptionCase.class);
+        when(foreign.getOriginCity()).thenReturn("HYD");
+        when(foreign.getDestCity()).thenReturn("MAA");
+        when(caseRepo.findByOrderRefAndResolvedAtIsNull("1DD-ORD-1")).thenReturn(List.of(mine, foreign));
+        when(self.batchResolve(any(), any(), any(), any())).thenReturn(new BatchResolveResponse(List.of()));
+
+        svc.resolveByOrder("1DD-ORD-1", ResolveAction.INITIATE_RTO, "BLR", "u1", "STATION_MANAGER", null);
+
+        ArgumentCaptor<BatchResolveRequest> cap = ArgumentCaptor.forClass(BatchResolveRequest.class);
+        verify(self).batchResolve(cap.capture(), eq("BLR"), eq("u1"), eq("STATION_MANAGER"));
+        assertThat(cap.getValue().caseIds()).containsExactly(inCity); // the HYD→MAA sibling is not this SM's
+    }
+
+    @Test
+    void resolveByOrderWithNoLiveCasesReturnsEmptyWithoutBatching() {
+        when(caseRepo.findByOrderRefAndResolvedAtIsNull("1DD-ORD-EMPTY")).thenReturn(List.of());
+
+        BatchResolveResponse resp = svc.resolveByOrder("1DD-ORD-EMPTY", ResolveAction.INITIATE_RTO,
+                null, "u1", "STATION_MANAGER", null);
+
+        assertThat(resp.results()).isEmpty();
+        verify(self, never()).batchResolve(any(), any(), any(), any());
     }
 
     @Test
