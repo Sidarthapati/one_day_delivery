@@ -24,6 +24,7 @@ import com.oneday.orders.dto.B2bBookingRequest;
 import com.oneday.orders.dto.BookingResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
+import com.oneday.orders.repository.MerchantCategoryRepository;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.ShipmentStateHistoryRepository;
 import com.oneday.orders.service.B2bBookingService;
@@ -66,6 +67,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private final ShipmentRepository shipmentRepository;
     private final ShipmentStateHistoryRepository historyRepository;
     private final CodCollectionRepository codCollectionRepository;
+    private final MerchantCategoryRepository merchantCategoryRepository;
     private final CustomerVisibleStateMapper stateMapper;
     private final WalletService walletService;
     private final PickupSlotCapacity pickupSlotCapacity;
@@ -89,6 +91,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
                           ShipmentRepository shipmentRepository,
                           ShipmentStateHistoryRepository historyRepository,
                           CodCollectionRepository codCollectionRepository,
+                          MerchantCategoryRepository merchantCategoryRepository,
                           CustomerVisibleStateMapper stateMapper,
                           WalletService walletService,
                           PickupSlotCapacity pickupSlotCapacity,
@@ -106,6 +109,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         this.shipmentRepository   = shipmentRepository;
         this.historyRepository    = historyRepository;
         this.codCollectionRepository = codCollectionRepository;
+        this.merchantCategoryRepository = merchantCategoryRepository;
         this.stateMapper          = stateMapper;
         this.walletService        = walletService;
         this.pickupSlotCapacity   = pickupSlotCapacity;
@@ -139,6 +143,12 @@ class B2bBookingServiceImpl implements B2bBookingService {
         if (account.getOwnerUserId() == null || !account.getOwnerUserId().toString().equals(userId)) {
             throw new AccountAccessException(
                     "Caller is not authorized for B2B account: " + req.getB2bAccountId());
+        }
+        // Category (optional) must be one of THIS merchant's own — never another account's category.
+        if (req.getCategoryId() != null
+                && merchantCategoryRepository.findByIdAndB2bAccountId(req.getCategoryId(), req.getB2bAccountId()).isEmpty()) {
+            throw new BookingService.InvalidBookingRequestException(
+                    "Unknown category for this account: " + req.getCategoryId());
         }
 
         // ── 2. Serviceability (outside TX) ────────────────────────────────────
@@ -244,6 +254,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         shipment.setOrderId(effectiveOrderId);
         shipment.setCustomerType(CustomerType.B2B);
         shipment.setB2bAccountId(req.getB2bAccountId());
+        shipment.setCategoryId(req.getCategoryId());   // validated same-merchant in book()
         shipment.setDeliveryType(serviceability.deliveryType());
         shipment.setSenderName(req.getSenderName());
         shipment.setSenderPhone(req.getSenderPhone());

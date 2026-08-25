@@ -4,6 +4,7 @@ import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.ShipmentState;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * One row of a customer's own booking history ({@code GET /api/v1/shipments/mine}). A read-only
@@ -20,6 +21,7 @@ public record MyShipmentSummaryResponse(
         String originCity,
         String destCity,
         Long totalPricePaise,
+        UUID categoryId,
         Instant createdAt,
         Instant cancelledAt) {
 }

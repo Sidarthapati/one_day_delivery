@@ -6,6 +6,7 @@ import com.oneday.orders.service.BookingService;
 import com.oneday.orders.service.BulkUploadService;
 import com.oneday.orders.service.CancellationService;
 import com.oneday.orders.service.CartService;
+import com.oneday.orders.service.MerchantCategoryService;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.PickupSlotFullException;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
@@ -130,6 +131,22 @@ class OrdersGlobalExceptionHandler {
     ProblemDetail handlePickupSlotFull(PickupSlotFullException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
         pd.setTitle("Pickup slot full");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(MerchantCategoryService.CategoryNotFoundException.class)
+    ProblemDetail handleCategoryNotFound(MerchantCategoryService.CategoryNotFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setTitle("Category not found");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(MerchantCategoryService.DuplicateCategoryException.class)
+    ProblemDetail handleDuplicateCategory(MerchantCategoryService.DuplicateCategoryException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("Duplicate category");
         pd.setDetail(ex.getMessage());
         return pd;
     }

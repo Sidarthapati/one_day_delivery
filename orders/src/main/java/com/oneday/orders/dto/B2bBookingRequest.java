@@ -23,6 +23,8 @@ public class B2bBookingRequest {
     @NotNull private UUID b2bAccountId;
     @Size(max = 100) private String purchaseOrderRef;  // nullable
 
+    private java.util.UUID categoryId;  // nullable — one of the merchant's own section categories
+
     // ── Sender ────────────────────────────────────────────────────────────────
 
     @NotBlank @Size(max = 100) private String senderName;
@@ -81,6 +83,8 @@ public class B2bBookingRequest {
 
     public String getPurchaseOrderRef()        { return purchaseOrderRef; }
     public void setPurchaseOrderRef(String v)  { this.purchaseOrderRef = v; }
+    public java.util.UUID getCategoryId()      { return categoryId; }
+    public void setCategoryId(java.util.UUID v) { this.categoryId = v; }
 
     public String getSenderName()              { return senderName; }
     public void setSenderName(String v)        { this.senderName = v; }
