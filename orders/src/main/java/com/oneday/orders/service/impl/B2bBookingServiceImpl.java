@@ -68,6 +68,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private final CodCollectionRepository codCollectionRepository;
     private final CustomerVisibleStateMapper stateMapper;
     private final WalletService walletService;
+    private final PickupSlotCapacity pickupSlotCapacity;
     private final TransactionTemplate tx;
     private final ApplicationEventPublisher applicationEventPublisher;
 
@@ -90,6 +91,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
                           CodCollectionRepository codCollectionRepository,
                           CustomerVisibleStateMapper stateMapper,
                           WalletService walletService,
+                          PickupSlotCapacity pickupSlotCapacity,
                           TransactionTemplate transactionTemplate,
                           ApplicationEventPublisher applicationEventPublisher,
                           CircuitBreakerRegistry circuitBreakerRegistry,
@@ -106,6 +108,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
         this.codCollectionRepository = codCollectionRepository;
         this.stateMapper          = stateMapper;
         this.walletService        = walletService;
+        this.pickupSlotCapacity   = pickupSlotCapacity;
         this.tx                   = transactionTemplate;
         this.applicationEventPublisher = applicationEventPublisher;
         this.serviceabilityCb     = circuitBreakerRegistry.circuitBreaker("serviceability");
@@ -164,6 +167,9 @@ class B2bBookingServiceImpl implements B2bBookingService {
                         req.getDeclaredValuePaise(),
                         account.getRateCardId(),
                         null)));  // B2B is credit-billed — no COD surcharge
+
+        // ── 4b. Pickup-slot capacity (before opening the TX; a full slot rejects cleanly) ──
+        pickupSlotCapacity.ensureRoom(req.getOriginCity(), req.getPickupSlotDate(), req.getPickupSlotStartHour());
 
         // ── 5. DB transaction: credit check → persist → balance increment ──────
         final int finalVolumetric = volumetricWeightGrams;

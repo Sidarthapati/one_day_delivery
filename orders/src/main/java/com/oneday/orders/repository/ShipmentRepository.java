@@ -72,6 +72,10 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     // account's users), newest first. Ownership is enforced by the caller before this runs.
     Page<Shipment> findByB2bAccountId(UUID b2bAccountId, Pageable pageable);
 
+    // Pickup-slot capacity: how many active (non-cancelled) reservations already hold a given
+    // city's slot (identified by its absolute start instant). Backs the per-slot cap at booking time.
+    int countByOriginCityAndScheduledPickupStartAndCancelledAtIsNull(String originCity, Instant scheduledPickupStart);
+
     // Order → N Shipments: the child shipments of one order (booking order preserved).
     List<Shipment> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
 
