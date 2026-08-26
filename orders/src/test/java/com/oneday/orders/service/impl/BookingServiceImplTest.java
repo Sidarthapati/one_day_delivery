@@ -108,7 +108,7 @@ class BookingServiceImplTest {
         service = new BookingServiceImpl(
                 serviceabilityPort, pricingPort, paymentPort, etaPort,
                 shipmentRefService, orderService, shipmentRepository, paymentTransactionRepository,
-                historyRepository, stateMapper, new TransactionTemplate(NO_OP_TX),
+                historyRepository, stateMapper, org.mockito.Mockito.mock(PickupSlotCapacity.class), new TransactionTemplate(NO_OP_TX),
                 CircuitBreakerRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),
                 scheduler, applicationEventPublisher);

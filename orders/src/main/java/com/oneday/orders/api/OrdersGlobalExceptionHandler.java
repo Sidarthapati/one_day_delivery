@@ -7,6 +7,7 @@ import com.oneday.orders.service.BulkUploadService;
 import com.oneday.orders.service.CancellationService;
 import com.oneday.orders.service.CartService;
 import com.oneday.orders.service.PaymentPort;
+import com.oneday.orders.service.PickupSlotFullException;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
 import com.oneday.pricing.service.NoRateConfiguredException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -121,6 +122,14 @@ class OrdersGlobalExceptionHandler {
     ProblemDetail handleCancellationNotAllowed(CancellationService.CancellationNotAllowedException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
         pd.setTitle("Cancellation not allowed");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(PickupSlotFullException.class)
+    ProblemDetail handlePickupSlotFull(PickupSlotFullException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("Pickup slot full");
         pd.setDetail(ex.getMessage());
         return pd;
     }

@@ -1,6 +1,7 @@
 package com.oneday.orders.repository;
 
 import com.oneday.common.domain.enums.CustomerType;
+import com.oneday.common.domain.enums.PickupType;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.Shipment;
 import jakarta.persistence.LockModeType;
@@ -71,6 +72,12 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     // Merchant self-service export: every shipment booked against one B2B account (any of the
     // account's users), newest first. Ownership is enforced by the caller before this runs.
     Page<Shipment> findByB2bAccountId(UUID b2bAccountId, Pageable pageable);
+
+    // Pickup-slot capacity: how many active (non-cancelled) DA-pickup reservations already hold a
+    // given city's slot (identified by its absolute start instant). Only DA_PICKUP shipments consume
+    // a pickup slot — a SELF_DROP parcel needs no DA. Backs the per-slot cap at booking time.
+    int countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(
+            String originCity, Instant scheduledPickupStart, PickupType pickupType);
 
     // Order → N Shipments: the child shipments of one order (booking order preserved).
     List<Shipment> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
