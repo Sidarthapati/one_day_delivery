@@ -42,6 +42,11 @@ class NotificationTemplateResolverImpl implements NotificationTemplateResolver {
                 EnumSet.of(NotificationChannel.EMAIL),
                 "SLA alert: {shipment_ref} needs attention",
                 "Shipment {shipment_ref} ({city}) has breached its SLA: {detail}. Please action it."));
+
+        TEMPLATES.put(NotificationEventType.WALLET_LOW, new Template(
+                EnumSet.of(NotificationChannel.EMAIL, NotificationChannel.SMS),
+                "Your Godspeed wallet is running low",
+                "Your Godspeed wallet balance is now ₹{balance}. Top up to keep shipping without interruption."));
     }
 
     @Override

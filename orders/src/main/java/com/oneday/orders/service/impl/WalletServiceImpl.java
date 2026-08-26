@@ -30,15 +30,21 @@ class WalletServiceImpl implements WalletService {
     private final WalletTransactionRepository ledger;
     private final WalletRechargeOrderRepository rechargeOrders;
     private final PaymentPort paymentPort;
+    private final com.oneday.common.port.NotificationPort notificationPort;
+    private final com.oneday.orders.config.WalletProperties walletProperties;
 
     WalletServiceImpl(B2bAccountRepository accounts,
                       WalletTransactionRepository ledger,
                       WalletRechargeOrderRepository rechargeOrders,
-                      PaymentPort paymentPort) {
+                      PaymentPort paymentPort,
+                      com.oneday.common.port.NotificationPort notificationPort,
+                      com.oneday.orders.config.WalletProperties walletProperties) {
         this.accounts = accounts;
         this.ledger = ledger;
         this.rechargeOrders = rechargeOrders;
         this.paymentPort = paymentPort;
+        this.notificationPort = notificationPort;
+        this.walletProperties = walletProperties;
     }
 
     @Override
@@ -115,6 +121,27 @@ class WalletServiceImpl implements WalletService {
                 shipmentRef, "Shipment " + shipmentRef, actorId);
         log.info("Wallet debited: account {} -{} paise → {} (shipment {})",
                 account.getId(), amountPaise, newBalance, safe(shipmentRef));
+
+        maybeAlertLowBalance(account, current, newBalance);
+    }
+
+    /**
+     * Alert the merchant to top up — but only on the CROSSING (a debit that took the balance from
+     * at/above the threshold to below it), so they get one nudge per low episode, not one per debit
+     * while already low. Enqueued in the caller's booking TX via the notification outbox, so it
+     * commits atomically and a rolled-back booking never alerts.
+     */
+    private void maybeAlertLowBalance(B2bAccount account, long balanceBefore, long balanceAfter) {
+        long threshold = walletProperties.getLowBalanceThresholdPaise();
+        if (threshold <= 0 || balanceBefore < threshold || balanceAfter >= threshold) {
+            return;
+        }
+        String rupees = java.math.BigDecimal.valueOf(balanceAfter, 2).toPlainString();
+        notificationPort.send(new com.oneday.common.port.dto.NotificationRequest(
+                com.oneday.common.port.dto.NotificationEventType.WALLET_LOW,
+                account.getBillingEmail(),
+                account.getSupportPhone(),                 // nullable — SMS only if the account has one
+                java.util.Map.of("balance", rupees)));
     }
 
     @Override

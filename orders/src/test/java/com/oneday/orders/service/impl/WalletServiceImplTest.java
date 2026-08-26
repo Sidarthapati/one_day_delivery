@@ -1,5 +1,9 @@
 package com.oneday.orders.service.impl;
 
+import com.oneday.common.port.NotificationPort;
+import com.oneday.common.port.dto.NotificationEventType;
+import com.oneday.common.port.dto.NotificationRequest;
+import com.oneday.orders.config.WalletProperties;
 import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.WalletRechargeOrder;
 import com.oneday.orders.dto.WalletResponse;
@@ -38,6 +42,8 @@ class WalletServiceImplTest {
     @Mock private WalletTransactionRepository ledger;
     @Mock private WalletRechargeOrderRepository rechargeOrders;
     @Mock private PaymentPort paymentPort;
+    @Mock private NotificationPort notificationPort;
+    private final WalletProperties walletProperties = new WalletProperties();   // threshold ₹1,000 default
 
     private static final UUID ACCOUNT = UUID.randomUUID();
     private static final String ORDER_ID = "order_abc";
@@ -45,7 +51,35 @@ class WalletServiceImplTest {
     private static final String SIG = "sig";
 
     private WalletServiceImpl service() {
-        return new WalletServiceImpl(accounts, ledger, rechargeOrders, paymentPort);
+        return new WalletServiceImpl(accounts, ledger, rechargeOrders, paymentPort,
+                notificationPort, walletProperties);
+    }
+
+    @Test
+    void debitCrossingBelowThreshold_alertsMerchantOnce() {
+        B2bAccount acc = new B2bAccount();
+        acc.setWalletBalancePaise(150_000L);        // ₹1,500 — above the ₹1,000 threshold
+        acc.setBillingEmail("merchant@acme.example");
+        acc.setSupportPhone("+919000000001");
+
+        service().debitForBooking(acc, 60_000L, "1DD-REF", UUID.randomUUID());   // → ₹900, below
+
+        ArgumentCaptor<NotificationRequest> req = ArgumentCaptor.forClass(NotificationRequest.class);
+        verify(notificationPort).send(req.capture());
+        assertThat(req.getValue().type()).isEqualTo(NotificationEventType.WALLET_LOW);
+        assertThat(req.getValue().recipientEmail()).isEqualTo("merchant@acme.example");
+        assertThat(req.getValue().params().get("balance")).isEqualTo("900.00");
+    }
+
+    @Test
+    void debitWhileAlreadyBelowThreshold_doesNotAlertAgain() {
+        B2bAccount acc = new B2bAccount();
+        acc.setWalletBalancePaise(90_000L);         // ₹900 — already below threshold
+        acc.setBillingEmail("merchant@acme.example");
+
+        service().debitForBooking(acc, 10_000L, "1DD-REF", UUID.randomUUID());   // → ₹800, still below
+
+        verify(notificationPort, never()).send(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
