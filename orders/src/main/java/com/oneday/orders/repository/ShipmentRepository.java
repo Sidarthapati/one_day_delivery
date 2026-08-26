@@ -79,6 +79,16 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     int countByOriginCityAndScheduledPickupStartAndPickupTypeAndCancelledAtIsNull(
             String originCity, Instant scheduledPickupStart, PickupType pickupType);
 
+    // Pickup-slot availability: booked count per slot start across a city + time window, in ONE grouped
+    // query (instead of one count per candidate slot). Backs the "hide full slots" picker.
+    @Query("SELECT s.scheduledPickupStart AS start, COUNT(s) AS count FROM Shipment s "
+            + "WHERE s.originCity = :city AND s.pickupType = :pickupType AND s.cancelledAt IS NULL "
+            + "AND s.scheduledPickupStart >= :from AND s.scheduledPickupStart < :to "
+            + "GROUP BY s.scheduledPickupStart")
+    List<SlotBookingCount> countBookedSlotsInRange(@Param("city") String city,
+                                                   @Param("pickupType") PickupType pickupType,
+                                                   @Param("from") Instant from, @Param("to") Instant to);
+
     // Order → N Shipments: the child shipments of one order (booking order preserved).
     List<Shipment> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
 
