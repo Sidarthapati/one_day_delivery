@@ -59,6 +59,7 @@ class NotificationServiceImpl implements NotificationPort {
             }
             NotificationLog row = new NotificationLog();
             row.setEventType(request.type().name());
+            row.setB2bAccountId(request.accountId());
             row.setChannel(channel);
             row.setRecipient(recipient.trim());
             row.setSubject(channel == NotificationChannel.EMAIL ? subject : null);

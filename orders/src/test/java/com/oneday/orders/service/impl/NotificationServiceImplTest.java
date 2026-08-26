@@ -82,4 +82,24 @@ class NotificationServiceImplTest {
                 Map.of("otp", "123456")));
         verify(repo, never()).saveAll(org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void stampsTheOwningAccountIdOnEveryRow_soSharedContactsStayIsolated() {
+        // Two accounts share a billing email. Each notification carries its own account id, so the
+        // in-app bell (which queries by account id) can never surface one account's row to the other.
+        java.util.UUID accountA = java.util.UUID.randomUUID();
+        java.util.UUID accountB = java.util.UUID.randomUUID();
+        String sharedEmail = "billing@shared-corp.example";
+
+        service.send(new NotificationRequest(NotificationEventType.WALLET_LOW, sharedEmail, "+919000000001",
+                Map.of("balance", "900.00"), accountA));
+        List<NotificationLog> aRows = captureSaved();
+        assertThat(aRows).isNotEmpty();
+        assertThat(aRows).allSatisfy(r -> assertThat(r.getB2bAccountId()).isEqualTo(accountA));
+
+        // Account B's request carries B's id (not A's); a platform notification has no account → null.
+        assertThat(new NotificationRequest(NotificationEventType.WALLET_LOW, sharedEmail, null,
+                Map.of("balance", "1.00"), accountB).accountId()).isEqualTo(accountB);
+        assertThat(NotificationRequest.of(NotificationEventType.OTP_GENERATED, "x@y.com", null).accountId()).isNull();
+    }
 }

@@ -16,4 +16,11 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
      */
     List<NotificationLog> findTop200ByStatusInAndAttemptsLessThanOrderByCreatedAtAsc(
             Collection<NotificationStatus> statuses, int maxAttempts);
+
+    /**
+     * The recent notifications owned by one B2B account, newest first — backs the in-app notifications
+     * bell. Scoped by account identity (not the mutable recipient string), so accounts sharing a billing
+     * email or support phone can't see each other's messages. Backed by {@code idx_notification_log_account}.
+     */
+    List<NotificationLog> findTop50ByB2bAccountIdOrderByCreatedAtDesc(UUID b2bAccountId);
 }
