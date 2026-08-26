@@ -47,6 +47,12 @@ class NotificationTemplateResolverImpl implements NotificationTemplateResolver {
                 EnumSet.of(NotificationChannel.EMAIL, NotificationChannel.SMS),
                 "Your Godspeed wallet is running low",
                 "Your Godspeed wallet balance is now ₹{balance}. Top up to keep shipping without interruption."));
+
+        TEMPLATES.put(NotificationEventType.SHIPMENT_DELAYED, new Template(
+                EnumSet.of(NotificationChannel.EMAIL, NotificationChannel.SMS),
+                "Your Godspeed delivery {shipment_ref} is running late",
+                "Your shipment {shipment_ref} is now expected by {new_eta} (was {original_eta}). "
+                        + "No action is needed to keep it — or cancel for a full refund if the new time doesn't work."));
     }
 
     @Override
