@@ -73,6 +73,7 @@ class B2bProvisioningAdapter implements B2bProvisioningPort {
         owner.setUserId(r.ownerUserId());
         owner.setRole(MemberRole.OWNER);
         owner.setEmail(r.billingEmail());
+        owner.setName(r.companyName());   // match the V4_44 backfill (account_name), so the owner row isn't nameless
         members.save(owner);
 
         log.info("Provisioned B2B account {} for owner {} (status={})", a.getId(), r.ownerUserId(), status);

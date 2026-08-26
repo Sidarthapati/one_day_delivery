@@ -1,7 +1,9 @@
 -- Multiple service accounts: a B2B account can have many users. Until now a user linked to an account
 -- only via b2b_accounts.owner_user_id (one owner). This membership table generalises that — one account
--- ↔ many members; a user belongs to at most one account (unique user_id, a v1 simplification).
--- email/name are denormalised at invite time for a display-only member list.
+-- ↔ many members. The DB permits a user on more than one account (unique per account+user, not per user):
+-- the seeded demo principal owns BOTH demo accounts (V4_16), so a per-user unique would abort the backfill
+-- below. The invite flow still enforces one-account-per-user for real invites; resolution is deterministic
+-- (earliest membership). email/name are denormalised for a display-only member list.
 
 CREATE TABLE b2b_account_member (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -12,7 +14,7 @@ CREATE TABLE b2b_account_member (
     name           VARCHAR(200),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_b2b_member_user UNIQUE (user_id)
+    CONSTRAINT uq_b2b_member_account_user UNIQUE (b2b_account_id, user_id)
 );
 
 -- The member list for one account, owner first.
