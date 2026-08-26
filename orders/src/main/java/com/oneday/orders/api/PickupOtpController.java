@@ -120,8 +120,8 @@ public class PickupOtpController {
         }
 
         try {
+            // resend() SMSes the new OTP to the sender via the notification outbox; also returned for DA display.
             String newOtp = pickupOtpService.resend(shipment.getId());
-            // TODO (PR #10): call NotificationPort to SMS the new OTP to the sender.
             return ResponseEntity.ok(Map.of("otp", newOtp));
         } catch (PickupOtpService.ResendLimitExceededException e) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
