@@ -50,6 +50,11 @@ public class Shipment extends MutableBaseEntity {
     @Column(name = "order_id", updatable = false)
     private UUID orderId;
 
+    // Merchant's section category for this shipment (null = untagged). Set at booking from the
+    // merchant's own categories; a bare UUID by cross-module convention, not a DB foreign key.
+    @Column(name = "category_id", updatable = false)
+    private UUID categoryId;
+
     // ── Sender ────────────────────────────────────────────────────────────
 
     @Column(name = "sender_name", length = 100, nullable = false, updatable = false)
