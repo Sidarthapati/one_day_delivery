@@ -59,6 +59,8 @@ class DaTaskServiceImplTest {
     private com.oneday.dispatch.events.HubScanSeamProducer scanSeam;
     private CityMeetingModePort meetingModePort;
     private DaTaskService service;
+    // Shipment ref lookup the custody-scan validation reads; empty by default (validation skipped).
+    private final java.util.Map<UUID, String> refs = new java.util.HashMap<>();
 
     @BeforeEach
     void setUp() {
@@ -71,8 +73,9 @@ class DaTaskServiceImplTest {
         meetingModePort = mock(CityMeetingModePort.class);
         // This test's city is a HUB_RETURN city (hub-handoff/collect paths exercised below).
         when(meetingModePort.modeFor(any())).thenReturn(MeetingMode.HUB_RETURN);
+        refs.clear();
         service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam,
-                ids -> java.util.Map.of(), ids -> java.util.Map.of(), reorder, meetingModePort);
+                ids -> refs, ids -> java.util.Map.of(), reorder, meetingModePort);
     }
 
     @Test
@@ -335,6 +338,20 @@ class DaTaskServiceImplTest {
         assertThatThrownBy(() -> service.recordCustodyCollect(da, task.getId(), List.of("P-1")))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("409");
+    }
+
+    @Test
+    void custodyCollectRejectsAScanThatIsNotThisParcel() {
+        DispatchQueue collect = persistCustody(TaskType.DELIVERY, UUID.randomUUID(), 28.70, 77.10);
+        refs.put(collect.getShipmentId(), "1DD-DEL-20260826-00042");   // this parcel's real label barcode
+        // A junk / wrong-parcel scan is rejected (422) and custody is NOT completed.
+        assertThatThrownBy(() -> service.recordCustodyCollect(da, collect.getId(), List.of("SOME-OTHER-CODE")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("422");
+        assertThat(reload(collect).getStatus()).isEqualTo(TaskStatus.QUEUED);
+        // The correct barcode (matching the shipment ref, case-insensitive) completes it.
+        service.recordCustodyCollect(da, collect.getId(), List.of("1dd-del-20260826-00042"));
+        assertThat(reload(collect).getStatus()).isEqualTo(TaskStatus.COMPLETED);
     }
 
     @Test
