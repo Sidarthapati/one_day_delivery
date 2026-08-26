@@ -107,6 +107,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/sales/leads").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()
                         .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
+                        // Demo-only static pages + midday-absence visualiser API. The backing
+                        // controllers are @Profile("!prod"), so these paths simply 404 in prod.
+                        .requestMatchers("/demo/**", "/api/grid/demo/**").permitAll()
                         // Security disclosure (RFC 9116) — must be publicly fetchable.
                         .requestMatchers("/.well-known/**").permitAll()
                         // Permit the error dispatch (Spring Boot's default). The JWT filter is skipped

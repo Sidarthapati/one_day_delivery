@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DA Absence — flood-fill demo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --ink:#e7e9ee; --dim:#98a2b3; --accent:#4f8cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:15px; margin:0 12px 0 0; font-weight:650; }
+  header .sub { color:var(--dim); font-size:12px; }
+  input, button, select { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font:inherit; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  .wrap { display:flex; height:calc(100vh - 54px); }
+  #map { flex:1; background:#0b0d11; }
+  aside { width:320px; border-left:1px solid var(--line); padding:14px; overflow:auto; }
+  .das { list-style:none; margin:0; padding:0; }
+  .das li { display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px solid var(--line); }
+  .das li label { display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; }
+  .sw { width:14px; height:14px; border-radius:4px; flex:none; border:1px solid rgba(255,255,255,.35); }
+  .count { color:var(--dim); font-size:12px; }
+  .gain { color:#37d67a; font-size:12px; font-weight:600; }
+  .summary { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px; }
+  .summary b { font-size:20px; }
+  .summary .row { display:flex; justify-content:space-between; padding:2px 0; }
+  .orphan { color:#ff6b6b; font-weight:600; }
+  .muted { color:var(--dim); font-size:12px; }
+  .leaflet-container { background:#0b0d11; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DA absence — flood-fill</h1>
+  <label class="sub">City <input id="city" value="delhi" size="8"></label>
+  <label class="sub"># DAs <input id="daCount" type="number" value="6" min="2" max="12" size="3"></label>
+  <button id="seed">Seed territories</button>
+  <button id="load">Load</button>
+  <span id="status" class="sub"></span>
+</header>
+<div class="wrap">
+  <div id="map"></div>
+  <aside>
+    <div id="summary" class="summary muted">Tick a DA below to mark them absent — their hexes reassign live.</div>
+    <div class="muted" style="margin-bottom:6px">Working DAs — tick = absent</div>
+    <ul id="das" class="das"></ul>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const PALETTE = ["#4f8cff","#37d67a","#ffb020","#e5709b","#20c4c4","#a78bfa","#f97316","#84cc16","#f43f5e","#22d3ee","#c084fc","#eab308"];
+const map = L.map('map', { zoomControl:true, preferCanvas:true }).setView([28.61,77.20], 11);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom:18, attribution:'© OpenStreetMap, © CARTO' }).addTo(map);
+
+let layer = L.layerGroup().addTo(map);
+let hexLayers = {};       // hexId -> polygon
+let colorByDa = {};       // daId -> color
+let ownerByHex = {};      // hexId -> current owner
+let das = [];             // [{daId,label,hexCount}]
+let absent = new Set();
+
+const $ = s => document.querySelector(s);
+const short = id => id ? id.slice(0,8) : '—';
+const status = m => $('#status').textContent = m || '';
+
+function baseStyle(color){ return { color:'#0b0d11', weight:1, fillColor:color, fillOpacity:0.55 }; }
+function movedStyle(color){ return { color:'#ffffff', weight:1.5, dashArray:'3', fillColor:color, fillOpacity:0.9 }; }
+const ORPHAN_STYLE = { color:'#ff6b6b', weight:2, dashArray:'2', fillColor:'#ff6b6b', fillOpacity:0.75 };
+const ABSENT_EMPTY = { color:'#3a3f4b', weight:1, fillColor:'#3a3f4b', fillOpacity:0.25 };
+
+async function seed(){
+  status('seeding…');
+  const r = await fetch(`/api/grid/demo/absence/seed?city=${encodeURIComponent($('#city').value)}&das=${$('#daCount').value}`, {method:'POST'});
+  if(!r.ok){ status('seed failed: '+r.status); return; }
+  await load();
+}
+
+async function load(){
+  status('loading…'); absent.clear();
+  const r = await fetch(`/api/grid/demo/absence/state?city=${encodeURIComponent($('#city').value)}`);
+  if(!r.ok){ status('load failed: '+r.status); return; }
+  const st = await r.json();
+  das = st.das;
+  colorByDa = {};
+  das.forEach((d,i)=> colorByDa[d.da_id] = PALETTE[i % PALETTE.length]);
+  ownerByHex = {};
+  layer.clearLayers(); hexLayers = {};
+  const bounds = [];
+  st.hexes.forEach(h => {
+    ownerByHex[h.hex_id] = h.owner_da_id;
+    const ring = h.boundary.map(p => [p[0], p[1]]);
+    bounds.push(...ring);
+    const color = h.owner_da_id ? colorByDa[h.owner_da_id] : '#3a3f4b';
+    const poly = L.polygon(ring, baseStyle(color)).addTo(layer);
+    poly.bindTooltip(`hex ${short(h.hex_id)}<br>DA ${short(h.owner_da_id)}`, {sticky:true});
+    hexLayers[h.hex_id] = poly;
+  });
+  if(bounds.length) map.fitBounds(bounds, {padding:[20,20]});
+  renderList();
+  $('#summary').className = 'summary muted';
+  $('#summary').textContent = `${das.length} DAs · ${st.hexes.length} hexes. Tick a DA to mark them absent.`;
+  status('');
+}
+
+function renderList(){
+  const ul = $('#das'); ul.innerHTML = '';
+  das.forEach(d => {
+    const li = document.createElement('li');
+    li.innerHTML = `<label><input type="checkbox" data-da="${d.da_id}"><span class="sw" style="background:${colorByDa[d.da_id]}"></span>
+      <span>${d.label || 'DA '+short(d.da_id)}</span></label><span class="count" id="c-${d.da_id}">${d.hex_count} hexes</span>`;
+    ul.appendChild(li);
+  });
+  ul.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', onToggle));
+}
+
+async function onToggle(e){
+  const da = e.target.dataset.da;
+  if(e.target.checked) absent.add(da); else absent.delete(da);
+  // Absent DAs' rows dim their swatch.
+  e.target.closest('li').style.opacity = e.target.checked ? .5 : 1;
+  await recompute();
+}
+
+async function recompute(){
+  // Reset all hexes to their current owner colour first.
+  Object.entries(hexLayers).forEach(([hexId,poly]) => {
+    const owner = ownerByHex[hexId];
+    if(absent.has(owner)) poly.setStyle(ABSENT_EMPTY);          // vacated, not yet reassigned
+    else poly.setStyle(baseStyle(owner ? colorByDa[owner] : '#3a3f4b'));
+  });
+  if(absent.size === 0){ $('#summary').className='summary muted'; $('#summary').textContent='No one absent.'; das.forEach(d=>$('#c-'+d.da_id).textContent=d.hex_count+' hexes'); return; }
+  status('reassigning…');
+  const r = await fetch(`/api/grid/demo/absence/plan?city=${encodeURIComponent($('#city').value)}&absent=${[...absent].join(',')}`);
+  if(!r.ok){ status('plan failed: '+r.status); return; }
+  const plan = await r.json();
+  const gained = {};
+  plan.reassignments.forEach(m => {
+    const poly = hexLayers[m.hex_id];
+    if(poly){ poly.setStyle(movedStyle(colorByDa[m.to_da_id] || '#888'));
+      poly.setTooltipContent(`hex ${short(m.hex_id)}<br>${short(m.from_da_id)} → <b>${short(m.to_da_id)}</b>`); }
+    gained[m.to_da_id] = (gained[m.to_da_id]||0)+1;
+  });
+  plan.orphan_hex_ids.forEach(hid => { const p = hexLayers[hid]; if(p){ p.setStyle(ORPHAN_STYLE); p.setTooltipContent(`hex ${short(hid)}<br><b>orphan</b> — no live neighbor`); }});
+  // Update receiver counts in the list.
+  das.forEach(d => {
+    const el = $('#c-'+d.da_id); if(!el) return;
+    if(absent.has(d.da_id)) el.textContent = 'absent';
+    else if(gained[d.da_id]) el.innerHTML = `${d.hex_count} <span class="gain">+${gained[d.da_id]}</span>`;
+    else el.textContent = d.hex_count + ' hexes';
+  });
+  const receivers = Object.keys(gained).length;
+  $('#summary').className = 'summary';
+  $('#summary').innerHTML = `<div class="row"><span>Hexes reassigned</span><b>${plan.reassignments.length}</b></div>
+    <div class="row"><span>Split across</span><b>${receivers} neighbor${receivers===1?'':'s'}</b></div>
+    <div class="row"><span class="${plan.orphan_hex_ids.length?'orphan':''}">Orphans</span><b class="${plan.orphan_hex_ids.length?'orphan':''}">${plan.orphan_hex_ids.length}</b></div>`;
+  status('');
+}
+
+$('#seed').addEventListener('click', seed);
+$('#load').addEventListener('click', load);
+load().catch(()=>status('Start the app, then Seed territories.'));
+</script>
+</body>
+</html>
