@@ -30,28 +30,36 @@ class MerchantAnalyticsServiceImplTest {
 
     private static StateCount state(ShipmentState s, long c) {
         return new StateCount() {
+            @Override
             public ShipmentState getState() { return s; }
+            @Override
             public long getCount() { return c; }
         };
     }
 
     private static AccountTotals totals(long gmv, long cod) {
         return new AccountTotals() {
+            @Override
             public long getGmvPaise() { return gmv; }
+            @Override
             public long getCodPaise() { return cod; }
         };
     }
 
     private static OnTimeStat onTime(long delivered, long on) {
         return new OnTimeStat() {
+            @Override
             public long getDelivered() { return delivered; }
+            @Override
             public long getOnTime() { return on; }
         };
     }
 
     private static CityCount city(String c, long n) {
         return new CityCount() {
+            @Override
             public String getCity() { return c; }
+            @Override
             public long getCount() { return n; }
         };
     }
