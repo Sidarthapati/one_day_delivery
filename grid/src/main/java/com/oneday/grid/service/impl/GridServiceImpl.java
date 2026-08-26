@@ -12,6 +12,7 @@ import com.oneday.grid.domain.Hex;
 import com.oneday.grid.domain.HexDemandSnapshot;
 import com.oneday.grid.domain.HexVertex;
 import com.oneday.grid.domain.PincodeMapping;
+import com.oneday.grid.dto.response.AbsenceReassignmentPlan;
 import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.DaTerritoryResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
@@ -61,6 +62,7 @@ public class GridServiceImpl implements GridService {
     private final ResourceLoader resourceLoader;
     private final GridProperties gridProperties;
     private final H3Core h3Core;
+    private final AbsenceReassignmentPlanner absencePlanner;
     private final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
 
     private final Map<UUID, Grid> gridCache = new ConcurrentHashMap<>();
@@ -73,7 +75,8 @@ public class GridServiceImpl implements GridService {
                     DaHexAssignmentRepository assignmentRepository,
                     ResourceLoader resourceLoader,
                     GridProperties gridProperties,
-                    H3Core h3Core) {
+                    H3Core h3Core,
+                    AbsenceReassignmentPlanner absencePlanner) {
         this.gridRepository = gridRepository;
         this.hexRepository = hexRepository;
         this.pincodeMappingRepository = pincodeMappingRepository;
@@ -83,11 +86,23 @@ public class GridServiceImpl implements GridService {
         this.resourceLoader = resourceLoader;
         this.gridProperties = gridProperties;
         this.h3Core = h3Core;
+        this.absencePlanner = absencePlanner;
     }
 
     @PostConstruct
     void loadGridCache() {
         gridRepository.findAll().forEach(g -> gridCache.put(g.getCityId(), g));
+    }
+
+    @Override
+    public AbsenceReassignmentPlan planAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date) {
+        return absencePlanner.plan(cityId, absentDaIds, date);
+    }
+
+    @Override
+    public AbsenceReassignmentPlan applyAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date,
+                                                            UUID reviewerId) {
+        return absencePlanner.apply(cityId, absentDaIds, date, reviewerId);
     }
 
     @Override

@@ -73,6 +73,11 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "home_tile_id", updatable = false)
     private UUID homeTileId;
 
+    // Set only on CUSTODY_COLLECT tasks: the absent DA the covering DA collects this parcel from
+    // (task_lat/task_lon carry the collect location). Null for ordinary pickup/delivery tasks.
+    @Column(name = "collect_from_da_id", updatable = false)
+    private UUID collectFromDaId;
+
     @Column(name = "cron_safe", nullable = false, updatable = false)
     private boolean cronSafe;
 
