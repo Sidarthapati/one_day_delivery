@@ -41,6 +41,7 @@ class GridServiceImplTest {
     @Mock ResourceLoader resourceLoader;
     @Mock GridProperties gridProperties;
     @Mock H3Core h3Core;
+    @Mock AbsenceReassignmentPlanner absencePlanner;
     @Mock Grid grid;
 
     GridServiceImpl service;
@@ -60,7 +61,7 @@ class GridServiceImplTest {
         service = new GridServiceImpl(gridRepository, hexRepository,
                 pincodeMappingRepository, hexVertexRepository,
                 demandSnapshotRepository, assignmentRepository,
-                resourceLoader, gridProperties, h3Core);
+                resourceLoader, gridProperties, h3Core, absencePlanner);
         service.loadGridCache();
     }
 

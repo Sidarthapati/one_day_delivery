@@ -109,6 +109,13 @@ public class DaEventProducer {
         emit(DaEventType.COD_COLLECTED, daId, cityId, shipmentId, null, null);
     }
 
+    /** Midday absence: covering DA collected an in-custody parcel from the absent DA. → M10, M11.
+     *  {@code fromDaId} (the absent DA) rides in the reason slot for audit/triage. */
+    public void emitCustodyCollected(UUID daId, UUID cityId, UUID shipmentId, UUID fromDaId) {
+        emit(DaEventType.CUSTODY_COLLECTED, daId, cityId, shipmentId, null,
+                fromDaId != null ? "FROM_DA:" + fromDaId : null);
+    }
+
     private void emit(DaEventType type, UUID daId, UUID cityId, UUID shipmentId,
                       String shipmentRef, String reasonCode) {
         // v1: parcel id == shipment id (no M8 barcode yet); validDate = operating date in the shift zone.

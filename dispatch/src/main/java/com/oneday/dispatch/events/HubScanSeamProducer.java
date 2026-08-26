@@ -32,6 +32,11 @@ public class HubScanSeamProducer {
         emit(shipmentId, ScanEventType.HUB_DEST_OUT);
     }
 
+    /** Midday absence: covering DA collected an in-custody parcel from the absent DA (ledger only). */
+    public void emitDaCustodyTransfer(UUID shipmentId) {
+        emit(shipmentId, ScanEventType.DA_CUSTODY_TRANSFER);
+    }
+
     private void emit(UUID shipmentId, ScanEventType type) {
         try {
             eventPublisher.publish(EventStreams.SCAN_EVENTS, new ScanEvent(shipmentId, type));

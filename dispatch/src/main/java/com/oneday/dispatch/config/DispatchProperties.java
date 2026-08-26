@@ -66,6 +66,8 @@ public class DispatchProperties {
     private Reorder reorder = new Reorder();
     @NestedConfigurationProperty
     private Dlq dlq = new Dlq();
+    @NestedConfigurationProperty
+    private Absence absence = new Absence();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -95,6 +97,8 @@ public class DispatchProperties {
     public void setDeferred(Deferred deferred) { this.deferred = deferred; }
     public Dlq getDlq() { return dlq; }
     public void setDlq(Dlq dlq) { this.dlq = dlq; }
+    public Absence getAbsence() { return absence; }
+    public void setAbsence(Absence absence) { this.absence = absence; }
 
     /** Cron-meeting protection (the hard constraint). */
     public static class Cron {
@@ -117,6 +121,21 @@ public class DispatchProperties {
         public void setAbsentThresholdMinutes(int absentThresholdMinutes) {
             this.absentThresholdMinutes = absentThresholdMinutes;
         }
+    }
+
+    /** Midday DA-absence reassignment (manager-triggered; auto-approves if unattended). */
+    public static class Absence {
+        /** A PENDING absence plan auto-applies this many minutes after preview if no one approves it. */
+        private int autoApproveTimeoutMinutes = 5;
+        /** How often the auto-apply sweep runs, in milliseconds. */
+        private long autoApplySweepMs = 60_000;
+
+        public int getAutoApproveTimeoutMinutes() { return autoApproveTimeoutMinutes; }
+        public void setAutoApproveTimeoutMinutes(int autoApproveTimeoutMinutes) {
+            this.autoApproveTimeoutMinutes = autoApproveTimeoutMinutes;
+        }
+        public long getAutoApplySweepMs() { return autoApplySweepMs; }
+        public void setAutoApplySweepMs(long autoApplySweepMs) { this.autoApplySweepMs = autoApplySweepMs; }
     }
 
     public static class Gps {

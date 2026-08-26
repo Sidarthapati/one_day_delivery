@@ -58,6 +58,10 @@ public class ScanEventsConsumer {
             // HUB_RETURN custody ledger record (DA collected a dest parcel from the hub); the DA's
             // later DROP_* events drive the last-mile state, so this is not an M4 transition.
             case HUB_DEST_OUT          -> null;
+            // Midday absence: a covering DA took an in-custody parcel from an absent DA. Custody moved
+            // between DAs but the shipment state hasn't — the covering DA's onward DROP_*/handoff events
+            // drive it. Ledger record only.
+            case DA_CUSTODY_TRANSFER   -> null;
             // DELIVERED is a custody fact only (Option A) — DROPPED stays owned by the delivery-OTP
             // verify path (scan = right box, OTP = right customer, mirroring LABEL_GENERATED/PICKED_UP).
             case DELIVERED             -> null;

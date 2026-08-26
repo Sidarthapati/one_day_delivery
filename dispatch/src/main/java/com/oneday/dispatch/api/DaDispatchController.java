@@ -1,6 +1,7 @@
 package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.dispatch.dto.request.CustodyCollectRequest;
 import com.oneday.dispatch.dto.request.DropCompletedRequest;
 import com.oneday.dispatch.dto.request.GpsPingRequest;
 import com.oneday.dispatch.dto.request.HubHandoffRequest;
@@ -163,6 +164,14 @@ public class DaDispatchController {
         Authz.requireDaSelf(principal, daId);
         boolean cod = request != null && request.codCollected();
         return daTaskService.markDropCompleted(daId, taskId, cod);
+    }
+
+    @PostMapping("/tasks/{taskId}/custody-collected")
+    public DaTaskView custodyCollected(@PathVariable UUID daId, @PathVariable UUID taskId,
+                                       @AuthenticationPrincipal AuthUserDetails principal,
+                                       @Valid @RequestBody CustodyCollectRequest request) {
+        Authz.requireDaSelf(principal, daId);
+        return daTaskService.recordCustodyCollect(daId, taskId, request.parcelScans());
     }
 
     @PostMapping("/tasks/{taskId}/verify-otp")

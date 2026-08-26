@@ -1,6 +1,7 @@
 package com.oneday.grid.service;
 
 import com.oneday.grid.domain.Grid;
+import com.oneday.grid.dto.response.AbsenceReassignmentPlan;
 import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.dto.response.DaTerritoryResponse;
 import com.oneday.grid.dto.response.GridVertexResponse;
@@ -47,4 +48,12 @@ public interface GridService {
     // DA territories for the date — DA → hexes (+ demand) → corner vertices. M6's planning input
     // (§6); built from ACTIVE da_hex_assignment rows joined to the date's demand snapshot.
     List<DaTerritoryResponse> getDaTerritories(UUID cityId, LocalDate date);
+
+    // Midday DA absence (M5-triggered): split the absent DAs' hexes among their territory-neighbors.
+    // plan* is compute-only (preview); apply* writes + approves the INTRADAY_OVERRIDE and returns the
+    // committed split so M5 can move the matching tasks.
+    AbsenceReassignmentPlan planAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date);
+
+    AbsenceReassignmentPlan applyAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date,
+                                                     UUID reviewerId);
 }

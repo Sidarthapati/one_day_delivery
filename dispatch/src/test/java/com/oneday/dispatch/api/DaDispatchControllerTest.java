@@ -122,6 +122,6 @@ class DaDispatchControllerTest {
         return new DaTaskView(taskId, UUID.randomUUID(), "1DD-BLR-20260716-00001",
                 UUID.randomUUID(), "1DD-ORD-BLR-20260716-00001", TaskType.PICKUP,
                 TaskStatus.IN_PROGRESS, 0, null, 12.9716, 77.5946, "PREPAID",
-                "Asha Rao", "+919000000001", "12, MG Road, Bengaluru, 560001", null, false);
+                "Asha Rao", "+919000000001", "12, MG Road, Bengaluru, 560001", null, false, null);
     }
 }

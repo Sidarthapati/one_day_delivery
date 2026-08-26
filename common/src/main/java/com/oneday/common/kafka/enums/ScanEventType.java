@@ -10,5 +10,6 @@ public enum ScanEventType {
     LABEL_GENERATED,
     HUB_COLLECT_COMPLETED,  // hub-collect path: AWAITING_HUB_COLLECT → HUB_COLLECTED
     HUB_DEST_OUT,           // HUB_RETURN: DA collected a dest parcel from the hub for last-mile (ledger only)
+    DA_CUSTODY_TRANSFER,    // midday absence: covering DA collected an in-custody parcel from the absent DA (ledger only)
     DELIVERED,              // DA delivered the box (custody fact only, Option A — DROPPED stays OTP-owned)
 }

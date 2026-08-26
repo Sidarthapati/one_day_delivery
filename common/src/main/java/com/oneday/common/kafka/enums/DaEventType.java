@@ -44,6 +44,11 @@ public enum DaEventType {
     // COD cash collected at delivery; emitted alongside DROP_COMPLETED. → finance / M10
     COD_COLLECTED,
 
+    // Midday absence: the covering DA physically collected an in-custody parcel from an absent DA
+    // (a CUSTODY_COLLECT task completed). Custody moved between DAs, so state consumers can re-anchor
+    // the parcel to the new owner. → M10, M11
+    CUSTODY_COLLECTED,
+
     // QUEUED tasks deferred at shift end (carried to next day / RTO path). → M11
     TASK_DEFERRED_SHIFT_ENDED
 }
