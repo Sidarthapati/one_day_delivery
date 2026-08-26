@@ -141,7 +141,8 @@ class WalletServiceImpl implements WalletService {
                 com.oneday.common.port.dto.NotificationEventType.WALLET_LOW,
                 account.getBillingEmail(),
                 account.getSupportPhone(),                 // nullable — SMS only if the account has one
-                java.util.Map.of("balance", rupees)));
+                java.util.Map.of("balance", rupees),
+                account.getId()));                         // scopes the in-app bell to this account
     }
 
     @Override

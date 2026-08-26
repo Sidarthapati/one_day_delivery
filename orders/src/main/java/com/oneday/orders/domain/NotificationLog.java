@@ -29,6 +29,14 @@ public class NotificationLog extends MutableBaseEntity {
     @Column(name = "event_type", nullable = false, updatable = false)
     private String eventType;
 
+    /**
+     * The B2B account this notification belongs to (nullable — platform notifications like OTP have no
+     * account). The in-app notifications bell scopes by this id, not by the mutable recipient string, so
+     * accounts that happen to share a contact can't see each other's messages.
+     */
+    @Column(name = "b2b_account_id", updatable = false)
+    private java.util.UUID b2bAccountId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "channel", nullable = false, updatable = false)
     private NotificationChannel channel;

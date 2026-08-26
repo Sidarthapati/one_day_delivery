@@ -58,6 +58,7 @@ class WalletServiceImplTest {
     @Test
     void debitCrossingBelowThreshold_alertsMerchantOnce() {
         B2bAccount acc = new B2bAccount();
+        org.springframework.test.util.ReflectionTestUtils.setField(acc, "id", ACCOUNT);
         acc.setWalletBalancePaise(150_000L);        // ₹1,500 — above the ₹1,000 threshold
         acc.setBillingEmail("merchant@acme.example");
         acc.setSupportPhone("+919000000001");
@@ -69,6 +70,8 @@ class WalletServiceImplTest {
         assertThat(req.getValue().type()).isEqualTo(NotificationEventType.WALLET_LOW);
         assertThat(req.getValue().recipientEmail()).isEqualTo("merchant@acme.example");
         assertThat(req.getValue().params().get("balance")).isEqualTo("900.00");
+        // Scoped to the account, so the in-app bell can't leak it to another account sharing a contact.
+        assertThat(req.getValue().accountId()).isEqualTo(ACCOUNT);
     }
 
     @Test

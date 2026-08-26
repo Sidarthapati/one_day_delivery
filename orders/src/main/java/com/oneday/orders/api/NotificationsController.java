@@ -12,7 +12,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -33,21 +32,11 @@ class NotificationsController {
         this.accounts = accounts;
     }
 
-    /** The caller's recent notifications, newest first. */
+    /** The caller's recent notifications, newest first. Scoped by account id (not recipient string). */
     @GetMapping("/mine")
     public List<NotificationView> mine(@AuthenticationPrincipal AuthUserDetails principal) {
         B2bAccount account = ownedAccount(principal);
-        List<String> recipients = new ArrayList<>(2);
-        if (isSet(account.getBillingEmail())) {
-            recipients.add(account.getBillingEmail());
-        }
-        if (isSet(account.getSupportPhone())) {
-            recipients.add(account.getSupportPhone());
-        }
-        if (recipients.isEmpty()) {
-            return List.of();
-        }
-        return notifications.findTop50ByRecipientInOrderByCreatedAtDesc(recipients).stream()
+        return notifications.findTop50ByB2bAccountIdOrderByCreatedAtDesc(account.getId()).stream()
                 .map(NotificationView::from)
                 .toList();
     }
@@ -58,9 +47,5 @@ class NotificationsController {
         UUID userId = UUID.fromString(Authz.requireUserId(principal));
         return accounts.findByOwnerUserId(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No B2B account for this user"));
-    }
-
-    private static boolean isSet(String s) {
-        return s != null && !s.isBlank();
     }
 }
