@@ -118,18 +118,29 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
     }
 
     /**
-     * The absent DAs' shift + its full DA roster for the date. A DA belongs to exactly one shift, so all
-     * the marked DAs must share one (a mixed selection is rejected). The returned id set scopes the M3
-     * split to this shift — without it the split would mix the day's other shift plan (same valid_date).
+     * The absent DAs' shift + its full DA roster for the date. Every requested DA must actually be
+     * rostered to <em>this</em> city and date (a foreign-city or wrong-date id is rejected), and all
+     * must share one shift (a DA belongs to exactly one; a mixed selection is rejected). The returned
+     * id set scopes the M3 split to that shift — without it the split would mix the day's other shift
+     * plan (same valid_date). {@code requireOnShift} additionally demands the DA be live on the clock —
+     * true for the manager's preview (they pick from the on-shift roster); false for apply, where an
+     * absent DA may already have dropped OFFLINE (that's the very thing being handled).
      */
-    private Set<UUID> resolveShiftScope(UUID cityId, List<UUID> absentDaIds, LocalDate date) {
+    private Set<UUID> resolveShiftScope(UUID cityId, List<UUID> absentDaIds, LocalDate date,
+                                        boolean requireOnShift) {
         String shiftType = null;
         for (UUID da : absentDaIds) {
             DaStatus st = daStatusRepository.findByDaId(da)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
                             "DA " + da + " is not on shift for " + date));
-            if (st.getShiftType() == null) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "DA " + da + " has no shift assigned");
+            // Must be rostered to THIS city + date + a shift — never trust a stale/foreign row.
+            if (!cityId.equals(st.getCityId()) || !date.equals(st.getShiftDate()) || st.getShiftType() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "DA " + da + " is not on shift in this city for " + date);
+            }
+            if (requireOnShift && !ON_SHIFT.contains(st.getStatus())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "DA " + da + " is not currently on the clock");
             }
             if (shiftType == null) {
                 shiftType = st.getShiftType();
@@ -138,17 +149,17 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                         "All absent DAs must be on the same shift (got " + shiftType + " and " + st.getShiftType() + ")");
             }
         }
-        Set<UUID> ids = daStatusRepository.findByCityIdAndShiftDateAndShiftType(cityId, date, shiftType)
+        // The roster for that shift IS the scope. Each validated absent DA is in it (same city+date+shift),
+        // so we never widen the scope past the actual roster.
+        return daStatusRepository.findByCityIdAndShiftDateAndShiftType(cityId, date, shiftType)
                 .stream().map(DaStatus::getDaId).collect(Collectors.toCollection(HashSet::new));
-        ids.addAll(absentDaIds);   // the absent DAs are always in scope, even if their row lags
-        return ids;
     }
 
     @Override
     @Transactional
     public AbsencePreviewResponse preview(UUID cityId, List<UUID> daIds, String reason, UUID actorUserId) {
         LocalDate date = today();
-        Set<UUID> inShiftDaIds = resolveShiftScope(cityId, daIds, date);
+        Set<UUID> inShiftDaIds = resolveShiftScope(cityId, daIds, date, true);
         AbsenceReassignmentPlan plan = gridService.planAbsenceReassignment(cityId, daIds, date, inShiftDaIds);
 
         List<ReceiverLoad> receivers = plan.reassignments().stream()
@@ -243,8 +254,9 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
         UUID reviewer = system ? null : actorUserId;
 
         // 1) Commit the M3 territory split (writes + approves the INTRADAY_OVERRIDE), scoped to the
-        //    absent DAs' shift so the day's other shift plan (same valid_date) never leaks in.
-        Set<UUID> inShiftDaIds = resolveShiftScope(cityId, daIds, date);
+        //    absent DAs' shift so the day's other shift plan (same valid_date) never leaks in. Not
+        //    requireOnShift: by apply time an absent DA may already have gone OFFLINE — expected.
+        Set<UUID> inShiftDaIds = resolveShiftScope(cityId, daIds, date, false);
         AbsenceReassignmentPlan plan = gridService.applyAbsenceReassignment(cityId, daIds, date, inShiftDaIds, reviewer);
 
         // 2) Make every task follow its hex to the new owner.

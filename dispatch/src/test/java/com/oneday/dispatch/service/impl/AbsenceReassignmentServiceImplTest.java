@@ -223,6 +223,22 @@ class AbsenceReassignmentServiceImplTest {
         verify(gridService, never()).applyAbsenceReassignment(any(), any(), any(), any(), any());
     }
 
+    @Test
+    void previewRejectsADaThatIsNotOnThisCitysShift() {
+        DaStatus foreign = new DaStatus();
+        foreign.setDaId(RAVI);
+        foreign.setCityId(UUID.randomUUID());   // a different city's roster
+        foreign.setShiftDate(LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")));
+        foreign.setShiftType("SHIFT_2");
+        foreign.setStatus(DaStatusEnum.IDLE);
+        when(daStatusRepository.findByDaId(RAVI)).thenReturn(Optional.of(foreign));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.preview(CITY, List.of(RAVI), "sick", UUID.randomUUID()))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        verify(gridService, never()).planAbsenceReassignment(any(), any(), any(), any());
+    }
+
     private DaAbsenceEvent pendingEvent() {
         DaAbsenceEvent event = new DaAbsenceEvent() {
             private final UUID id = UUID.randomUUID();
@@ -238,7 +254,10 @@ class AbsenceReassignmentServiceImplTest {
     private void stubShiftScope() {
         DaStatus st = new DaStatus();
         st.setDaId(RAVI);
+        st.setCityId(CITY);
+        st.setShiftDate(LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")));   // must match service today()
         st.setShiftType("SHIFT_2");
+        st.setStatus(DaStatusEnum.IDLE);                                        // on the clock (preview path)
         when(daStatusRepository.findByDaId(RAVI)).thenReturn(Optional.of(st));
         when(daStatusRepository.findByCityIdAndShiftDateAndShiftType(eq(CITY), any(), eq("SHIFT_2")))
                 .thenReturn(List.of(st));

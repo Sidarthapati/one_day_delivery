@@ -44,26 +44,28 @@ public class HubScanSeamProducer {
     }
 
     private void emit(UUID shipmentId, ScanEventType type) {
+        // Build the event NOW so occurredAt is the scan time, not the (possibly much later) commit time.
+        ScanEvent event = new ScanEvent(shipmentId, type);
         // Inside a transaction → publish only once it commits (a rollback must not leave a phantom scan);
         // outside one → publish now.
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    publish(shipmentId, type);
+                    publish(event);
                 }
             });
         } else {
-            publish(shipmentId, type);
+            publish(event);
         }
     }
 
-    private void publish(UUID shipmentId, ScanEventType type) {
+    private void publish(ScanEvent event) {
         try {
-            eventPublisher.publish(EventStreams.SCAN_EVENTS, new ScanEvent(shipmentId, type));
+            eventPublisher.publish(EventStreams.SCAN_EVENTS, event);
         } catch (Exception e) {   // M8-SEAM: never block custody on a scan publish failure
             log.warn("M8-SEAM hub scan {} for shipment {} failed (non-blocking): {}",
-                    type, shipmentId, e.getMessage());
+                    event.eventType(), event.shipmentId(), e.getMessage());
         }
     }
 }
