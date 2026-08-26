@@ -8,6 +8,7 @@ import com.oneday.orders.service.CancellationService;
 import com.oneday.orders.service.CartService;
 import com.oneday.orders.service.MerchantCategoryService;
 import com.oneday.orders.service.PaymentPort;
+import com.oneday.orders.service.WalletService;
 import com.oneday.orders.service.PickupSlotFullException;
 import com.oneday.orders.service.exception.IllegalStateTransitionException;
 import com.oneday.pricing.service.NoRateConfiguredException;
@@ -100,6 +101,14 @@ class OrdersGlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYMENT_REQUIRED);
         pd.setTitle("Payment capture failed");
         pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(WalletService.InsufficientWalletBalanceException.class)
+    ProblemDetail handleInsufficientWallet(WalletService.InsufficientWalletBalanceException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYMENT_REQUIRED);
+        pd.setTitle("Insufficient wallet balance");
+        pd.setDetail("Your wallet balance isn't enough for this booking. Recharge your wallet, or switch payment to Credit.");
         return pd;
     }
 

@@ -16,4 +16,12 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
      */
     List<NotificationLog> findTop200ByStatusInAndAttemptsLessThanOrderByCreatedAtAsc(
             Collection<NotificationStatus> statuses, int maxAttempts);
+
+    /**
+     * The recent notifications addressed to any of these recipients (a merchant's billing email /
+     * support phone), newest first — backs the in-app notifications bell.
+     * ponytail: scoped by recipient string (no account_id on the row yet); add an account_id column
+     * if a merchant ever changes their billing email and needs history to follow.
+     */
+    List<NotificationLog> findTop50ByRecipientInOrderByCreatedAtDesc(Collection<String> recipients);
 }
