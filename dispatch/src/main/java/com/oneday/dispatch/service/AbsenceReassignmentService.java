@@ -2,7 +2,9 @@ package com.oneday.dispatch.service;
 
 import com.oneday.dispatch.dto.response.AbsenceApplyResponse;
 import com.oneday.dispatch.dto.response.AbsencePreviewResponse;
+import com.oneday.dispatch.dto.response.DaRosterEntry;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -13,6 +15,12 @@ import java.util.UUID;
  * (grid override + task moves + custody handoffs). {@link #autoApply} is the timeout path.
  */
 public interface AbsenceReassignmentService {
+
+    /**
+     * The DAs on shift for the picker — every DA on the clock (any task type), not just those with
+     * delivery scorecards. {@code scopeCityId} null = all cities (ADMIN), else a single city.
+     */
+    List<DaRosterEntry> roster(UUID scopeCityId, LocalDate date);
 
     /** Compute + persist a PENDING plan for the given absent DAs and return it for the manager to review. */
     AbsencePreviewResponse preview(UUID cityId, List<UUID> daIds, String reason, UUID actorUserId);

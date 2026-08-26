@@ -1,10 +1,13 @@
 package com.oneday.dispatch.service.impl;
 
 import com.oneday.dispatch.config.DispatchProperties;
+import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.dispatch.domain.AbsenceStatus;
 import com.oneday.dispatch.domain.DaAbsenceEvent;
 import com.oneday.dispatch.domain.DaStatusEnum;
 import com.oneday.dispatch.domain.DispatchQueue;
+import com.oneday.dispatch.dto.response.DaRosterEntry;
+import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.dto.response.AbsenceApplyResponse;
@@ -34,6 +37,7 @@ import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,10 +58,16 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
     private static final Logger log = LoggerFactory.getLogger(AbsenceReassignmentServiceImpl.class);
     private static final List<TaskStatus> ACTIVE = List.of(TaskStatus.QUEUED, TaskStatus.IN_PROGRESS);
 
+    // On-shift DAs (any of these) are candidates for the absence picker; OFFLINE / ABSENT are excluded.
+    private static final List<DaStatusEnum> ON_SHIFT = List.of(
+            DaStatusEnum.IDLE, DaStatusEnum.IN_PROGRESS, DaStatusEnum.CRON_LOCKED, DaStatusEnum.AT_CRON);
+
     private final GridService gridService;
     private final DispatchQueueRepository queueRepository;
     private final DaAbsenceEventRepository absenceRepository;
     private final DaStatusService daStatusService;
+    private final DaStatusRepository daStatusRepository;
+    private final DaDirectoryPort daDirectory;
     private final QueueReorderService reorderService;
     private final DispatchProperties props;
 
@@ -65,14 +75,36 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                                    DispatchQueueRepository queueRepository,
                                    DaAbsenceEventRepository absenceRepository,
                                    DaStatusService daStatusService,
+                                   DaStatusRepository daStatusRepository,
+                                   DaDirectoryPort daDirectory,
                                    QueueReorderService reorderService,
                                    DispatchProperties props) {
         this.gridService = gridService;
         this.queueRepository = queueRepository;
         this.absenceRepository = absenceRepository;
         this.daStatusService = daStatusService;
+        this.daStatusRepository = daStatusRepository;
+        this.daDirectory = daDirectory;
         this.reorderService = reorderService;
         this.props = props;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaRosterEntry> roster(UUID scopeCityId, LocalDate date) {
+        List<com.oneday.dispatch.domain.DaStatus> onShift = scopeCityId == null
+                ? daStatusRepository.findByShiftDateAndStatusIn(date, ON_SHIFT)
+                : daStatusRepository.findByCityIdAndShiftDateAndStatusIn(scopeCityId, date, ON_SHIFT);
+        List<UUID> daIds = onShift.stream().map(com.oneday.dispatch.domain.DaStatus::getDaId).toList();
+        Map<UUID, DaDirectoryPort.DaContact> names = daDirectory.contactsFor(daIds);
+        return daIds.stream()
+                .map(daId -> {
+                    int open = queueRepository.findByDaIdAndOperatingDateAndStatusIn(daId, date, ACTIVE).size();
+                    DaDirectoryPort.DaContact c = names.get(daId);
+                    return new DaRosterEntry(daId, c != null ? c.name() : null, open);
+                })
+                .sorted(Comparator.comparing(r -> r.daName() == null ? "" : r.daName()))
+                .toList();
     }
 
     @Override
@@ -105,6 +137,17 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                     loose.add(new TaskMove(row.getShipmentId(), row.getOrderRef(),
                             row.getTaskType().name(), absentDa, newOwner));
                 }
+            }
+        }
+
+        // One live plan per DA: retire any still-PENDING plan in this city that overlaps these DAs, so a
+        // re-preview can't leave a second plan whose auto-apply later races this one's apply on the same
+        // territory (which would collide / land a confusing 0-count apply). The freshest preview wins.
+        Set<UUID> theseDas = new HashSet<>(daIds);
+        for (DaAbsenceEvent prior : absenceRepository.findByCityIdAndStatus(cityId, AbsenceStatus.PENDING)) {
+            if (prior.absentDaIdList().stream().anyMatch(theseDas::contains)) {
+                prior.setStatus(AbsenceStatus.CANCELLED);
+                absenceRepository.save(prior);
             }
         }
 
@@ -241,9 +284,13 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                                             double[] at, LocalDate date) {
         DispatchQueue r = baseRow(newOwner, src, date);
         r.setTaskType(TaskType.CUSTODY_COLLECT);
-        r.setTaskLat(at[0]);
+        r.setTaskLat(at[0]);           // where to meet the absent DA (their last GPS / the task location)
         r.setTaskLon(at[1]);
         r.setCollectFromDaId(absentDa);
+        // Carry the original leg + its destination so the onward task can resume once collected.
+        r.setOnwardTaskType(src.getTaskType());
+        r.setOnwardTaskLat(src.getTaskLat());
+        r.setOnwardTaskLon(src.getTaskLon());
         return r;
     }
 

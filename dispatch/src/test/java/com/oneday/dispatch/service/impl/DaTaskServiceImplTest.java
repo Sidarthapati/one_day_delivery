@@ -283,7 +283,89 @@ class DaTaskServiceImplTest {
         verify(events).emitCodCollected(eq(da), eq(city), eq(task.getShipmentId()));
     }
 
+    @Test
+    void custodyCollectCompletesRecordsScanAndSpawnsOnwardDelivery() {
+        // The in-custody parcel was an out-for-delivery leg; after collect the covering DA delivers it.
+        UUID absentDa = UUID.randomUUID();
+        DispatchQueue collect = persistCustody(TaskType.DELIVERY, absentDa, 28.70, 77.10);
+
+        service.recordCustodyCollect(da, collect.getId(), List.of("P-1"));
+
+        assertThat(reload(collect).getStatus()).isEqualTo(TaskStatus.COMPLETED);
+        verify(scanSeam).emitDaCustodyTransfer(eq(collect.getShipmentId()));
+        verify(events).emitCustodyCollected(eq(da), eq(city), eq(collect.getShipmentId()), eq(absentDa));
+
+        // The onward delivery is now on this DA, in hand (IN_PROGRESS), at the parcel's destination.
+        DispatchQueue onward = queueRepo.findByDaIdAndOperatingDateOrderByQueuePosition(da, today).stream()
+                .filter(r -> r.getTaskType() == TaskType.DELIVERY
+                        && r.getShipmentId().equals(collect.getShipmentId()))
+                .findFirst().orElseThrow();
+        assertThat(onward.getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(onward.isPickedUp()).isFalse();
+        assertThat(onward.getTaskLat()).isEqualTo(28.70);
+        assertThat(onward.getTaskLon()).isEqualTo(77.10);
+    }
+
+    @Test
+    void custodyCollectSpawnsOnwardPickupInHand() {
+        // An in-custody pickup (sender collected, en route to hub) resumes as a PICKUP, in hand.
+        DispatchQueue collect = persistCustody(TaskType.PICKUP, UUID.randomUUID(), 28.55, 77.20);
+
+        service.recordCustodyCollect(da, collect.getId(), List.of("P-1"));
+
+        DispatchQueue onward = queueRepo.findByDaIdAndOperatingDateOrderByQueuePosition(da, today).stream()
+                .filter(r -> r.getTaskType() == TaskType.PICKUP
+                        && r.getShipmentId().equals(collect.getShipmentId()))
+                .findFirst().orElseThrow();
+        assertThat(onward.getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(onward.isPickedUp()).isTrue();
+    }
+
+    @Test
+    void custodyCollectWithNoScansIs422() {
+        DispatchQueue collect = persistCustody(TaskType.DELIVERY, UUID.randomUUID(), 28.70, 77.10);
+        assertThatThrownBy(() -> service.recordCustodyCollect(da, collect.getId(), List.of()))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("422");
+    }
+
+    @Test
+    void custodyCollectOnANonCustodyTaskIs409() {
+        DispatchQueue task = persist(TaskType.PICKUP, TaskStatus.QUEUED);
+        assertThatThrownBy(() -> service.recordCustodyCollect(da, task.getId(), List.of("P-1")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409");
+    }
+
+    @Test
+    void failedCustodyCollectEmitsPickupFailedNotDrop() {
+        DispatchQueue collect = persistCustody(TaskType.DELIVERY, UUID.randomUUID(), 28.70, 77.10);
+        service.markFailed(da, collect.getId(), "colleague unreachable");
+        assertThat(reload(collect).getStatus()).isEqualTo(TaskStatus.FAILED);
+        verify(events).emitPickupFailed(eq(da), eq(city), eq(collect.getShipmentId()), eq("colleague unreachable"));
+    }
+
     // ── helpers ──
+
+    private DispatchQueue persistCustody(TaskType onwardType, UUID absentDa, double onwardLat, double onwardLon) {
+        DispatchQueue d = new DispatchQueue();
+        d.setDaId(da);
+        d.setCityId(city);
+        d.setShipmentId(UUID.randomUUID());
+        d.setTaskType(TaskType.CUSTODY_COLLECT);
+        d.setTaskLat(28.60);            // the meet point (absent DA's location)
+        d.setTaskLon(77.05);
+        d.setTileId(tile);
+        d.setQueuePosition(0);
+        d.setStatus(TaskStatus.QUEUED);
+        d.setCronSafe(false);
+        d.setCollectFromDaId(absentDa);
+        d.setOnwardTaskType(onwardType);
+        d.setOnwardTaskLat(onwardLat);
+        d.setOnwardTaskLon(onwardLon);
+        d.setOperatingDate(today);
+        return queueRepo.saveAndFlush(d);
+    }
 
     private DispatchQueue persist(TaskType type, TaskStatus status) {
         DispatchQueue d = new DispatchQueue();

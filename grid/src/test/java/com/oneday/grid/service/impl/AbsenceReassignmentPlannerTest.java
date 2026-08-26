@@ -14,6 +14,7 @@ import com.uber.h3core.H3Core;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -29,6 +30,9 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -157,6 +161,62 @@ class AbsenceReassignmentPlannerTest {
         assertThat(plan.orphanHexIds()).isEmpty();
         assertThat(plan.reassignments()).hasSize(7);
         assertThat(plan.reassignments()).allSatisfy(r -> assertThat(r.toDaId()).isEqualTo(SUNIL));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void applyAppendsOnlyGainedHexesNeverRewritingAReceiversOwnHexes() {
+        // Regression: the (da_id, hex_id, valid_date) uniqueness means apply must NOT re-insert a hex a
+        // receiver already owns — earlier it rewrote each receiver's full set (retained + gained) and
+        // collided on the receiver's existing APPROVED rows. Here Meena/Sunil already own their flanks;
+        // apply must only add the absent Ravi's hexes to them, leaving the flank rows untouched.
+        long center = h3.latLngToCell(28.6139, 77.2090, RES);
+        List<Long> blob = h3.gridDisk(center, 1);            // 7 cells → Ravi
+        List<Long> ring2 = subtract(h3.gridDisk(center, 2), blob);
+        Map<Long, UUID> owners = new HashMap<>();
+        blob.forEach(h -> owners.put(h, RAVI));
+        List<Long> sortedRing = ring2.stream().sorted().toList();
+        for (int i = 0; i < sortedRing.size(); i++) {
+            owners.put(sortedRing.get(i), i % 2 == 0 ? MEENA : SUNIL);
+        }
+        stubGrid(owners);
+        // approvedRows(da) — each DA's own existing hexes (what a receiver already holds).
+        when(assignmentRepository.findByDaIdAndValidDate(any(), eq(DATE))).thenAnswer(inv -> {
+            UUID da = inv.getArgument(0);
+            return owners.entrySet().stream()
+                    .filter(e -> e.getValue().equals(da))
+                    .map(e -> DaHexAssignment.builder().daId(da).hexId(hexIdByH3.get(e.getKey()))
+                            .validDate(DATE).nDasOnHex(1).status(AssignmentStatus.APPROVED).build())
+                    .toList();
+        });
+        when(proposalRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        planner.apply(CITY, List.of(RAVI), DATE, UUID.randomUUID());
+
+        // Every hex Ravi owned, keyed for lookup.
+        Set<UUID> raviHexes = blob.stream().map(hexIdByH3::get).collect(Collectors.toSet());
+        Map<UUID, Set<UUID>> ownHexes = Map.of(
+                MEENA, sortedRing.stream().filter(h -> owners.get(h) == MEENA).map(hexIdByH3::get).collect(Collectors.toSet()),
+                SUNIL, sortedRing.stream().filter(h -> owners.get(h) == SUNIL).map(hexIdByH3::get).collect(Collectors.toSet()));
+
+        ArgumentCaptor<List<DaHexAssignment>> cap = ArgumentCaptor.forClass(List.class);
+        verify(assignmentRepository, atLeastOnce()).saveAll(cap.capture());
+        List<DaHexAssignment> inserted = cap.getAllValues().stream()
+                .flatMap(List::stream)
+                .filter(a -> a.getStatus() == AssignmentStatus.APPROVED)   // the newly-added gained rows
+                .toList();
+
+        assertThat(inserted).isNotEmpty();
+        // 1) Every inserted row is one of Ravi's hexes (a genuine gain) — never a hex already owned.
+        assertThat(inserted).allSatisfy(a -> {
+            assertThat(raviHexes).contains(a.getHexId());
+            assertThat(ownHexes.get(a.getDaId())).doesNotContain(a.getHexId());
+        });
+        // 2) No (da_id, hex_id) duplicated among the inserts (the exact unique key that used to blow up).
+        assertThat(inserted.stream().map(a -> a.getDaId() + ":" + a.getHexId()).distinct().count())
+                .isEqualTo(inserted.size());
+        // 3) All 7 of Ravi's hexes were covered exactly once.
+        assertThat(inserted.stream().map(DaHexAssignment::getHexId).collect(Collectors.toSet())).isEqualTo(raviHexes);
     }
 
     // ── fixtures ────────────────────────────────────────────────────────────────────────────────

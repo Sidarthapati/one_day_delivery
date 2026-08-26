@@ -4,17 +4,24 @@ import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.dispatch.dto.request.MarkAbsentRequest;
 import com.oneday.dispatch.dto.response.AbsenceApplyResponse;
 import com.oneday.dispatch.dto.response.AbsencePreviewResponse;
+import com.oneday.dispatch.dto.response.DaRosterEntry;
 import com.oneday.dispatch.service.AbsenceReassignmentService;
 import com.oneday.grid.service.GridService;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -32,6 +39,22 @@ public class AbsenceController {
     public AbsenceController(AbsenceReassignmentService absenceService, GridService gridService) {
         this.absenceService = absenceService;
         this.gridService = gridService;
+    }
+
+    /**
+     * The DAs on shift for the absence picker — every DA on the clock (any task type), so a DA doing
+     * only pickups can be marked absent (the delivery scorecards would hide them). ADMIN may pass
+     * {@code cityId} to scope to one city (omit for all); a STATION_MANAGER is pinned to their city.
+     */
+    @GetMapping("/dispatch/absence/roster")
+    public List<DaRosterEntry> roster(@RequestParam(required = false) UUID cityId,
+                                      @RequestParam(required = false)
+                                      @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+                                      @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scope = Authz.isAdmin(principal) ? cityId : managerCity(principal);
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        return absenceService.roster(scope, day);
     }
 
     /** Preview (and stage as PENDING) the reassignment for the marked DAs. */

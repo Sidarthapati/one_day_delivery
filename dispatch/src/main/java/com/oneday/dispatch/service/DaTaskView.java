@@ -35,7 +35,10 @@ public record DaTaskView(
         String contactPhone,
         String addressText,
         Long codAmountPaise,
-        boolean pickedUp) {
+        boolean pickedUp,
+        // Set only on a CUSTODY_COLLECT task: the absent DA this parcel is collected from
+        // (task_lat/task_lon is the meet point). Null on ordinary pickups/deliveries.
+        UUID collectFromDaId) {
 
     /** Mutation responses don't need the ref/contact (the app already holds them from listTasks). */
     public static DaTaskView of(DispatchQueue row) {
@@ -47,7 +50,7 @@ public record DaTaskView(
                 row.getOrderId(), row.getOrderRef(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
-                null, null, null, null, row.isPickedUp());
+                null, null, null, null, row.isPickedUp(), row.getCollectFromDaId());
     }
 
     /** List rows carry the field contact — sender end for a PICKUP, receiver end for a DELIVERY. */
@@ -61,6 +64,6 @@ public record DaTaskView(
                 row.getOrderId(), row.getOrderRef(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
-                name, phone, addr, cod, row.isPickedUp());
+                name, phone, addr, cod, row.isPickedUp(), row.getCollectFromDaId());
     }
 }

@@ -63,4 +63,13 @@ public interface DaTaskService {
 
     /** DELIVERY task IN_PROGRESS → COMPLETED; emits DROP_COMPLETED (+ COD_COLLECTED if cash taken). */
     DaTaskView markDropCompleted(UUID daId, UUID taskId, boolean codCollected);
+
+    /**
+     * Midday-absence handoff: a CUSTODY_COLLECT task (QUEUED/IN_PROGRESS) → COMPLETED when the covering
+     * DA physically takes the in-custody parcel from the absent DA. Records the append-only M8 DA→DA
+     * custody scan (the source of truth that custody moved), emits CUSTODY_COLLECTED, and spawns the
+     * parcel's onward leg (the original PICKUP/DELIVERY, in-hand) on this DA so it isn't stranded.
+     * {@code parcelScans} must be non-empty.
+     */
+    DaTaskView recordCustodyCollect(UUID daId, UUID taskId, List<String> parcelScans);
 }

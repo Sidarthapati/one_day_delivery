@@ -15,4 +15,7 @@ public interface DaAbsenceEventRepository extends JpaRepository<DaAbsenceEvent, 
 
     /** Recent absence events for a city (console history), newest first. */
     List<DaAbsenceEvent> findByCityIdOrderByCreatedAtDesc(UUID cityId);
+
+    /** Live plans in a city with a given status — used to retire stale PENDING plans on a re-preview. */
+    List<DaAbsenceEvent> findByCityIdAndStatus(UUID cityId, AbsenceStatus status);
 }

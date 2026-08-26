@@ -213,36 +213,32 @@ class AbsenceReassignmentPlanner {
                 .understaffedHexIds("[]")
                 .build());
 
-        // Write each receiver's full new hex-set (append-only). Retained hexes keep their existing
-        // nDasOnHex (a shared hex stays shared); gained hexes get a single new owner (nDasOnHex=1).
+        // Append ONLY the gained hexes to each receiver, as new APPROVED rows. The receiver keeps its
+        // retained hexes through its existing APPROVED rows — leave those untouched. Re-inserting a
+        // retained hex would violate the (da_id, hex_id, valid_date) uniqueness (supersede only flips
+        // status, it does not free the slot), which is the whole reason we don't rewrite the full set.
+        // Only the absent DA's rows are superseded (done above), so their hexes move cleanly to the
+        // new owner: (receiver, gainedHex, date) is a brand-new key.
         List<DaHexAssignment> newRows = new ArrayList<>();
         for (UUID receiver : receivers) {
-            Map<UUID, Integer> retainedCount = approvedRows(receiver, date).stream()
-                    .collect(Collectors.toMap(DaHexAssignment::getHexId, DaHexAssignment::getNDasOnHex));
-            Set<UUID> merged = new LinkedHashSet<>(retainedCount.keySet());
-            merged.addAll(gainedByReceiver.get(receiver));
-            for (UUID hex : merged) {
+            Set<UUID> alreadyOwned = approvedRows(receiver, date).stream()
+                    .map(DaHexAssignment::getHexId).collect(Collectors.toSet());
+            for (UUID hex : new LinkedHashSet<>(gainedByReceiver.get(receiver))) {
+                if (alreadyOwned.contains(hex)) {
+                    continue;   // defensive: never double-insert a hex the receiver already holds
+                }
                 newRows.add(DaHexAssignment.builder()
                         .proposalId(proposal.getId())
                         .daId(receiver)
                         .hexId(hex)
                         .validDate(date)
-                        .nDasOnHex(retainedCount.getOrDefault(hex, 1))
-                        .status(AssignmentStatus.PROPOSED)
+                        .nDasOnHex(1)
+                        .status(AssignmentStatus.APPROVED)
+                        .approvedBy(reviewerId)
+                        .approvedAt(now)
                         .build());
             }
         }
-        assignmentRepository.saveAll(newRows);
-
-        // Supersede the receivers' standing APPROVED rows (absent DAs were retired above), activate the new.
-        for (UUID receiver : receivers) {
-            supersedeApproved(receiver, date);
-        }
-        newRows.forEach(a -> {
-            a.setStatus(AssignmentStatus.APPROVED);
-            a.setApprovedBy(reviewerId);
-            a.setApprovedAt(now);
-        });
         assignmentRepository.saveAll(newRows);
 
         proposal.setStatus(ProposalStatus.APPROVED);

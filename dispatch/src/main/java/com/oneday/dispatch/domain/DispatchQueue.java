@@ -78,6 +78,19 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "collect_from_da_id", updatable = false)
     private UUID collectFromDaId;
 
+    // Set only on CUSTODY_COLLECT tasks: the in-custody parcel's original leg (PICKUP/DELIVERY) and its
+    // destination, so on collection the covering DA's onward task resumes at the right place. task_lat/lon
+    // on this row is the COLLECT point; these carry where the parcel goes next. Null on ordinary tasks.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "onward_task_type", updatable = false, length = 20)
+    private TaskType onwardTaskType;
+
+    @Column(name = "onward_task_lat", updatable = false)
+    private Double onwardTaskLat;
+
+    @Column(name = "onward_task_lon", updatable = false)
+    private Double onwardTaskLon;
+
     @Column(name = "cron_safe", nullable = false, updatable = false)
     private boolean cronSafe;
 

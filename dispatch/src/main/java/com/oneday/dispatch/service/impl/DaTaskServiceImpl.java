@@ -190,10 +190,12 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStatus(TaskStatus.FAILED);
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
-            if (task.getTaskType() == TaskType.PICKUP) {
-                daEventProducer.emitPickupFailed(daId, task.getCityId(), task.getShipmentId(), reason);
-            } else {
+            // A custody collect is a pickup-shaped custody take → PICKUP_FAILED (not DROP_FAILED),
+            // so M11 triages a failed hand-off correctly rather than as a delivery miss.
+            if (task.getTaskType() == TaskType.DELIVERY) {
                 daEventProducer.emitDropFailed(daId, task.getCityId(), task.getShipmentId(), reason);
+            } else {
+                daEventProducer.emitPickupFailed(daId, task.getCityId(), task.getShipmentId(), reason);
             }
             return view;
         });
@@ -272,6 +274,80 @@ class DaTaskServiceImpl implements DaTaskService {
             queueReorderService.reorder(daId, task.getOperatingDate());
             return view;
         });
+    }
+
+    @Override
+    @Transactional
+    public DaTaskView recordCustodyCollect(UUID daId, UUID taskId, List<String> parcelScans) {
+        if (parcelScans == null || parcelScans.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "At least one parcel scan is required");
+        }
+        return daStatusService.withDaLock(daId, () -> {
+            DispatchQueue task = ownedTask(daId, taskId);
+            requireType(task, TaskType.CUSTODY_COLLECT);
+            requireCollectable(task);
+            task.setStatus(TaskStatus.COMPLETED);
+            if (task.getStartedAt() == null) {
+                task.setStartedAt(Instant.now());
+            }
+            task.setCompletedAt(Instant.now());
+            DaTaskView view = save(task);
+            // M8-SEAM: append-only DA→DA custody scan — the source of truth that custody moved. Best-effort.
+            hubScanSeamProducer.emitDaCustodyTransfer(task.getShipmentId());
+            daEventProducer.emitCustodyCollected(daId, task.getCityId(), task.getShipmentId(),
+                    task.getCollectFromDaId());
+            // The parcel is now in this DA's hands → resume its onward leg on this DA (in-hand).
+            spawnOnwardLeg(daId, task);
+            AuditLog.event("da.custody_collected")
+                    .kv("daId", daId)
+                    .kv("taskId", taskId)
+                    .kv("shipmentId", task.getShipmentId())
+                    .kv("fromDaId", task.getCollectFromDaId())
+                    .kv("onwardTaskType", task.getOnwardTaskType())
+                    .log();
+            // Collect head removed + onward leg inserted → re-rank the tail (cron-aware).
+            queueReorderService.reorder(daId, task.getOperatingDate());
+            return view;
+        });
+    }
+
+    /**
+     * Re-create the in-custody parcel's onward leg (its original PICKUP/DELIVERY) for the covering DA,
+     * IN_PROGRESS because the parcel is already in hand — no re-collect step. The onward type and its
+     * destination were captured on the CUSTODY_COLLECT row when the absence was applied.
+     */
+    private void spawnOnwardLeg(UUID daId, DispatchQueue collect) {
+        TaskType onwardType = collect.getOnwardTaskType();
+        if (onwardType == null || onwardType == TaskType.CUSTODY_COLLECT) {
+            return;   // nothing to resume (defensive — a well-formed collect row always carries an onward leg)
+        }
+        DispatchQueue onward = new DispatchQueue();
+        onward.setDaId(daId);
+        onward.setCityId(collect.getCityId());
+        onward.setShipmentId(collect.getShipmentId());
+        onward.setOrderId(collect.getOrderId());
+        onward.setOrderRef(collect.getOrderRef());
+        onward.setTaskType(onwardType);
+        onward.setTaskLat(collect.getOnwardTaskLat() != null ? collect.getOnwardTaskLat() : collect.getTaskLat());
+        onward.setTaskLon(collect.getOnwardTaskLon() != null ? collect.getOnwardTaskLon() : collect.getTaskLon());
+        onward.setTileId(collect.getTileId());
+        onward.setHomeTileId(collect.getHomeTileId());
+        onward.setPaymentMode(collect.getPaymentMode());
+        onward.setStatus(TaskStatus.IN_PROGRESS);        // parcel already in hand
+        onward.setPickedUp(onwardType == TaskType.PICKUP);
+        onward.setCrossTerritory(false);
+        onward.setCronSafe(false);
+        onward.setBeyondCron(false);
+        onward.setStartedAt(Instant.now());
+        onward.setAssignedAt(Instant.now());
+        onward.setOperatingDate(collect.getOperatingDate());
+        onward.setQueuePosition(nextPosition(daId, collect.getOperatingDate()));
+        queueRepository.save(onward);
+    }
+
+    private int nextPosition(UUID daId, LocalDate date) {
+        return queueRepository.findByDaIdAndOperatingDateOrderByQueuePosition(daId, date).stream()
+                .mapToInt(DispatchQueue::getQueuePosition).max().orElse(-1) + 1;
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────
@@ -372,6 +448,14 @@ class DaTaskServiceImpl implements DaTaskService {
         if (task.getStatus() != TaskStatus.QUEUED && task.getStatus() != TaskStatus.IN_PROGRESS) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Task " + task.getId() + " is " + task.getStatus() + " and cannot be failed");
+        }
+    }
+
+    /** A CUSTODY_COLLECT can be confirmed straight from QUEUED (no separate en-route step) or IN_PROGRESS. */
+    private static void requireCollectable(DispatchQueue task) {
+        if (task.getStatus() != TaskStatus.QUEUED && task.getStatus() != TaskStatus.IN_PROGRESS) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Task " + task.getId() + " is " + task.getStatus() + " and cannot be collected");
         }
     }
 }
