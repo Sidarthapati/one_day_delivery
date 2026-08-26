@@ -7,6 +7,8 @@ import com.oneday.common.kafka.events.ScanEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.UUID;
 
@@ -15,6 +17,10 @@ import java.util.UUID;
  * the hub-custody scans that M8 (barcode) will own are emitted here on {@code oneday.scan.events} as a
  * bridge until M8 lands — the M8 owner relocates these into M8 proper. Every emit is best-effort: a
  * publish failure is logged and swallowed so it can never block the DA's custody flow.
+ *
+ * <p>When a caller emits from inside a transaction, the actual publish is deferred to AFTER_COMMIT so a
+ * later rollback never leaves the ledger describing a custody move that was never persisted (the seam
+ * has no transactional {@code RabbitTemplate}). Outside a transaction it publishes inline.</p>
  */
 @Component
 public class HubScanSeamProducer {
@@ -38,6 +44,21 @@ public class HubScanSeamProducer {
     }
 
     private void emit(UUID shipmentId, ScanEventType type) {
+        // Inside a transaction → publish only once it commits (a rollback must not leave a phantom scan);
+        // outside one → publish now.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publish(shipmentId, type);
+                }
+            });
+        } else {
+            publish(shipmentId, type);
+        }
+    }
+
+    private void publish(UUID shipmentId, ScanEventType type) {
         try {
             eventPublisher.publish(EventStreams.SCAN_EVENTS, new ScanEvent(shipmentId, type));
         } catch (Exception e) {   // M8-SEAM: never block custody on a scan publish failure
