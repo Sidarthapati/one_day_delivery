@@ -2,6 +2,8 @@ package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.CancellationResponse;
+import com.oneday.orders.dto.ReviseEtaRequest;
+import com.oneday.orders.dto.ReviseEtaResponse;
 import com.oneday.orders.dto.ShipmentAgeingStats;
 import com.oneday.orders.dto.ShipmentPageResponse;
 import com.oneday.orders.dto.ShipmentSummaryResponse;
@@ -10,6 +12,8 @@ import com.oneday.orders.dto.ShipmentTimelineResponse;
 import com.oneday.orders.service.AdminOrderQueryService;
 import com.oneday.orders.service.AdminOrderSummaryService;
 import com.oneday.orders.service.CancellationService;
+import com.oneday.orders.service.ShipmentEtaService;
+import jakarta.validation.Valid;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
@@ -21,6 +25,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -50,13 +56,16 @@ class AdminOrdersController {
     private final AdminOrderQueryService adminOrderQueryService;
     private final AdminOrderSummaryService adminOrderSummaryService;
     private final CancellationService cancellationService;
+    private final ShipmentEtaService shipmentEtaService;
 
     AdminOrdersController(AdminOrderQueryService adminOrderQueryService,
                           AdminOrderSummaryService adminOrderSummaryService,
-                          CancellationService cancellationService) {
+                          CancellationService cancellationService,
+                          ShipmentEtaService shipmentEtaService) {
         this.adminOrderQueryService = adminOrderQueryService;
         this.adminOrderSummaryService = adminOrderSummaryService;
         this.cancellationService = cancellationService;
+        this.shipmentEtaService = shipmentEtaService;
     }
 
     @GetMapping
@@ -213,5 +222,19 @@ class AdminOrdersController {
             return cancellationService.cancelAsStationManager(ref, reason, userId, cityScope);
         }
         return cancellationService.cancelAsAdmin(ref, reason, userId);
+    }
+
+    /**
+     * Revise a shipment's delivery ETA. If the new ETA slips past what was promised at booking, the
+     * customer is notified (the delay mail — new ETA + "wait, or cancel for a refund"). ADMIN or a
+     * STATION_MANAGER.
+     */
+    @PostMapping("/{ref}/revise-eta")
+    public ReviseEtaResponse reviseEta(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("ref") String ref,
+            @Valid @RequestBody ReviseEtaRequest body) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        return shipmentEtaService.reviseEta(ref, body.newEta(), body.reason(), Authz.requireUserId(principal));
     }
 }
