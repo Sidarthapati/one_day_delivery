@@ -124,7 +124,9 @@ class SupportTicketServiceImpl implements SupportTicketService {
     @Override
     @Transactional
     public SupportTicketResponse postAgentMessage(UUID agentUserId, String agentRole, UUID ticketId, String body) {
-        SupportTicket t = repository.findById(ticketId).orElseThrow(() -> notFound(ticketId));
+        // Row-lock the ticket: the OPEN→IN_PROGRESS claim below must be atomic, or two agents replying at
+        // once could both pass the check and clobber each other's assignment.
+        SupportTicket t = repository.findByIdForUpdate(ticketId).orElseThrow(() -> notFound(ticketId));
         appendMessage(t, agentUserId, agentRole, true, body);
         // Replying to an untouched ticket claims it for this agent.
         if (t.getStatus() == TicketStatus.OPEN) {

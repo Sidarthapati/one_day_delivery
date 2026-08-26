@@ -162,7 +162,7 @@ class SupportTicketServiceImplTest {
         UUID id = UUID.randomUUID();
         SupportTicket t = new SupportTicket();
         t.setStatus(TicketStatus.OPEN);
-        when(repo.findById(id)).thenReturn(Optional.of(t));
+        when(repo.findByIdForUpdate(id)).thenReturn(Optional.of(t));
         when(messages.findByTicketIdOrderByCreatedAtAsc(any())).thenReturn(java.util.List.of());
 
         UUID agent = UUID.randomUUID();
