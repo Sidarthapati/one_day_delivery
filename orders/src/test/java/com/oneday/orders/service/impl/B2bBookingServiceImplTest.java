@@ -102,7 +102,7 @@ class B2bBookingServiceImplTest {
         service = new B2bBookingServiceImpl(
                 b2bAccountRepository, serviceabilityPort, pricingPort, etaPort,
                 shipmentRefService, orderService, shipmentRepository, historyRepository,
-                codCollectionRepository, stateMapper, walletService, new TransactionTemplate(NO_OP_TX),
+                codCollectionRepository, stateMapper, walletService, org.mockito.Mockito.mock(PickupSlotCapacity.class), new TransactionTemplate(NO_OP_TX),
                 applicationEventPublisher,
                 CircuitBreakerRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),

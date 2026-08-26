@@ -68,6 +68,7 @@ class BookingServiceImpl implements BookingService {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final ShipmentStateHistoryRepository historyRepository;
     private final CustomerVisibleStateMapper stateMapper;
+    private final PickupSlotCapacity pickupSlotCapacity;
     private final TransactionTemplate tx;
 
     private final CircuitBreaker serviceabilityCb;
@@ -91,6 +92,7 @@ class BookingServiceImpl implements BookingService {
                        PaymentTransactionRepository paymentTransactionRepository,
                        ShipmentStateHistoryRepository historyRepository,
                        CustomerVisibleStateMapper stateMapper,
+                       PickupSlotCapacity pickupSlotCapacity,
                        TransactionTemplate transactionTemplate,
                        CircuitBreakerRegistry circuitBreakerRegistry,
                        TimeLimiterRegistry timeLimiterRegistry,
@@ -106,6 +108,7 @@ class BookingServiceImpl implements BookingService {
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.historyRepository = historyRepository;
         this.stateMapper = stateMapper;
+        this.pickupSlotCapacity = pickupSlotCapacity;
         this.tx = transactionTemplate;
         this.serviceabilityCb = circuitBreakerRegistry.circuitBreaker("serviceability");
         this.pricingCb        = circuitBreakerRegistry.circuitBreaker("pricing");
@@ -193,6 +196,10 @@ class BookingServiceImpl implements BookingService {
         int volumetricWeightGrams = priced.volumetricWeightGrams();
         int chargeableWeightGrams = priced.chargeableWeightGrams();
         QuoteResult quote = priced.quote();
+
+        // ── 3b. Pickup-slot capacity (before payment, so a full slot never charges) ──
+        pickupSlotCapacity.ensureRoom(req.getOriginCity(), req.getPickupSlotDate(),
+                req.getPickupSlotStartHour(), req.getPickupType());
 
         // ── 4. Payment verify + capture (PREPAID only, outside DB transaction) ──
         boolean isPrepaid = PaymentMode.PREPAID == req.getPaymentMode();
