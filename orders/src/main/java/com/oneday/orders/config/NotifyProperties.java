@@ -22,7 +22,9 @@ public class NotifyProperties {
     public Sms getSms() { return sms; }
     public Email getEmail() { return email; }
     public int getMaxAttempts() { return maxAttempts; }
-    public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
+    // Clamp to >= 1: a zero/negative cap would make the drain query (attempts < max) exclude every
+    // new row, stranding notifications PENDING forever.
+    public void setMaxAttempts(int maxAttempts) { this.maxAttempts = Math.max(1, maxAttempts); }
 
     public static class Sms {
         /** log | msg91 */

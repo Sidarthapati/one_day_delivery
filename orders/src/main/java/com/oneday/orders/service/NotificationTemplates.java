@@ -46,15 +46,26 @@ public final class NotificationTemplates {
         return TEMPLATES.get(type);
     }
 
-    /** Substitute every {@code {key}} present in {@code params}; unknown placeholders are left as-is. */
+    private static final java.util.regex.Pattern PLACEHOLDER =
+            java.util.regex.Pattern.compile("\\{([a-zA-Z0-9_]+)\\}");
+
+    /**
+     * Substitute every {@code {key}} present in {@code params} in a SINGLE pass over the original
+     * pattern; unknown placeholders are left as-is. Single-pass matters: a param value that itself
+     * contains {@code {something}} must not be re-substituted (that would let template data inject
+     * into later placeholders).
+     */
     public static String render(String pattern, Map<String, String> params) {
         if (pattern == null || params.isEmpty()) {
             return pattern;
         }
-        String out = pattern;
-        for (Map.Entry<String, String> e : params.entrySet()) {
-            out = out.replace("{" + e.getKey() + "}", e.getValue() == null ? "" : e.getValue());
+        java.util.regex.Matcher m = PLACEHOLDER.matcher(pattern);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String value = params.get(m.group(1));
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(value != null ? value : m.group()));
         }
-        return out;
+        m.appendTail(sb);
+        return sb.toString();
     }
 }
