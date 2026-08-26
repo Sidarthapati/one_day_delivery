@@ -43,16 +43,19 @@ class PickupOtpServiceImpl implements PickupOtpService {
     private final PickupOtpRepository otpRepository;
     private final ShipmentRepository shipmentRepository;
     private final PickupOtpProperties properties;
+    private final com.oneday.common.port.NotificationPort notificationPort;
     // Absent in prod (the bean is @Profile("!prod")) — the peek is a field-test aid only.
     private final ObjectProvider<DevOtpRegistry> devOtpRegistry;
 
     PickupOtpServiceImpl(PickupOtpRepository otpRepository,
                          ShipmentRepository shipmentRepository,
                          PickupOtpProperties properties,
+                         com.oneday.common.port.NotificationPort notificationPort,
                          ObjectProvider<DevOtpRegistry> devOtpRegistry) {
         this.otpRepository      = otpRepository;
         this.shipmentRepository = shipmentRepository;
         this.properties         = properties;
+        this.notificationPort   = notificationPort;
         this.devOtpRegistry     = devOtpRegistry;
     }
 
@@ -75,6 +78,14 @@ class PickupOtpServiceImpl implements PickupOtpService {
         record.setResendCount((short) 0);
         record.setUsed(false);
         otpRepository.save(record);
+
+        // SMS the cleartext OTP to the sender (they read it to the pickup DA). Enqueued in this same
+        // transaction via the notification outbox, so it commits atomically with the OTP.
+        notificationPort.send(new com.oneday.common.port.dto.NotificationRequest(
+                com.oneday.common.port.dto.NotificationEventType.OTP_GENERATED,
+                null,                          // OTP is SMS-only — no email
+                shipment.getSenderPhone(),
+                java.util.Map.of("otp", otp, "ttl_minutes", String.valueOf(properties.getTtlMinutes()))));
 
         devOtpRegistry.ifAvailable(r -> r.put(shipmentId, otp));   // no-op in prod (bean absent)
         log.debug("OTP generated for shipmentId={}", shipmentId);
@@ -134,6 +145,12 @@ class PickupOtpServiceImpl implements PickupOtpService {
         record.setResendCount(newResendCount);
         record.setUsed(false);
         otpRepository.save(record);
+
+        notificationPort.send(new com.oneday.common.port.dto.NotificationRequest(
+                com.oneday.common.port.dto.NotificationEventType.OTP_GENERATED,
+                null,
+                shipment.getSenderPhone(),
+                java.util.Map.of("otp", otp, "ttl_minutes", String.valueOf(properties.getTtlMinutes()))));
 
         devOtpRegistry.ifAvailable(r -> r.put(shipmentId, otp));   // no-op in prod (bean absent)
         log.debug("OTP resent (attempt {}/{}) for shipmentId={}",
