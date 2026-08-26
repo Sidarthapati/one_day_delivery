@@ -7,6 +7,7 @@ import com.oneday.dispatch.domain.DaAttendanceMethod;
 import com.oneday.dispatch.domain.DaAttendanceStatus;
 import com.oneday.dispatch.domain.DaGpsPing;
 import com.oneday.dispatch.domain.DaStatus;
+import com.oneday.dispatch.dto.response.AttendanceMusterEntry;
 import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.repository.DaAttendanceRepository;
 import com.oneday.dispatch.repository.DaGpsPingRepository;
@@ -120,6 +121,50 @@ class AttendanceServiceImplTest {
         ArgumentCaptor<DaAttendance> saved = ArgumentCaptor.forClass(DaAttendance.class);
         verify(attendanceRepository).save(saved.capture());
         assertThat(saved.getValue().getMethod()).isEqualTo(DaAttendanceMethod.MANUAL_CHECKIN);
+    }
+
+    @Test
+    void checkIn_alreadySettled_isIdempotent_noGeofenceRecheck() {
+        // A DA already present (e.g. auto-marked at the hub earlier) who has since walked away and taps
+        // again: returns the existing record, no 422, no second save, no da_status lookup.
+        DaAttendance present = new DaAttendance();
+        present.setDaId(daId);
+        present.setCityId(cityId);
+        present.setStatus(DaAttendanceStatus.PRESENT);
+        present.setMethod(DaAttendanceMethod.AUTO_GEOFENCE);
+        when(attendanceRepository.findByDaIdAndAttendanceDate(eq(daId), any()))
+                .thenReturn(Optional.of(present));
+
+        AttendanceMusterEntry entry = service.checkIn(daId, HUB_LAT - 0.02, HUB_LON); // far from hub
+
+        assertThat(entry.status()).isEqualTo("PRESENT");
+        verify(attendanceRepository, never()).save(any());
+        verify(daStatusRepository, never()).findByDaId(any());
+    }
+
+    @Test
+    void today_present_returnsPresentEntry() {
+        DaAttendance present = new DaAttendance();
+        present.setDaId(daId);
+        present.setStatus(DaAttendanceStatus.PRESENT);
+        present.setMethod(DaAttendanceMethod.MANUAL_CHECKIN);
+        when(attendanceRepository.findByDaIdAndAttendanceDate(eq(daId), any()))
+                .thenReturn(Optional.of(present));
+
+        AttendanceMusterEntry entry = service.today(daId);
+
+        assertThat(entry.status()).isEqualTo("PRESENT");
+        assertThat(entry.method()).isEqualTo("MANUAL_CHECKIN");
+    }
+
+    @Test
+    void today_noRow_returnsPending() {
+        when(attendanceRepository.findByDaIdAndAttendanceDate(eq(daId), any())).thenReturn(Optional.empty());
+
+        AttendanceMusterEntry entry = service.today(daId);
+
+        assertThat(entry.status()).isEqualTo("PENDING");
+        assertThat(entry.method()).isNull();
     }
 
     @Test

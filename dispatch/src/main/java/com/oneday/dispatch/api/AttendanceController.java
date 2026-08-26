@@ -53,6 +53,15 @@ public class AttendanceController {
         return attendanceService.checkIn(daId, lat, lon);
     }
 
+    /** The DA's own attendance for today (PRESENT/ABSENT/PENDING) — lets the driver app reflect a GPS
+     *  auto-present, not just a tap in the current session. */
+    @GetMapping("/dispatch/da/{daId}/attendance/today")
+    public AttendanceMusterEntry today(@PathVariable UUID daId,
+                                       @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        return attendanceService.today(daId);
+    }
+
     /** The day's muster for a city + shift: rostered DAs with their present/absent/pending state. */
     @GetMapping("/dispatch/attendance/muster")
     public List<AttendanceMusterEntry> muster(@RequestParam(required = false) UUID cityId,

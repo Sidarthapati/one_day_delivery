@@ -24,8 +24,15 @@ public interface AttendanceService {
     void onGpsFix(UUID daId, UUID cityId, String shiftType, double lat, double lon, Instant pingAt);
 
     /** DA self "I've arrived": marks present if within the hub geofence (else 422). Coords optional —
-     *  falls back to the DA's latest GPS fix. */
+     *  falls back to the DA's latest GPS fix. Idempotent — if the DA is already settled for the day
+     *  (auto-present, manual, or a manager override) it returns that record without re-checking the
+     *  geofence, so tapping again after leaving the hub never 422s. */
     AttendanceMusterEntry checkIn(UUID daId, Double lat, Double lon);
+
+    /** The DA's own attendance for today: {@code PRESENT} / {@code ABSENT} with how + distance, or
+     *  {@code PENDING} when nothing is recorded yet. Drives the driver-app card so it reflects a GPS
+     *  auto-present, not just a tap in the current app session. */
+    AttendanceMusterEntry today(UUID daId);
 
     /** The day's attendance for a city + shift: the rostered DAs joined with their present/absent state. */
     List<AttendanceMusterEntry> muster(String cityCode, LocalDate date, Shift shift);

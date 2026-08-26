@@ -119,9 +119,18 @@ class AttendanceServiceImpl implements AttendanceService {
     @Override
     @Transactional
     public AttendanceMusterEntry checkIn(UUID daId, Double lat, Double lon) {
+        LocalDate today = LocalDate.now(zone());
+
+        // Already settled for the day (auto-present, a prior tap, or a manager override) — idempotent:
+        // return it without re-checking the geofence, so a second tap after leaving the hub never 422s.
+        Optional<DaAttendance> settled = attendanceRepository.findByDaIdAndAttendanceDate(daId, today);
+        if (settled.isPresent()) {
+            markedPresentOn.put(daId, today);
+            return toEntry(daId, null, settled.get());
+        }
+
         DaStatus da = daStatusRepository.findByDaId(daId).orElseThrow(
                 () -> new ResponseStatusException(HttpStatus.NOT_FOUND, "DA is not on shift"));
-        LocalDate today = LocalDate.now(zone());
 
         double useLat, useLon;
         Instant pingAt;
@@ -151,23 +160,29 @@ class AttendanceServiceImpl implements AttendanceService {
                             + props.getAttendance().getRadiusMeters() + " m to check in");
         }
 
-        Optional<DaAttendance> existing = attendanceRepository.findByDaIdAndAttendanceDate(daId, today);
-        DaAttendance row = existing.orElseGet(DaAttendance::new);
-        if (existing.isEmpty()) {
-            row.setDaId(daId);
-            row.setCityId(da.getCityId());
-            row.setAttendanceDate(today);
-            row.setShiftType(da.getShiftType());
-            row.setStatus(DaAttendanceStatus.PRESENT);
-            row.setMethod(DaAttendanceMethod.MANUAL_CHECKIN);
-            row.setDetectedLat(useLat);
-            row.setDetectedLon(useLon);
-            row.setDistanceM(dist);
-            row.setSourcePingAt(pingAt);
-            attendanceRepository.save(row);
-        }
+        // No row yet for today (the settled short-circuit above ruled that out) — record the check-in.
+        DaAttendance row = new DaAttendance();
+        row.setDaId(daId);
+        row.setCityId(da.getCityId());
+        row.setAttendanceDate(today);
+        row.setShiftType(da.getShiftType());
+        row.setStatus(DaAttendanceStatus.PRESENT);
+        row.setMethod(DaAttendanceMethod.MANUAL_CHECKIN);
+        row.setDetectedLat(useLat);
+        row.setDetectedLon(useLon);
+        row.setDistanceM(dist);
+        row.setSourcePingAt(pingAt);
+        attendanceRepository.save(row);
         markedPresentOn.put(daId, today);
         return toEntry(daId, null, row);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AttendanceMusterEntry today(UUID daId) {
+        LocalDate today = LocalDate.now(zone());
+        DaAttendance row = attendanceRepository.findByDaIdAndAttendanceDate(daId, today).orElse(null);
+        return toEntry(daId, null, row); // row == null → PENDING
     }
 
     @Override
