@@ -1,8 +1,10 @@
 package com.oneday.dispatch.service.impl;
 
 import com.oneday.dispatch.config.DispatchProperties;
+import com.oneday.common.domain.Shift;
 import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.dispatch.domain.AbsenceStatus;
+import com.oneday.dispatch.domain.DaStatus;
 import com.oneday.dispatch.domain.DaAbsenceEvent;
 import com.oneday.dispatch.domain.DaStatusEnum;
 import com.oneday.dispatch.domain.DispatchQueue;
@@ -91,10 +93,18 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DaRosterEntry> roster(UUID scopeCityId, LocalDate date) {
-        List<com.oneday.dispatch.domain.DaStatus> onShift = scopeCityId == null
-                ? daStatusRepository.findByShiftDateAndStatusIn(date, ON_SHIFT)
-                : daStatusRepository.findByCityIdAndShiftDateAndStatusIn(scopeCityId, date, ON_SHIFT);
+    public List<DaRosterEntry> roster(UUID scopeCityId, LocalDate date, Shift shift) {
+        String shiftType = shift != null ? shift.name() : null;
+        List<com.oneday.dispatch.domain.DaStatus> onShift;
+        if (shiftType != null) {
+            onShift = scopeCityId == null
+                    ? daStatusRepository.findByShiftDateAndShiftTypeAndStatusIn(date, shiftType, ON_SHIFT)
+                    : daStatusRepository.findByCityIdAndShiftDateAndShiftTypeAndStatusIn(scopeCityId, date, shiftType, ON_SHIFT);
+        } else {
+            onShift = scopeCityId == null
+                    ? daStatusRepository.findByShiftDateAndStatusIn(date, ON_SHIFT)
+                    : daStatusRepository.findByCityIdAndShiftDateAndStatusIn(scopeCityId, date, ON_SHIFT);
+        }
         List<UUID> daIds = onShift.stream().map(com.oneday.dispatch.domain.DaStatus::getDaId).toList();
         Map<UUID, DaDirectoryPort.DaContact> names = daDirectory.contactsFor(daIds);
         return daIds.stream()
@@ -107,11 +117,39 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                 .toList();
     }
 
+    /**
+     * The absent DAs' shift + its full DA roster for the date. A DA belongs to exactly one shift, so all
+     * the marked DAs must share one (a mixed selection is rejected). The returned id set scopes the M3
+     * split to this shift — without it the split would mix the day's other shift plan (same valid_date).
+     */
+    private Set<UUID> resolveShiftScope(UUID cityId, List<UUID> absentDaIds, LocalDate date) {
+        String shiftType = null;
+        for (UUID da : absentDaIds) {
+            DaStatus st = daStatusRepository.findByDaId(da)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                            "DA " + da + " is not on shift for " + date));
+            if (st.getShiftType() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "DA " + da + " has no shift assigned");
+            }
+            if (shiftType == null) {
+                shiftType = st.getShiftType();
+            } else if (!shiftType.equals(st.getShiftType())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "All absent DAs must be on the same shift (got " + shiftType + " and " + st.getShiftType() + ")");
+            }
+        }
+        Set<UUID> ids = daStatusRepository.findByCityIdAndShiftDateAndShiftType(cityId, date, shiftType)
+                .stream().map(DaStatus::getDaId).collect(Collectors.toCollection(HashSet::new));
+        ids.addAll(absentDaIds);   // the absent DAs are always in scope, even if their row lags
+        return ids;
+    }
+
     @Override
     @Transactional
     public AbsencePreviewResponse preview(UUID cityId, List<UUID> daIds, String reason, UUID actorUserId) {
         LocalDate date = today();
-        AbsenceReassignmentPlan plan = gridService.planAbsenceReassignment(cityId, daIds, date);
+        Set<UUID> inShiftDaIds = resolveShiftScope(cityId, daIds, date);
+        AbsenceReassignmentPlan plan = gridService.planAbsenceReassignment(cityId, daIds, date, inShiftDaIds);
 
         List<ReceiverLoad> receivers = plan.reassignments().stream()
                 .collect(Collectors.groupingBy(HexReassignment::toDaId, Collectors.counting()))
@@ -204,8 +242,10 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
         List<UUID> daIds = event.absentDaIdList();
         UUID reviewer = system ? null : actorUserId;
 
-        // 1) Commit the M3 territory split (writes + approves the INTRADAY_OVERRIDE).
-        AbsenceReassignmentPlan plan = gridService.applyAbsenceReassignment(cityId, daIds, date, reviewer);
+        // 1) Commit the M3 territory split (writes + approves the INTRADAY_OVERRIDE), scoped to the
+        //    absent DAs' shift so the day's other shift plan (same valid_date) never leaks in.
+        Set<UUID> inShiftDaIds = resolveShiftScope(cityId, daIds, date);
+        AbsenceReassignmentPlan plan = gridService.applyAbsenceReassignment(cityId, daIds, date, inShiftDaIds, reviewer);
 
         // 2) Make every task follow its hex to the new owner.
         int moved = 0;

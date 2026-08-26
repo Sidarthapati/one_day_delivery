@@ -49,6 +49,7 @@ class AbsenceReassignmentPlannerTest {
     private static final UUID RAVI = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
     private static final UUID MEENA = UUID.fromString("00000000-0000-0000-0000-0000000000bb");
     private static final UUID SUNIL = UUID.fromString("00000000-0000-0000-0000-0000000000cc");
+    private static final UUID NIGHT_S1 = UUID.fromString("00000000-0000-0000-0000-0000000000dd");
 
     @Mock private DaHexAssignmentRepository assignmentRepository;
     @Mock private AssignmentProposalRepository proposalRepository;
@@ -263,6 +264,51 @@ class AbsenceReassignmentPlannerTest {
     }
 
     // ── fixtures ────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void scopesTheSplitToTheAbsentDasShiftIgnoringTheOtherShiftsSameDatePlan() {
+        // A day carries two APPROVED plans on the same valid_date: SHIFT_2 (Ravi + Meena) and SHIFT_1
+        // (Night). Ravi (S2) owns a 7-hex blob; Meena (S2) owns the full surrounding ring; Night (S1)
+        // owns those very same ring cells for its own shift. A SHIFT_2 absence must land entirely on the
+        // SHIFT_2 neighbor (Meena) and never hand territory to the off-shift Night.
+        long center = h3.latLngToCell(28.6139, 77.2090, RES);
+        List<Long> blob = h3.gridDisk(center, 1);
+        List<Long> ring2 = subtract(h3.gridDisk(center, 2), blob);
+
+        hexIdByH3.clear();
+        List<Hex> hexes = new ArrayList<>();
+        for (Long h : blob) { registerHex(h, hexes); }
+        for (Long h : ring2) { registerHex(h, hexes); }
+        when(hexRepository.findByH3GridIdAndActiveTrue(any())).thenReturn(hexes);
+
+        List<DaHexAssignment> rows = new ArrayList<>();
+        blob.forEach(h -> rows.add(approvedRow(RAVI, h)));
+        ring2.forEach(h -> rows.add(approvedRow(MEENA, h)));      // SHIFT_2 ring
+        ring2.forEach(h -> rows.add(approvedRow(NIGHT_S1, h)));   // SHIFT_1 ring — same cells, other shift
+        when(assignmentRepository.findByValidDateAndStatus(DATE, AssignmentStatus.APPROVED)).thenReturn(rows);
+
+        // Scope = the SHIFT_2 roster only (Ravi + Meena); Night is on SHIFT_1.
+        AbsenceReassignmentPlan plan = planner.plan(CITY, List.of(RAVI), DATE, Set.of(RAVI, MEENA));
+
+        assertThat(plan.orphanHexIds()).isEmpty();
+        assertThat(plan.reassignments()).hasSize(7);
+        Set<UUID> receivers = plan.reassignments().stream()
+                .map(HexReassignment::toDaId).collect(Collectors.toSet());
+        assertThat(receivers).containsExactly(MEENA);            // the SHIFT_1 DA never receives
+        assertThat(receivers).doesNotContain(NIGHT_S1);
+    }
+
+    private void registerHex(long h3Index, List<Hex> into) {
+        UUID id = UUID.randomUUID();
+        hexIdByH3.put(h3Index, id);
+        into.add(Hex.builder().id(id).h3Index(h3Index).active(true).build());
+    }
+
+    private DaHexAssignment approvedRow(UUID da, long h3Index) {
+        return DaHexAssignment.builder()
+                .daId(da).hexId(hexIdByH3.get(h3Index))
+                .validDate(DATE).nDasOnHex(1).status(AssignmentStatus.APPROVED).build();
+    }
 
     /** Wire the hex list + APPROVED assignments implied by an h3→owner map into the mocked repos. */
     private void stubGrid(Map<Long, UUID> owners) {

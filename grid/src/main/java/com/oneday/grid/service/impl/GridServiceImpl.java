@@ -95,14 +95,15 @@ public class GridServiceImpl implements GridService {
     }
 
     @Override
-    public AbsenceReassignmentPlan planAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date) {
-        return absencePlanner.plan(cityId, absentDaIds, date);
+    public AbsenceReassignmentPlan planAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date,
+                                                           Set<UUID> inShiftDaIds) {
+        return absencePlanner.plan(cityId, absentDaIds, date, inShiftDaIds);
     }
 
     @Override
     public AbsenceReassignmentPlan applyAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date,
-                                                            UUID reviewerId) {
-        return absencePlanner.apply(cityId, absentDaIds, date, reviewerId);
+                                                            Set<UUID> inShiftDaIds, UUID reviewerId) {
+        return absencePlanner.apply(cityId, absentDaIds, date, inShiftDaIds, reviewerId);
     }
 
     @Override

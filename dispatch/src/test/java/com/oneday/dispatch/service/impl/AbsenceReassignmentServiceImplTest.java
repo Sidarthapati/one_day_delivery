@@ -3,6 +3,7 @@ package com.oneday.dispatch.service.impl;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.AbsenceStatus;
 import com.oneday.dispatch.domain.DaAbsenceEvent;
+import com.oneday.dispatch.domain.DaStatus;
 import com.oneday.dispatch.domain.DaStatusEnum;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
@@ -84,7 +85,8 @@ class AbsenceReassignmentServiceImplTest {
 
     @Test
     void previewSplitsTasksIntoLooseCustodyAndOrphanBuckets() {
-        when(gridService.planAbsenceReassignment(eq(CITY), eq(List.of(RAVI)), any()))
+        stubShiftScope();
+        when(gridService.planAbsenceReassignment(eq(CITY), eq(List.of(RAVI)), any(), any()))
                 .thenReturn(planWithTileAToMeena());
         when(queueRepository.findByDaIdAndOperatingDateAndStatusIn(eq(RAVI), any(), any()))
                 .thenReturn(List.of(
@@ -109,9 +111,10 @@ class AbsenceReassignmentServiceImplTest {
 
     @Test
     void applyMovesLooseTaskToNewOwnerAsQueuedNeverDeferred() {
+        stubShiftScope();
         DaAbsenceEvent event = pendingEvent();
         when(absenceRepository.findById(event.getId())).thenReturn(Optional.of(event));
-        when(gridService.applyAbsenceReassignment(eq(CITY), eq(List.of(RAVI)), any(), any()))
+        when(gridService.applyAbsenceReassignment(eq(CITY), eq(List.of(RAVI)), any(), any(), any()))
                 .thenReturn(planWithTileAToMeena());
         DispatchQueue loose = row(TILE_A, TaskStatus.QUEUED, TaskType.DELIVERY);
         when(queueRepository.findByDaIdAndOperatingDateAndStatusIn(eq(RAVI), any(), any()))
@@ -138,9 +141,10 @@ class AbsenceReassignmentServiceImplTest {
 
     @Test
     void applyCreatesCustodyCollectForInProgressParcel() {
+        stubShiftScope();
         DaAbsenceEvent event = pendingEvent();
         when(absenceRepository.findById(event.getId())).thenReturn(Optional.of(event));
-        when(gridService.applyAbsenceReassignment(eq(CITY), eq(List.of(RAVI)), any(), any()))
+        when(gridService.applyAbsenceReassignment(eq(CITY), eq(List.of(RAVI)), any(), any(), any()))
                 .thenReturn(planWithTileAToMeena());
         when(queueRepository.findByDaIdAndOperatingDateAndStatusIn(eq(RAVI), any(), any()))
                 .thenReturn(List.of(row(TILE_A, TaskStatus.IN_PROGRESS, TaskType.DELIVERY)));
@@ -162,9 +166,10 @@ class AbsenceReassignmentServiceImplTest {
 
     @Test
     void applyTakesAbsentDaOfflineAndMarksApplied() {
+        stubShiftScope();
         DaAbsenceEvent event = pendingEvent();
         when(absenceRepository.findById(event.getId())).thenReturn(Optional.of(event));
-        when(gridService.applyAbsenceReassignment(any(), any(), any(), any()))
+        when(gridService.applyAbsenceReassignment(any(), any(), any(), any(), any()))
                 .thenReturn(planWithTileAToMeena());
         when(queueRepository.findByDaIdAndOperatingDateAndStatusIn(any(), any(), any()))
                 .thenReturn(List.of());
@@ -180,9 +185,10 @@ class AbsenceReassignmentServiceImplTest {
 
     @Test
     void autoApplyMarksAutoApplied() {
+        stubShiftScope();
         DaAbsenceEvent event = pendingEvent();
         when(absenceRepository.findById(event.getId())).thenReturn(Optional.of(event));
-        when(gridService.applyAbsenceReassignment(any(), any(), any(), any()))
+        when(gridService.applyAbsenceReassignment(any(), any(), any(), any(), any()))
                 .thenReturn(planWithTileAToMeena());
         when(queueRepository.findByDaIdAndOperatingDateAndStatusIn(any(), any(), any()))
                 .thenReturn(List.of());
@@ -202,7 +208,7 @@ class AbsenceReassignmentServiceImplTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> service.apply(event.getId(), UUID.randomUUID(), otherCity))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
-        verify(gridService, never()).applyAbsenceReassignment(any(), any(), any(), any());
+        verify(gridService, never()).applyAbsenceReassignment(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -214,7 +220,7 @@ class AbsenceReassignmentServiceImplTest {
         AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID(), null);
 
         assertThat(res.status()).isEqualTo(AbsenceStatus.APPLIED);
-        verify(gridService, never()).applyAbsenceReassignment(any(), any(), any(), any());
+        verify(gridService, never()).applyAbsenceReassignment(any(), any(), any(), any(), any());
     }
 
     private DaAbsenceEvent pendingEvent() {
@@ -227,6 +233,15 @@ class AbsenceReassignmentServiceImplTest {
         event.setAbsentDaIdList(List.of(RAVI));
         event.setStatus(AbsenceStatus.PENDING);
         return event;
+    }
+
+    private void stubShiftScope() {
+        DaStatus st = new DaStatus();
+        st.setDaId(RAVI);
+        st.setShiftType("SHIFT_2");
+        when(daStatusRepository.findByDaId(RAVI)).thenReturn(Optional.of(st));
+        when(daStatusRepository.findByCityIdAndShiftDateAndShiftType(eq(CITY), any(), eq("SHIFT_2")))
+                .thenReturn(List.of(st));
     }
 
     @SuppressWarnings("unchecked")

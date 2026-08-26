@@ -12,6 +12,7 @@ import com.oneday.grid.dto.response.TileDetailResponse;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 public interface GridService {
@@ -51,9 +52,11 @@ public interface GridService {
 
     // Midday DA absence (M5-triggered): split the absent DAs' hexes among their territory-neighbors.
     // plan* is compute-only (preview); apply* writes + approves the INTRADAY_OVERRIDE and returns the
-    // committed split so M5 can move the matching tasks.
-    AbsenceReassignmentPlan planAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date);
+    // committed split so M5 can move the matching tasks. {@code inShiftDaIds} is the absent DA's shift
+    // roster — the split is scoped to it so the other shift's same-date plan doesn't leak in.
+    AbsenceReassignmentPlan planAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date,
+                                                    Set<UUID> inShiftDaIds);
 
     AbsenceReassignmentPlan applyAbsenceReassignment(UUID cityId, List<UUID> absentDaIds, LocalDate date,
-                                                     UUID reviewerId);
+                                                     Set<UUID> inShiftDaIds, UUID reviewerId);
 }

@@ -79,6 +79,17 @@ class AbsenceReassignmentPlanner {
      * no path to any live DA (an isolated pocket) is left an orphan.
      */
     AbsenceReassignmentPlan plan(UUID cityId, List<UUID> absentDaIds, LocalDate date) {
+        return plan(cityId, absentDaIds, date, null);
+    }
+
+    /**
+     * As {@link #plan(UUID, List, LocalDate)}, but scoped to a single shift: {@code inShiftDaIds} is the
+     * set of DAs rostered to the absent DA's shift for the date. A day carries one APPROVED plan per
+     * shift on the same {@code valid_date}, so without this the split would mix shifts — attributing a
+     * hex to the other shift's DA (whichever row loads first) or handing an absent DA's territory to a
+     * DA who isn't on the clock. {@code null} keeps the legacy (unscoped) behaviour.
+     */
+    AbsenceReassignmentPlan plan(UUID cityId, List<UUID> absentDaIds, LocalDate date, Set<UUID> inShiftDaIds) {
         Set<UUID> absent = new HashSet<>(absentDaIds);
         Grid grid = gridRepository.findByCityId(cityId)
                 .orElseThrow(() -> new IllegalArgumentException("Grid not found for city: " + cityId));
@@ -87,9 +98,13 @@ class AbsenceReassignmentPlanner {
         Set<UUID> gridHexIds = hexes.stream().map(Hex::getId).collect(Collectors.toSet());
         Map<UUID, List<UUID>> adjacency = geometricAdjacency(hexes);
 
-        // Current standing plan for the date, scoped to this city's hexes.
+        // Current standing plan for the date, scoped to this city's hexes and — when given — to the
+        // absent DA's shift, so the other shift's same-date assignments don't leak into the split.
         List<DaHexAssignment> approved = assignmentRepository.findByValidDateAndStatus(date, AssignmentStatus.APPROVED)
-                .stream().filter(a -> gridHexIds.contains(a.getHexId())).toList();
+                .stream()
+                .filter(a -> gridHexIds.contains(a.getHexId()))
+                .filter(a -> inShiftDaIds == null || inShiftDaIds.contains(a.getDaId()) || absent.contains(a.getDaId()))
+                .toList();
 
         // Live ownership (hex → a live DA) grows as hexes are claimed; load is the balancing counter.
         Map<UUID, UUID> owner = new HashMap<>();
@@ -177,7 +192,14 @@ class AbsenceReassignmentPlanner {
      */
     @Transactional
     AbsenceReassignmentPlan apply(UUID cityId, List<UUID> absentDaIds, LocalDate date, UUID reviewerId) {
-        AbsenceReassignmentPlan plan = plan(cityId, absentDaIds, date);
+        return apply(cityId, absentDaIds, date, null, reviewerId);
+    }
+
+    /** Shift-scoped apply — see {@link #plan(UUID, List, LocalDate, Set)} for what {@code inShiftDaIds} does. */
+    @Transactional
+    AbsenceReassignmentPlan apply(UUID cityId, List<UUID> absentDaIds, LocalDate date,
+                                  Set<UUID> inShiftDaIds, UUID reviewerId) {
+        AbsenceReassignmentPlan plan = plan(cityId, absentDaIds, date, inShiftDaIds);
         Set<UUID> absent = new HashSet<>(absentDaIds);
         Instant now = Instant.now();
 
