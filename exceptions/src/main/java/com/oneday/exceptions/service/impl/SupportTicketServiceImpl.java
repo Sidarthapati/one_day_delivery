@@ -1,10 +1,13 @@
 package com.oneday.exceptions.service.impl;
 
 import com.oneday.exceptions.domain.SupportTicket;
+import com.oneday.exceptions.domain.SupportTicketMessage;
 import com.oneday.exceptions.domain.TicketChannel;
 import com.oneday.exceptions.domain.TicketStatus;
+import com.oneday.exceptions.dto.SupportTicketMessageResponse;
 import com.oneday.exceptions.dto.SupportTicketRequest;
 import com.oneday.exceptions.dto.SupportTicketResponse;
+import com.oneday.exceptions.repository.SupportTicketMessageRepository;
 import com.oneday.exceptions.repository.SupportTicketRepository;
 import com.oneday.exceptions.service.SupportTicketService;
 import com.oneday.orders.service.ShipmentLookupService;
@@ -26,10 +29,13 @@ class SupportTicketServiceImpl implements SupportTicketService {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final SupportTicketRepository repository;
+    private final SupportTicketMessageRepository messages;
     private final ShipmentLookupService shipmentLookup;
 
-    SupportTicketServiceImpl(SupportTicketRepository repository, ShipmentLookupService shipmentLookup) {
+    SupportTicketServiceImpl(SupportTicketRepository repository, SupportTicketMessageRepository messages,
+                             ShipmentLookupService shipmentLookup) {
         this.repository = repository;
+        this.messages = messages;
         this.shipmentLookup = shipmentLookup;
     }
 
@@ -82,8 +88,9 @@ class SupportTicketServiceImpl implements SupportTicketService {
     @Override
     @Transactional(readOnly = true)
     public SupportTicketResponse myDetail(UUID raisedByUserId, UUID ticketId) {
-        return SupportTicketResponse.from(repository.findByIdAndRaisedByUserId(ticketId, raisedByUserId)
-                .orElseThrow(() -> notFound(ticketId)));
+        SupportTicket t = repository.findByIdAndRaisedByUserId(ticketId, raisedByUserId)
+                .orElseThrow(() -> notFound(ticketId));
+        return withThread(t);
     }
 
     @Override
@@ -96,7 +103,38 @@ class SupportTicketServiceImpl implements SupportTicketService {
     @Override
     @Transactional(readOnly = true)
     public SupportTicketResponse detail(UUID ticketId) {
-        return SupportTicketResponse.from(repository.findById(ticketId).orElseThrow(() -> notFound(ticketId)));
+        return withThread(repository.findById(ticketId).orElseThrow(() -> notFound(ticketId)));
+    }
+
+    @Override
+    @Transactional
+    public SupportTicketResponse postMineMessage(UUID raisedByUserId, UUID ticketId, String body) {
+        SupportTicket t = repository.findByIdAndRaisedByUserId(ticketId, raisedByUserId)
+                .orElseThrow(() -> notFound(ticketId));
+        appendMessage(t, raisedByUserId, t.getRaisedByRole(), false, body);
+        // A reply from the customer on a resolved ticket reopens it (the issue evidently isn't settled).
+        if (t.getStatus() == TicketStatus.RESOLVED) {
+            t.setStatus(TicketStatus.OPEN);
+            t.setResolvedAt(null);
+            repository.save(t);
+        }
+        return withThread(t);
+    }
+
+    @Override
+    @Transactional
+    public SupportTicketResponse postAgentMessage(UUID agentUserId, String agentRole, UUID ticketId, String body) {
+        // Row-lock the ticket: the OPEN→IN_PROGRESS claim below must be atomic, or two agents replying at
+        // once could both pass the check and clobber each other's assignment.
+        SupportTicket t = repository.findByIdForUpdate(ticketId).orElseThrow(() -> notFound(ticketId));
+        appendMessage(t, agentUserId, agentRole, true, body);
+        // Replying to an untouched ticket claims it for this agent.
+        if (t.getStatus() == TicketStatus.OPEN) {
+            t.setStatus(TicketStatus.IN_PROGRESS);
+            t.setAssignedTo(agentUserId.toString());
+            repository.save(t);
+        }
+        return withThread(t);
     }
 
     @Override
@@ -119,6 +157,28 @@ class SupportTicketServiceImpl implements SupportTicketService {
         }
         t.setResolvedAt(status.isTerminal() ? Instant.now() : null);
         return SupportTicketResponse.from(repository.save(t));
+    }
+
+    /** Load the ticket's thread (oldest first) and pack it into the detail response. */
+    private SupportTicketResponse withThread(SupportTicket t) {
+        List<SupportTicketMessageResponse> thread = messages.findByTicketIdOrderByCreatedAtAsc(t.getId()).stream()
+                .map(SupportTicketMessageResponse::from)
+                .toList();
+        return SupportTicketResponse.withThread(t, thread);
+    }
+
+    private void appendMessage(SupportTicket t, UUID authorId, String authorRole, boolean fromAgent, String body) {
+        String trimmed = trimToNull(body);
+        if (trimmed == null) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "Message body is required");
+        }
+        SupportTicketMessage m = new SupportTicketMessage();
+        m.setTicketId(t.getId());
+        m.setAuthorUserId(authorId);
+        m.setAuthorRole(authorRole);
+        m.setFromAgent(fromAgent);
+        m.setBody(trimmed);
+        messages.save(m);
     }
 
     private static ResponseStatusException notFound(UUID id) {

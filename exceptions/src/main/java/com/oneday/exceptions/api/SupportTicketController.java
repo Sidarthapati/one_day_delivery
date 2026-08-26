@@ -1,6 +1,7 @@
 package com.oneday.exceptions.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.exceptions.dto.PostMessageRequest;
 import com.oneday.exceptions.dto.SupportTicketRequest;
 import com.oneday.exceptions.dto.SupportTicketResponse;
 import com.oneday.exceptions.dto.TicketActionRequest;
@@ -59,13 +60,24 @@ public class SupportTicketController {
         return service.listMine(UUID.fromString(Authz.requireUserId(principal)));
     }
 
-    /** One of the caller's own tickets. */
+    /** One of the caller's own tickets, with its conversation thread. */
     @GetMapping("/mine/{id}")
     public SupportTicketResponse myDetail(
             @AuthenticationPrincipal AuthUserDetails principal,
             @PathVariable UUID id) {
         Authz.requireCustomerRole(principal, Authz.B2C_CUSTOMER, Authz.C2C_CUSTOMER, Authz.B2B_USER);
         return service.myDetail(UUID.fromString(Authz.requireUserId(principal)), id);
+    }
+
+    /** Post a reply into the caller's own ticket (reopens it if it was resolved). */
+    @PostMapping("/mine/{id}/messages")
+    @ResponseStatus(HttpStatus.CREATED)
+    public SupportTicketResponse replyMine(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable UUID id,
+            @Valid @RequestBody PostMessageRequest body) {
+        Authz.requireCustomerRole(principal, Authz.B2C_CUSTOMER, Authz.C2C_CUSTOMER, Authz.B2B_USER);
+        return service.postMineMessage(UUID.fromString(Authz.requireUserId(principal)), id, body.body());
     }
 
     // ── Ops console ────────────────────────────────────────────────────────
@@ -82,13 +94,25 @@ public class SupportTicketController {
                 p.getTotalElements(), p.getTotalPages());
     }
 
-    /** One ticket for an ops agent. */
+    /** One ticket for an ops agent, with its conversation thread. */
     @GetMapping("/{id}")
     public SupportTicketResponse detail(
             @AuthenticationPrincipal AuthUserDetails principal,
             @PathVariable UUID id) {
         Authz.requireRole(principal, Authz.CALL_CENTER_AGENT, Authz.SUPERVISOR, Authz.STATION_MANAGER);
         return service.detail(id);
+    }
+
+    /** An ops agent posts a reply into a ticket (claims it if it was still OPEN). */
+    @PostMapping("/{id}/messages")
+    @ResponseStatus(HttpStatus.CREATED)
+    public SupportTicketResponse reply(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable UUID id,
+            @Valid @RequestBody PostMessageRequest body) {
+        Authz.requireRole(principal, Authz.CALL_CENTER_AGENT, Authz.SUPERVISOR, Authz.STATION_MANAGER);
+        return service.postAgentMessage(UUID.fromString(Authz.requireUserId(principal)),
+                Authz.role(principal), id, body.body());
     }
 
     /** Action a ticket: claim (IN_PROGRESS), resolve, or cancel — with an optional note. */
