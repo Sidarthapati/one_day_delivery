@@ -68,6 +68,10 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     // Customer "my shipments" view: every shipment a given M1 user booked, newest first.
     Page<Shipment> findByBookedByUserId(UUID bookedByUserId, Pageable pageable);
 
+    // Merchant self-service export: every shipment booked against one B2B account (any of the
+    // account's users), newest first. Ownership is enforced by the caller before this runs.
+    Page<Shipment> findByB2bAccountId(UUID b2bAccountId, Pageable pageable);
+
     // Order → N Shipments: the child shipments of one order (booking order preserved).
     List<Shipment> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
 
