@@ -50,10 +50,17 @@ class ShipmentEtaServiceImpl implements ShipmentEtaService {
 
     @Override
     @Transactional
-    public ReviseEtaResponse reviseEta(String shipmentRef, Instant newEta, String reason, String actorUserId) {
+    public ReviseEtaResponse reviseEta(String shipmentRef, Instant newEta, String reason, String actorUserId,
+                                       String cityScope) {
         // ponytail: no row lock — ETA revision is rare and ops-driven; the @Transactional dirty-check is enough.
         Shipment s = shipments.findByShipmentRef(shipmentRef)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Shipment not found: " + shipmentRef));
+
+        // City scope (station manager): only a parcel touching their city; else 404, not 403 — a ref
+        // outside scope reads as "not found", matching the ops read/cancel rule.
+        if (cityScope != null && !cityScope.equals(s.getOriginCity()) && !cityScope.equals(s.getDestCity())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Shipment not found: " + shipmentRef);
+        }
 
         Instant promised = s.getEtaPromised();
         s.setEtaUpdated(newEta);
@@ -64,9 +71,15 @@ class ShipmentEtaServiceImpl implements ShipmentEtaService {
         if (delayed) {
             notified = notifyCustomer(s, promised, newEta);
         }
+        // Sanitize caller-supplied strings before logging — strip CR/LF so they can't forge log lines.
         log.info("ETA revised for {} → {} (promised {}, delayed={}, notified={}, by {}, reason={})",
-                shipmentRef, newEta, promised, delayed, notified, actorUserId, reason);
+                forLog(shipmentRef), newEta, promised, delayed, notified, actorUserId, forLog(reason));
         return new ReviseEtaResponse(shipmentRef, promised, newEta, delayed, notified);
+    }
+
+    /** Neutralize CR/LF in caller-supplied text so it can't inject forged lines into the log. */
+    private static String forLog(String s) {
+        return s == null ? null : s.replaceAll("[\\r\\n]", "_");
     }
 
     /** Send the delay mail to whoever booked: the B2B account (billing contact) or the retail sender. */

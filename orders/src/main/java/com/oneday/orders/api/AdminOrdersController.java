@@ -226,8 +226,9 @@ class AdminOrdersController {
 
     /**
      * Revise a shipment's delivery ETA. If the new ETA slips past what was promised at booking, the
-     * customer is notified (the delay mail — new ETA + "wait, or cancel for a refund"). ADMIN or a
-     * STATION_MANAGER.
+     * customer is notified (the delay mail — new ETA + "wait, or cancel for a refund"). ADMIN revises
+     * any lane; a STATION_MANAGER only a shipment touching their own city (a ref outside that scope
+     * 404s, matching the read/cancel rule) — so a valid ref can't trigger another city's customer mail.
      */
     @PostMapping("/{ref}/revise-eta")
     public ReviseEtaResponse reviseEta(
@@ -235,6 +236,7 @@ class AdminOrdersController {
             @PathVariable("ref") String ref,
             @Valid @RequestBody ReviseEtaRequest body) {
         Authz.requireRole(principal, STATION_MANAGER);
-        return shipmentEtaService.reviseEta(ref, body.newEta(), body.reason(), Authz.requireUserId(principal));
+        return shipmentEtaService.reviseEta(ref, body.newEta(), body.reason(),
+                Authz.requireUserId(principal), cityScope(principal));
     }
 }

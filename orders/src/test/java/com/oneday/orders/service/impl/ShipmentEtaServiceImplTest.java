@@ -15,6 +15,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -22,6 +23,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -57,7 +59,7 @@ class ShipmentEtaServiceImplTest {
         Shipment s = b2cShipment(promised);
         Instant newEta = promised.plus(Duration.ofHours(3)); // clearly late
 
-        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", newEta, "flight delayed", "ops-1");
+        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", newEta, "flight delayed", "ops-1", null);
 
         assertThat(r.delayed()).isTrue();
         assertThat(r.customerNotified()).isTrue();
@@ -79,7 +81,7 @@ class ShipmentEtaServiceImplTest {
         b2cShipment(promised);
         Instant newEta = promised.plus(Duration.ofMinutes(5)); // within the 15-min grace
 
-        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", newEta, null, "ops-1");
+        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", newEta, null, "ops-1", null);
 
         assertThat(r.delayed()).isFalse();
         assertThat(r.customerNotified()).isFalse();
@@ -89,9 +91,29 @@ class ShipmentEtaServiceImplTest {
     @Test
     void noPromisedEta_cannotBeADelay() {
         b2cShipment(null); // never got an ETA at booking
-        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", Instant.parse("2026-08-27T20:00:00Z"), null, "ops-1");
+        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", Instant.parse("2026-08-27T20:00:00Z"), null, "ops-1", null);
         assertThat(r.delayed()).isFalse();
         verify(notificationPort, never()).send(any());
+    }
+
+    @Test
+    void stationManagerCannotReviseAParcelOutsideTheirCity() {
+        Shipment s = new Shipment();
+        s.setShipmentRef("1DD-DEL-7");
+        s.setCustomerType(CustomerType.B2C);
+        s.setOriginCity("DEL");
+        s.setDestCity("BLR");
+        s.setEtaPromised(Instant.parse("2026-08-27T10:00:00Z"));
+        when(shipments.findByShipmentRef("1DD-DEL-7")).thenReturn(Optional.of(s));
+
+        // A MAA manager (scope "MAA") touches neither origin nor dest → 404, nothing notified.
+        assertThatThrownBy(() -> service().reviseEta("1DD-DEL-7", Instant.parse("2026-08-27T20:00:00Z"), null, "sm-maa", "MAA"))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(notificationPort, never()).send(any());
+
+        // The destination-city manager (scope "BLR") is in scope → allowed, and it's a delay.
+        assertThat(service().reviseEta("1DD-DEL-7", Instant.parse("2026-08-27T20:00:00Z"), null, "sm-blr", "BLR").delayed())
+                .isTrue();
     }
 
     @Test
@@ -112,7 +134,7 @@ class ShipmentEtaServiceImplTest {
         acc.setSupportPhone("+919111111111");
         when(accounts.findById(accountId)).thenReturn(Optional.of(acc));
 
-        ReviseEtaResponse r = service().reviseEta("1DD-BLR-9", promised.plus(Duration.ofHours(4)), null, "ops-1");
+        ReviseEtaResponse r = service().reviseEta("1DD-BLR-9", promised.plus(Duration.ofHours(4)), null, "ops-1", null);
 
         assertThat(r.customerNotified()).isTrue();
         ArgumentCaptor<NotificationRequest> req = ArgumentCaptor.forClass(NotificationRequest.class);
