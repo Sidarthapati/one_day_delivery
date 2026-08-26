@@ -73,13 +73,13 @@ class ShipmentEtaServiceImpl implements ShipmentEtaService {
         }
         // Sanitize caller-supplied strings before logging — strip CR/LF so they can't forge log lines.
         log.info("ETA revised for {} → {} (promised {}, delayed={}, notified={}, by {}, reason={})",
-                forLog(shipmentRef), newEta, promised, delayed, notified, actorUserId, forLog(reason));
+                forLog(shipmentRef), newEta, promised, delayed, notified, forLog(actorUserId), forLog(reason));
         return new ReviseEtaResponse(shipmentRef, promised, newEta, delayed, notified);
     }
 
     /** Neutralize CR/LF in caller-supplied text so it can't inject forged lines into the log. */
     private static String forLog(String s) {
-        return s == null ? null : s.replaceAll("[\\r\\n]", "_");
+        return s == null ? null : s.replace('\n', '_').replace('\r', '_');
     }
 
     /** Send the delay mail to whoever booked: the B2B account (billing contact) or the retail sender. */
@@ -104,7 +104,7 @@ class ShipmentEtaServiceImpl implements ShipmentEtaService {
             accountId = null;
         }
         if ((email == null || email.isBlank()) && (phone == null || phone.isBlank())) {
-            log.warn("ETA delayed for {} but no customer contact to notify", s.getShipmentRef());
+            log.warn("ETA delayed for {} but no customer contact to notify", forLog(s.getShipmentRef()));
             return false;
         }
         notificationPort.send(new NotificationRequest(
