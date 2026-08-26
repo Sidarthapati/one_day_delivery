@@ -21,6 +21,14 @@ public interface B2bAccountRepository extends JpaRepository<B2bAccount, UUID> {
 
     Optional<B2bAccount> findByOwnerUserId(UUID ownerUserId);
 
+    /**
+     * The account a user can act on, resolved via membership (owners are members too, backfilled by
+     * V4_44) — so an invited teammate resolves to the same account as the owner. A user belongs to at
+     * most one account in v1, so at most one row.
+     */
+    @Query("SELECT a FROM B2bAccount a, B2bAccountMember m WHERE m.b2bAccountId = a.id AND m.userId = :userId")
+    Optional<B2bAccount> findByMemberUserId(@Param("userId") UUID userId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM B2bAccount a WHERE a.id = :id")
     Optional<B2bAccount> findByIdForUpdate(@Param("id") UUID id);

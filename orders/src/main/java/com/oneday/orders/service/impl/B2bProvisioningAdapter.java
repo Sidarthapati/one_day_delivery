@@ -3,7 +3,10 @@ package com.oneday.orders.service.impl;
 import com.oneday.common.port.B2bProvisioningPort;
 import com.oneday.common.port.dto.B2bProvisioningRequest;
 import com.oneday.orders.domain.B2bAccount;
+import com.oneday.orders.domain.B2bAccountMember;
 import com.oneday.orders.domain.B2bVerificationStatus;
+import com.oneday.orders.domain.MemberRole;
+import com.oneday.orders.repository.B2bAccountMemberRepository;
 import com.oneday.orders.repository.B2bAccountRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,9 +27,11 @@ class B2bProvisioningAdapter implements B2bProvisioningPort {
     private static final Logger log = LoggerFactory.getLogger(B2bProvisioningAdapter.class);
 
     private final B2bAccountRepository accounts;
+    private final B2bAccountMemberRepository members;
 
-    B2bProvisioningAdapter(B2bAccountRepository accounts) {
+    B2bProvisioningAdapter(B2bAccountRepository accounts, B2bAccountMemberRepository members) {
         this.accounts = accounts;
+        this.members = members;
     }
 
     @Override
@@ -61,6 +66,15 @@ class B2bProvisioningAdapter implements B2bProvisioningPort {
             a.setActivatedAt(Instant.now());
         }
         a = accounts.save(a);
+
+        // The owner is the account's first member, so membership-based resolution works from creation.
+        B2bAccountMember owner = new B2bAccountMember();
+        owner.setB2bAccountId(a.getId());
+        owner.setUserId(r.ownerUserId());
+        owner.setRole(MemberRole.OWNER);
+        owner.setEmail(r.billingEmail());
+        members.save(owner);
+
         log.info("Provisioned B2B account {} for owner {} (status={})", a.getId(), r.ownerUserId(), status);
         return a.getId();
     }

@@ -23,7 +23,7 @@ class B2bAccountServiceImpl implements B2bAccountService {
     @Override
     @Transactional(readOnly = true)
     public B2bAccountResponse getMine(UUID ownerUserId) {
-        B2bAccount a = accounts.findByOwnerUserId(ownerUserId)
+        B2bAccount a = accounts.findByMemberUserId(ownerUserId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "No business account for this user"));
         long available = Math.max(0L, a.getCreditLimitPaise() - a.getOutstandingBalancePaise());

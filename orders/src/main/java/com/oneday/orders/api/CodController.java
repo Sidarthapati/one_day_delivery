@@ -90,7 +90,7 @@ class CodController {
     private UUID ownedAccountId(AuthUserDetails principal) {
         Authz.requireRole(principal, "B2B_USER");
         UUID userId = UUID.fromString(Authz.requireUserId(principal));
-        return accounts.findByOwnerUserId(userId)
+        return accounts.findByMemberUserId(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No B2B account for this user"))
                 .getId();
     }
