@@ -6,8 +6,8 @@ import com.oneday.orders.domain.NotificationChannel;
 import com.oneday.orders.domain.NotificationLog;
 import com.oneday.orders.domain.NotificationStatus;
 import com.oneday.orders.repository.NotificationLogRepository;
-import com.oneday.orders.service.NotificationTemplates;
-import com.oneday.orders.service.NotificationTemplates.Template;
+import com.oneday.orders.service.NotificationTemplateResolver;
+import com.oneday.orders.service.NotificationTemplateResolver.Rendered;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,24 +32,26 @@ class NotificationServiceImpl implements NotificationPort {
     private static final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
     private final NotificationLogRepository repository;
+    private final NotificationTemplateResolver templates;
 
-    NotificationServiceImpl(NotificationLogRepository repository) {
+    NotificationServiceImpl(NotificationLogRepository repository, NotificationTemplateResolver templates) {
         this.repository = repository;
+        this.templates = templates;
     }
 
     @Override
     @Transactional
     public void send(NotificationRequest request) {
-        Template template = NotificationTemplates.forType(request.type());
-        if (template == null) {
+        Rendered rendered = templates.resolve(request.type(), request.params()).orElse(null);
+        if (rendered == null) {
             log.warn("[notify] no template for event {} — dropping", request.type());
             return;
         }
-        String subject = NotificationTemplates.render(template.subject(), request.params());
-        String body = NotificationTemplates.render(template.body(), request.params());
+        String subject = rendered.subject();
+        String body = rendered.body();
 
         List<NotificationLog> rows = new ArrayList<>(2);
-        for (NotificationChannel channel : template.channels()) {
+        for (NotificationChannel channel : rendered.channels()) {
             String recipient = channel == NotificationChannel.EMAIL
                     ? request.recipientEmail() : request.recipientPhone();
             if (recipient == null || recipient.isBlank()) {

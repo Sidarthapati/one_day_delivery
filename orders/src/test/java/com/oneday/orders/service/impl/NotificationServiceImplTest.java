@@ -24,7 +24,9 @@ import static org.mockito.Mockito.verify;
 class NotificationServiceImplTest {
 
     private final NotificationLogRepository repo = mock(NotificationLogRepository.class);
-    private final NotificationServiceImpl service = new NotificationServiceImpl(repo);
+    // Real resolver (stateless) so the template fan-out + render are exercised end-to-end.
+    private final NotificationServiceImpl service =
+            new NotificationServiceImpl(repo, new NotificationTemplateResolverImpl());
 
     @SuppressWarnings("unchecked")
     private List<NotificationLog> captureSaved() {
