@@ -50,5 +50,15 @@ public enum DaEventType {
     CUSTODY_COLLECTED,
 
     // QUEUED tasks deferred at shift end (carried to next day / RTO path). → M11
-    TASK_DEFERRED_SHIFT_ENDED
+    TASK_DEFERRED_SHIFT_ENDED,
+
+    // Geocoded attendance: a rostered DA's hub proximity could not be confirmed by the shift cutoff
+    // (never pinged, or never within the hub geofence). reasonCode = "{SHIFT}|{cityCode}". → M11 (opens
+    // an attendance alert for the station manager).
+    ATTENDANCE_UNCONFIRMED,
+
+    // Geocoded attendance: an open attendance alert was settled — the station manager marked the DA
+    // present, or marked them absent (which also triggered the reassignment). reasonCode = PRESENT|ABSENT.
+    // → M11 (closes the alert).
+    ATTENDANCE_RESOLVED
 }

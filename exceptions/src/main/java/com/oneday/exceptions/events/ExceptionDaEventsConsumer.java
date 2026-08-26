@@ -3,6 +3,7 @@ package com.oneday.exceptions.events;
 import com.oneday.common.kafka.events.DaLifecycleEvent;
 import com.oneday.exceptions.domain.ExceptionReason;
 import com.oneday.exceptions.domain.ExceptionType;
+import com.oneday.exceptions.service.AttendanceAlertService;
 import com.oneday.exceptions.service.ExceptionCaseService;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
@@ -17,9 +18,12 @@ import org.springframework.stereotype.Component;
 public class ExceptionDaEventsConsumer {
 
     private final ExceptionCaseService service;
+    private final AttendanceAlertService attendanceAlertService;
 
-    public ExceptionDaEventsConsumer(ExceptionCaseService service) {
+    public ExceptionDaEventsConsumer(ExceptionCaseService service,
+                                     AttendanceAlertService attendanceAlertService) {
         this.service = service;
+        this.attendanceAlertService = attendanceAlertService;
     }
 
     @RabbitListener(queues = ExceptionMessagingTopology.DA_QUEUE)
@@ -32,6 +36,8 @@ public class ExceptionDaEventsConsumer {
             case DROP_FAILED -> capture(event, ExceptionType.DELIVERY_FAILED, reason);
             case PICKUP_FAILED -> capture(event, ExceptionType.PICKUP_FAILED, reason);
             case CRON_MISSED -> capture(event, ExceptionType.CRON_MISSED, ExceptionReason.CRON_MISSED);
+            case ATTENDANCE_UNCONFIRMED -> attendanceAlertService.raise(event);
+            case ATTENDANCE_RESOLVED -> attendanceAlertService.resolve(event);
             default -> { /* not a failure signal */ }
         }
     }
