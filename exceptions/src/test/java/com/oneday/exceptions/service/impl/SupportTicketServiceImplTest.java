@@ -5,6 +5,8 @@ import com.oneday.exceptions.domain.TicketChannel;
 import com.oneday.exceptions.domain.TicketStatus;
 import com.oneday.exceptions.dto.SupportTicketRequest;
 import com.oneday.exceptions.dto.SupportTicketResponse;
+import com.oneday.exceptions.domain.SupportTicketMessage;
+import com.oneday.exceptions.repository.SupportTicketMessageRepository;
 import com.oneday.exceptions.repository.SupportTicketRepository;
 import com.oneday.orders.dto.ShipmentInfo;
 import com.oneday.orders.service.ShipmentLookupService;
@@ -30,8 +32,10 @@ import static org.mockito.Mockito.when;
 class SupportTicketServiceImplTest {
 
     private final SupportTicketRepository repo = mock(SupportTicketRepository.class);
+    private final SupportTicketMessageRepository messages = mock(SupportTicketMessageRepository.class);
     private final ShipmentLookupService shipmentLookup = mock(ShipmentLookupService.class);
-    private final SupportTicketServiceImpl service = new SupportTicketServiceImpl(repo, shipmentLookup);
+    private final SupportTicketServiceImpl service =
+            new SupportTicketServiceImpl(repo, messages, shipmentLookup);
 
     private static final UUID USER = UUID.randomUUID();
 
@@ -121,5 +125,65 @@ class SupportTicketServiceImplTest {
         assertThatThrownBy(() -> service.act(id, "agent-1", TicketStatus.IN_PROGRESS, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("already");
+    }
+
+    // ── Conversation thread ────────────────────────────────────────────────
+
+    @Test
+    void customerReplyIsScopedToTheirOwnTicket() {
+        UUID id = UUID.randomUUID();
+        when(repo.findByIdAndRaisedByUserId(id, USER)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.postMineMessage(USER, id, "any update?"))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(messages, never()).save(any());
+    }
+
+    @Test
+    void customerReplyReopensAResolvedTicket() {
+        UUID id = UUID.randomUUID();
+        SupportTicket t = new SupportTicket();
+        t.setRaisedByRole("B2B_USER");
+        t.setStatus(TicketStatus.RESOLVED);
+        when(repo.findByIdAndRaisedByUserId(id, USER)).thenReturn(Optional.of(t));
+        when(messages.findByTicketIdOrderByCreatedAtAsc(any())).thenReturn(java.util.List.of());
+
+        SupportTicketResponse resp = service.postMineMessage(USER, id, "still not delivered");
+
+        assertThat(resp.status()).isEqualTo(TicketStatus.OPEN); // reopened
+        assertThat(t.getResolvedAt()).isNull();
+        org.mockito.ArgumentCaptor<SupportTicketMessage> msg = org.mockito.ArgumentCaptor.forClass(SupportTicketMessage.class);
+        verify(messages).save(msg.capture());
+        assertThat(msg.getValue().isFromAgent()).isFalse();
+        assertThat(msg.getValue().getBody()).isEqualTo("still not delivered");
+    }
+
+    @Test
+    void agentReplyClaimsAnOpenTicket() {
+        UUID id = UUID.randomUUID();
+        SupportTicket t = new SupportTicket();
+        t.setStatus(TicketStatus.OPEN);
+        when(repo.findById(id)).thenReturn(Optional.of(t));
+        when(messages.findByTicketIdOrderByCreatedAtAsc(any())).thenReturn(java.util.List.of());
+
+        UUID agent = UUID.randomUUID();
+        SupportTicketResponse resp = service.postAgentMessage(agent, "CALL_CENTER_AGENT", id, "on it now");
+
+        assertThat(resp.status()).isEqualTo(TicketStatus.IN_PROGRESS); // claimed
+        assertThat(resp.assignedTo()).isEqualTo(agent.toString());
+        org.mockito.ArgumentCaptor<SupportTicketMessage> msg = org.mockito.ArgumentCaptor.forClass(SupportTicketMessage.class);
+        verify(messages).save(msg.capture());
+        assertThat(msg.getValue().isFromAgent()).isTrue();
+    }
+
+    @Test
+    void blankMessageBodyIsRejected() {
+        UUID id = UUID.randomUUID();
+        SupportTicket t = new SupportTicket();
+        t.setStatus(TicketStatus.IN_PROGRESS);
+        when(repo.findByIdAndRaisedByUserId(id, USER)).thenReturn(Optional.of(t));
+        assertThatThrownBy(() -> service.postMineMessage(USER, id, "   "))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("body is required");
+        verify(messages, never()).save(any());
     }
 }

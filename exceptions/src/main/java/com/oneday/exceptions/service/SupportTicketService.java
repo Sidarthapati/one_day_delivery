@@ -20,14 +20,26 @@ public interface SupportTicketService {
     /** The caller's own tickets, newest first. */
     List<SupportTicketResponse> listMine(UUID raisedByUserId);
 
-    /** One of the caller's own tickets by id (404 if not theirs / unknown). */
+    /** One of the caller's own tickets by id, with its conversation thread (404 if not theirs / unknown). */
     SupportTicketResponse myDetail(UUID raisedByUserId, UUID ticketId);
+
+    /**
+     * The raiser posts a reply into their own ticket's thread; a reply to a RESOLVED ticket reopens it.
+     * Returns the updated ticket detail (with the full thread). 404 if the ticket isn't theirs.
+     */
+    SupportTicketResponse postMineMessage(UUID raisedByUserId, UUID ticketId, String body);
 
     /** Ops queue: live (unresolved) tickets, freshest first. */
     Page<SupportTicketResponse> queue(int page, int size);
 
-    /** One ticket by id for an ops agent (404 if unknown). */
+    /** One ticket by id for an ops agent, with its conversation thread (404 if unknown). */
     SupportTicketResponse detail(UUID ticketId);
+
+    /**
+     * An ops agent posts a reply into a ticket's thread; replying to an OPEN ticket claims it (→ IN_PROGRESS,
+     * assigned to the agent). Returns the updated ticket detail (with the full thread). 404 if unknown.
+     */
+    SupportTicketResponse postAgentMessage(UUID agentUserId, String agentRole, UUID ticketId, String body);
 
     /**
      * Ops action: set the ticket's status (IN_PROGRESS / RESOLVED / CANCELLED), record the acting
