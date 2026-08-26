@@ -245,7 +245,9 @@ class AbsenceReassignmentServiceImplTest {
             @Override public UUID getId() { return id; }
         };
         event.setCityId(CITY);
-        event.setOperatingDate(LocalDate.now());
+        // IST, to match the service's today() (Asia/Kolkata) and the da_status shiftDate stub — otherwise
+        // a UTC CI runner near IST-midnight lands a day earlier and the roster date-check rejects it.
+        event.setOperatingDate(LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")));
         event.setAbsentDaIdList(List.of(RAVI));
         event.setStatus(AbsenceStatus.PENDING);
         return event;
