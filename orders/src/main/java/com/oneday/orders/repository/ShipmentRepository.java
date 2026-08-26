@@ -113,6 +113,43 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
             + "WHERE s.originCity = :city OR s.destCity = :city GROUP BY s.state")
     List<StateCount> countByStateForCity(@Param("city") String city);
 
+    // ── Merchant analytics (per B2B account, windowed by booking time) ─────────────────────────
+    // :since is always bound (the service passes Instant.EPOCH for all-time) — a nullable bind in a
+    // "? IS NULL" branch left Postgres unable to infer the parameter type. Same grouped-count shape
+    // as countByState, scoped to one account.
+
+    @Query("SELECT s.state AS state, COUNT(s) AS count FROM Shipment s "
+            + "WHERE s.b2bAccountId = :accountId AND s.createdAt >= :since "
+            + "GROUP BY s.state")
+    List<StateCount> countByStateForAccount(@Param("accountId") UUID accountId, @Param("since") Instant since);
+
+    // Money rollup: shipping GMV + COD value handled, in paise. COALESCE keeps it 0 (never null) for
+    // an account with no shipments in the window.
+    @Query("SELECT COALESCE(SUM(s.totalPricePaise), 0) AS gmvPaise, "
+            + "COALESCE(SUM(s.codAmountPaise), 0) AS codPaise "
+            + "FROM Shipment s WHERE s.b2bAccountId = :accountId "
+            + "AND s.createdAt >= :since")
+    AccountTotals sumTotalsForAccount(@Param("accountId") UUID accountId, @Param("since") Instant since);
+
+    // Destination-city split (only 5 serviceable cities, so a tiny result set), busiest first.
+    @Query("SELECT s.destCity AS city, COUNT(s) AS count FROM Shipment s "
+            + "WHERE s.b2bAccountId = :accountId AND s.createdAt >= :since "
+            + "GROUP BY s.destCity ORDER BY COUNT(s) DESC")
+    List<CityCount> destinationSplitForAccount(@Param("accountId") UUID accountId, @Param("since") Instant since);
+
+    // On-time delivery: joins each parcel's actual delivered time (the history row's occurred_at for a
+    // delivered terminal state) against its promised ETA. Theta-join because shipment↔history is a bare
+    // UUID reference, not a mapped association. Only parcels with a promised ETA are rated.
+    @Query("SELECT COUNT(h) AS delivered, "
+            + "COALESCE(SUM(CASE WHEN h.occurredAt <= s.etaPromised THEN 1 ELSE 0 END), 0) AS onTime "
+            + "FROM ShipmentStateHistory h, Shipment s "
+            + "WHERE h.shipmentId = s.id AND h.toState IN :deliveredStates "
+            + "AND s.b2bAccountId = :accountId AND s.etaPromised IS NOT NULL "
+            + "AND s.createdAt >= :since")
+    OnTimeStat onTimeForAccount(@Param("accountId") UUID accountId,
+                                @Param("deliveredStates") Collection<ShipmentState> deliveredStates,
+                                @Param("since") Instant since);
+
     /**
      * Ageing rollup: live (non-terminal) shipments grouped by state and a dwell band. Dwell is
      * {@code now() − COALESCE(last_scan_at, created_at)} (a never-scanned parcel ages from booking).
