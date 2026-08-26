@@ -223,6 +223,7 @@ class CustomerOrderQueryServiceImpl implements CustomerOrderQueryService {
                 s.getOriginCity(),
                 s.getDestCity(),
                 s.getTotalPricePaise(),
+                s.getCategoryId(),
                 s.getCreatedAt(),
                 s.getCancelledAt());
     }
