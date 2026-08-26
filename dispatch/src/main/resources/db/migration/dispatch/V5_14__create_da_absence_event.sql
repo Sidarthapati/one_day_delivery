@@ -13,8 +13,6 @@ CREATE TABLE da_absence_event (
     created_by       UUID,
     auto_approve_at  TIMESTAMPTZ NOT NULL,
     applied_at       TIMESTAMPTZ,
-    -- The grid INTRADAY_OVERRIDE proposal committed on apply (null while PENDING / if nothing moved).
-    proposal_id      UUID,
     orphan_count     INT         NOT NULL DEFAULT 0,
     created_at       TIMESTAMPTZ NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL

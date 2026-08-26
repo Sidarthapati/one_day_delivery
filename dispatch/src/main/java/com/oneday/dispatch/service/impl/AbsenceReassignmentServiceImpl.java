@@ -23,8 +23,10 @@ import com.oneday.grid.dto.response.AssignmentResponse;
 import com.oneday.grid.service.GridService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -128,19 +130,25 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
 
     @Override
     @Transactional
-    public AbsenceApplyResponse apply(UUID eventId, UUID actorUserId) {
-        return doApply(loadPending(eventId), false, actorUserId);
+    public AbsenceApplyResponse apply(UUID eventId, UUID actorUserId, UUID scopeCityId) {
+        DaAbsenceEvent event = loadEvent(eventId);
+        // City scope first — a manager may only apply an absence event in their own city (404, not 403,
+        // so a cross-city event id isn't confirmed to exist). ADMIN passes scopeCityId == null.
+        if (scopeCityId != null && !scopeCityId.equals(event.getCityId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No absence event " + eventId);
+        }
+        return doApply(event, false, actorUserId);
     }
 
     @Override
     @Transactional
     public AbsenceApplyResponse autoApply(UUID eventId) {
-        return doApply(loadPending(eventId), true, null);
+        return doApply(loadEvent(eventId), true, null);
     }
 
-    private DaAbsenceEvent loadPending(UUID eventId) {
+    private DaAbsenceEvent loadEvent(UUID eventId) {
         return absenceRepository.findById(eventId)
-                .orElseThrow(() -> new IllegalArgumentException("No absence event " + eventId));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No absence event " + eventId));
     }
 
     private AbsenceApplyResponse doApply(DaAbsenceEvent event, boolean system, UUID actorUserId) {

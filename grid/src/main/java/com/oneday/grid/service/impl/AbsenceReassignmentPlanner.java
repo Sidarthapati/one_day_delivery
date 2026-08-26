@@ -170,22 +170,36 @@ class AbsenceReassignmentPlanner {
 
     /**
      * Recompute the split and commit it as one append-only {@code INTRADAY_OVERRIDE} proposal:
-     * receivers get their full new hex-set (existing + gained), absent DAs are fully vacated (no new
-     * rows), and the affected DAs' standing APPROVED rows are superseded. Returns the applied plan so
-     * M5 can move the matching tasks.
+     * receivers get their full new hex-set (existing + gained), absent DAs are fully vacated, and the
+     * affected DAs' standing APPROVED rows are superseded. The absent DAs are retired even when no hex
+     * finds a receiver (their orphaned hexes are simply left uncovered for escalation). Returns the
+     * applied plan so M5 can move the matching tasks.
      */
     @Transactional
     AbsenceReassignmentPlan apply(UUID cityId, List<UUID> absentDaIds, LocalDate date, UUID reviewerId) {
         AbsenceReassignmentPlan plan = plan(cityId, absentDaIds, date);
+        Set<UUID> absent = new HashSet<>(absentDaIds);
+        Instant now = Instant.now();
+
+        // Always retire the absent DAs — they're absent whether or not any of their hexes found a
+        // receiver. Hexes with no live neighbor (orphans) are left uncovered for manual escalation.
+        for (UUID da : absent) {
+            supersedeApproved(da, date);
+        }
         if (plan.reassignments().isEmpty()) {
-            return plan;   // nothing to move (all covered, or all orphaned → caller escalates)
+            log.info("Absence reassignment: retired {} absent DA(s), no receiver for any hex ({} orphans)",
+                    absent.size(), plan.orphanHexIds().size());
+            return plan;
         }
 
-        Set<UUID> absent = new HashSet<>(absentDaIds);
         Map<UUID, List<UUID>> gainedByReceiver = plan.reassignments().stream()
                 .collect(Collectors.groupingBy(HexReassignment::toDaId,
                         Collectors.mapping(HexReassignment::hexId, Collectors.toList())));
         Set<UUID> receivers = gainedByReceiver.keySet();
+
+        int covered = plan.reassignments().size();
+        int total = covered + plan.orphanHexIds().size();
+        double coveragePct = total == 0 ? 100.0 : (100.0 * covered / total);
 
         AssignmentProposal proposal = proposalRepository.save(AssignmentProposal.builder()
                 .cityId(cityId)
@@ -195,14 +209,17 @@ class AbsenceReassignmentPlanner {
                 .solverType(SolverType.MANUAL)
                 .adjacencySource(AdjacencySource.GEOMETRIC_FALLBACK)
                 .totalDas(receivers.size())
-                .coveragePct(100.0)
+                .coveragePct(coveragePct)
                 .understaffedHexIds("[]")
                 .build());
 
-        // Write each receiver's full new hex-set (append-only; absent DAs get nothing → vacated).
+        // Write each receiver's full new hex-set (append-only). Retained hexes keep their existing
+        // nDasOnHex (a shared hex stays shared); gained hexes get a single new owner (nDasOnHex=1).
         List<DaHexAssignment> newRows = new ArrayList<>();
         for (UUID receiver : receivers) {
-            Set<UUID> merged = new LinkedHashSet<>(activeAssignedHexes(receiver, date));
+            Map<UUID, Integer> retainedCount = approvedRows(receiver, date).stream()
+                    .collect(Collectors.toMap(DaHexAssignment::getHexId, DaHexAssignment::getNDasOnHex));
+            Set<UUID> merged = new LinkedHashSet<>(retainedCount.keySet());
             merged.addAll(gainedByReceiver.get(receiver));
             for (UUID hex : merged) {
                 newRows.add(DaHexAssignment.builder()
@@ -210,24 +227,16 @@ class AbsenceReassignmentPlanner {
                         .daId(receiver)
                         .hexId(hex)
                         .validDate(date)
-                        .nDasOnHex(1)
+                        .nDasOnHex(retainedCount.getOrDefault(hex, 1))
                         .status(AssignmentStatus.PROPOSED)
                         .build());
             }
         }
         assignmentRepository.saveAll(newRows);
 
-        // Approve: supersede the standing APPROVED rows of every affected DA, activate the new rows.
-        Instant now = Instant.now();
-        Set<UUID> affected = new HashSet<>(receivers);
-        affected.addAll(absent);
-        for (UUID da : affected) {
-            assignmentRepository.findByDaIdAndValidDate(da, date).stream()
-                    .filter(a -> a.getStatus() == AssignmentStatus.APPROVED)
-                    .forEach(a -> {
-                        a.setStatus(AssignmentStatus.SUPERSEDED);
-                        assignmentRepository.save(a);
-                    });
+        // Supersede the receivers' standing APPROVED rows (absent DAs were retired above), activate the new.
+        for (UUID receiver : receivers) {
+            supersedeApproved(receiver, date);
         }
         newRows.forEach(a -> {
             a.setStatus(AssignmentStatus.APPROVED);
@@ -241,17 +250,22 @@ class AbsenceReassignmentPlanner {
         proposal.setReviewedAt(now);
         proposalRepository.save(proposal);
 
-        log.info("Absence reassignment applied: proposal={} receivers={} hexes={} absent={} orphans={}",
-                proposal.getId(), receivers.size(), plan.reassignments().size(),
-                absent.size(), plan.orphanHexIds().size());
+        log.info("Absence reassignment applied: proposal={} receivers={} hexes={} absent={} orphans={} coverage={}%",
+                proposal.getId(), receivers.size(), covered, absent.size(), plan.orphanHexIds().size(),
+                String.format("%.1f", coveragePct));
         return plan;
     }
 
-    private List<UUID> activeAssignedHexes(UUID daId, LocalDate date) {
+    private List<DaHexAssignment> approvedRows(UUID daId, LocalDate date) {
         return assignmentRepository.findByDaIdAndValidDate(daId, date).stream()
                 .filter(a -> a.getStatus() == AssignmentStatus.APPROVED)
-                .map(DaHexAssignment::getHexId)
                 .toList();
+    }
+
+    private void supersedeApproved(UUID daId, LocalDate date) {
+        List<DaHexAssignment> rows = approvedRows(daId, date);
+        rows.forEach(a -> a.setStatus(AssignmentStatus.SUPERSEDED));
+        assignmentRepository.saveAll(rows);
     }
 
     /** H3 1-ring adjacency over the city's active hexes — hexId → neighboring hexIds. */

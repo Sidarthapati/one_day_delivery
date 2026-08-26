@@ -53,9 +53,6 @@ public class DaAbsenceEvent extends MutableBaseEntity {
     @Column(name = "applied_at")
     private Instant appliedAt;
 
-    @Column(name = "proposal_id")
-    private UUID proposalId;
-
     @Column(name = "orphan_count", nullable = false)
     private int orphanCount;
 

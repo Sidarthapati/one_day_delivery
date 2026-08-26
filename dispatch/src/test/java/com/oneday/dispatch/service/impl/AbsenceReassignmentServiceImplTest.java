@@ -118,7 +118,7 @@ class AbsenceReassignmentServiceImplTest {
                 .thenReturn(List.of());
         runLockInline();
 
-        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID());
+        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID(), null);
 
         assertThat(res.movedTaskCount()).isEqualTo(1);
         // A new QUEUED row for the new owner + the old row cancelled — no DEFERRED anywhere.
@@ -146,7 +146,7 @@ class AbsenceReassignmentServiceImplTest {
                 .thenReturn(List.of());
         runLockInline();
 
-        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID());
+        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID(), null);
 
         assertThat(res.custodyTaskCount()).isEqualTo(1);
         ArgumentCaptor<DispatchQueue> saved = ArgumentCaptor.forClass(DispatchQueue.class);
@@ -168,7 +168,7 @@ class AbsenceReassignmentServiceImplTest {
                 .thenReturn(List.of());
         when(gridService.getActiveAssignments(any(), any())).thenReturn(List.of());
 
-        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID());
+        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID(), null);
 
         verify(daStatusService).updateStatus(RAVI, DaStatusEnum.ABSENT);
         verify(daStatusService).setTerritory(eq(RAVI), eq(List.of()));
@@ -192,12 +192,24 @@ class AbsenceReassignmentServiceImplTest {
     }
 
     @Test
+    void applyRejectsAnEventOutsideTheCallersCity() {
+        DaAbsenceEvent event = pendingEvent();   // cityId == CITY
+        when(absenceRepository.findById(event.getId())).thenReturn(Optional.of(event));
+        UUID otherCity = UUID.randomUUID();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.apply(event.getId(), UUID.randomUUID(), otherCity))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        verify(gridService, never()).applyAbsenceReassignment(any(), any(), any(), any());
+    }
+
+    @Test
     void applyIsIdempotentOnceApplied() {
         DaAbsenceEvent event = pendingEvent();
         event.setStatus(AbsenceStatus.APPLIED);
         when(absenceRepository.findById(event.getId())).thenReturn(Optional.of(event));
 
-        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID());
+        AbsenceApplyResponse res = service.apply(event.getId(), UUID.randomUUID(), null);
 
         assertThat(res.status()).isEqualTo(AbsenceStatus.APPLIED);
         verify(gridService, never()).applyAbsenceReassignment(any(), any(), any(), any());

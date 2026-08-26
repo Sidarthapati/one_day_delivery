@@ -50,7 +50,9 @@ public class AbsenceController {
                                       @AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID actor = Authz.requireUserId(principal);
-        return absenceService.apply(eventId, actor);
+        // A STATION_MANAGER may only apply an event in their own city; ADMIN (null scope) any city.
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return absenceService.apply(eventId, actor, scopeCityId);
     }
 
     /**

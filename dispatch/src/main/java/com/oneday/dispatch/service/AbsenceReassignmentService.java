@@ -17,8 +17,12 @@ public interface AbsenceReassignmentService {
     /** Compute + persist a PENDING plan for the given absent DAs and return it for the manager to review. */
     AbsencePreviewResponse preview(UUID cityId, List<UUID> daIds, String reason, UUID actorUserId);
 
-    /** Apply a PENDING plan on a manager's approval. Idempotent once applied. */
-    AbsenceApplyResponse apply(UUID eventId, UUID actorUserId);
+    /**
+     * Apply a PENDING plan on a manager's approval. Idempotent once applied. {@code scopeCityId} pins
+     * the caller to one city (a STATION_MANAGER's own city); pass {@code null} for an unrestricted
+     * (ADMIN) caller. A mismatch is rejected before anything is applied.
+     */
+    AbsenceApplyResponse apply(UUID eventId, UUID actorUserId, UUID scopeCityId);
 
     /** Apply a PENDING plan automatically (auto-approve timeout). Idempotent once applied. */
     AbsenceApplyResponse autoApply(UUID eventId);
