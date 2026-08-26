@@ -21,4 +21,15 @@ public interface DaStatusRepository extends JpaRepository<DaStatus, UUID> {
 
     /** All-city roster for a shift filtered by status (ADMIN, unscoped). */
     List<DaStatus> findByShiftDateAndStatusIn(LocalDate shiftDate, Collection<DaStatusEnum> statuses);
+
+    /** Every DA rostered to one shift on a date (any status) — the shift scope for an absence split. */
+    List<DaStatus> findByCityIdAndShiftDateAndShiftType(UUID cityId, LocalDate shiftDate, String shiftType);
+
+    /** City roster for one shift-type filtered by status (shift-scoped absence picker). */
+    List<DaStatus> findByCityIdAndShiftDateAndShiftTypeAndStatusIn(
+            UUID cityId, LocalDate shiftDate, String shiftType, Collection<DaStatusEnum> statuses);
+
+    /** All-city roster for one shift-type filtered by status (ADMIN, shift-scoped picker). */
+    List<DaStatus> findByShiftDateAndShiftTypeAndStatusIn(
+            LocalDate shiftDate, String shiftType, Collection<DaStatusEnum> statuses);
 }

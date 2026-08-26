@@ -19,8 +19,9 @@ public interface AbsenceReassignmentService {
     /**
      * The DAs on shift for the picker — every DA on the clock (any task type), not just those with
      * delivery scorecards. {@code scopeCityId} null = all cities (ADMIN), else a single city.
+     * {@code shift} null = both shifts on the date; else only that shift's DAs (the console filter).
      */
-    List<DaRosterEntry> roster(UUID scopeCityId, LocalDate date);
+    List<DaRosterEntry> roster(UUID scopeCityId, LocalDate date, com.oneday.common.domain.Shift shift);
 
     /** Compute + persist a PENDING plan for the given absent DAs and return it for the manager to review. */
     AbsencePreviewResponse preview(UUID cityId, List<UUID> daIds, String reason, UUID actorUserId);

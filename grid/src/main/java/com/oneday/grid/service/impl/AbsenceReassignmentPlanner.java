@@ -79,6 +79,17 @@ class AbsenceReassignmentPlanner {
      * no path to any live DA (an isolated pocket) is left an orphan.
      */
     AbsenceReassignmentPlan plan(UUID cityId, List<UUID> absentDaIds, LocalDate date) {
+        return plan(cityId, absentDaIds, date, null);
+    }
+
+    /**
+     * As {@link #plan(UUID, List, LocalDate)}, but scoped to a single shift: {@code inShiftDaIds} is the
+     * set of DAs rostered to the absent DA's shift for the date. A day carries one APPROVED plan per
+     * shift on the same {@code valid_date}, so without this the split would mix shifts — attributing a
+     * hex to the other shift's DA (whichever row loads first) or handing an absent DA's territory to a
+     * DA who isn't on the clock. {@code null} keeps the legacy (unscoped) behaviour.
+     */
+    AbsenceReassignmentPlan plan(UUID cityId, List<UUID> absentDaIds, LocalDate date, Set<UUID> inShiftDaIds) {
         Set<UUID> absent = new HashSet<>(absentDaIds);
         Grid grid = gridRepository.findByCityId(cityId)
                 .orElseThrow(() -> new IllegalArgumentException("Grid not found for city: " + cityId));
@@ -87,9 +98,13 @@ class AbsenceReassignmentPlanner {
         Set<UUID> gridHexIds = hexes.stream().map(Hex::getId).collect(Collectors.toSet());
         Map<UUID, List<UUID>> adjacency = geometricAdjacency(hexes);
 
-        // Current standing plan for the date, scoped to this city's hexes.
+        // Current standing plan for the date, scoped to this city's hexes and — when given — to the
+        // absent DA's shift, so the other shift's same-date assignments don't leak into the split.
         List<DaHexAssignment> approved = assignmentRepository.findByValidDateAndStatus(date, AssignmentStatus.APPROVED)
-                .stream().filter(a -> gridHexIds.contains(a.getHexId())).toList();
+                .stream()
+                .filter(a -> gridHexIds.contains(a.getHexId()))
+                .filter(a -> inShiftDaIds == null || inShiftDaIds.contains(a.getDaId()) || absent.contains(a.getDaId()))
+                .toList();
 
         // Live ownership (hex → a live DA) grows as hexes are claimed; load is the balancing counter.
         Map<UUID, UUID> owner = new HashMap<>();
@@ -177,7 +192,14 @@ class AbsenceReassignmentPlanner {
      */
     @Transactional
     AbsenceReassignmentPlan apply(UUID cityId, List<UUID> absentDaIds, LocalDate date, UUID reviewerId) {
-        AbsenceReassignmentPlan plan = plan(cityId, absentDaIds, date);
+        return apply(cityId, absentDaIds, date, null, reviewerId);
+    }
+
+    /** Shift-scoped apply — see {@link #plan(UUID, List, LocalDate, Set)} for what {@code inShiftDaIds} does. */
+    @Transactional
+    AbsenceReassignmentPlan apply(UUID cityId, List<UUID> absentDaIds, LocalDate date,
+                                  Set<UUID> inShiftDaIds, UUID reviewerId) {
+        AbsenceReassignmentPlan plan = plan(cityId, absentDaIds, date, inShiftDaIds);
         Set<UUID> absent = new HashSet<>(absentDaIds);
         Instant now = Instant.now();
 
@@ -200,6 +222,10 @@ class AbsenceReassignmentPlanner {
         int covered = plan.reassignments().size();
         int total = covered + plan.orphanHexIds().size();
         double coveragePct = total == 0 ? 100.0 : (100.0 * covered / total);
+        // Record the orphan (uncovered) hexes on the proposal so reports/UI don't read "[]" as full coverage.
+        String understaffed = plan.orphanHexIds().isEmpty() ? "[]"
+                : plan.orphanHexIds().stream().map(id -> "\"" + id + "\"")
+                        .collect(Collectors.joining(",", "[", "]"));
 
         AssignmentProposal proposal = proposalRepository.save(AssignmentProposal.builder()
                 .cityId(cityId)
@@ -210,36 +236,42 @@ class AbsenceReassignmentPlanner {
                 .adjacencySource(AdjacencySource.GEOMETRIC_FALLBACK)
                 .totalDas(receivers.size())
                 .coveragePct(coveragePct)
-                .understaffedHexIds("[]")
+                .understaffedHexIds(understaffed)
                 .build());
 
-        // Append ONLY the gained hexes to each receiver, as new APPROVED rows. The receiver keeps its
-        // retained hexes through its existing APPROVED rows — leave those untouched. Re-inserting a
-        // retained hex would violate the (da_id, hex_id, valid_date) uniqueness (supersede only flips
-        // status, it does not free the slot), which is the whole reason we don't rewrite the full set.
-        // Only the absent DA's rows are superseded (done above), so their hexes move cleanly to the
-        // new owner: (receiver, gainedHex, date) is a brand-new key.
-        List<DaHexAssignment> newRows = new ArrayList<>();
+        // Give each receiver ONLY the gained hexes (the absent DA's hexes, superseded above); the
+        // receiver keeps its retained hexes through its own untouched APPROVED rows. The (da_id, hex_id,
+        // valid_date) key is unique regardless of status, so we must not blindly INSERT: a hex the
+        // receiver already holds APPROVED is a no-op, and a hex it holds SUPERSEDED (from an earlier
+        // same-day absence that bounced this hex away and back) is REACTIVATED in place — inserting a
+        // second row for that key would be rejected and roll the whole apply back.
+        List<DaHexAssignment> toSave = new ArrayList<>();
         for (UUID receiver : receivers) {
-            Set<UUID> alreadyOwned = approvedRows(receiver, date).stream()
-                    .map(DaHexAssignment::getHexId).collect(Collectors.toSet());
+            Map<UUID, DaHexAssignment> existingByHex = assignmentRepository.findByDaIdAndValidDate(receiver, date)
+                    .stream().collect(Collectors.toMap(DaHexAssignment::getHexId, a -> a, (a, b) -> a));
             for (UUID hex : new LinkedHashSet<>(gainedByReceiver.get(receiver))) {
-                if (alreadyOwned.contains(hex)) {
-                    continue;   // defensive: never double-insert a hex the receiver already holds
+                DaHexAssignment existing = existingByHex.get(hex);
+                if (existing == null) {
+                    toSave.add(DaHexAssignment.builder()
+                            .proposalId(proposal.getId())
+                            .daId(receiver)
+                            .hexId(hex)
+                            .validDate(date)
+                            .nDasOnHex(1)
+                            .status(AssignmentStatus.APPROVED)
+                            .approvedBy(reviewerId)
+                            .approvedAt(now)
+                            .build());
+                } else if (existing.getStatus() != AssignmentStatus.APPROVED) {
+                    existing.setStatus(AssignmentStatus.APPROVED);   // reactivate the slot in place
+                    existing.setApprovedBy(reviewerId);
+                    existing.setApprovedAt(now);
+                    toSave.add(existing);
                 }
-                newRows.add(DaHexAssignment.builder()
-                        .proposalId(proposal.getId())
-                        .daId(receiver)
-                        .hexId(hex)
-                        .validDate(date)
-                        .nDasOnHex(1)
-                        .status(AssignmentStatus.APPROVED)
-                        .approvedBy(reviewerId)
-                        .approvedAt(now)
-                        .build());
+                // else already APPROVED → the receiver already holds this hex, nothing to do.
             }
         }
-        assignmentRepository.saveAll(newRows);
+        assignmentRepository.saveAll(toSave);
 
         proposal.setStatus(ProposalStatus.APPROVED);
         proposal.setReviewedBy(reviewerId);

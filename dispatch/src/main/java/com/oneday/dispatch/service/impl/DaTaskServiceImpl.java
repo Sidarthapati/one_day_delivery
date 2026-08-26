@@ -286,13 +286,17 @@ class DaTaskServiceImpl implements DaTaskService {
             DispatchQueue task = ownedTask(daId, taskId);
             requireType(task, TaskType.CUSTODY_COLLECT);
             requireCollectable(task);
+            requireScanMatchesShipment(task, parcelScans);   // the scan must be THIS parcel's label
             task.setStatus(TaskStatus.COMPLETED);
             if (task.getStartedAt() == null) {
                 task.setStartedAt(Instant.now());
             }
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
-            // M8-SEAM: append-only DA→DA custody scan — the source of truth that custody moved. Best-effort.
+            // M8-SEAM (best-effort): append the DA→DA custody scan to the ledger. The authoritative record
+            // that custody moved is the committed dispatch_queue transition above (this task COMPLETED +
+            // the onward leg) — the scan is a ledger bridge until M8 owns it, so a publish hiccup must
+            // never block the hand-off.
             hubScanSeamProducer.emitDaCustodyTransfer(task.getShipmentId());
             daEventProducer.emitCustodyCollected(daId, task.getCityId(), task.getShipmentId(),
                     task.getCollectFromDaId());
@@ -448,6 +452,24 @@ class DaTaskServiceImpl implements DaTaskService {
         if (task.getStatus() != TaskStatus.QUEUED && task.getStatus() != TaskStatus.IN_PROGRESS) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Task " + task.getId() + " is " + task.getStatus() + " and cannot be failed");
+        }
+    }
+
+    /**
+     * The custody hand-off must prove the right parcel was taken: at least one scan must be this
+     * shipment's label barcode (== its ref; v1 parcelId == shipmentId). Guards against a DA completing
+     * a custody transfer with a junk scan. Skipped only when the shipment has no ref to check against.
+     */
+    private void requireScanMatchesShipment(DispatchQueue task, List<String> parcelScans) {
+        String ref = shipmentRefPort.refsFor(List.of(task.getShipmentId())).get(task.getShipmentId());
+        if (ref == null) {
+            return;   // no barcode/ref to validate against — the non-empty cardinality guard still applied
+        }
+        boolean matched = parcelScans.stream()
+                .anyMatch(s -> s != null && s.trim().equalsIgnoreCase(ref.trim()));
+        if (!matched) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Scanned parcel does not match this task's shipment " + ref);
         }
     }
 

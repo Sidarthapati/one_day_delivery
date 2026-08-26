@@ -50,11 +50,12 @@ public class AbsenceController {
     public List<DaRosterEntry> roster(@RequestParam(required = false) UUID cityId,
                                       @RequestParam(required = false)
                                       @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+                                      @RequestParam(required = false) com.oneday.common.domain.Shift shift,
                                       @AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID scope = Authz.isAdmin(principal) ? cityId : managerCity(principal);
         LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        return absenceService.roster(scope, day);
+        return absenceService.roster(scope, day, shift);
     }
 
     /** Preview (and stage as PENDING) the reassignment for the marked DAs. */
