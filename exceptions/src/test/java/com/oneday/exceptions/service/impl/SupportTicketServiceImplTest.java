@@ -102,6 +102,17 @@ class SupportTicketServiceImplTest {
     }
 
     @Test
+    void movingATicketBackToOpenIsRejected() {
+        UUID id = UUID.randomUUID();
+        SupportTicket t = new SupportTicket();
+        t.setStatus(TicketStatus.IN_PROGRESS);
+        when(repo.findById(id)).thenReturn(Optional.of(t));
+        assertThatThrownBy(() -> service.act(id, "agent-1", TicketStatus.OPEN, null))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("OPEN is not a valid action");
+    }
+
+    @Test
     void actingOnAClosedTicketConflicts() {
         UUID id = UUID.randomUUID();
         SupportTicket t = new SupportTicket();

@@ -107,6 +107,10 @@ class SupportTicketServiceImpl implements SupportTicketService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Ticket is already " + t.getStatus() + " and cannot be actioned");
         }
+        if (status == TicketStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "OPEN is not a valid action; use IN_PROGRESS, RESOLVED, or CANCELLED");
+        }
         t.setStatus(status);
         t.setAssignedTo(agentUserId);
         String trimmedNote = trimToNull(note);
