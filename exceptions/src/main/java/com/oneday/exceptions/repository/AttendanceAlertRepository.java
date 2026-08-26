@@ -18,7 +18,12 @@ public interface AttendanceAlertRepository extends JpaRepository<AttendanceAlert
     List<AttendanceAlert> findByStatusAndAttendanceDateOrderByCreatedAtDesc(
             AttendanceAlertStatus status, LocalDate attendanceDate);
 
-    /** Open alerts for a date scoped to one city (by city code or city UUID string), newest first. */
+    /** Open alerts for a date scoped to one city by its grid code (e.g. "delhi"), newest first. */
     List<AttendanceAlert> findByStatusAndAttendanceDateAndCityCodeOrderByCreatedAtDesc(
             AttendanceAlertStatus status, LocalDate attendanceDate, String cityCode);
+
+    /** Same, but scoped by the city UUID — for station managers whose {@code city_id} claim is a UUID
+     *  rather than the grid code. */
+    List<AttendanceAlert> findByStatusAndAttendanceDateAndCityIdOrderByCreatedAtDesc(
+            AttendanceAlertStatus status, LocalDate attendanceDate, UUID cityId);
 }

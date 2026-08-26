@@ -106,6 +106,18 @@ class AttendanceAlertServiceImplTest {
     }
 
     @Test
+    void openAlerts_scopesByCityIdWhenScopeIsUuid() {
+        String uuidScope = cityId.toString();
+        when(repository.findByStatusAndAttendanceDateAndCityIdOrderByCreatedAtDesc(
+                eq(AttendanceAlertStatus.OPEN), eq(date), eq(cityId))).thenReturn(java.util.List.of());
+        service.openAlerts(uuidScope, date);
+        verify(repository).findByStatusAndAttendanceDateAndCityIdOrderByCreatedAtDesc(
+                AttendanceAlertStatus.OPEN, date, cityId);
+        verify(repository, never()).findByStatusAndAttendanceDateAndCityCodeOrderByCreatedAtDesc(
+                any(), any(), any());
+    }
+
+    @Test
     void openAlerts_allCitiesWhenScopeNull() {
         when(repository.findByStatusAndAttendanceDateOrderByCreatedAtDesc(
                 eq(AttendanceAlertStatus.OPEN), eq(date))).thenReturn(java.util.List.of());

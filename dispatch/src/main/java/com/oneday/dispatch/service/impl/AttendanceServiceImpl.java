@@ -79,7 +79,9 @@ class AttendanceServiceImpl implements AttendanceService {
     @Override
     @Transactional
     public void onGpsFix(UUID daId, UUID cityId, String shiftType, double lat, double lon, Instant pingAt) {
-        LocalDate today = LocalDate.now(zone());
+        // Date of the fix, not of processing — a ping delayed across midnight IST still lands on the
+        // day the DA was actually at the hub, so it settles the right shift's cutoff.
+        LocalDate today = LocalDate.ofInstant(pingAt, zone());
         if (today.equals(markedPresentOn.get(daId))) {
             return; // already present today — skip without a DB read
         }
@@ -172,7 +174,16 @@ class AttendanceServiceImpl implements AttendanceService {
         row.setDetectedLon(useLon);
         row.setDistanceM(dist);
         row.setSourcePingAt(pingAt);
-        attendanceRepository.save(row);
+        try {
+            attendanceRepository.save(row);
+        } catch (DataIntegrityViolationException concurrent) {
+            // A concurrent ping (onGpsFix) won the unique (da_id, attendance_date) race — return the
+            // winning row instead of failing the check-in.
+            DaAttendance winner = attendanceRepository.findByDaIdAndAttendanceDate(daId, today)
+                    .orElseThrow(() -> concurrent);
+            markedPresentOn.put(daId, today);
+            return toEntry(daId, null, winner);
+        }
         markedPresentOn.put(daId, today);
         return toEntry(daId, null, row);
     }
@@ -205,6 +216,7 @@ class AttendanceServiceImpl implements AttendanceService {
     @Override
     @Transactional
     public void markPresent(UUID daId, LocalDate date, UUID actorUserId, UUID scopeCityId) {
+        rejectFutureDate(date);
         DaStatus da = requireDaInScope(daId, scopeCityId);
         upsertOverride(daId, da, date, DaAttendanceStatus.PRESENT, DaAttendanceMethod.MANAGER_PRESENT, actorUserId);
         markedPresentOn.put(daId, date);
@@ -215,6 +227,7 @@ class AttendanceServiceImpl implements AttendanceService {
     @Transactional
     public AbsencePreviewResponse markAbsent(UUID daId, LocalDate date, String reason,
                                              UUID actorUserId, UUID scopeCityId) {
+        rejectFutureDate(date);
         DaStatus da = requireDaInScope(daId, scopeCityId);
         upsertOverride(daId, da, date, DaAttendanceStatus.ABSENT, DaAttendanceMethod.MANAGER_ABSENT, actorUserId);
         AbsencePreviewResponse preview =
@@ -224,6 +237,15 @@ class AttendanceServiceImpl implements AttendanceService {
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /** A manager can't record attendance for a day that hasn't happened yet (a future date would also
+     *  stage a reassignment for a future shift). Same-day/back-dated resolutions are allowed. */
+    private void rejectFutureDate(LocalDate date) {
+        if (date.isAfter(LocalDate.now(zone()))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot set attendance for a future date");
+        }
+    }
 
     private DaStatus requireDaInScope(UUID daId, UUID scopeCityId) {
         DaStatus da = daStatusRepository.findByDaId(daId).orElseThrow(

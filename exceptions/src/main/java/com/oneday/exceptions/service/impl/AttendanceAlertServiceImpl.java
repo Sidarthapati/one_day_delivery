@@ -95,10 +95,19 @@ class AttendanceAlertServiceImpl implements AttendanceAlertService {
     @Override
     @Transactional(readOnly = true)
     public List<AttendanceAlertResponse> openAlerts(String cityScope, LocalDate date) {
-        List<AttendanceAlert> alerts = cityScope == null
-                ? repository.findByStatusAndAttendanceDateOrderByCreatedAtDesc(AttendanceAlertStatus.OPEN, date)
-                : repository.findByStatusAndAttendanceDateAndCityCodeOrderByCreatedAtDesc(
-                        AttendanceAlertStatus.OPEN, date, cityScope);
+        List<AttendanceAlert> alerts;
+        if (cityScope == null) {
+            alerts = repository.findByStatusAndAttendanceDateOrderByCreatedAtDesc(AttendanceAlertStatus.OPEN, date);
+        } else {
+            // A station manager's city_id claim can be either the grid code ("delhi") or the city UUID.
+            // Alerts carry both columns, so scope by whichever shape the claim is.
+            UUID cityId = tryUuid(cityScope);
+            alerts = cityId != null
+                    ? repository.findByStatusAndAttendanceDateAndCityIdOrderByCreatedAtDesc(
+                            AttendanceAlertStatus.OPEN, date, cityId)
+                    : repository.findByStatusAndAttendanceDateAndCityCodeOrderByCreatedAtDesc(
+                            AttendanceAlertStatus.OPEN, date, cityScope);
+        }
         return alerts.stream().map(this::toResponse).toList();
     }
 
@@ -106,6 +115,15 @@ class AttendanceAlertServiceImpl implements AttendanceAlertService {
         return new AttendanceAlertResponse(a.getId(), a.getDaId(), a.getDaName(), a.getCityId(),
                 a.getCityCode(), a.getAttendanceDate(), a.getShiftType(), a.getStatus().name(),
                 a.getResolution() != null ? a.getResolution().name() : null, a.getCreatedAt());
+    }
+
+    /** The scope as a UUID if it parses as one (city UUID claim), else null (a grid code like "delhi"). */
+    private static UUID tryUuid(String s) {
+        try {
+            return UUID.fromString(s);
+        } catch (IllegalArgumentException notUuid) {
+            return null;
+        }
     }
 
     private String nameFor(UUID daId) {

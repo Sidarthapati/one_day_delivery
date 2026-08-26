@@ -168,6 +168,38 @@ class AttendanceServiceImplTest {
     }
 
     @Test
+    void checkIn_concurrentInsert_returnsWinnerNotError() {
+        DaStatus da = new DaStatus();
+        da.setDaId(daId);
+        da.setCityId(cityId);
+        da.setShiftType("SHIFT_1");
+        when(daStatusRepository.findByDaId(daId)).thenReturn(Optional.of(da));
+        DaAttendance winner = new DaAttendance();
+        winner.setDaId(daId);
+        winner.setStatus(DaAttendanceStatus.PRESENT);
+        winner.setMethod(DaAttendanceMethod.AUTO_GEOFENCE);
+        // First lookup (settled check) empty; the save loses the unique race; reload returns the winner.
+        when(attendanceRepository.findByDaIdAndAttendanceDate(eq(daId), any()))
+                .thenReturn(Optional.empty(), Optional.of(winner));
+        when(attendanceRepository.save(any()))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("dup"));
+
+        AttendanceMusterEntry entry = service.checkIn(daId, HUB_LAT, HUB_LON);
+
+        assertThat(entry.status()).isEqualTo("PRESENT");
+        assertThat(entry.method()).isEqualTo("AUTO_GEOFENCE");
+    }
+
+    @Test
+    void markAbsent_futureDate_rejected() {
+        assertThatThrownBy(() -> service.markAbsent(daId, LocalDate.now().plusDays(2), "x",
+                UUID.randomUUID(), cityId))
+                .hasMessageContaining("future date");
+        verify(attendanceRepository, never()).save(any());
+        verify(absenceService, never()).preview(any(), any(), any(), any());
+    }
+
+    @Test
     void markAbsent_recordsAbsent_triggersReassignment_andEmitsResolved() {
         DaStatus da = new DaStatus();
         da.setDaId(daId);
