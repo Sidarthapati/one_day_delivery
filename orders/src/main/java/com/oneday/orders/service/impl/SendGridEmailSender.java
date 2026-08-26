@@ -56,11 +56,18 @@ class SendGridEmailSender implements EmailSender {
                     .build();
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() / 100 != 2) {
-                log.warn("[notify:email] sendgrid returned {} for {}: {}", resp.statusCode(), toEmail, resp.body());
+                throw new com.oneday.orders.service.NotificationDeliveryException(
+                        "sendgrid " + resp.statusCode() + " for " + toEmail + ": " + resp.body());
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();   // only an actual interrupt sets the flag
+            throw new com.oneday.orders.service.NotificationDeliveryException(
+                    "interrupted sending to " + toEmail, e);
+        } catch (com.oneday.orders.service.NotificationDeliveryException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("[notify:email] sendgrid send to {} failed: {}", toEmail, e.toString());
-            Thread.currentThread().interrupt();
+            throw new com.oneday.orders.service.NotificationDeliveryException(
+                    "sendgrid send to " + toEmail + " failed: " + e, e);
         }
     }
 }

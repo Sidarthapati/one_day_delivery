@@ -16,8 +16,13 @@ public class NotifyProperties {
     private final Sms sms = new Sms();
     private final Email email = new Email();
 
+    /** How many delivery attempts the outbox drain makes before leaving a row FAILED. */
+    private int maxAttempts = 3;
+
     public Sms getSms() { return sms; }
     public Email getEmail() { return email; }
+    public int getMaxAttempts() { return maxAttempts; }
+    public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
 
     public static class Sms {
         /** log | msg91 */

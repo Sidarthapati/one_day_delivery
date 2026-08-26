@@ -55,11 +55,18 @@ class Msg91SmsSender implements SmsSender {
                     .build();
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() / 100 != 2) {
-                log.warn("[notify:sms] msg91 returned {} for {}: {}", resp.statusCode(), mobile, resp.body());
+                throw new com.oneday.orders.service.NotificationDeliveryException(
+                        "msg91 " + resp.statusCode() + " for " + mobile + ": " + resp.body());
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();   // only an actual interrupt sets the flag
+            throw new com.oneday.orders.service.NotificationDeliveryException(
+                    "interrupted sending to " + phone, e);
+        } catch (com.oneday.orders.service.NotificationDeliveryException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("[notify:sms] msg91 send to {} failed: {}", phone, e.toString());
-            Thread.currentThread().interrupt();
+            throw new com.oneday.orders.service.NotificationDeliveryException(
+                    "msg91 send to " + phone + " failed: " + e, e);
         }
     }
 }
