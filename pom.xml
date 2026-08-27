@@ -32,6 +32,7 @@
         <module>shuttle</module>
         <module>sla</module>
         <module>exceptions</module>
+        <module>assets</module>
         <module>app</module>
     </modules>
 
@@ -77,6 +78,15 @@
                 <groupId>com.google.protobuf</groupId>
                 <artifactId>protobuf-java</artifactId>
                 <version>3.25.5</version>
+            </dependency>
+            <!-- Pin the RabbitMQ client past the amqp-client 5.19 CVEs — HIGH CVE-2026-63337/69219/69220
+                 (+ MEDIUM 63335/63336). Spring Boot 3.2.5 manages 5.19.0; this explicit entry overrides
+                 the BOM across every amqp module (dispatch/hub/routing/assets/…). 5.33.1 is same-major,
+                 drop-in with the BOM-managed spring-amqp 3.1.x. -->
+            <dependency>
+                <groupId>com.rabbitmq</groupId>
+                <artifactId>amqp-client</artifactId>
+                <version>5.33.1</version>
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>
@@ -161,6 +171,11 @@
             <dependency>
                 <groupId>com.oneday</groupId>
                 <artifactId>exceptions</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.oneday</groupId>
+                <artifactId>assets</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
