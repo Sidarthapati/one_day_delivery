@@ -134,6 +134,20 @@ dispatch:
       - bangalore
       - hyderabad
       - chennai
+  # Geocoded attendance: a GPS fix within radius-meters of the city hub auto-marks the DA present; a
+  # rostered DA unconfirmed by cutoff-offset-minutes before shift start raises an alert. hub-locations
+  # is keyed by the grid.cities cityId (UUID); coords mirror tracking.city-nodes (confirm with ops).
+  attendance:
+    radius-meters: 500
+    cutoff-offset-minutes: 30
+    cutoff-cron: "0 30 5,13 * * *"
+    zone: Asia/Kolkata
+    hub-locations:
+      "f47ac10b-58cc-4372-a567-0e02b2c3d479": { lat: 28.5000, lon: 77.1500 }    # delhi
+      "550e8400-e29b-41d4-a716-446655440000": { lat: 19.0760, lon: 72.8777 }    # mumbai
+      "6ba7b810-9dad-11d1-80b4-00c04fd430c8": { lat: 12.9716, lon: 77.5946 }    # bangalore
+      "6ba7b811-9dad-11d1-80b4-00c04fd430c8": { lat: 17.41397, lon: 78.34436 }  # hyderabad
+      "6ba7b812-9dad-11d1-80b4-00c04fd430c8": { lat: 13.0827, lon: 80.2707 }    # chennai
 
 # M9 (airline). Maps the IATA hub codes flight_schedule/orders.origin_city|dest_city use (see
 # pricing/V2_4's "as M4 sends them" note) to the same fixed cityId UUIDs as grid.cities, so

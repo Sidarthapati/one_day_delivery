@@ -68,6 +68,8 @@ public class DispatchProperties {
     private Dlq dlq = new Dlq();
     @NestedConfigurationProperty
     private Absence absence = new Absence();
+    @NestedConfigurationProperty
+    private Attendance attendance = new Attendance();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -99,6 +101,8 @@ public class DispatchProperties {
     public void setDlq(Dlq dlq) { this.dlq = dlq; }
     public Absence getAbsence() { return absence; }
     public void setAbsence(Absence absence) { this.absence = absence; }
+    public Attendance getAttendance() { return attendance; }
+    public void setAttendance(Attendance attendance) { this.attendance = attendance; }
 
     /** Cron-meeting protection (the hard constraint). */
     public static class Cron {
@@ -136,6 +140,47 @@ public class DispatchProperties {
         }
         public long getAutoApplySweepMs() { return autoApplySweepMs; }
         public void setAutoApplySweepMs(long autoApplySweepMs) { this.autoApplySweepMs = autoApplySweepMs; }
+    }
+
+    /**
+     * Geocoded DA attendance. A GPS fix within {@code radiusMeters} of the DA's city hub auto-marks the
+     * DA present; a DA whose proximity is unconfirmed by {@code cutoffOffsetMinutes} before their shift
+     * start raises an alert. {@code hubLocations} is keyed by the {@code cityId} (UUID string, same
+     * convention as {@code travel.cities}); a city with no hub entry is skipped for auto/manual presence.
+     */
+    public static class Attendance {
+        /** A GPS fix within this many metres of the city hub marks the DA present. */
+        private int radiusMeters = 500;
+        /** The cutoff fires this many minutes before each shift start (05:30 SHIFT_1 / 13:30 SHIFT_2). */
+        private int cutoffOffsetMinutes = 30;
+        /** Cron for {@code AttendanceCutoffJob}; default = 30 min before the 06:00 / 14:00 shift starts. */
+        private String cutoffCron = "0 30 5,13 * * *";
+        /** Time zone the cutoff cron is evaluated in. */
+        private String zone = "Asia/Kolkata";
+        /** cityId (UUID string) → hub coordinate. */
+        private Map<String, HubLocation> hubLocations = new HashMap<>();
+
+        public int getRadiusMeters() { return radiusMeters; }
+        public void setRadiusMeters(int radiusMeters) { this.radiusMeters = radiusMeters; }
+        public int getCutoffOffsetMinutes() { return cutoffOffsetMinutes; }
+        public void setCutoffOffsetMinutes(int v) { this.cutoffOffsetMinutes = v; }
+        public String getCutoffCron() { return cutoffCron; }
+        public void setCutoffCron(String cutoffCron) { this.cutoffCron = cutoffCron; }
+        public String getZone() { return zone; }
+        public void setZone(String zone) { this.zone = zone; }
+        public Map<String, HubLocation> getHubLocations() { return hubLocations; }
+        public void setHubLocations(Map<String, HubLocation> hubLocations) { this.hubLocations = hubLocations; }
+
+        /** The hub coordinate a DA's proximity is measured against. */
+        public static class HubLocation {
+            private double lat;
+            private double lon;
+
+            public double getLat() { return lat; }
+            public void setLat(double lat) { this.lat = lat; }
+            public double getLon() { return lon; }
+            public void setLon(double lon) { this.lon = lon; }
+        }
     }
 
     public static class Gps {

@@ -43,7 +43,8 @@ class DaDispatchControllerTest {
         daStatusService = mock(DaStatusService.class);
         daTaskService = mock(DaTaskService.class);
         otpVerificationService = mock(OtpVerificationService.class);
-        controller = new DaDispatchController(daStatusService, daTaskService, otpVerificationService);
+        controller = new DaDispatchController(daStatusService, daTaskService, otpVerificationService,
+                mock(com.oneday.dispatch.service.AttendanceService.class));
         when(daTaskService.markEnRoute(any(), any())).thenReturn(sampleView());
     }
 

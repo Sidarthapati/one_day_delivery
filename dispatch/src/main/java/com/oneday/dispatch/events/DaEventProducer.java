@@ -1,5 +1,6 @@
 package com.oneday.dispatch.events;
 
+import com.oneday.common.domain.Shift;
 import com.oneday.common.kafka.EventPublisher;
 import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.enums.DaEventType;
@@ -114,6 +115,31 @@ public class DaEventProducer {
     public void emitCustodyCollected(UUID daId, UUID cityId, UUID shipmentId, UUID fromDaId) {
         emit(DaEventType.CUSTODY_COLLECTED, daId, cityId, shipmentId, null,
                 fromDaId != null ? "FROM_DA:" + fromDaId : null);
+    }
+
+    /** A rostered DA's hub proximity was not confirmed by the shift cutoff. → M11 (opens an alert).
+     *  {@code reasonCode} carries {@code "{SHIFT}|{cityCode}"} so M11 can scope + label without a city resolver. */
+    public void emitAttendanceUnconfirmed(UUID daId, UUID cityId, LocalDate date, Shift shift, String cityCode) {
+        emitDaScoped(DaEventType.ATTENDANCE_UNCONFIRMED, daId, cityId, date,
+                shift.name() + "|" + (cityCode != null ? cityCode : ""));
+    }
+
+    /** An attendance alert was settled by the station manager. → M11 (closes the alert). */
+    public void emitAttendanceResolved(UUID daId, UUID cityId, LocalDate date, boolean present) {
+        emitDaScoped(DaEventType.ATTENDANCE_RESOLVED, daId, cityId, date, present ? "PRESENT" : "ABSENT");
+    }
+
+    /** DA-scoped emit that carries an explicit {@code validDate} (the private {@link #emit} ties validDate
+     *  to a non-null shipmentId, which attendance events don't have). */
+    private void emitDaScoped(DaEventType type, UUID daId, UUID cityId, LocalDate validDate, String reasonCode) {
+        DaLifecycleEvent event = new DaLifecycleEvent(
+                UUID.randomUUID(), type, DaLifecycleEvent.SCHEMA_VERSION, Instant.now(),
+                null, null, daId, cityId, null, null, reasonCode, null, validDate);
+        if (!props.getEvents().isPublishDaEvents()) {
+            log.debug("DA event {} for da {} suppressed (dispatch.events.publish-da-events=false)", type, daId);
+            return;
+        }
+        eventPublisher.publish(EventStreams.DA_EVENTS, event);
     }
 
     private void emit(DaEventType type, UUID daId, UUID cityId, UUID shipmentId,

@@ -8,11 +8,13 @@ import com.oneday.dispatch.dto.request.HubHandoffRequest;
 import com.oneday.dispatch.dto.request.OtpVerifyRequest;
 import com.oneday.dispatch.dto.request.TaskFailedRequest;
 import com.oneday.dispatch.dto.request.VanHandoffRequest;
+import com.oneday.dispatch.service.AttendanceService;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
 import com.oneday.dispatch.service.GpsFixView;
 import com.oneday.dispatch.service.OtpVerificationService;
+import com.oneday.dispatch.service.model.DaLiveStatus;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -43,12 +45,15 @@ public class DaDispatchController {
     private final DaStatusService daStatusService;
     private final DaTaskService daTaskService;
     private final OtpVerificationService otpVerificationService;
+    private final AttendanceService attendanceService;
 
     public DaDispatchController(DaStatusService daStatusService, DaTaskService daTaskService,
-                               OtpVerificationService otpVerificationService) {
+                               OtpVerificationService otpVerificationService,
+                               AttendanceService attendanceService) {
         this.daStatusService = daStatusService;
         this.daTaskService = daTaskService;
         this.otpVerificationService = otpVerificationService;
+        this.attendanceService = attendanceService;
     }
 
     /** The DA's task queue for the day (the app's home list). Each item carries taskLat/taskLon for Open-in-Maps. */
@@ -67,6 +72,13 @@ public class DaDispatchController {
         Authz.requireDaSelf(principal, daId);
         Instant ts = request.timestamp() != null ? request.timestamp() : Instant.now();
         daStatusService.updateGps(daId, request.lat(), request.lon(), ts);
+        // Reactive geocoded attendance: an on-shift DA within the hub geofence is auto-marked present.
+        // Uses the in-memory live status (city + shift) so the hot ping path takes no extra DB read.
+        DaLiveStatus live = daStatusService.getLiveStatus(daId);
+        if (live != null && live.getCityId() != null) {
+            attendanceService.onGpsFix(daId, live.getCityId(), live.getShiftType(),
+                    request.lat(), request.lon(), ts);
+        }
         return ResponseEntity.noContent().build();
     }
 
