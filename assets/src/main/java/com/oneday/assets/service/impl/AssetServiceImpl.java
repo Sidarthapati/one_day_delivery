@@ -20,6 +20,7 @@ import com.oneday.assets.service.AssetService;
 import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.common.port.ObjectStoragePort;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -89,6 +90,10 @@ class AssetServiceImpl implements AssetService {
         }
         List<String> photoKeys = null;
         if (req.photoKeys() != null && !req.photoKeys().isEmpty()) {
+            if (req.photoKeys().size() > props.getMaxPhotos()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "at most " + props.getMaxPhotos() + " photos");
+            }
             for (String key : req.photoKeys()) {
                 requireOwnedKey(key, cityId);
             }
@@ -110,7 +115,13 @@ class AssetServiceImpl implements AssetService {
         a.setCurrentHolderType(HolderType.STATION);
         a.setHeldSince(Instant.now());
         a.setPhotoKeys(photoKeys);
-        Asset saved = assets.save(a);
+        Asset saved;
+        try {
+            saved = assets.save(a);
+            assets.flush();   // surface a concurrent duplicate-tag insert here, not at commit
+        } catch (DataIntegrityViolationException dup) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "asset tag already exists: " + tag);
+        }
 
         recordEvent(saved, AssetEventType.REGISTERED, null, null, null,
                 HolderType.STATION, null, null, saved.getCondition(), "registered", actor);
@@ -324,6 +335,11 @@ class AssetServiceImpl implements AssetService {
     @Override
     public AssetView selectVan(UUID daId, UUID daCityId, SelectVanRequest req) {
         Asset van = resolveVan(req, daCityId);
+        // Idempotent: re-selecting the van you already hold just returns it (no 409).
+        if (van.getCurrentHolderType() == HolderType.USER && daId.equals(van.getCurrentHolderId())
+                && van.getStatus() == AssetStatus.ASSIGNED) {
+            return view(van, false);
+        }
         // Free any van the DA is still holding before taking a new one.
         for (Asset held : heldVehicles(daId)) {
             if (!held.getId().equals(van.getId())) {
@@ -423,7 +439,11 @@ class AssetServiceImpl implements AssetService {
 
     private String daName(UUID daId) {
         DaDirectoryPort.DaContact c = daDirectory.contactsFor(Set.of(daId)).get(daId);
-        return c != null && c.name() != null ? c.name() : daId.toString().substring(0, 8);
+        if (c == null || c.name() == null) {
+            // Don't persist a placeholder into custody state / the append-only ledger.
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown delivery associate");
+        }
+        return c.name();
     }
 
     private String buildPhotoKey(UUID cityId) {

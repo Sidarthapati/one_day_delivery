@@ -252,4 +252,36 @@ class AssetServiceImplTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("400");
     }
+
+    @Test
+    void selectVan_reselectingHeldVan_isIdempotent() {
+        UUID id = UUID.randomUUID();
+        when(assets.findById(id)).thenReturn(Optional.of(asset(AssetStatus.ASSIGNED, HolderType.USER, daId)));
+        AssetView v = service.selectVan(daId, cityId, new SelectVanRequest(id, null));
+        assertThat(v.currentHolderId()).isEqualTo(daId);
+        verify(custody, never()).save(any());   // no new custody event
+    }
+
+    @Test
+    void register_tooManyPhotos_badRequest() {
+        when(assets.existsByAssetTag(any())).thenReturn(false);
+        List<String> keys = java.util.stream.IntStream.range(0, 50)
+                .mapToObj(i -> "asset-photos/2026/08/27/" + cityId + "/p" + i + ".jpg").toList();
+        RegisterAssetRequest req = new RegisterAssetRequest("DEL-VAN-9", AssetCategory.VEHICLE,
+                "VAN", "V", null, null, null, null, cityId, null, keys);
+        assertThatThrownBy(() -> service.register(req, cityId, actor))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("400");
+    }
+
+    @Test
+    void issue_toUnknownDa_notFound() {
+        UUID id = UUID.randomUUID();
+        when(assets.findByIdForUpdate(id)).thenReturn(Optional.of(asset(AssetStatus.IN_STOCK, HolderType.STATION, null)));
+        when(daDirectory.contactsFor(any())).thenReturn(Map.of());   // directory has no such DA
+        assertThatThrownBy(() -> service.issue(id, daId, null, cityId, actor))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("404");
+        verify(custody, never()).save(any());
+    }
 }
