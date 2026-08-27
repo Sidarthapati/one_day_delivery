@@ -1,0 +1,34 @@
+################ SHIPMENTS (original + return child) ################
+        shipment_ref        |     state     |  orig  |  dest  | sender_name  | receiver_name  |         inr          | is_return_child | has_child 
+----------------------------+---------------+--------+--------+--------------+----------------+----------------------+-----------------+-----------
+ 1DD-DELHI-20260828-00001   | DEPARTED      | DELHI  | MUMBAI | Riya Sender  | Arjun Receiver | 581.7400000000000000 | f               | f
+ 1DD-DELHI-20260828-00002   | RTO_COMPLETED | DELHI  | MUMBAI | Riya Sender  | Meera Return   | 581.7400000000000000 | f               | t
+ 1DD-DELHI-20260828-00002_R | DROPPED       | MUMBAI | DELHI  | Meera Return | Riya Sender    | 581.7400000000000000 | t               | f
+(3 rows)
+
+################ WORKSTREAM B: delivery_confirmation ################
+       shipment_ref       |  status  | eta_day | eta_shift |     etd     | response_shift 
+--------------------------+----------+---------+-----------+-------------+----------------
+ 1DD-DELHI-20260828-00001 | REJECTED | TODAY   | SHIFT_1   | 08-28 07:36 | SHIFT_2
+(1 row)
+
+################ WORKSTREAM B: deferred_dispatch (re-park) ################
+       shipment_ref       |   defer_reason    | operating_date | target_shift | status  
+--------------------------+-------------------+----------------+--------------+---------
+ 1DD-DELHI-20260828-00001 | RECEIVER_REJECTED | 2026-08-29     | SHIFT_2      | PENDING
+(1 row)
+
+################ WORKSTREAM A/C: dispatch tasks ################
+        shipment_ref        |   task_type   |  status   
+----------------------------+---------------+-----------
+ 1DD-DELHI-20260828-00002   | DELIVERY      | FAILED
+ 1DD-DELHI-20260828-00002   | RETURN_TO_HUB | COMPLETED
+ 1DD-DELHI-20260828-00002_R | DELIVERY      | COMPLETED
+(3 rows)
+
+################ WORKSTREAM A/C: M11 exception cases ################
+       shipment_ref       |      type       | status | disposition | attempt_no 
+--------------------------+-----------------+--------+-------------+------------
+ 1DD-DELHI-20260828-00002 | DELIVERY_FAILED | RTO    | RETURNED    |          1
+(1 row)
+
