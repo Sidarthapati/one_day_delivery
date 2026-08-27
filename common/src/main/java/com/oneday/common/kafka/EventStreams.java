@@ -25,6 +25,7 @@ public final class EventStreams {
     public static final String FLIGHT_EVENTS      = "oneday.flight.events";     // M9
     public static final String CRON_EVENTS        = "oneday.cron.events";       // M6
     public static final String EXCEPTIONS_EVENTS  = "oneday.exceptions.events"; // M11
+    public static final String ASSET_EVENTS       = "oneday.asset.events";      // M13
 
     // ── Produced by M4 (Orders) → consumed by M3 (grid) ───────────────────
     public static final String TILE_QUEUE_DEPTH   = "orders.tile_queue_depth";

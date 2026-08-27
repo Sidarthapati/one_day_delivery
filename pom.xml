@@ -32,6 +32,7 @@
         <module>shuttle</module>
         <module>sla</module>
         <module>exceptions</module>
+        <module>assets</module>
         <module>app</module>
     </modules>
 
@@ -161,6 +162,11 @@
             <dependency>
                 <groupId>com.oneday</groupId>
                 <artifactId>exceptions</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.oneday</groupId>
+                <artifactId>assets</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

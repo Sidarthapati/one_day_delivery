@@ -65,6 +65,10 @@
             <artifactId>exceptions</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.oneday</groupId>
+            <artifactId>assets</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
