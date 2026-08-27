@@ -26,6 +26,7 @@ COPY shuttle/pom.xml    shuttle/
 COPY sla/pom.xml        sla/
 COPY exceptions/pom.xml exceptions/
 COPY vision/pom.xml     vision/
+COPY assets/pom.xml     assets/
 COPY app/pom.xml        app/
 
 # Warm the dependency cache into THIS image layer (deliberately no cache mount —
