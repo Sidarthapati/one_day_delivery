@@ -46,9 +46,9 @@ public class CustomerVisibleStateMapper {
         LABELS.put(ShipmentState.HUB_COLLECTED,            "Collected from hub");
         LABELS.put(ShipmentState.PICKUP_FAILED,            "Pickup unsuccessful");
         LABELS.put(ShipmentState.DELIVERY_FAILED,          "Delivery unsuccessful");
-        LABELS.put(ShipmentState.RTO_INITIATED,            "Return to sender initiated");
-        LABELS.put(ShipmentState.RTO_IN_TRANSIT,           "Returning to sender");
+        LABELS.put(ShipmentState.RTO_INITIATED,            "Return to sender started");
         LABELS.put(ShipmentState.RTO_COMPLETED,            "Returned to sender");
+        LABELS.put(ShipmentState.HELD_AT_HUB,              "Held at hub");
         LABELS.put(ShipmentState.CANCELLED,                "Cancelled");
     }
 

@@ -28,8 +28,8 @@ public class FlightEventsConsumer {
         ShipmentState target = switch (event.eventType()) {
             case DEPARTED       -> ShipmentState.DEPARTED;
             case LANDED         -> ShipmentState.LANDED;
-            case RTO_IN_TRANSIT -> ShipmentState.RTO_IN_TRANSIT;
             // FLIGHT_REASSIGNED / FLIGHT_TIME_CHANGED are M7 (hub) concerns — no M4 state change.
+            // A return in flight is just a <ref>_R child riding DEPARTED/LANDED like any parcel.
             case FLIGHT_REASSIGNED, FLIGHT_TIME_CHANGED -> null;
         };
         if (target == null) {

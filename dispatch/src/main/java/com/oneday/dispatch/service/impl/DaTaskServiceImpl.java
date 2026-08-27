@@ -187,6 +187,7 @@ class DaTaskServiceImpl implements DaTaskService {
         return daStatusService.withDaLock(daId, () -> {
             DispatchQueue task = ownedTask(daId, taskId);
             requireActive(task);
+            boolean parcelInHand = task.getStatus() == TaskStatus.IN_PROGRESS;
             task.setStatus(TaskStatus.FAILED);
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
@@ -194,9 +195,87 @@ class DaTaskServiceImpl implements DaTaskService {
             // so M11 triages a failed hand-off correctly rather than as a delivery miss.
             if (task.getTaskType() == TaskType.DELIVERY) {
                 daEventProducer.emitDropFailed(daId, task.getCityId(), task.getShipmentId(), reason);
+                // The parcel is in the DA's hands (collected, then delivery missed) → give it a modelled
+                // way back: a carry-back task to the hub. A QUEUED delivery that fails was never
+                // collected (nothing in hand), so no carry-back.
+                if (parcelInHand) {
+                    spawnReturnToHub(daId, task);
+                }
             } else {
                 daEventProducer.emitPickupFailed(daId, task.getCityId(), task.getShipmentId(), reason);
             }
+            return view;
+        });
+    }
+
+    /**
+     * Carry-back task: an in-hand parcel a delivery attempt could not complete is brought back to the
+     * hub. task_lat/lon = the city hub (the same coordinate DA attendance is measured against), falling
+     * back to the delivery location if no hub is configured. Completed via {@link #recordReturnedToHub},
+     * whose hub-return scan is the dock-receive that re-enters the parcel into the pipeline.
+     */
+    private void spawnReturnToHub(UUID daId, DispatchQueue failedDelivery) {
+        // Idempotent: don't stack a second carry-back for the same parcel on the same DA.
+        if (queueRepository.findActiveByShipmentIdAndTaskType(
+                failedDelivery.getShipmentId(), TaskType.RETURN_TO_HUB).isPresent()) {
+            return;
+        }
+        double[] hub = hubLocation(failedDelivery);
+        DispatchQueue carry = new DispatchQueue();
+        carry.setDaId(daId);
+        carry.setCityId(failedDelivery.getCityId());
+        carry.setShipmentId(failedDelivery.getShipmentId());
+        carry.setOrderId(failedDelivery.getOrderId());
+        carry.setOrderRef(failedDelivery.getOrderRef());
+        carry.setTaskType(TaskType.RETURN_TO_HUB);
+        carry.setTaskLat(hub[0]);
+        carry.setTaskLon(hub[1]);
+        carry.setTileId(failedDelivery.getTileId());
+        carry.setHomeTileId(failedDelivery.getHomeTileId());
+        carry.setStatus(TaskStatus.QUEUED);
+        carry.setPaymentMode(failedDelivery.getPaymentMode());
+        carry.setCrossTerritory(false);
+        carry.setCronSafe(false);
+        carry.setBeyondCron(false);
+        carry.setPickedUp(true);            // parcel already in hand
+        carry.setAssignedAt(Instant.now());
+        carry.setOperatingDate(failedDelivery.getOperatingDate());
+        carry.setQueuePosition(nextPosition(daId, failedDelivery.getOperatingDate()));
+        queueRepository.save(carry);
+        QueueMirror.rebuild(daStatusService, queueRepository, daId, failedDelivery.getOperatingDate());
+    }
+
+    /** The city hub coordinate (attendance hub config), else the task's own location as a fallback. */
+    private double[] hubLocation(DispatchQueue task) {
+        var hub = props.getAttendance().getHubLocations().get(String.valueOf(task.getCityId()));
+        if (hub != null) {
+            return new double[] {hub.getLat(), hub.getLon()};
+        }
+        return new double[] {task.getTaskLat(), task.getTaskLon()};
+    }
+
+    @Override
+    @Transactional
+    public DaTaskView recordReturnedToHub(UUID daId, UUID taskId) {
+        return daStatusService.withDaLock(daId, () -> {
+            DispatchQueue task = ownedTask(daId, taskId);
+            requireType(task, TaskType.RETURN_TO_HUB);
+            requireCollectable(task);   // QUEUED or IN_PROGRESS → COMPLETED
+            task.setStatus(TaskStatus.COMPLETED);
+            if (task.getStartedAt() == null) {
+                task.setStartedAt(Instant.now());
+            }
+            task.setCompletedAt(Instant.now());
+            DaTaskView view = save(task);
+            // M8-SEAM: the hub dock-receive scan (ledger). PR3's return framework consumes this to re-enter
+            // the parcel into the pipeline; on its own it records the parcel is back in hub custody.
+            hubScanSeamProducer.emitHubReturnIn(task.getShipmentId());
+            AuditLog.event("da.returned_to_hub")
+                    .kv("daId", daId)
+                    .kv("taskId", taskId)
+                    .kv("shipmentId", task.getShipmentId())
+                    .log();
+            queueReorderService.reorder(daId, task.getOperatingDate());
             return view;
         });
     }
@@ -207,6 +286,15 @@ class DaTaskServiceImpl implements DaTaskService {
         return daStatusService.withDaLock(daId, () -> {
             DispatchQueue task = ownedTask(daId, taskId);
             requireStatus(task, TaskStatus.FAILED);
+            // A same-day reattempt supersedes the carry-back: the DA keeps the parcel to retry it, so
+            // cancel any open RETURN_TO_HUB for this shipment before re-queuing.
+            if (task.getTaskType() == TaskType.DELIVERY) {
+                queueRepository.findActiveByShipmentIdAndTaskType(task.getShipmentId(), TaskType.RETURN_TO_HUB)
+                        .ifPresent(carry -> {
+                            carry.setStatus(TaskStatus.CANCELLED);
+                            queueRepository.save(carry);
+                        });
+            }
             // Re-queue at the end of the DA's own list so current work continues first, then this retry.
             int endPos = queueRepository
                     .findByDaIdAndOperatingDateOrderByQueuePosition(daId, task.getOperatingDate()).stream()

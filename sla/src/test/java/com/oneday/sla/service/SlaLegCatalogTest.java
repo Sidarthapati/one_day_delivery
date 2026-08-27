@@ -50,7 +50,7 @@ class SlaLegCatalogTest {
         assertThat(c.isTerminalSuccess(ShipmentState.HUB_COLLECTED)).isTrue();
         assertThat(c.isTerminalSuccess(ShipmentState.DELIVERY_FAILED)).isFalse();
         assertThat(c.isException(ShipmentState.PICKUP_FAILED)).isTrue();
-        assertThat(c.isException(ShipmentState.RTO_IN_TRANSIT)).isTrue();
+        assertThat(c.isException(ShipmentState.RTO_INITIATED)).isTrue();
         assertThat(c.isException(ShipmentState.DROPPED)).isFalse();
         assertThat(c.budgetMinutes(SlaLegType.FIRST_MILE)).isEqualTo(180);
     }

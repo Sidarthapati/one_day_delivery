@@ -115,14 +115,8 @@ class ShipmentStateMachineImpl implements ShipmentStateMachine {
                     base.remove(ShipmentState.HANDED_TO_DROP_VAN);
                 }
             }
-            case RTO_INITIATED -> {
-                // delivery_type determines whether there is a return air leg
-                if (shipment.getDeliveryType() == DeliveryType.INTERCITY) {
-                    base.remove(ShipmentState.RTO_COMPLETED);
-                } else if (shipment.getDeliveryType() == DeliveryType.SAME_CITY) {
-                    base.remove(ShipmentState.RTO_IN_TRANSIT);
-                }
-            }
+            // RTO_INITIATED no longer branches on delivery_type: the return child carries the transit,
+            // so the original always completes RTO_INITIATED → RTO_COMPLETED when the child is delivered.
             default -> { /* no branching — base set is the full allowed set */ }
         }
 

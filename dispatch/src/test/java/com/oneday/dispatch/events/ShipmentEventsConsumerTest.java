@@ -17,6 +17,7 @@ import com.oneday.grid.service.GridService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -55,7 +56,8 @@ class ShipmentEventsConsumerTest {
         queueRepository = mock(DispatchQueueRepository.class);
         gridService = mock(GridService.class);
         scheduledPickupService = mock(com.oneday.dispatch.service.ScheduledPickupService.class);
-        consumer = new ShipmentEventsConsumer(dispatchService, queueRepository, gridService, scheduledPickupService);
+        consumer = new ShipmentEventsConsumer(dispatchService, queueRepository, gridService, scheduledPickupService,
+                new com.oneday.dispatch.config.DispatchProperties());
 
         lenient().when(queueRepository.findActiveByShipmentIdAndTaskType(any(), eq(TaskType.PICKUP)))
                 .thenReturn(Optional.empty());
@@ -176,6 +178,47 @@ class ShipmentEventsConsumerTest {
         consumer.onShipmentEvent(e);
 
         verify(dispatchService, never()).assignDelivery(any(), any(), anyDouble(), anyDouble(), any(), any(), any());
+    }
+
+    @Test
+    void dropAssignedRescheduleParksNextDayDelivery() {
+        // Ops reschedule (DELIVERY_FAILED → DROP_ASSIGNED): no active delivery task, dest coords enriched.
+        UUID shipment = UUID.randomUUID();
+        when(queueRepository.findActiveByShipmentIdAndTaskType(eq(shipment), eq(TaskType.DELIVERY)))
+                .thenReturn(Optional.empty());
+
+        consumer.onShipmentEvent(dropAssigned(shipment, 12.97, 77.61, tileId));
+
+        LocalDate tomorrow = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")).plusDays(1);
+        verify(dispatchService).deferDeliveryForRetry(eq(shipment), eq(cityId), eq(tileId), eq(12.97), eq(77.61),
+                eq(orderId), eq(orderRef), eq(tomorrow), eq(null),
+                eq(com.oneday.dispatch.domain.DeferReason.DELIVERY_FAILED));
+    }
+
+    @Test
+    void dropAssignedEchoWithActiveDeliveryTaskIsNoOp() {
+        // The DROP_ASSIGNED that echoes back from a normal assignment still has a live delivery task.
+        UUID shipment = UUID.randomUUID();
+        when(queueRepository.findActiveByShipmentIdAndTaskType(eq(shipment), eq(TaskType.DELIVERY)))
+                .thenReturn(Optional.of(new DispatchQueue()));
+
+        consumer.onShipmentEvent(dropAssigned(shipment, 12.97, 77.61, tileId));
+
+        verify(dispatchService, never()).deferDeliveryForRetry(any(), any(), any(), anyDouble(), anyDouble(),
+                any(), any(), any(), any(), any());
+    }
+
+    private ShipmentStateChangedEvent dropAssigned(UUID shipmentId, Double lat, Double lon, UUID destTileId) {
+        ShipmentStateChangedEvent e = new ShipmentStateChangedEvent();
+        e.setEventType(ShipmentEventType.STATE_CHANGED);
+        e.setShipmentId(shipmentId);
+        e.setToState(ShipmentState.DROP_ASSIGNED);
+        e.setDestLat(lat);
+        e.setDestLon(lon);
+        e.setDestTileId(destTileId);
+        e.setOrderId(orderId);
+        e.setOrderRef(orderRef);
+        return e;
     }
 
     private ShipmentCancelledEvent cancelled(UUID shipmentId, ShipmentState at) {

@@ -65,6 +65,9 @@ public class ScanEventsConsumer {
             // DELIVERED is a custody fact only (Option A) — DROPPED stays owned by the delivery-OTP
             // verify path (scan = right box, OTP = right customer, mirroring LABEL_GENERATED/PICKED_UP).
             case DELIVERED             -> null;
+            // Delivery-failure carry-back dock-receive (parcel back in hub custody). Ledger only in v1 —
+            // the return framework (PR3) consumes this to re-enter the parcel into the pipeline.
+            case HUB_RETURN_IN         -> null;
         };
         if (target == null) {
             log.debug("Scan event {} ignored for shipment {}", event.eventType(), event.shipmentId());

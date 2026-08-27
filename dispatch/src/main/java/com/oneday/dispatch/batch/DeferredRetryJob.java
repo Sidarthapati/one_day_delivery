@@ -1,5 +1,6 @@
 package com.oneday.dispatch.batch;
 
+import com.oneday.common.domain.Shift;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DeferredDispatch;
 import com.oneday.dispatch.events.DaEventProducer;
@@ -17,6 +18,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.Set;
@@ -63,8 +67,13 @@ public class DeferredRetryJob {
             return;   // outside shift hours
         }
         Instant now = Instant.now();
+        ZoneId zone = ZoneId.of(props.getShift().getZone());
+        LocalDate today = LocalDate.now(zone);
+        // Which shift is on the clock now (mirrors ShiftLoadJob's before-noon heuristic) — a next-day
+        // reschedule targeted at the other shift stays parked until that shift's DAs are on.
+        String currentShift = (LocalTime.now(zone).getHour() < 12 ? Shift.SHIFT_1 : Shift.SHIFT_2).name();
         for (UUID cityId : citiesOnShift()) {
-            for (DeferredDispatch deferred : deferredRepository.findPendingForRetry(cityId, now)) {
+            for (DeferredDispatch deferred : deferredRepository.findPendingForRetry(cityId, now, today, currentShift)) {
                 AssignmentResult result = dispatchService.reassignDeferred(deferred.getId());
                 if (result.outcome() == AssignmentOutcome.DEFERRED) {
                     handleFailedRetry(deferred, now);

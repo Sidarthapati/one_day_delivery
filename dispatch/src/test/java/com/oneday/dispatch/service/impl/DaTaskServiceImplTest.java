@@ -237,6 +237,53 @@ class DaTaskServiceImplTest {
     }
 
     @Test
+    void failedInHandDeliverySpawnsCarryBackToHub() {
+        // A DELIVERY missed while IN_PROGRESS (parcel in hand) → DROP_FAILED + a RETURN_TO_HUB carry-back.
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+        service.markFailed(da, delivery.getId(), "customer not home");
+
+        verify(events).emitDropFailed(eq(da), eq(city), eq(delivery.getShipmentId()), eq("customer not home"));
+        DispatchQueue carry = carryBackFor(delivery.getShipmentId());
+        assertThat(carry).isNotNull();
+        assertThat(carry.getStatus()).isEqualTo(TaskStatus.QUEUED);
+        assertThat(carry.isPickedUp()).isTrue();
+        assertThat(carry.getDaId()).isEqualTo(da);
+    }
+
+    @Test
+    void failedQueuedDeliveryDoesNotSpawnCarryBack() {
+        // A QUEUED delivery that fails was never collected — nothing in hand, no carry-back.
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
+        service.markFailed(da, delivery.getId(), "van never arrived");
+        assertThat(carryBackFor(delivery.getShipmentId())).isNull();
+    }
+
+    @Test
+    void reattemptCancelsAnOpenCarryBack() {
+        // A same-day reattempt supersedes the carry-back: the DA keeps the parcel to retry it.
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+        service.markFailed(da, delivery.getId(), "customer not home");
+        assertThat(carryBackFor(delivery.getShipmentId())).isNotNull();
+
+        service.reattempt(da, delivery.getId());
+
+        assertThat(carryBackFor(delivery.getShipmentId())).isNull();   // no longer ACTIVE
+    }
+
+    @Test
+    void returnedToHubCompletesAndEmitsHubReturnScan() {
+        DispatchQueue carry = persist(TaskType.RETURN_TO_HUB, TaskStatus.QUEUED);
+        service.recordReturnedToHub(da, carry.getId());
+        assertThat(reload(carry).getStatus()).isEqualTo(TaskStatus.COMPLETED);
+        verify(scanSeam).emitHubReturnIn(eq(carry.getShipmentId()));
+    }
+
+    /** The ACTIVE (QUEUED/IN_PROGRESS) RETURN_TO_HUB task for a shipment, or null. */
+    private DispatchQueue carryBackFor(UUID shipmentId) {
+        return queueRepo.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.RETURN_TO_HUB).orElse(null);
+    }
+
+    @Test
     void hubCollectMovesDeliveryToInProgressAndEmitsScanSeam() {
         DispatchQueue task = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
         service.recordHubCollect(da, task.getId());

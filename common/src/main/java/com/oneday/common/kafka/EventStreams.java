@@ -35,4 +35,8 @@ public final class EventStreams {
 
     // ── Notification fan-out (consumed by the notification service) ──────
     public static final String NOTIFICATIONS_EVENTS = "oneday.notifications.events";
+
+    // ── Produced by M4 (receiver delivery confirmations) → consumed by M5 ─
+    // A receiver rejected today's delivery and picked a next-day shift; M5 re-parks the delivery.
+    public static final String DELIVERY_CONFIRMATIONS = "oneday.delivery.confirmations";
 }

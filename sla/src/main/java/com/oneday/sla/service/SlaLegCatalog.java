@@ -75,6 +75,6 @@ public class SlaLegCatalog {
     /** A hard failure while still in flight — the SLA is breached but stays open until RTO/cancel. */
     public boolean isException(ShipmentState state) {
         return state == PICKUP_FAILED || state == DELIVERY_FAILED
-                || state == RTO_INITIATED || state == RTO_IN_TRANSIT;
+                || state == RTO_INITIATED;
     }
 }

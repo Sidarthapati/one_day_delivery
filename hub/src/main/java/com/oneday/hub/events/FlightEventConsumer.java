@@ -54,7 +54,7 @@ public class FlightEventConsumer {
 
     @RabbitHandler(isDefault = true)
     public void onOther(Object event) {
-        // DEPARTED/LANDED/RTO_IN_TRANSIT etc. — no hub reaction (M7-D-006).
+        // DEPARTED/LANDED etc. — no hub reaction (M7-D-006).
         log.trace("Ignoring non-reschedule flight event {}", event.getClass().getSimpleName());
     }
 }

@@ -50,8 +50,11 @@ public enum ShipmentState {
     // ── Exception / failure states (owned by M11) ──────────────────────────
     PICKUP_FAILED,
     DELIVERY_FAILED,
-    RTO_INITIATED,
-    RTO_IN_TRANSIT,  // INTERCITY only
-    RTO_COMPLETED,
+    // RTO on the ORIGINAL is now just two markers: a return was spawned (a <ref>_R child shipment
+    // carries the physical transit) and the child was delivered. The old RTO_IN_TRANSIT hop is gone.
+    RTO_INITIATED,   // a return child was spawned for this shipment
+    RTO_COMPLETED,   // the return child reached the sender (terminal, returned)
+    // A return child that itself couldn't be delivered ends here → ops disposition (no return-of-a-return).
+    HELD_AT_HUB,
     CANCELLED
 }

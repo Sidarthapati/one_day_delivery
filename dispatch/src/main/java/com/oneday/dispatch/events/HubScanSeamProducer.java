@@ -43,6 +43,11 @@ public class HubScanSeamProducer {
         emit(shipmentId, ScanEventType.DA_CUSTODY_TRANSFER);
     }
 
+    /** Delivery-failure carry-back: DA scanned an in-hand parcel back in at the hub (the dock-receive). */
+    public void emitHubReturnIn(UUID shipmentId) {
+        emit(shipmentId, ScanEventType.HUB_RETURN_IN);
+    }
+
     private void emit(UUID shipmentId, ScanEventType type) {
         // Build the event NOW so occurredAt is the scan time, not the (possibly much later) commit time.
         ScanEvent event = new ScanEvent(shipmentId, type);

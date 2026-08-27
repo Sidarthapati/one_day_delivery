@@ -53,6 +53,13 @@ class NotificationTemplateResolverImpl implements NotificationTemplateResolver {
                 "Your Godspeed delivery {shipment_ref} is running late",
                 "Your shipment {shipment_ref} is now expected by {new_eta} (was {original_eta}). "
                         + "No action is needed to keep it — or cancel for a full refund if the new time doesn't work."));
+
+        TEMPLATES.put(NotificationEventType.RECEIVER_CONFIRM, new Template(
+                EnumSet.of(NotificationChannel.EMAIL),
+                "Your Godspeed parcel {shipment_ref} is arriving {eta_text}",
+                "Hi {receiver_name}, your parcel {shipment_ref} is on its way and should arrive {eta_text}. "
+                        + "No action is needed to accept it. If the timing doesn't work, you can pick another "
+                        + "slot here: {link}"));
     }
 
     @Override

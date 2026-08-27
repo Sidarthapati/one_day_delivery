@@ -1,7 +1,9 @@
 package com.oneday.dispatch.service;
 
+import com.oneday.dispatch.domain.DeferReason;
 import com.oneday.dispatch.domain.TaskType;
 
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -60,4 +62,15 @@ public interface DispatchService {
      * @throws IllegalArgumentException if {@code deferredId} doesn't exist
      */
     void escalateDeferred(UUID deferredId);
+
+    /**
+     * Park a last-mile delivery for a future day/shift retry (redelivery). Writes a PENDING
+     * {@code deferred_dispatch} row dated {@code targetDate} and tagged {@code targetShift} (SHIFT_1 /
+     * SHIFT_2, or null for any shift), so {@code DeferredRetryJob} re-assigns it to the tile owner on
+     * that day/shift. Used by the receiver-reject handler and an ops delivery reschedule. Idempotent:
+     * a shipment that already has an active DELIVERY task or a PENDING delivery deferral is a no-op.
+     */
+    void deferDeliveryForRetry(UUID shipmentId, UUID cityId, UUID tileId, double lat, double lon,
+                               UUID orderId, String orderRef, LocalDate targetDate, String targetShift,
+                               DeferReason reason);
 }

@@ -186,6 +186,14 @@ public class DaDispatchController {
         return daTaskService.recordCustodyCollect(daId, taskId, request.parcelScans());
     }
 
+    /** Delivery-failure carry-back: RETURN_TO_HUB → COMPLETED when the DA scans the parcel back in at the hub. */
+    @PostMapping("/tasks/{taskId}/returned-to-hub")
+    public DaTaskView returnedToHub(@PathVariable UUID daId, @PathVariable UUID taskId,
+                                    @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        return daTaskService.recordReturnedToHub(daId, taskId);
+    }
+
     @PostMapping("/tasks/{taskId}/verify-otp")
     public ResponseEntity<Void> verifyOtp(@PathVariable UUID daId, @PathVariable UUID taskId,
                                           @AuthenticationPrincipal AuthUserDetails principal,

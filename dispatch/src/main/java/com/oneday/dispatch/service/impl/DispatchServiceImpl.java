@@ -396,6 +396,38 @@ class DispatchServiceImpl implements DispatchService {
 
     @Override
     @Transactional
+    public void deferDeliveryForRetry(UUID shipmentId, UUID cityId, UUID tileId, double lat, double lon,
+                                      UUID orderId, String orderRef, LocalDate targetDate, String targetShift,
+                                      DeferReason reason) {
+        // Idempotent: skip if the delivery is already live or already parked for retry.
+        if (queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.DELIVERY).isPresent()) {
+            log.debug("Shipment {} still has an active DELIVERY task — not deferring for retry", shipmentId);
+            return;
+        }
+        if (!deferredRepository.findByShipmentIdAndTaskTypeAndStatus(shipmentId, TaskType.DELIVERY, "PENDING").isEmpty()) {
+            log.debug("Shipment {} already has a PENDING delivery deferral — not re-parking", shipmentId);
+            return;
+        }
+        DeferredDispatch d = new DeferredDispatch();
+        d.setCityId(cityId);
+        d.setShipmentId(shipmentId);
+        d.setOrderId(orderId);
+        d.setOrderRef(orderRef);
+        d.setTaskType(TaskType.DELIVERY);
+        d.setTileId(tileId);
+        d.setTaskLat(lat);
+        d.setTaskLon(lon);
+        d.setDeferReason(reason);
+        d.setStatus("PENDING");
+        d.setOperatingDate(targetDate);
+        d.setTargetShift(targetShift);
+        deferredRepository.save(d);
+        log.info("Parked delivery of shipment {} for redelivery on {} shift {} ({})",
+                shipmentId, targetDate, targetShift, reason);
+    }
+
+    @Override
+    @Transactional
     public void escalateDeferred(UUID deferredId) {
         DeferredDispatch deferred = deferredRepository.findById(deferredId)
                 .orElseThrow(() -> new IllegalArgumentException("No deferred dispatch " + deferredId));

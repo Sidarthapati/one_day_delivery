@@ -72,7 +72,9 @@ public class ShipmentEventProducer {
 
         // Q-M4-2: HANDED_TO_DROP_VAN is M5's last-mile assignment trigger — enrich this one
         // transition with the destination data M5 needs, so it never has to GET back to M4.
-        if (e.toState() == ShipmentState.HANDED_TO_DROP_VAN) {
+        // DROP_ASSIGNED carries the same enrichment so an ops delivery reschedule (DELIVERY_FAILED →
+        // DROP_ASSIGNED) reaches M5 with the dest coords it needs to re-park the delivery for redelivery.
+        if (e.toState() == ShipmentState.HANDED_TO_DROP_VAN || e.toState() == ShipmentState.DROP_ASSIGNED) {
             shipmentRepository.findById(e.shipmentId()).ifPresent(s -> {
                 event.setDestTileId(s.getDestTileId());
                 event.setDropType(s.getDropType());

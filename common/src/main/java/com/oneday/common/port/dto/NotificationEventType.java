@@ -11,5 +11,8 @@ public enum NotificationEventType {
     WALLET_LOW,
     // M4: a shipment's delivery ETA slipped later than what was promised at booking — tell the
     // customer the new ETA and that they can wait, or cancel for a refund.
-    SHIPMENT_DELAYED
+    SHIPMENT_DELAYED,
+    // M4: the parcel's assigned flight has departed (or, same-city, it's sorted for delivery) — email
+    // the receiver an ETD + a no-login accept/reject link so they can reschedule before last-mile.
+    RECEIVER_CONFIRM
 }

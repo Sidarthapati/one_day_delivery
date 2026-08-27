@@ -101,15 +101,14 @@ public class TransitionRegistry {
         register(ShipmentState.DELIVERY_FAILED,       ShipmentState.DROP_ASSIGNED);          // VAN_MEETING redelivery
         register(ShipmentState.DELIVERY_FAILED,       ShipmentState.HUB_DELIVERY_ASSIGNED);  // HUB_RETURN redelivery
         register(ShipmentState.DELIVERY_FAILED,       ShipmentState.HANDED_TO_DROP_VAN);     // M11 reassign → re-run M5
+        register(ShipmentState.DELIVERY_FAILED,       ShipmentState.HELD_AT_HUB);            // a return child's own delivery failed at cap
 
-        // ── RTO path (delivery_type branching at RTO_INITIATED) ──────────────
-        // Both targets registered; impl filters to one at runtime.
-        register(ShipmentState.RTO_INITIATED,         ShipmentState.RTO_IN_TRANSIT);  // INTERCITY
-        register(ShipmentState.RTO_INITIATED,         ShipmentState.RTO_COMPLETED);   // SAME_CITY
+        // ── RTO on the original: a return child now carries the physical transit, so the original
+        // just marks RTO_INITIATED (child spawned) → RTO_COMPLETED (child delivered). No air-leg hop
+        // on the original itself (the old RTO_IN_TRANSIT), so this is one edge for both delivery types.
+        register(ShipmentState.RTO_INITIATED,         ShipmentState.RTO_COMPLETED);
 
-        register(ShipmentState.RTO_IN_TRANSIT,        ShipmentState.RTO_COMPLETED);
-
-        // Terminal states: DROPPED, HUB_COLLECTED, RTO_COMPLETED, CANCELLED
+        // Terminal states: DROPPED, HUB_COLLECTED, RTO_COMPLETED, HELD_AT_HUB, CANCELLED
         // — intentionally not registered; getAllowedTargets returns empty set for them.
 
         // Apply extension configurers (e.g. V2 flows registered by other modules)

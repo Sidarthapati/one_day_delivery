@@ -72,4 +72,11 @@ public interface DaTaskService {
      * {@code parcelScans} must be non-empty.
      */
     DaTaskView recordCustodyCollect(UUID daId, UUID taskId, List<String> parcelScans);
+
+    /**
+     * Delivery-failure carry-back: a RETURN_TO_HUB task (QUEUED/IN_PROGRESS) → COMPLETED when the DA
+     * scans the in-hand undelivered parcel back in at the hub. Emits the M8 hub-return dock-receive scan
+     * (the re-entry point for the return / next-day redelivery pipeline).
+     */
+    DaTaskView recordReturnedToHub(UUID daId, UUID taskId);
 }

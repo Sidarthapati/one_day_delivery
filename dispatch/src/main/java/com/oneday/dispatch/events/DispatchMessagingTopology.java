@@ -31,6 +31,9 @@ public class DispatchMessagingTopology {
      */
     public static final String HUB_QUEUE = "m5.hub";
 
+    /** M5's queue on M4's receiver-confirmation stream — acts on RECEIVER_REJECTED (re-park delivery). */
+    public static final String DELIVERY_CONFIRMATIONS_QUEUE = "m5.delivery-confirmations";
+
     /** Exchange M5 publishes DA lifecycle events to (gated — see DaEventProducer). */
     @Bean
     Declarables daEventsExchange() {
@@ -53,5 +56,11 @@ public class DispatchMessagingTopology {
     @Bean
     Declarables hubBinding() {
         return RabbitStreamSupport.consumer(HUB_QUEUE, EventStreams.HUB_EVENTS);
+    }
+
+    /** M4's receiver-confirmation stream; the consumer re-parks a delivery a receiver rejected. */
+    @Bean
+    Declarables deliveryConfirmationsBinding() {
+        return RabbitStreamSupport.consumer(DELIVERY_CONFIRMATIONS_QUEUE, EventStreams.DELIVERY_CONFIRMATIONS);
     }
 }
