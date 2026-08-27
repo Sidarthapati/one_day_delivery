@@ -9,6 +9,8 @@ import com.oneday.orders.service.TransitionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -31,7 +33,10 @@ public class ReturnCompletionListener {
         this.stateMachine = stateMachine;
     }
 
+    // AFTER_COMMIT runs with no active transaction, so open a fresh one (REQUIRES_NEW) — the state
+    // machine's pessimistic-lock read of the original needs a transaction in progress.
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onShipmentTransitioned(ShipmentTransitioned e) {
         if (e.toState() != ShipmentState.DROPPED && e.toState() != ShipmentState.HUB_COLLECTED) {
             return; // only a delivered terminal matters here

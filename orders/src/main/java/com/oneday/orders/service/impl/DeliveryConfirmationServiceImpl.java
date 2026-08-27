@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -70,7 +71,9 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
     }
 
     @Override
-    @Transactional
+    // Called from an AFTER_COMMIT listener (DeliveryConfirmationTrigger), where no transaction is
+    // active — REQUIRES_NEW so the confirmation row + notification actually commit.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void promptOnDeparture(UUID shipmentId) {
         try {
             Shipment s = shipmentRepository.findById(shipmentId).orElse(null);
