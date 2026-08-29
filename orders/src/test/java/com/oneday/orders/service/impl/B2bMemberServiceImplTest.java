@@ -160,6 +160,24 @@ class B2bMemberServiceImplTest {
     }
 
     @Test
+    void ownerCanSelfVerify_despiteCompanyNameOnFile() {
+        UUID caller = UUID.randomUUID();
+        B2bAccountMember me = new B2bAccountMember();
+        me.setRole(MemberRole.OWNER);
+        me.setName("Acme Corp"); // owner rows carry the company name, not a person's
+        me.setKycStatus(MemberKycStatus.UNVERIFIED);
+        when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(me));
+        when(kycPort.verifyPan("ABCDE1234F", "Priya Patel"))
+                .thenReturn(new PanResult(true, "ABCDE1234F", "Priya Patel", true, "ok"));
+        when(members.save(any(B2bAccountMember.class))).thenAnswer(i -> i.getArgument(0));
+
+        // The name-binding is skipped for owners, so the personal name ≠ company name doesn't block them.
+        MemberResponse r = service().verifyMyKyc(account, caller, "ABCDE1234F", "Priya Patel");
+
+        assertThat(r.kycStatus()).isEqualTo("VERIFIED");
+    }
+
+    @Test
     void memberCannotVerifyWithSomeoneElsesPan() {
         UUID caller = UUID.randomUUID();
         B2bAccountMember me = new B2bAccountMember();

@@ -116,8 +116,10 @@ class B2bMemberServiceImpl implements B2bMemberService {
                     "The name doesn't match the one on that PAN.");
         }
         // Bind the verification to the caller: the PAN's name must be the caller's own name on file, so a
-        // member can't verify themselves with someone else's (real) PAN + that person's name.
-        if (!nameBelongsToCaller(me.getName(), name)) {
+        // member can't verify themselves with someone else's (real) PAN + that person's name. Owners are
+        // exempt — their member row carries the company name (not a person's), and KYB at onboarding
+        // already established the owner's identity, so the personal-name binding doesn't apply to them.
+        if (me.getRole() != MemberRole.OWNER && !nameBelongsToCaller(me.getName(), name)) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "You can only verify your own PAN — the name must match your account name.");
         }
