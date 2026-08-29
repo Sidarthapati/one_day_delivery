@@ -2,6 +2,7 @@ package com.oneday.exceptions.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.oneday.exceptions.domain.SupportTicket;
+import com.oneday.exceptions.domain.TicketCategory;
 import com.oneday.exceptions.domain.TicketChannel;
 import com.oneday.exceptions.domain.TicketStatus;
 
@@ -16,6 +17,7 @@ import java.util.UUID;
 public record SupportTicketResponse(
         UUID id,
         TicketChannel channel,
+        TicketCategory category,
         String shipmentRef,
         String subject,
         String body,
@@ -39,7 +41,7 @@ public record SupportTicketResponse(
 
     private static SupportTicketResponse build(SupportTicket t, List<SupportTicketMessageResponse> messages) {
         return new SupportTicketResponse(
-                t.getId(), t.getChannel(), t.getShipmentRef(), t.getSubject(), t.getBody(),
+                t.getId(), t.getChannel(), t.getCategory(), t.getShipmentRef(), t.getSubject(), t.getBody(),
                 t.getContactPhone(), t.getStatus(), t.getAssignedTo(), t.getResolutionNote(),
                 t.getCreatedAt(), t.getResolvedAt(), messages);
     }
