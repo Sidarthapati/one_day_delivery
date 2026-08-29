@@ -1,9 +1,12 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.orders.domain.MerchantCategory;
 import com.oneday.orders.dto.MerchantAnalyticsResponse;
+import com.oneday.orders.dto.MerchantAnalyticsResponse.CategoryCount;
 import com.oneday.orders.dto.MerchantAnalyticsResponse.DestinationCount;
 import com.oneday.orders.repository.AccountTotals;
+import com.oneday.orders.repository.MerchantCategoryRepository;
 import com.oneday.orders.repository.OnTimeStat;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.StateCount;
@@ -13,8 +16,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -29,10 +36,14 @@ class MerchantAnalyticsServiceImpl implements MerchantAnalyticsService {
     /** Busiest few destinations are enough for the dashboard; there are only 5 serviceable cities today. */
     private static final int TOP_DESTINATIONS = 6;
 
-    private final ShipmentRepository shipments;
+    private static final String UNCATEGORISED = "Uncategorised";
 
-    MerchantAnalyticsServiceImpl(ShipmentRepository shipments) {
+    private final ShipmentRepository shipments;
+    private final MerchantCategoryRepository categories;
+
+    MerchantAnalyticsServiceImpl(ShipmentRepository shipments, MerchantCategoryRepository categories) {
         this.shipments = shipments;
+        this.categories = categories;
     }
 
     @Override
@@ -73,7 +84,30 @@ class MerchantAnalyticsServiceImpl implements MerchantAnalyticsService {
                 .map(cc -> new DestinationCount(cc.getCity(), cc.getCount()))
                 .toList();
 
+        List<CategoryCount> categorySplit = categorySplit(accountId, since);
+
         return new MerchantAnalyticsResponse(windowDays, total, delivered, inTransit, cancelled, rto,
-                deliveryRatePct, onTimePct, gmv, cod, avg, dests);
+                deliveryRatePct, onTimePct, gmv, cod, avg, dests, categorySplit);
+    }
+
+    /**
+     * Shipments per merchant category, busiest first. The split query groups by {@code category_id}; here
+     * we resolve ids to names, folding untagged parcels and any since-deleted category into "Uncategorised".
+     */
+    private List<CategoryCount> categorySplit(UUID accountId, Instant since) {
+        Map<UUID, String> names = new HashMap<>();
+        for (MerchantCategory c : categories.findByB2bAccountIdOrderByName(accountId)) {
+            names.put(c.getId(), c.getName());
+        }
+        Map<String, Long> byName = new LinkedHashMap<>();
+        shipments.categorySplitForAccount(accountId, since).forEach(row -> {
+            String name = row.getCategoryId() == null ? UNCATEGORISED
+                    : names.getOrDefault(row.getCategoryId(), UNCATEGORISED);
+            byName.merge(name, row.getCount(), Long::sum);
+        });
+        return byName.entrySet().stream()
+                .sorted(Comparator.comparingLong(Map.Entry<String, Long>::getValue).reversed())
+                .map(e -> new CategoryCount(e.getKey(), e.getValue()))
+                .toList();
     }
 }

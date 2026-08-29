@@ -147,6 +147,12 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
             + "GROUP BY s.destCity ORDER BY COUNT(s) DESC")
     List<CityCount> destinationSplitForAccount(@Param("accountId") UUID accountId, @Param("since") Instant since);
 
+    // Category split — one row per category_id (null = untagged), busiest first. Names resolved in the service.
+    @Query("SELECT s.categoryId AS categoryId, COUNT(s) AS count FROM Shipment s "
+            + "WHERE s.b2bAccountId = :accountId AND s.createdAt >= :since "
+            + "GROUP BY s.categoryId ORDER BY COUNT(s) DESC")
+    List<CategoryCount> categorySplitForAccount(@Param("accountId") UUID accountId, @Param("since") Instant since);
+
     // On-time delivery: joins each parcel's actual delivered time (the history row's occurred_at for a
     // delivered terminal state) against its promised ETA. Theta-join because shipment↔history is a bare
     // UUID reference, not a mapped association. Only parcels with a promised ETA are rated.
