@@ -146,6 +146,7 @@ class B2bMemberServiceImplTest {
         UUID caller = UUID.randomUUID();
         B2bAccountMember me = new B2bAccountMember();
         me.setRole(MemberRole.MEMBER);
+        me.setName("Priya Patel"); // name on file, from the M1 record at invite
         me.setKycStatus(MemberKycStatus.UNVERIFIED);
         when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(me));
         when(kycPort.verifyPan("ABCDE1234F", "Priya Patel"))
@@ -156,6 +157,24 @@ class B2bMemberServiceImplTest {
 
         assertThat(r.kycStatus()).isEqualTo("VERIFIED");
         assertThat(me.getKycStatus()).isEqualTo(MemberKycStatus.VERIFIED);
+    }
+
+    @Test
+    void memberCannotVerifyWithSomeoneElsesPan() {
+        UUID caller = UUID.randomUUID();
+        B2bAccountMember me = new B2bAccountMember();
+        me.setRole(MemberRole.MEMBER);
+        me.setName("Priya Patel");
+        when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(me));
+        // A valid PAN whose name matches the submission — but it's someone else, not the caller.
+        when(kycPort.verifyPan("XYZAB9876C", "Rahul Sharma"))
+                .thenReturn(new PanResult(true, "XYZAB9876C", "Rahul Sharma", true, "ok"));
+
+        assertThatThrownBy(() -> service().verifyMyKyc(account, caller, "XYZAB9876C", "Rahul Sharma"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("your own PAN");
+        assertThat(me.getKycStatus()).isEqualTo(MemberKycStatus.UNVERIFIED);
+        verify(members, never()).save(any());
     }
 
     @Test

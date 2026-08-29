@@ -5,6 +5,7 @@ import com.oneday.common.port.dto.B2bProvisioningRequest;
 import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.B2bAccountMember;
 import com.oneday.orders.domain.B2bVerificationStatus;
+import com.oneday.orders.domain.MemberKycStatus;
 import com.oneday.orders.domain.MemberRole;
 import com.oneday.orders.repository.B2bAccountMemberRepository;
 import com.oneday.orders.repository.B2bAccountRepository;
@@ -74,6 +75,9 @@ class B2bProvisioningAdapter implements B2bProvisioningPort {
         owner.setRole(MemberRole.OWNER);
         owner.setEmail(r.billingEmail());
         owner.setName(r.companyName());   // match the V4_44 backfill (account_name), so the owner row isn't nameless
+        // Carry the KYB result onto the owner's per-member KYC (mirrors the V4_45 backfill): a clean KYB
+        // (account ACTIVE) verifies the owner; otherwise they stay UNVERIFIED like any other member.
+        owner.setKycStatus(kycClean ? MemberKycStatus.VERIFIED : MemberKycStatus.UNVERIFIED);
         members.save(owner);
 
         log.info("Provisioned B2B account {} for owner {} (status={})", a.getId(), r.ownerUserId(), status);

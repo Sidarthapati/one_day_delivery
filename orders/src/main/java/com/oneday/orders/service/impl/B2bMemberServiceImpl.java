@@ -115,8 +115,26 @@ class B2bMemberServiceImpl implements B2bMemberService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "The name doesn't match the one on that PAN.");
         }
+        // Bind the verification to the caller: the PAN's name must be the caller's own name on file, so a
+        // member can't verify themselves with someone else's (real) PAN + that person's name.
+        if (!nameBelongsToCaller(me.getName(), name)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "You can only verify your own PAN — the name must match your account name.");
+        }
         me.setKycStatus(MemberKycStatus.VERIFIED);
         return MemberResponse.from(members.save(me));
+    }
+
+    /** The submitted (PAN-matched) name must equal the caller's own name on file (case/space-insensitive). */
+    private static boolean nameBelongsToCaller(String memberName, String submitted) {
+        if (memberName == null || memberName.isBlank()) {
+            return false;   // no name on file → nothing to bind to; refuse rather than trust the submission
+        }
+        return normalizeName(memberName).equals(normalizeName(submitted));
+    }
+
+    private static String normalizeName(String s) {
+        return s.trim().toLowerCase().replaceAll("\\s+", " ");
     }
 
     /** The caller must be the account's OWNER to manage membership. */
