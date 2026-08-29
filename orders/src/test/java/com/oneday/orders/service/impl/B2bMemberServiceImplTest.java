@@ -3,7 +3,10 @@ package com.oneday.orders.service.impl;
 import com.oneday.auth.dto.response.UserResponse;
 import com.oneday.auth.exception.UserNotFoundException;
 import com.oneday.auth.service.UserService;
+import com.oneday.common.port.KycPort;
+import com.oneday.common.port.dto.kyc.PanResult;
 import com.oneday.orders.domain.B2bAccountMember;
+import com.oneday.orders.domain.MemberKycStatus;
 import com.oneday.orders.domain.MemberRole;
 import com.oneday.orders.dto.MemberResponse;
 import com.oneday.orders.repository.B2bAccountMemberRepository;
@@ -29,12 +32,13 @@ class B2bMemberServiceImplTest {
 
     @Mock private B2bAccountMemberRepository members;
     @Mock private UserService userService;
+    @Mock private KycPort kycPort;
 
     private final UUID account = UUID.randomUUID();
     private final UUID owner = UUID.randomUUID();
 
     private B2bMemberServiceImpl service() {
-        return new B2bMemberServiceImpl(members, userService);
+        return new B2bMemberServiceImpl(members, userService, kycPort);
     }
 
     private void callerIsOwner() {
@@ -135,5 +139,38 @@ class B2bMemberServiceImplTest {
         service().remove(account, owner, memberId);
 
         verify(members).delete(target);
+    }
+
+    @Test
+    void memberVerifiesOwnKyc_flipsToVerified() {
+        UUID caller = UUID.randomUUID();
+        B2bAccountMember me = new B2bAccountMember();
+        me.setRole(MemberRole.MEMBER);
+        me.setKycStatus(MemberKycStatus.UNVERIFIED);
+        when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(me));
+        when(kycPort.verifyPan("ABCDE1234F", "Priya Patel"))
+                .thenReturn(new PanResult(true, "ABCDE1234F", "Priya Patel", true, "ok"));
+        when(members.save(any(B2bAccountMember.class))).thenAnswer(i -> i.getArgument(0));
+
+        MemberResponse r = service().verifyMyKyc(account, caller, "abcde1234f", "Priya Patel");
+
+        assertThat(r.kycStatus()).isEqualTo("VERIFIED");
+        assertThat(me.getKycStatus()).isEqualTo(MemberKycStatus.VERIFIED);
+    }
+
+    @Test
+    void kycFailsOnBadPanOrNameMismatch_leavesUnverified() {
+        UUID caller = UUID.randomUUID();
+        B2bAccountMember me = new B2bAccountMember();
+        me.setRole(MemberRole.MEMBER);
+        when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(me));
+        when(kycPort.verifyPan(any(), any()))
+                .thenReturn(new PanResult(true, "ABCDE1234F", "Someone Else", false, "ok"));
+
+        assertThatThrownBy(() -> service().verifyMyKyc(account, caller, "ABCDE1234F", "Priya Patel"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("name doesn't match");
+        assertThat(me.getKycStatus()).isEqualTo(MemberKycStatus.UNVERIFIED);
+        verify(members, never()).save(any());
     }
 }

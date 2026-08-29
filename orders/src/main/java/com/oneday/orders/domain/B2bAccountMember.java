@@ -35,6 +35,11 @@ public class B2bAccountMember extends MutableBaseEntity {
     @Column(name = "role", length = 16, nullable = false)
     private MemberRole role = MemberRole.MEMBER;
 
+    /** Per-member KYC state — UNVERIFIED until the member verifies their PAN (skipping is allowed). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "kyc_status", length = 16, nullable = false)
+    private MemberKycStatus kycStatus = MemberKycStatus.UNVERIFIED;
+
     @Column(name = "email", length = 254)
     private String email;
 

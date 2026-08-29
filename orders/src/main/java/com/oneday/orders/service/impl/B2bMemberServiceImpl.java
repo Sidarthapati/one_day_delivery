@@ -3,7 +3,10 @@ package com.oneday.orders.service.impl;
 import com.oneday.auth.dto.response.UserResponse;
 import com.oneday.auth.exception.UserNotFoundException;
 import com.oneday.auth.service.UserService;
+import com.oneday.common.port.KycPort;
+import com.oneday.common.port.dto.kyc.PanResult;
 import com.oneday.orders.domain.B2bAccountMember;
+import com.oneday.orders.domain.MemberKycStatus;
 import com.oneday.orders.domain.MemberRole;
 import com.oneday.orders.dto.MemberResponse;
 import com.oneday.orders.repository.B2bAccountMemberRepository;
@@ -24,10 +27,12 @@ class B2bMemberServiceImpl implements B2bMemberService {
 
     private final B2bAccountMemberRepository members;
     private final UserService userService;
+    private final KycPort kycPort;
 
-    B2bMemberServiceImpl(B2bAccountMemberRepository members, UserService userService) {
+    B2bMemberServiceImpl(B2bAccountMemberRepository members, UserService userService, KycPort kycPort) {
         this.members = members;
         this.userService = userService;
+        this.kycPort = kycPort;
     }
 
     @Override
@@ -85,6 +90,33 @@ class B2bMemberServiceImpl implements B2bMemberService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "The account owner can't be removed.");
         }
         members.delete(target);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public MemberResponse me(UUID accountId, UUID callerUserId) {
+        return members.findByB2bAccountIdAndUserId(accountId, callerUserId)
+                .map(MemberResponse::from)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not a member of this account"));
+    }
+
+    @Override
+    @Transactional
+    public MemberResponse verifyMyKyc(UUID accountId, UUID callerUserId, String pan, String name) {
+        B2bAccountMember me = members.findByB2bAccountIdAndUserId(accountId, callerUserId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not a member of this account"));
+
+        PanResult result = kycPort.verifyPan(pan.trim().toUpperCase(), name.trim());
+        if (!result.verified()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    result.message() != null ? result.message() : "We couldn't verify that PAN.");
+        }
+        if (!result.nameMatch()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "The name doesn't match the one on that PAN.");
+        }
+        me.setKycStatus(MemberKycStatus.VERIFIED);
+        return MemberResponse.from(members.save(me));
     }
 
     /** The caller must be the account's OWNER to manage membership. */
