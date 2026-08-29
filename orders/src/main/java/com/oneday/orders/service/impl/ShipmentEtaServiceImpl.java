@@ -46,6 +46,10 @@ class ShipmentEtaServiceImpl implements ShipmentEtaService {
     ShipmentEtaServiceImpl(ShipmentRepository shipments, B2bAccountRepository accounts,
                            NotificationPort notificationPort,
                            @Value("${orders.eta.delay-threshold-minutes:1440}") long delayThresholdMinutes) {
+        if (delayThresholdMinutes < 0) {
+            throw new IllegalArgumentException(
+                    "orders.eta.delay-threshold-minutes must be >= 0, was " + delayThresholdMinutes);
+        }
         this.shipments = shipments;
         this.accounts = accounts;
         this.notificationPort = notificationPort;
