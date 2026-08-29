@@ -5,11 +5,13 @@ import com.oneday.auth.exception.UserNotFoundException;
 import com.oneday.auth.service.UserService;
 import com.oneday.common.port.KycPort;
 import com.oneday.common.port.dto.kyc.PanResult;
+import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.B2bAccountMember;
 import com.oneday.orders.domain.MemberKycStatus;
 import com.oneday.orders.domain.MemberRole;
 import com.oneday.orders.dto.MemberResponse;
 import com.oneday.orders.repository.B2bAccountMemberRepository;
+import com.oneday.orders.repository.B2bAccountRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -31,6 +33,7 @@ import static org.mockito.Mockito.when;
 class B2bMemberServiceImplTest {
 
     @Mock private B2bAccountMemberRepository members;
+    @Mock private B2bAccountRepository accounts;
     @Mock private UserService userService;
     @Mock private KycPort kycPort;
 
@@ -38,7 +41,13 @@ class B2bMemberServiceImplTest {
     private final UUID owner = UUID.randomUUID();
 
     private B2bMemberServiceImpl service() {
-        return new B2bMemberServiceImpl(members, userService, kycPort);
+        return new B2bMemberServiceImpl(members, accounts, userService, kycPort);
+    }
+
+    private void accountPan(String pan) {
+        B2bAccount a = new B2bAccount();
+        a.setPan(pan);
+        when(accounts.findById(account)).thenReturn(Optional.of(a));
     }
 
     private void callerIsOwner() {
@@ -160,21 +169,45 @@ class B2bMemberServiceImplTest {
     }
 
     @Test
-    void ownerCanSelfVerify_despiteCompanyNameOnFile() {
+    void ownerSelfVerifiesWithTheAccountPan() {
         UUID caller = UUID.randomUUID();
         B2bAccountMember me = new B2bAccountMember();
         me.setRole(MemberRole.OWNER);
         me.setName("Acme Corp"); // owner rows carry the company name, not a person's
         me.setKycStatus(MemberKycStatus.UNVERIFIED);
         when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(me));
-        when(kycPort.verifyPan("ABCDE1234F", "Priya Patel"))
-                .thenReturn(new PanResult(true, "ABCDE1234F", "Priya Patel", true, "ok"));
+        accountPan("ABCDE1234F"); // the PAN the business was onboarded with
+        when(kycPort.verifyPan("ABCDE1234F", "Acme Corp"))
+                .thenReturn(new PanResult(true, "ABCDE1234F", "Acme Corp", true, "ok"));
         when(members.save(any(B2bAccountMember.class))).thenAnswer(i -> i.getArgument(0));
 
-        // The name-binding is skipped for owners, so the personal name ≠ company name doesn't block them.
-        MemberResponse r = service().verifyMyKyc(account, caller, "ABCDE1234F", "Priya Patel");
+        // Owner binds to the account PAN (not name), so the company name doesn't block them.
+        MemberResponse r = service().verifyMyKyc(account, caller, "abcde1234f", "Acme Corp");
 
         assertThat(r.kycStatus()).isEqualTo("VERIFIED");
+        ArgumentCaptor<B2bAccountMember> saved = ArgumentCaptor.forClass(B2bAccountMember.class);
+        verify(members).save(saved.capture());
+        assertThat(saved.getValue().getKycStatus()).isEqualTo(MemberKycStatus.VERIFIED);
+    }
+
+    @Test
+    void ownerCannotSelfVerifyWithAThirdPartyPan() {
+        UUID caller = UUID.randomUUID();
+        B2bAccountMember me = new B2bAccountMember();
+        me.setRole(MemberRole.OWNER);
+        me.setName("Acme Corp");
+        me.setKycStatus(MemberKycStatus.UNVERIFIED);
+        when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(me));
+        accountPan("ABCDE1234F");
+        // A valid, name-matching PAN — but not the account's. Must not verify the owner.
+        when(kycPort.verifyPan("XYZAB9876C", "Rahul Sharma"))
+                .thenReturn(new PanResult(true, "XYZAB9876C", "Rahul Sharma", true, "ok"));
+
+        assertThatThrownBy(() -> service().verifyMyKyc(account, caller, "XYZAB9876C", "Rahul Sharma"))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("PAN the business was onboarded with");
+        assertThat(me.getKycStatus()).isEqualTo(MemberKycStatus.UNVERIFIED);
+        verify(members, never()).save(any());
     }
 
     @Test
