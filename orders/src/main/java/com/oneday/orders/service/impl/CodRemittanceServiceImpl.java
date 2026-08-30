@@ -14,6 +14,8 @@ import com.oneday.orders.dto.CodSummaryResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
 import com.oneday.orders.repository.CodRemittanceRepository;
+import com.oneday.orders.domain.DaCodLedgerType;
+import com.oneday.orders.service.CodLedgerService;
 import com.oneday.orders.service.CodRemittanceService;
 import com.oneday.orders.service.Notifier;
 import org.slf4j.Logger;
@@ -43,19 +45,22 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
     private final CodProperties props;
     private final PayoutPort payouts;
     private final Notifier notifier;
+    private final CodLedgerService codLedger;
 
     CodRemittanceServiceImpl(CodCollectionRepository collections,
                              CodRemittanceRepository remittances,
                              B2bAccountRepository accounts,
                              CodProperties props,
                              PayoutPort payouts,
-                             Notifier notifier) {
+                             Notifier notifier,
+                             CodLedgerService codLedger) {
         this.collections = collections;
         this.remittances = remittances;
         this.accounts = accounts;
         this.props = props;
         this.payouts = payouts;
         this.notifier = notifier;
+        this.codLedger = codLedger;
     }
 
     // ── Lifecycle hooks — run in their own transaction (called AFTER_COMMIT) ────
@@ -69,6 +74,12 @@ class CodRemittanceServiceImpl implements CodRemittanceService {
                 c.setCollectedAt(Instant.now());
                 c.setCollectedByDaId(collectedByDaId);
                 collections.save(c);
+                // A doorstep DA now holds the buyer's cash → post it to their cash-in-hand ledger. Skip
+                // hub self-collect (collectedByDaId null) — no rider is carrying that cash.
+                if (collectedByDaId != null) {
+                    codLedger.post(collectedByDaId, DaCodLedgerType.COLLECTION, c.getAmountPaise(),
+                            c.getShipmentRef(), "COD collected on delivery", collectedByDaId);
+                }
                 log.info("COD collection {} for shipment {} → COLLECTED ({} paise)",
                         c.getId(), c.getShipmentRef(), c.getAmountPaise());
             }

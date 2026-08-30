@@ -2,13 +2,16 @@ package com.oneday.orders.service.impl;
 
 import com.oneday.orders.domain.CodCashDeposit;
 import com.oneday.orders.domain.CodCashDepositState;
+import com.oneday.orders.domain.DaCodLedgerType;
 import com.oneday.orders.dto.AdminCodReconciliationRow;
 import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.DaCodCashSummaryResponse;
+import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
 import com.oneday.orders.repository.CodCashDepositRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
 import com.oneday.orders.service.CodCashService;
+import com.oneday.orders.service.CodLedgerService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,10 +32,13 @@ class CodCashServiceImpl implements CodCashService {
 
     private final CodCashDepositRepository deposits;
     private final CodCollectionRepository collections;
+    private final CodLedgerService codLedger;
 
-    CodCashServiceImpl(CodCashDepositRepository deposits, CodCollectionRepository collections) {
+    CodCashServiceImpl(CodCashDepositRepository deposits, CodCollectionRepository collections,
+                       CodLedgerService codLedger) {
         this.deposits = deposits;
         this.collections = collections;
+        this.codLedger = codLedger;
     }
 
     @Override
@@ -53,13 +59,18 @@ class CodCashServiceImpl implements CodCashService {
         d.setDepositRef(ref);
         d.setNote(request.note());
         d.setStatus(CodCashDepositState.DEPOSITED);
+        CodCashDeposit saved;
         try {
-            return CodCashDepositResponse.from(deposits.saveAndFlush(d));
+            saved = deposits.saveAndFlush(d);
         } catch (org.springframework.dao.DataIntegrityViolationException race) {
-            // Lost the race to a concurrent identical submit — return the winner.
+            // Lost the race to a concurrent identical submit — return the winner, don't double-post.
             return CodCashDepositResponse.from(
                     deposits.findByDaUserIdAndDepositRef(daUserId, ref).orElseThrow(() -> race));
         }
+        // A genuinely new deposit reduces the DA's cash-in-hand (they handed the cash over).
+        codLedger.post(daUserId, DaCodLedgerType.DEPOSIT, -saved.getAmountPaise(),
+                saved.getDepositRef(), "Cash deposited", daUserId);
+        return CodCashDepositResponse.from(saved);
     }
 
     @Override
@@ -68,9 +79,17 @@ class CodCashServiceImpl implements CodCashService {
         long collected = collections.sumCollectedByDa(daUserId);
         long count = collections.countCollectedByDa(daUserId);
         long deposited = deposits.sumDepositedByDa(daUserId);
+        long cashInHand = codLedger.cashInHand(daUserId);
         List<CodCashDepositResponse> rows = deposits.findByDaUserIdOrderByCreatedAtDesc(daUserId)
                 .stream().map(CodCashDepositResponse::from).toList();
-        return new DaCodCashSummaryResponse(daUserId, count, collected, deposited, collected - deposited, rows);
+        return new DaCodCashSummaryResponse(
+                daUserId, count, collected, deposited, collected - deposited, cashInHand, rows);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaCodLedgerEntryResponse> daLedger(UUID daUserId) {
+        return codLedger.history(daUserId);
     }
 
     @Override

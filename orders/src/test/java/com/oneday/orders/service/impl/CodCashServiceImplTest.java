@@ -4,8 +4,10 @@ import com.oneday.orders.domain.CodCashDeposit;
 import com.oneday.orders.domain.CodCashDepositState;
 import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
+import com.oneday.orders.domain.DaCodLedgerType;
 import com.oneday.orders.repository.CodCashDepositRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
+import com.oneday.orders.service.CodLedgerService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -17,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -27,9 +30,10 @@ class CodCashServiceImplTest {
 
     @Mock private CodCashDepositRepository deposits;
     @Mock private CodCollectionRepository collections;
+    @Mock private CodLedgerService codLedger;
 
     private CodCashServiceImpl service() {
-        return new CodCashServiceImpl(deposits, collections);
+        return new CodCashServiceImpl(deposits, collections, codLedger);
     }
 
     @Test
@@ -49,6 +53,9 @@ class CodCashServiceImplTest {
         assertThat(resp.id()).isEqualTo(existing.getId());
         verify(deposits, never()).save(any());
         verify(deposits, never()).saveAndFlush(any());
+        // An idempotent repeat must NOT post to the ledger again (no double debit of cash-in-hand).
+        verify(codLedger, never()).post(any(), any(), org.mockito.ArgumentMatchers.anyLong(),
+                any(), any(), any());
     }
 
     @Test
@@ -62,5 +69,7 @@ class CodCashServiceImplTest {
 
         assertThat(resp.amountPaise()).isEqualTo(700L);
         verify(deposits).saveAndFlush(any(CodCashDeposit.class));
+        // A new deposit posts a negative (DEPOSIT) movement to the DA's cash-in-hand ledger.
+        verify(codLedger).post(eq(da), eq(DaCodLedgerType.DEPOSIT), eq(-700L), eq("REF-2"), any(), eq(da));
     }
 }
