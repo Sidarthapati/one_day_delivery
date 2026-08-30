@@ -13,6 +13,7 @@ import com.oneday.dispatch.repository.DaAttendanceRepository;
 import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.service.AbsenceReassignmentService;
+import com.oneday.dispatch.service.AttendanceConfigService;
 import com.oneday.grid.service.GridService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ class AttendanceServiceImplTest {
     @Mock AbsenceReassignmentService absenceService;
     @Mock DaEventProducer eventProducer;
     @Mock GridService gridService;
+    @Mock AttendanceConfigService attendanceConfigService;
 
     private DispatchProperties props;
     private AttendanceServiceImpl service;
@@ -66,11 +68,12 @@ class AttendanceServiceImplTest {
         props.getAttendance().getHubLocations().put(cityId.toString(), hub);
 
         service = new AttendanceServiceImpl(attendanceRepository, daStatusRepository, daGpsPingRepository,
-                daDirectory, absenceService, eventProducer, gridService, props);
+                daDirectory, absenceService, eventProducer, gridService, props, attendanceConfigService);
     }
 
     @Test
     void onGpsFix_withinRadius_marksPresentOnce() {
+        when(attendanceConfigService.isAutoPresentEnabled()).thenReturn(true);
         when(attendanceRepository.findByDaIdAndAttendanceDate(eq(daId), any())).thenReturn(Optional.empty());
 
         // First ping at the hub → present.
@@ -88,8 +91,20 @@ class AttendanceServiceImplTest {
 
     @Test
     void onGpsFix_outsideRadius_doesNothing() {
+        when(attendanceConfigService.isAutoPresentEnabled()).thenReturn(true);
         // ~1.5 km south of the hub — well outside 500 m.
         service.onGpsFix(daId, cityId, "SHIFT_1", HUB_LAT - 0.0135, HUB_LON, Instant.now());
+        verify(attendanceRepository, never()).save(any());
+        verify(attendanceRepository, never()).findByDaIdAndAttendanceDate(any(), any());
+    }
+
+    @Test
+    void onGpsFix_autoPresentDisabled_doesNothing_evenAtHub() {
+        // Global toggle off: a fix right at the hub must NOT auto-mark present, and must do no DB work.
+        when(attendanceConfigService.isAutoPresentEnabled()).thenReturn(false);
+
+        service.onGpsFix(daId, cityId, "SHIFT_1", HUB_LAT, HUB_LON, Instant.now());
+
         verify(attendanceRepository, never()).save(any());
         verify(attendanceRepository, never()).findByDaIdAndAttendanceDate(any(), any());
     }

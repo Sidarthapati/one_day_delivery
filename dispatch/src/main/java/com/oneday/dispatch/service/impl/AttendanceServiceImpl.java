@@ -15,6 +15,7 @@ import com.oneday.dispatch.repository.DaAttendanceRepository;
 import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.service.AbsenceReassignmentService;
+import com.oneday.dispatch.service.AttendanceConfigService;
 import com.oneday.dispatch.service.AttendanceService;
 import com.oneday.grid.service.GridService;
 import org.slf4j.Logger;
@@ -54,6 +55,7 @@ class AttendanceServiceImpl implements AttendanceService {
     private final DaEventProducer eventProducer;
     private final GridService gridService;
     private final DispatchProperties props;
+    private final AttendanceConfigService attendanceConfigService;
 
     /** daId → date it was already marked present, so repeat pings short-circuit before any DB read. */
     private final Map<UUID, LocalDate> markedPresentOn = new ConcurrentHashMap<>();
@@ -61,7 +63,8 @@ class AttendanceServiceImpl implements AttendanceService {
     AttendanceServiceImpl(DaAttendanceRepository attendanceRepository, DaStatusRepository daStatusRepository,
                           DaGpsPingRepository daGpsPingRepository, DaDirectoryPort daDirectory,
                           AbsenceReassignmentService absenceService, DaEventProducer eventProducer,
-                          GridService gridService, DispatchProperties props) {
+                          GridService gridService, DispatchProperties props,
+                          AttendanceConfigService attendanceConfigService) {
         this.attendanceRepository = attendanceRepository;
         this.daStatusRepository = daStatusRepository;
         this.daGpsPingRepository = daGpsPingRepository;
@@ -70,6 +73,7 @@ class AttendanceServiceImpl implements AttendanceService {
         this.eventProducer = eventProducer;
         this.gridService = gridService;
         this.props = props;
+        this.attendanceConfigService = attendanceConfigService;
     }
 
     private ZoneId zone() {
@@ -79,6 +83,9 @@ class AttendanceServiceImpl implements AttendanceService {
     @Override
     @Transactional
     public void onGpsFix(UUID daId, UUID cityId, String shiftType, double lat, double lon, Instant pingAt) {
+        if (!attendanceConfigService.isAutoPresentEnabled()) {
+            return; // geofence auto-present globally disabled (admin toggle); manual check-in still works
+        }
         // Date of the fix, not of processing — a ping delayed across midnight IST still lands on the
         // day the DA was actually at the hub, so it settles the right shift's cutoff.
         LocalDate today = LocalDate.ofInstant(pingAt, zone());
