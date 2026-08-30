@@ -1,5 +1,6 @@
 package com.oneday.orders.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.oneday.orders.config.NotifyProperties;
 import com.oneday.orders.service.NotificationDeliveryException;
 import com.oneday.orders.service.WhatsAppSender;
@@ -13,6 +14,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Map;
 
 /**
  * Meta WhatsApp Cloud API adapter. Gated by {@code notify.whatsapp.provider=meta} — off by default,
@@ -34,10 +36,12 @@ class MetaWhatsAppSender implements WhatsAppSender {
     private static final String GRAPH_BASE = "https://graph.facebook.com/v21.0/";
 
     private final NotifyProperties props;
+    private final ObjectMapper mapper;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(4)).build();
 
-    MetaWhatsAppSender(NotifyProperties props) {
+    MetaWhatsAppSender(NotifyProperties props, ObjectMapper mapper) {
         this.props = props;
+        this.mapper = mapper;
         log.info("[notify] whatsapp provider=meta (phoneNumberId={})", props.getWhatsapp().getPhoneNumberId());
     }
 
@@ -45,9 +49,13 @@ class MetaWhatsAppSender implements WhatsAppSender {
     public void send(String phone, String message) {
         try {
             String to = phone.startsWith("+") ? phone.substring(1) : phone;   // Meta wants no leading +
-            String body = "{\"messaging_product\":\"whatsapp\",\"to\":\"" + to + "\","
-                    + "\"type\":\"text\",\"text\":{\"body\":\""
-                    + message.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\"}}";
+            // Serialize with Jackson so both `to` and the message body are correctly escaped (no hand-rolled
+            // JSON, no injection). ponytail: plain-text body — swap to a "template" object at go-live.
+            String body = mapper.writeValueAsString(Map.of(
+                    "messaging_product", "whatsapp",
+                    "to", to,
+                    "type", "text",
+                    "text", Map.of("body", message)));
             URI url = URI.create(GRAPH_BASE + props.getWhatsapp().getPhoneNumberId() + "/messages");
             HttpRequest req = HttpRequest.newBuilder(url)
                     .timeout(Duration.ofSeconds(6))
