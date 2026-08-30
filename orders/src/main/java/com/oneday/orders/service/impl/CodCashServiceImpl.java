@@ -12,6 +12,7 @@ import com.oneday.orders.repository.CodCashDepositRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
 import com.oneday.orders.service.CodCashService;
 import com.oneday.orders.service.CodLedgerService;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,14 +45,12 @@ class CodCashServiceImpl implements CodCashService {
     @Override
     @Transactional
     public CodCashDepositResponse recordDeposit(UUID daUserId, RecordCodDepositRequest request) {
-        String ref = request.depositRef() == null ? null : request.depositRef().trim();
-        // Idempotent on (DA, deposit_ref): a repeated submission returns the existing deposit instead
-        // of double-counting cash. A concurrent duplicate is caught by the DB unique index (V4_36).
-        if (ref != null && !ref.isBlank()) {
-            var existing = deposits.findByDaUserIdAndDepositRef(daUserId, ref);
-            if (existing.isPresent()) {
-                return CodCashDepositResponse.from(existing.get());
-            }
+        // depositRef is the required idempotency key (@NotBlank on the request). Every deposit is
+        // pre-checked, so a retry returns the existing row and never double-posts a ledger movement.
+        String ref = request.depositRef().trim();
+        var existing = deposits.findByDaUserIdAndDepositRef(daUserId, ref);
+        if (existing.isPresent()) {
+            return CodCashDepositResponse.from(existing.get());
         }
         CodCashDeposit d = new CodCashDeposit();
         d.setDaUserId(daUserId);
@@ -63,9 +62,11 @@ class CodCashServiceImpl implements CodCashService {
         try {
             saved = deposits.saveAndFlush(d);
         } catch (org.springframework.dao.DataIntegrityViolationException race) {
-            // Lost the race to a concurrent identical submit — return the winner, don't double-post.
-            return CodCashDepositResponse.from(
-                    deposits.findByDaUserIdAndDepositRef(daUserId, ref).orElseThrow(() -> race));
+            // A concurrent identical submit won the unique-index race. Don't recover-read here — the
+            // transaction is already rollback-only — surface a 409 so the client retries and the
+            // pre-check above returns the winning row (200). No double-post.
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "A deposit with this reference is already being recorded — retry.");
         }
         // A genuinely new deposit reduces the DA's cash-in-hand (they handed the cash over).
         codLedger.post(daUserId, DaCodLedgerType.DEPOSIT, -saved.getAmountPaise(),
@@ -88,8 +89,8 @@ class CodCashServiceImpl implements CodCashService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DaCodLedgerEntryResponse> daLedger(UUID daUserId) {
-        return codLedger.history(daUserId);
+    public List<DaCodLedgerEntryResponse> daLedger(UUID daUserId, Pageable pageable) {
+        return codLedger.history(daUserId, pageable);
     }
 
     @Override

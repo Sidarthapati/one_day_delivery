@@ -7,12 +7,14 @@ import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
 import com.oneday.orders.service.CodCashService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -48,10 +50,14 @@ class DaCodController {
         return codCash.daSummary(callerDaId(principal));
     }
 
-    /** The DA's own cash-in-hand ledger (collections + deposits with a running balance), newest first. */
+    /** A page of the DA's own cash-in-hand ledger (collections + deposits, running balance), newest first. */
     @GetMapping("/ledger")
-    public List<DaCodLedgerEntryResponse> ledger(@AuthenticationPrincipal AuthUserDetails principal) {
-        return codCash.daLedger(callerDaId(principal));
+    public List<DaCodLedgerEntryResponse> ledger(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        int capped = Math.min(Math.max(1, size), 200);
+        return codCash.daLedger(callerDaId(principal), PageRequest.of(Math.max(0, page), capped));
     }
 
     /** The calling delivery associate's own user id (also gates the endpoint to that role). */

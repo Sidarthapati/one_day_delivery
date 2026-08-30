@@ -7,6 +7,7 @@ import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import com.oneday.orders.repository.DaCodBalanceRepository;
 import com.oneday.orders.repository.DaCodLedgerRepository;
 import com.oneday.orders.service.CodLedgerService;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,8 +57,8 @@ class CodLedgerServiceImpl implements CodLedgerService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DaCodLedgerEntryResponse> history(UUID daUserId) {
-        return ledger.findByDaUserIdOrderByCreatedAtDesc(daUserId).stream()
+    public List<DaCodLedgerEntryResponse> history(UUID daUserId, Pageable pageable) {
+        return ledger.findByDaUserIdOrderByCreatedAtDesc(daUserId, pageable).stream()
                 .map(DaCodLedgerEntryResponse::from)
                 .toList();
     }

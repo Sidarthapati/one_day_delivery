@@ -2,6 +2,7 @@ package com.oneday.orders.service;
 
 import com.oneday.orders.domain.DaCodLedgerType;
 import com.oneday.orders.dto.DaCodLedgerEntryResponse;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.UUID;
@@ -24,6 +25,6 @@ public interface CodLedgerService {
     /** The DA's current cash-in-hand (0 if they have no ledger yet). */
     long cashInHand(UUID daUserId);
 
-    /** The DA's ledger history, newest first. */
-    List<DaCodLedgerEntryResponse> history(UUID daUserId);
+    /** A page of the DA's ledger history, newest first. */
+    List<DaCodLedgerEntryResponse> history(UUID daUserId, Pageable pageable);
 }

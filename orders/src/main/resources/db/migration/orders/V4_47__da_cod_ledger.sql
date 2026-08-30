@@ -27,5 +27,8 @@ CREATE TABLE da_cod_ledger (
 CREATE INDEX idx_da_cod_ledger_da ON da_cod_ledger (da_user_id, created_at DESC);
 
 -- NOTE: the ledger is authoritative for cash movements from here on. Existing cod_collection /
--- cod_cash_deposit rows are NOT backfilled (a per-DA time-ordered reconstruction is deferred — see the
--- COD-ledger follow-up issue); the on-the-fly collected/deposited sums remain for historical continuity.
+-- cod_cash_deposit rows are NOT backfilled — the per-DA time-ordered reconstruction / cutover
+-- opening-balance seed is deferred to issue #185. Until then a DA depositing pre-cutover cash can drive
+-- the ledger balance negative; that's expected (the ledger simply doesn't yet know their pre-cutover
+-- collections), and it's why we do NOT clamp deposits to a non-negative balance. The on-the-fly
+-- collected/deposited sums remain for historical continuity.
