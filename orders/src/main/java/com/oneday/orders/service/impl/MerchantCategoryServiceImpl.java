@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -78,7 +79,7 @@ class MerchantCategoryServiceImpl implements MerchantCategoryService {
     }
 
     private void requireNotReserved(String name) {
-        if (RESERVED_NAMES.contains(name.toLowerCase())) {
+        if (RESERVED_NAMES.contains(name.toLowerCase(Locale.ROOT))) {
             throw new DuplicateCategoryException("\"" + name + "\" is reserved — please choose another name.");
         }
     }
