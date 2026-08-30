@@ -15,8 +15,9 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "orders.capacity")
 public class OrderCapacityProperties {
 
-    /** Default DA vehicle capacity in grams (50 kg). */
-    private int daVehicleGrams = 50_000;
+    /** Default DA vehicle capacity in grams (500 kg — effectively permissive until per-DA capacity is
+     *  made admin-configurable; the gate still blocks a DA already loaded past this). */
+    private int daVehicleGrams = 500_000;
 
     /** Optional per-city overrides, key = origin city code (e.g. "DELHI"), value = capacity in grams. */
     private Map<String, Integer> daVehicleGramsByCity = new HashMap<>();

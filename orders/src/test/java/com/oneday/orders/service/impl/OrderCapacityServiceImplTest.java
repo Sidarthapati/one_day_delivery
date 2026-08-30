@@ -76,6 +76,7 @@ class OrderCapacityServiceImplTest {
 
     @Test
     void underCapacity_ok() {
+        properties.setDaVehicleGrams(50_000);   // pin the cap so the test is independent of the default
         wireAssignedDa(40_000);   // 40kg already on the vehicle
 
         assertThatCode(() -> service.ensureCapacityForAdd(order(), 5_000))   // +5kg = 45kg <= 50kg
@@ -84,6 +85,7 @@ class OrderCapacityServiceImplTest {
 
     @Test
     void overCapacity_rejects() {
+        properties.setDaVehicleGrams(50_000);   // pin the cap so the test is independent of the default
         wireAssignedDa(40_000);   // 40kg already on the vehicle
 
         assertThatThrownBy(() -> service.ensureCapacityForAdd(order(), 15_000))   // +15kg = 55kg > 50kg
