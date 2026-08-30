@@ -3,6 +3,7 @@ package com.oneday.dispatch.events;
 import com.oneday.common.kafka.events.ReceiverRejectedEvent;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DeferReason;
+import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DispatchService;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.service.GridService;
@@ -24,6 +25,7 @@ import static org.mockito.Mockito.when;
 class ReceiverRejectedConsumerTest {
 
     private DispatchService dispatchService;
+    private DaTaskService daTaskService;
     private GridService gridService;
     private ReceiverRejectedConsumer consumer;
 
@@ -34,8 +36,9 @@ class ReceiverRejectedConsumerTest {
     @BeforeEach
     void setUp() {
         dispatchService = mock(DispatchService.class);
+        daTaskService = mock(DaTaskService.class);
         gridService = mock(GridService.class);
-        consumer = new ReceiverRejectedConsumer(dispatchService, gridService, new DispatchProperties());
+        consumer = new ReceiverRejectedConsumer(dispatchService, daTaskService, gridService, new DispatchProperties());
     }
 
     @Test
@@ -44,7 +47,7 @@ class ReceiverRejectedConsumerTest {
         when(gridService.serviceableAt(anyDouble(), anyDouble()))
                 .thenReturn(new ServiceableAtResponse(true, "bengaluru", cityId, UUID.randomUUID(), "h3"));
 
-        consumer.onReceiverRejected(new ReceiverRejectedEvent(shipment, orderId, "1DD-ORD", "SHIFT_2",
+        consumer.onReceiverRejected(new ReceiverRejectedEvent(shipment, "1DD-SHP", orderId, "1DD-ORD", "SHIFT_2",
                 12.97, 77.61, tileId));
 
         LocalDate tomorrow = LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1);
@@ -54,7 +57,7 @@ class ReceiverRejectedConsumerTest {
 
     @Test
     void missingCoordinatesIsNoOp() {
-        consumer.onReceiverRejected(new ReceiverRejectedEvent(UUID.randomUUID(), orderId, "1DD-ORD", "SHIFT_1",
+        consumer.onReceiverRejected(new ReceiverRejectedEvent(UUID.randomUUID(), "1DD-SHP", orderId, "1DD-ORD", "SHIFT_1",
                 null, null, tileId));
         verify(dispatchService, never()).deferDeliveryForRetry(any(), any(), any(), anyDouble(), anyDouble(),
                 any(), any(), any(), any(), any());

@@ -2,6 +2,8 @@ package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.service.DeliveryConfirmationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -20,6 +22,8 @@ import java.util.Set;
 @Component
 class DeliveryConfirmationTrigger {
 
+    private static final Logger log = LoggerFactory.getLogger(DeliveryConfirmationTrigger.class);
+
     private static final Set<ShipmentState> PROMPT_STATES =
             EnumSet.of(ShipmentState.DEPARTED, ShipmentState.DEST_HUB_PROCESSING);
 
@@ -31,8 +35,15 @@ class DeliveryConfirmationTrigger {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onTransition(ShipmentTransitioned e) {
-        if (PROMPT_STATES.contains(e.toState())) {
+        if (!PROMPT_STATES.contains(e.toState())) {
+            return;
+        }
+        try {
             confirmationService.promptOnDeparture(e.shipmentId());
+        } catch (RuntimeException ex) {
+            // Best-effort: the transit state is already committed; a prompt failure must never affect it.
+            log.warn("Delivery confirmation prompt for shipment {} failed (non-blocking): {}",
+                    e.shipmentId(), ex.getMessage());
         }
     }
 }

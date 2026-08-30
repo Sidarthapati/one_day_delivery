@@ -1,5 +1,6 @@
 package com.oneday.orders.service.impl;
 
+import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.kafka.EventPublisher;
 import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.events.ReceiverRejectedEvent;
@@ -34,10 +35,12 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -48,6 +51,12 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
 
     private static final Logger log = LoggerFactory.getLogger(DeliveryConfirmationServiceImpl.class);
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    // States in which the accept/reject window has closed — the parcel is delivered, returned, held, or
+    // cancelled, so a response can no longer change anything (FIX-5: don't act on a concluded parcel).
+    private static final Set<ShipmentState> CONCLUDED = EnumSet.of(
+            ShipmentState.DROPPED, ShipmentState.HUB_COLLECTED, ShipmentState.RTO_INITIATED,
+            ShipmentState.RTO_COMPLETED, ShipmentState.HELD_AT_HUB, ShipmentState.CANCELLED);
 
     private final ShipmentRepository shipmentRepository;
     private final ParcelOrderRepository parcelOrderRepository;
@@ -71,58 +80,61 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
     }
 
     @Override
-    // Called from an AFTER_COMMIT listener (DeliveryConfirmationTrigger), where no transaction is
-    // active — REQUIRES_NEW so the confirmation row + notification actually commit.
+    // Called from an AFTER_COMMIT listener (DeliveryConfirmationTrigger, which swallows any throw), where
+    // no transaction is active — REQUIRES_NEW so the confirmation row + notification commit, and a failed
+    // send rolls the row back instead of leaving a live prompt that would suppress a later retry.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void promptOnDeparture(UUID shipmentId) {
-        try {
-            Shipment s = shipmentRepository.findById(shipmentId).orElse(null);
-            if (s == null) {
-                return;
-            }
-            if (s.getReceiverEmail() == null || s.getReceiverEmail().isBlank()) {
-                log.debug("Shipment {} has no receiver email — skipping delivery confirmation", shipmentId);
-                return;
-            }
-            // Idempotent: one live prompt per shipment (intercity DEPARTED first, then a same-city
-            // sorted-for-delivery trigger no-ops here).
-            if (confirmationRepository.findFirstByShipmentIdAndStatus(shipmentId,
-                    DeliveryConfirmationStatus.PENDING).isPresent()) {
-                return;
-            }
-
-            Eta eta = computeEta();
-            String token = mintToken();
-            Instant now = Instant.now();
-
-            DeliveryConfirmation c = new DeliveryConfirmation();
-            c.setShipmentId(shipmentId);
-            c.setAttemptNo(1);
-            c.setTokenHash(sha256(token));
-            c.setStatus(DeliveryConfirmationStatus.PENDING);
-            c.setEta(eta.instant());
-            c.setEtaShift(eta.shift());
-            c.setEtaDay(eta.day());
-            c.setChannel("EMAIL");
-            c.setSentAt(now);
-            c.setExpiresAt(now.plus(props.getConfirmationTtlMinutes(), ChronoUnit.MINUTES));
-            confirmationRepository.save(c);
-
-            String link = props.getLandingBaseUrl().replaceAll("/+$", "") + "/d/" + token;
-            notificationPort.send(new NotificationRequest(
-                    NotificationEventType.RECEIVER_CONFIRM,
-                    s.getReceiverEmail(), null,
-                    Map.of(
-                            "shipment_ref", s.getShipmentRef() != null ? s.getShipmentRef() : "",
-                            "receiver_name", s.getReceiverName() != null ? s.getReceiverName() : "there",
-                            "eta_text", eta.text(),
-                            "link", link),
-                    null));
-            log.info("Delivery confirmation sent for shipment {} (ETD {})", shipmentId, eta.text());
-        } catch (RuntimeException e) {
-            // Best-effort: a confirmation failure must never break the transit flow that triggered it.
-            log.warn("Delivery confirmation for shipment {} failed (non-blocking): {}", shipmentId, e.getMessage());
+        Shipment s = shipmentRepository.findById(shipmentId).orElse(null);
+        if (s == null) {
+            return;
         }
+        if (s.getReceiverEmail() == null || s.getReceiverEmail().isBlank()) {
+            log.debug("Shipment {} has no receiver email — skipping delivery confirmation", shipmentId);
+            return;
+        }
+        String baseUrl = props.getCustomerLandingBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            log.warn("No customer-landing-base-url configured — skipping delivery confirmation for {}", shipmentId);
+            return;
+        }
+        // Idempotent: one live prompt per shipment (intercity DEPARTED first, then a same-city
+        // sorted-for-delivery trigger no-ops here).
+        if (confirmationRepository.findFirstByShipmentIdAndStatus(shipmentId,
+                DeliveryConfirmationStatus.PENDING).isPresent()) {
+            return;
+        }
+
+        Eta eta = computeEta(s);
+        String token = mintToken();
+        Instant now = Instant.now();
+
+        DeliveryConfirmation c = new DeliveryConfirmation();
+        c.setShipmentId(shipmentId);
+        c.setAttemptNo(1);
+        c.setTokenHash(sha256(token));
+        c.setStatus(DeliveryConfirmationStatus.PENDING);
+        c.setEta(eta.instant());
+        c.setEtaShift(eta.shift());
+        c.setEtaDay(eta.day());
+        c.setChannel("EMAIL");
+        c.setSentAt(now);
+        c.setExpiresAt(now.plus(props.getConfirmationTtlMinutes(), ChronoUnit.MINUTES));
+        confirmationRepository.save(c);
+
+        String link = baseUrl.replaceAll("/+$", "") + "/d/" + token;
+        // Send inside the tx: a failure rolls back the just-saved PENDING row (REQUIRES_NEW), so a failed
+        // send never leaves a live prompt. The trigger catches the throw so transit is never affected.
+        notificationPort.send(new NotificationRequest(
+                NotificationEventType.RECEIVER_CONFIRM,
+                s.getReceiverEmail(), null,
+                Map.of(
+                        "shipment_ref", s.getShipmentRef() != null ? s.getShipmentRef() : "",
+                        "receiver_name", s.getReceiverName() != null ? s.getReceiverName() : "there",
+                        "eta_text", eta.text(),
+                        "link", link),
+                null));
+        log.info("Delivery confirmation sent for shipment {} (ETD {})", shipmentId, eta.text());
     }
 
     @Override
@@ -135,7 +147,7 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
     @Transactional
     public DeliveryConfirmationView accept(String token) {
         DeliveryConfirmation c = load(token);
-        if (c.getStatus() == DeliveryConfirmationStatus.PENDING) {
+        if (c.getStatus() == DeliveryConfirmationStatus.PENDING && stillActionable(c.getShipmentId())) {
             c.setStatus(DeliveryConfirmationStatus.ACCEPTED);
             c.setRespondedAt(Instant.now());
             confirmationRepository.save(c);
@@ -148,7 +160,7 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
     public DeliveryConfirmationView reject(String token, String targetShift) {
         String shift = normaliseShift(targetShift);
         DeliveryConfirmation c = load(token);
-        if (c.getStatus() == DeliveryConfirmationStatus.PENDING) {
+        if (c.getStatus() == DeliveryConfirmationStatus.PENDING && stillActionable(c.getShipmentId())) {
             c.setStatus(DeliveryConfirmationStatus.REJECTED);
             c.setResponseShift(shift);
             c.setRespondedAt(Instant.now());
@@ -178,7 +190,7 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
             Double lon = s.getDestAddress() != null ? s.getDestAddress().getLongitude() : null;
             String orderRef = orderRefFor(s.getOrderId());
             eventPublisher.publish(EventStreams.DELIVERY_CONFIRMATIONS, new ReceiverRejectedEvent(
-                    shipmentId, s.getOrderId(), orderRef, shift, lat, lon, s.getDestTileId()));
+                    shipmentId, s.getShipmentRef(), s.getOrderId(), orderRef, shift, lat, lon, s.getDestTileId()));
         });
     }
 
@@ -195,35 +207,45 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
     }
 
     private DeliveryConfirmationView toView(DeliveryConfirmation c) {
-        String ref = shipmentRepository.findById(c.getShipmentId())
-                .map(Shipment::getShipmentRef).orElse(null);
-        String receiver = shipmentRepository.findById(c.getShipmentId())
-                .map(Shipment::getReceiverName).orElse(null);
+        Shipment s = shipmentRepository.findById(c.getShipmentId()).orElse(null);
+        String ref = s != null ? s.getShipmentRef() : null;
+        String receiver = s != null ? s.getReceiverName() : null;
+        boolean concluded = s != null && CONCLUDED.contains(s.getState());
         boolean canRespond = c.getStatus() == DeliveryConfirmationStatus.PENDING
-                && c.getExpiresAt().isAfter(Instant.now());
+                && c.getExpiresAt().isAfter(Instant.now())
+                && !concluded;
         return new DeliveryConfirmationView(ref, receiver, c.getStatus().name(),
                 c.getEtaDay(), c.getEtaShift(), etaText(c.getEtaDay(), c.getEtaShift(), c.getEta()),
                 c.getResponseShift(), canRespond);
     }
 
-    /** Project the ETD from now (the departure moment) + hub-processing + last-mile windows. */
-    private Eta computeEta() {
+    /** The parcel is still en route (not delivered/returned/held/cancelled), so a response can still act. */
+    private boolean stillActionable(UUID shipmentId) {
+        return shipmentRepository.findById(shipmentId)
+                .map(s -> !CONCLUDED.contains(s.getState()))
+                .orElse(false);
+    }
+
+    /**
+     * Project the ETD. Prefer the parcel's promised delivery ETA (set at booking via {@code EtaPort}, so
+     * it already accounts for the flight leg); fall back to a now()+hub+last-mile heuristic only when no
+     * promised ETA is stored yet. The shift is derived from the projected time in both branches.
+     */
+    private Eta computeEta(Shipment s) {
         ZoneId zone = ZoneId.of(props.getZone());
-        Instant projected = Instant.now()
-                .plus(props.getHubProcessingMinutes(), ChronoUnit.MINUTES)
-                .plus(props.getLastMileWindowMinutes(), ChronoUnit.MINUTES);
+        Instant projected = s.getEtaPromised() != null
+                ? s.getEtaPromised()
+                : Instant.now()
+                    .plus(props.getHubProcessingMinutes(), ChronoUnit.MINUTES)
+                    .plus(props.getLastMileWindowMinutes(), ChronoUnit.MINUTES);
         ZonedDateTime projectedZ = projected.atZone(zone);
         LocalDate today = LocalDate.now(zone);
         LocalDateTime cutoffToday = LocalDateTime.of(today, props.getSameDayCutoff());
+        String shift = projectedZ.toLocalTime().isBefore(LocalTime.NOON) ? "SHIFT_1" : "SHIFT_2";
         boolean sameDay = !projectedZ.toLocalDate().isAfter(today)
                 && !projectedZ.toLocalDateTime().isAfter(cutoffToday);
-        if (sameDay) {
-            String shift = projectedZ.toLocalTime().isBefore(LocalTime.NOON) ? "SHIFT_1" : "SHIFT_2";
-            return new Eta(projected, "TODAY", shift, etaText("TODAY", shift, projected));
-        }
-        // Next day, first shift (nominal 10:00 IST for display).
-        Instant nextDay = LocalDateTime.of(today.plusDays(1), LocalTime.of(10, 0)).atZone(zone).toInstant();
-        return new Eta(nextDay, "NEXT_DAY", "SHIFT_1", etaText("NEXT_DAY", "SHIFT_1", nextDay));
+        String day = sameDay ? "TODAY" : "NEXT_DAY";
+        return new Eta(projected, day, shift, etaText(day, shift, projected));
     }
 
     private String etaText(String day, String shift, Instant eta) {

@@ -3,6 +3,7 @@ package com.oneday.dispatch.events;
 import com.oneday.common.kafka.events.ReceiverRejectedEvent;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DeferReason;
+import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DispatchService;
 import com.oneday.grid.dto.response.ServiceableAtResponse;
 import com.oneday.grid.service.GridService;
@@ -20,9 +21,10 @@ import java.util.UUID;
  * shift) and re-parks the last-mile delivery for that day/shift — a courtesy reschedule, NOT a failed
  * attempt (no {@code DROP_FAILED}, so M11's attempt count is untouched).
  *
- * <p>{@link DispatchService#deferDeliveryForRetry} is idempotent on a live delivery task, so this handles
- * only the common "parcel still inbound / not yet dispatched" case: if the parcel is already out for
- * last-mile the reject-defer no-ops and the DA's own door-failure carry-back path handles it instead.</p>
+ * <p>If the parcel is already out for last-mile, we don't wait for a doomed door attempt: the delivery
+ * task is recalled (and, if in hand, a RETURN_TO_HUB carry-back is spawned) via
+ * {@link DaTaskService#recallDeliveryForReschedule}, then the delivery is re-parked for the chosen day.
+ * {@link DispatchService#deferDeliveryForRetry} is idempotent on a live task, so the ordering is safe.</p>
  */
 @Component
 public class ReceiverRejectedConsumer {
@@ -30,12 +32,14 @@ public class ReceiverRejectedConsumer {
     private static final Logger log = LoggerFactory.getLogger(ReceiverRejectedConsumer.class);
 
     private final DispatchService dispatchService;
+    private final DaTaskService daTaskService;
     private final GridService gridService;
     private final DispatchProperties props;
 
-    public ReceiverRejectedConsumer(DispatchService dispatchService, GridService gridService,
-                                    DispatchProperties props) {
+    public ReceiverRejectedConsumer(DispatchService dispatchService, DaTaskService daTaskService,
+                                    GridService gridService, DispatchProperties props) {
         this.dispatchService = dispatchService;
+        this.daTaskService = daTaskService;
         this.gridService = gridService;
         this.props = props;
     }
@@ -57,9 +61,12 @@ public class ReceiverRejectedConsumer {
         }
         UUID tileId = event.destTileId() != null ? event.destTileId() : loc.hexId();
         LocalDate tomorrow = LocalDate.now(ZoneId.of(props.getShift().getZone())).plusDays(1);
+        // If it's already out for last-mile, pull it back (carry-back if in hand) so the DA isn't sent to
+        // a door the receiver already declined; then re-park for the chosen day/shift.
+        boolean recalled = daTaskService.recallDeliveryForReschedule(shipmentId);
         dispatchService.deferDeliveryForRetry(shipmentId, loc.cityId(), tileId, lat, lon,
                 event.orderId(), event.orderRef(), tomorrow, event.targetShift(), DeferReason.RECEIVER_REJECTED);
-        log.info("Re-parked delivery of shipment {} for {} shift {} (receiver rejected)",
-                shipmentId, tomorrow, event.targetShift());
+        log.info("Re-parked delivery of shipment {} for {} shift {} (receiver rejected; recalled={})",
+                shipmentId, tomorrow, event.targetShift(), recalled);
     }
 }

@@ -77,7 +77,7 @@ Both are `@TransactionalEventListener(AFTER_COMMIT)` paths that do DB writes. Af
 
 ## Final DB state (proof)
 
-```
+```text
  shipment_ref               | state         | orig  | dest  | sender  | receiver | is_return_child | has_child
  1DD-DELHI-20260828-00001   | DEPARTED      | DELHI | MUMBAI| Riya    | Arjun    | f               | f
  1DD-DELHI-20260828-00002   | RTO_COMPLETED | DELHI | MUMBAI| Riya    | Meera    | f               | t

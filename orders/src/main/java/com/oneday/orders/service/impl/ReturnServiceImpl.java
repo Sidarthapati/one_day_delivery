@@ -73,7 +73,9 @@ class ReturnServiceImpl implements ReturnService {
     @Override
     @Transactional
     public ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, TransitionContext ctx) {
-        Shipment original = shipmentRepository.findById(originalShipmentId)
+        // Lock the original for the whole tx so concurrent RTO_INITIATED calls serialize on it — the
+        // idempotency check below then can't be raced into a duplicate-child uniqueness error.
+        Shipment original = shipmentRepository.findByIdWithLock(originalShipmentId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Shipment not found: " + originalShipmentId));
 

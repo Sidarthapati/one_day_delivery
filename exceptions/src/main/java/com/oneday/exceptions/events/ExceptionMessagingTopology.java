@@ -19,6 +19,7 @@ public class ExceptionMessagingTopology {
 
     public static final String SHIPMENTS_QUEUE = "exceptions.shipments";
     public static final String DA_QUEUE        = "exceptions.da";
+    public static final String DELIVERY_CONFIRMATIONS_QUEUE = "exceptions.delivery_confirmations";
 
     /** Exchange M11 publishes reschedule / RTO events to (→ M4 orders, M10 SLA). */
     @Bean
@@ -28,4 +29,5 @@ public class ExceptionMessagingTopology {
 
     @Bean Declarables exceptionsShipmentsBinding() { return RabbitStreamSupport.consumer(SHIPMENTS_QUEUE, EventStreams.SHIPMENTS_EVENTS); }
     @Bean Declarables exceptionsDaBinding()        { return RabbitStreamSupport.consumer(DA_QUEUE, EventStreams.DA_EVENTS); }
+    @Bean Declarables exceptionsDeliveryConfirmationsBinding() { return RabbitStreamSupport.consumer(DELIVERY_CONFIRMATIONS_QUEUE, EventStreams.DELIVERY_CONFIRMATIONS); }
 }

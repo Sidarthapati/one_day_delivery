@@ -282,15 +282,50 @@ class DaTaskServiceImpl implements DaTaskService {
 
     @Override
     @Transactional
+    public boolean recallDeliveryForReschedule(UUID shipmentId) {
+        DispatchQueue active = queueRepository
+                .findActiveByShipmentIdAndTaskType(shipmentId, TaskType.DELIVERY).orElse(null);
+        if (active == null
+                || (active.getStatus() != TaskStatus.QUEUED && active.getStatus() != TaskStatus.IN_PROGRESS)) {
+            return false;   // nothing out for last-mile — caller just defers
+        }
+        UUID daId = active.getDaId();
+        return Boolean.TRUE.equals(daStatusService.withDaLock(daId, () -> {
+            DispatchQueue task = queueRepository.findById(active.getId()).orElse(null);
+            if (task == null
+                    || (task.getStatus() != TaskStatus.QUEUED && task.getStatus() != TaskStatus.IN_PROGRESS)) {
+                return false;
+            }
+            boolean parcelInHand = task.getStatus() == TaskStatus.IN_PROGRESS;
+            task.setStatus(TaskStatus.CANCELLED);
+            task.setCompletedAt(Instant.now());
+            queueRepository.save(task);
+            // Parcel already collected → give the DA a modelled way back instead of a doomed door attempt.
+            if (parcelInHand) {
+                spawnReturnToHub(daId, task);
+            }
+            QueueMirror.rebuild(daStatusService, queueRepository, daId, task.getOperatingDate());
+            queueReorderService.reorder(daId, task.getOperatingDate());
+            return true;
+        }));
+    }
+
+    @Override
+    @Transactional
     public DaTaskView reattempt(UUID daId, UUID taskId) {
         return daStatusService.withDaLock(daId, () -> {
             DispatchQueue task = ownedTask(daId, taskId);
             requireStatus(task, TaskStatus.FAILED);
             // A same-day reattempt supersedes the carry-back: the DA keeps the parcel to retry it, so
-            // cancel any open RETURN_TO_HUB for this shipment before re-queuing.
+            // cancel any OPEN RETURN_TO_HUB for this shipment before re-queuing. If the carry-back already
+            // COMPLETED the parcel is back at the hub (not in the DA's hands) — reattempt is invalid.
             if (task.getTaskType() == TaskType.DELIVERY) {
                 queueRepository.findActiveByShipmentIdAndTaskType(task.getShipmentId(), TaskType.RETURN_TO_HUB)
                         .ifPresent(carry -> {
+                            if (carry.getStatus() == TaskStatus.COMPLETED) {
+                                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                                        "Cannot reattempt a delivery after it was returned to the hub");
+                            }
                             carry.setStatus(TaskStatus.CANCELLED);
                             queueRepository.save(carry);
                         });

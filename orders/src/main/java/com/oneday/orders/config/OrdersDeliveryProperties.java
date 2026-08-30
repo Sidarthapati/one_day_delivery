@@ -14,8 +14,8 @@ import java.time.LocalTime;
  *     last-mile-window-minutes: 120   # dest hub → door
  *     hub-processing-minutes: 60      # landing → sorted for delivery
  *     same-day-cutoff: "18:00"        # latest a same-day delivery can still land (Shift-2 end)
- *     confirmation-ttl-minutes: 720   # how long the accept/reject link stays live
- *     landing-base-url: "https://godspeed-customer.vercel.app"
+ *     confirmation-ttl-minutes: 360   # how long the accept/reject link stays live
+ *     customer-landing-base-url: ${CUSTOMER_LANDING_BASE_URL}  # per-env, never baked in code
  *     zone: Asia/Kolkata
  * }</pre>
  */
@@ -30,9 +30,10 @@ public class OrdersDeliveryProperties {
     /** Latest wall-clock a parcel can still be delivered same-day (≈ Shift-2 end). */
     private LocalTime sameDayCutoff = LocalTime.of(18, 0);
     /** How long the receiver's no-login accept/reject link stays valid. */
-    private int confirmationTtlMinutes = 720;
-    /** Base URL of the customer web app hosting the no-login landing page. */
-    private String landingBaseUrl = "https://godspeed-customer.vercel.app";
+    private int confirmationTtlMinutes = 360;
+    /** Base URL of the customer app hosting the accept/reject landing page. Sourced per-environment
+     *  (env {@code CUSTOMER_LANDING_BASE_URL}) — never a prod URL baked in code. */
+    private String customerLandingBaseUrl;
     /** Time zone the same-day cutoff and today/next-day framing are evaluated in. */
     private String zone = "Asia/Kolkata";
 
@@ -44,8 +45,8 @@ public class OrdersDeliveryProperties {
     public void setSameDayCutoff(LocalTime v) { this.sameDayCutoff = v; }
     public int getConfirmationTtlMinutes() { return confirmationTtlMinutes; }
     public void setConfirmationTtlMinutes(int v) { this.confirmationTtlMinutes = v; }
-    public String getLandingBaseUrl() { return landingBaseUrl; }
-    public void setLandingBaseUrl(String v) { this.landingBaseUrl = v; }
+    public String getCustomerLandingBaseUrl() { return customerLandingBaseUrl; }
+    public void setCustomerLandingBaseUrl(String v) { this.customerLandingBaseUrl = v; }
     public String getZone() { return zone; }
     public void setZone(String v) { this.zone = v; }
 }

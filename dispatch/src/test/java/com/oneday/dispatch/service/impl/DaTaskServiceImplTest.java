@@ -271,6 +271,48 @@ class DaTaskServiceImplTest {
     }
 
     @Test
+    void reattemptAfterCarryBackCompletedIsRejected() {
+        // Once the parcel is back at the hub (carry-back COMPLETED), a reattempt is invalid → 409.
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+        service.markFailed(da, delivery.getId(), "customer not home");
+        DispatchQueue carry = carryBackFor(delivery.getShipmentId());
+        service.recordReturnedToHub(da, carry.getId());   // carry-back → COMPLETED
+
+        assertThatThrownBy(() -> service.reattempt(da, delivery.getId()))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("returned to the hub");
+    }
+
+    @Test
+    void recallForRescheduleCancelsInHandDeliveryAndSpawnsCarryBack() {
+        // Receiver reject while the parcel is out for last-mile → recall it (carry-back), no DROP_FAILED.
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+
+        boolean recalled = service.recallDeliveryForReschedule(delivery.getShipmentId());
+
+        assertThat(recalled).isTrue();
+        assertThat(reload(delivery).getStatus()).isEqualTo(TaskStatus.CANCELLED);
+        assertThat(carryBackFor(delivery.getShipmentId())).isNotNull();
+        verifyNoInteractions(events);   // a reject is not a door failure — no DROP_FAILED
+    }
+
+    @Test
+    void recallForRescheduleCancelsQueuedDeliveryWithoutCarryBack() {
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
+
+        boolean recalled = service.recallDeliveryForReschedule(delivery.getShipmentId());
+
+        assertThat(recalled).isTrue();
+        assertThat(reload(delivery).getStatus()).isEqualTo(TaskStatus.CANCELLED);
+        assertThat(carryBackFor(delivery.getShipmentId())).isNull();   // never collected → nothing to carry
+    }
+
+    @Test
+    void recallForRescheduleNoOpsWhenNoLiveDelivery() {
+        assertThat(service.recallDeliveryForReschedule(UUID.randomUUID())).isFalse();
+    }
+
+    @Test
     void returnedToHubCompletesAndEmitsHubReturnScan() {
         DispatchQueue carry = persist(TaskType.RETURN_TO_HUB, TaskStatus.QUEUED);
         service.recordReturnedToHub(da, carry.getId());

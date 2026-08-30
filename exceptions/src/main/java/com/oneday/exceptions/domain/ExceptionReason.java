@@ -9,6 +9,8 @@ public enum ExceptionReason {
     CUSTOMER_UNAVAILABLE,
     ADDRESS_INCORRECT,
     CUSTOMER_REFUSED,
+    /** Receiver proactively declined today's delivery via the accept/reject prompt (not a door refusal). */
+    CUSTOMER_REJECTED,
     COD_NOT_READY,
     DA_NO_SHOW,
     CRON_MISSED,
@@ -33,7 +35,8 @@ public enum ExceptionReason {
             case "PICKUP_FAILED", "DROP_FAILED", "DELIVERY_FAILED" -> OTHER; // a bare failure, no reason given
             case "NOT_AVAILABLE", "CUSTOMER_NOT_AVAILABLE", "NO_ONE_HOME" -> CUSTOMER_UNAVAILABLE;
             case "WRONG_ADDRESS", "BAD_ADDRESS", "ADDRESS_NOT_FOUND" -> ADDRESS_INCORRECT;
-            case "REFUSED", "REJECTED" -> CUSTOMER_REFUSED;
+            case "REFUSED" -> CUSTOMER_REFUSED;
+            case "REJECTED", "RECEIVER_REJECTED" -> CUSTOMER_REJECTED;
             case "COD_NOT_PAID", "NO_CASH" -> COD_NOT_READY;
             case "DAMAGED", "DAMAGE" -> PARCEL_DAMAGED;
             default -> OTHER;

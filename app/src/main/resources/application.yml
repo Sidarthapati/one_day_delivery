@@ -181,6 +181,10 @@ consolidator:
 orders:
   otp:
     ttl-minutes: 120
+  # Receiver accept/reject landing page (no-login). The base URL is per-environment via the
+  # CUSTOMER_LANDING_BASE_URL env var; the localhost default is a dev fallback only — never a prod URL.
+  delivery:
+    customer-landing-base-url: ${CUSTOMER_LANDING_BASE_URL:http://localhost:3000}
 
 # Live tracking (M4). Per-city hub + airport coordinates for the static-node fallbacks and the
 # route line; keyed by IATA code (the catalog also accepts DELHI/MUMBAI/... forms). Coordinates are

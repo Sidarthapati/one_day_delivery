@@ -105,7 +105,7 @@ class ReturnServiceImplTest {
 
     @Test
     void mintsAReversedChildUnderTheSameOrder() {
-        when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(original(CustomerType.B2C, null)));
+        when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(original(CustomerType.B2C, null)));
 
         ReturnService.ReturnResult r = service.initiateReturn(originalId, ReturnReason.ATTEMPTS_EXHAUSTED, ctx);
 
@@ -126,7 +126,7 @@ class ReturnServiceImplTest {
 
     @Test
     void birthWritesHistoryAndMovesOriginalToRtoInitiated() {
-        when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(original(CustomerType.B2C, null)));
+        when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(original(CustomerType.B2C, null)));
 
         service.initiateReturn(originalId, ReturnReason.ATTEMPTS_EXHAUSTED, ctx);
 
@@ -145,7 +145,7 @@ class ReturnServiceImplTest {
         acct.setCreditLimitPaise(6000L);              // already near the limit
         acct.setRateCardId(UUID.randomUUID());
         when(accountRepo.findByIdForUpdate(acctId)).thenReturn(Optional.of(acct));
-        when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(original(CustomerType.B2B, acctId)));
+        when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(original(CustomerType.B2B, acctId)));
 
         service.initiateReturn(originalId, ReturnReason.ATTEMPTS_EXHAUSTED, ctx);
 
@@ -160,7 +160,7 @@ class ReturnServiceImplTest {
         orig.setReturnShipmentId(childId);
         Shipment existing = new Shipment();
         existing.setShipmentRef("1DD-DEL-20260828-00001_R");
-        when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(orig));
+        when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(orig));
         when(shipmentRepo.findById(childId)).thenReturn(Optional.of(existing));
 
         ReturnService.ReturnResult r = service.initiateReturn(originalId, ReturnReason.ATTEMPTS_EXHAUSTED, ctx);

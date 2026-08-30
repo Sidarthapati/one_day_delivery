@@ -54,8 +54,10 @@ class DeliveryConfirmationServiceImplTest {
         confirmationRepo = mock(DeliveryConfirmationRepository.class);
         notificationPort = mock(NotificationPort.class);
         eventPublisher = mock(EventPublisher.class);
+        OrdersDeliveryProperties props = new OrdersDeliveryProperties();
+        props.setCustomerLandingBaseUrl("http://localhost:3000");
         service = new DeliveryConfirmationServiceImpl(shipmentRepo, orderRepo, confirmationRepo,
-                notificationPort, eventPublisher, new OrdersDeliveryProperties());
+                notificationPort, eventPublisher, props);
     }
 
     private Shipment shipmentWithEmail(String email) {
