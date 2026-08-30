@@ -10,10 +10,16 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 class MerchantCategoryServiceImpl implements MerchantCategoryService {
+
+    /** Names the analytics category breakdown generates ("Uncategorised" = untagged, "Other" = the tail
+     *  past the top few). A merchant category can't take either, or it would collide with those buckets. */
+    private static final Set<String> RESERVED_NAMES = Set.of("uncategorised", "other");
 
     private final MerchantCategoryRepository repository;
 
@@ -33,6 +39,7 @@ class MerchantCategoryServiceImpl implements MerchantCategoryService {
     @Transactional
     public MerchantCategoryResponse create(UUID accountId, MerchantCategoryRequest request) {
         String name = request.getName().trim();
+        requireNotReserved(name);
         requireUnique(accountId, name);
         MerchantCategory entity = new MerchantCategory();
         entity.setB2bAccountId(accountId);
@@ -47,6 +54,7 @@ class MerchantCategoryServiceImpl implements MerchantCategoryService {
                 .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + categoryId));
         String name = request.getName().trim();
         if (!name.equalsIgnoreCase(entity.getName())) {
+            requireNotReserved(name);
             requireUnique(accountId, name);
         }
         entity.setName(name);
@@ -67,6 +75,12 @@ class MerchantCategoryServiceImpl implements MerchantCategoryService {
     private void requireUnique(UUID accountId, String name) {
         if (repository.existsByB2bAccountIdAndNameIgnoreCaseAndArchivedAtIsNull(accountId, name)) {
             throw new DuplicateCategoryException("Category already exists: " + name);
+        }
+    }
+
+    private void requireNotReserved(String name) {
+        if (RESERVED_NAMES.contains(name.toLowerCase(Locale.ROOT))) {
+            throw new DuplicateCategoryException("\"" + name + "\" is reserved — please choose another name.");
         }
     }
 }
