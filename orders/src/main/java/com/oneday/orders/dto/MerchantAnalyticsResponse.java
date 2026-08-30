@@ -15,6 +15,7 @@ import java.util.List;
  * @param cancelled         cancelled shipments
  * @param rto               returned-to-origin (initiated, in transit, or completed)
  * @param deliveryRatePct   delivered ÷ (total − cancelled), or null if nothing to rate
+ * @param rtoRatePct        returned-to-origin ÷ (total − cancelled), or null if nothing to rate
  * @param onTimePct         delivered on/before promised ETA ÷ delivered-with-ETA, or null if none
  * @param gmvPaise          total shipping charged, in paise
  * @param codValuePaise     total COD goods-value handled, in paise
@@ -30,6 +31,7 @@ public record MerchantAnalyticsResponse(
         long cancelled,
         long rto,
         Integer deliveryRatePct,
+        Integer rtoRatePct,
         Integer onTimePct,
         long gmvPaise,
         long codValuePaise,

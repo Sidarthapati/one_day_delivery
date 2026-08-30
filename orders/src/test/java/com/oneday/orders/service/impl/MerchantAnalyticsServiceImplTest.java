@@ -120,6 +120,8 @@ class MerchantAnalyticsServiceImplTest {
         assertThat(r.rto()).isEqualTo(1);
         // delivery rate = delivered / (total - cancelled) = 10/14 = 71%
         assertThat(r.deliveryRatePct()).isEqualTo(71);
+        // RTO rate = rto / (total - cancelled) = 1/14 = 7%
+        assertThat(r.rtoRatePct()).isEqualTo(7);
         // on-time = 9/10 = 90%
         assertThat(r.onTimePct()).isEqualTo(90);
         assertThat(r.gmvPaise()).isEqualTo(1_600_000);
@@ -160,6 +162,7 @@ class MerchantAnalyticsServiceImplTest {
         assertThat(r.totalShipments()).isEqualTo(4);
         assertThat(r.cancelled()).isEqualTo(4);
         assertThat(r.deliveryRatePct()).isNull(); // total - cancelled = 0 → not rateable
+        assertThat(r.rtoRatePct()).isNull();
     }
 
     @Test

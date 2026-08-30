@@ -75,6 +75,8 @@ class MerchantAnalyticsServiceImpl implements MerchantAnalyticsService {
 
         long rateable = total - cancelled; // a cancelled parcel was never a delivery attempt
         Integer deliveryRatePct = rateable > 0 ? Math.round(delivered * 100f / rateable) : null;
+        // RTO rate over the same base: of the parcels we actually attempted, what share came back.
+        Integer rtoRatePct = rateable > 0 ? Math.round(rto * 100f / rateable) : null;
 
         AccountTotals totals = shipments.sumTotalsForAccount(accountId, since);
         long gmv = totals == null ? 0 : totals.getGmvPaise();
@@ -93,7 +95,7 @@ class MerchantAnalyticsServiceImpl implements MerchantAnalyticsService {
         List<CategoryCount> categorySplit = categorySplit(accountId, since);
 
         return new MerchantAnalyticsResponse(windowDays, total, delivered, inTransit, cancelled, rto,
-                deliveryRatePct, onTimePct, gmv, cod, avg, dests, categorySplit);
+                deliveryRatePct, rtoRatePct, onTimePct, gmv, cod, avg, dests, categorySplit);
     }
 
     /**
