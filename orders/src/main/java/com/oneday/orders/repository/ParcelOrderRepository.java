@@ -47,4 +47,16 @@ public interface ParcelOrderRepository extends JpaRepository<ParcelOrder, UUID> 
     @Query("UPDATE ParcelOrder o SET o.parcelCount = o.parcelCount + 1, "
             + "o.totalPricePaise = o.totalPricePaise + :amountPaise WHERE o.id = :id")
     int addShipment(@Param("id") UUID id, @Param("amountPaise") long amountPaise);
+
+    /**
+     * Reverse the rollup when a shipment is removed/cancelled from an order. Guarded on
+     * {@code parcel_count > 0} so the count can never go negative under concurrent cancels; the price
+     * total is floored at 0 for the same reason. Symmetric with {@link #addShipment}.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE ParcelOrder o SET o.parcelCount = o.parcelCount - 1, "
+            + "o.totalPricePaise = CASE WHEN o.totalPricePaise > :amountPaise "
+            + "THEN o.totalPricePaise - :amountPaise ELSE 0 END "
+            + "WHERE o.id = :id AND o.parcelCount > 0")
+    int removeShipment(@Param("id") UUID id, @Param("amountPaise") long amountPaise);
 }

@@ -7,6 +7,8 @@ import com.oneday.orders.service.BulkUploadService;
 import com.oneday.orders.service.CancellationService;
 import com.oneday.orders.service.CartService;
 import com.oneday.orders.service.MerchantCategoryService;
+import com.oneday.orders.service.OrderCapacityService;
+import com.oneday.orders.service.OrderRepairService;
 import com.oneday.orders.service.PaymentPort;
 import com.oneday.orders.service.WalletService;
 import com.oneday.orders.service.PickupSlotFullException;
@@ -140,6 +142,22 @@ class OrdersGlobalExceptionHandler {
     ProblemDetail handlePickupSlotFull(PickupSlotFullException ex) {
         ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
         pd.setTitle("Pickup slot full");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(OrderCapacityService.DaCapacityExceededException.class)
+    ProblemDetail handleDaCapacityExceeded(OrderCapacityService.DaCapacityExceededException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("Delivery associate at capacity");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
+    @ExceptionHandler(OrderRepairService.OrderNotEditableException.class)
+    ProblemDetail handleOrderNotEditable(OrderRepairService.OrderNotEditableException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        pd.setTitle("Order not editable");
         pd.setDetail(ex.getMessage());
         return pd;
     }
