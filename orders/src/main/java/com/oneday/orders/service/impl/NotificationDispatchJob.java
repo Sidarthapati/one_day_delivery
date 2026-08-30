@@ -7,6 +7,7 @@ import com.oneday.orders.domain.NotificationStatus;
 import com.oneday.orders.repository.NotificationLogRepository;
 import com.oneday.orders.service.EmailSender;
 import com.oneday.orders.service.SmsSender;
+import com.oneday.orders.service.WhatsAppSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -33,13 +34,15 @@ class NotificationDispatchJob {
     private final NotificationLogRepository repository;
     private final EmailSender emailSender;
     private final SmsSender smsSender;
+    private final WhatsAppSender whatsAppSender;
     private final NotifyProperties props;
 
     NotificationDispatchJob(NotificationLogRepository repository, EmailSender emailSender,
-                            SmsSender smsSender, NotifyProperties props) {
+                            SmsSender smsSender, WhatsAppSender whatsAppSender, NotifyProperties props) {
         this.repository = repository;
         this.emailSender = emailSender;
         this.smsSender = smsSender;
+        this.whatsAppSender = whatsAppSender;
         this.props = props;
     }
 
@@ -54,10 +57,10 @@ class NotificationDispatchJob {
         for (NotificationLog row : batch) {
             row.setAttempts(row.getAttempts() + 1);
             try {
-                if (row.getChannel() == NotificationChannel.EMAIL) {
-                    emailSender.send(row.getRecipient(), row.getSubject(), row.getBody());
-                } else {
-                    smsSender.send(row.getRecipient(), row.getBody());
+                switch (row.getChannel()) {
+                    case EMAIL -> emailSender.send(row.getRecipient(), row.getSubject(), row.getBody());
+                    case SMS -> smsSender.send(row.getRecipient(), row.getBody());
+                    case WHATSAPP -> whatsAppSender.send(row.getRecipient(), row.getBody());
                 }
                 row.setStatus(NotificationStatus.SENT);
                 row.setSentAt(Instant.now());

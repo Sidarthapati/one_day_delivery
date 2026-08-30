@@ -15,12 +15,14 @@ public class NotifyProperties {
 
     private final Sms sms = new Sms();
     private final Email email = new Email();
+    private final WhatsApp whatsapp = new WhatsApp();
 
     /** How many delivery attempts the outbox drain makes before leaving a row FAILED. */
     private int maxAttempts = 3;
 
     public Sms getSms() { return sms; }
     public Email getEmail() { return email; }
+    public WhatsApp getWhatsapp() { return whatsapp; }
     public int getMaxAttempts() { return maxAttempts; }
     // Clamp to >= 1: a zero/negative cap would make the drain query (attempts < max) exclude every
     // new row, stranding notifications PENDING forever.
@@ -42,6 +44,30 @@ public class NotifyProperties {
         public void setMsg91SenderId(String v) { this.msg91SenderId = v; }
         public String getMsg91TemplateId() { return msg91TemplateId; }
         public void setMsg91TemplateId(String v) { this.msg91TemplateId = v; }
+    }
+
+    public static class WhatsApp {
+        /** log | meta */
+        private String provider = "log";
+        /** Meta WhatsApp Cloud API phone-number id (the sending number). */
+        private String phoneNumberId = "";
+        /** Meta system-user / app access token. Env only — never committed. */
+        private String accessToken = "";
+        /** Token Meta echoes back on the webhook verify (GET) handshake — used by the inbound seam. */
+        private String verifyToken = "";
+        /** App secret for verifying inbound webhook signatures (X-Hub-Signature-256). */
+        private String appSecret = "";
+
+        public String getProvider() { return provider; }
+        public void setProvider(String v) { this.provider = v; }
+        public String getPhoneNumberId() { return phoneNumberId; }
+        public void setPhoneNumberId(String v) { this.phoneNumberId = v; }
+        public String getAccessToken() { return accessToken; }
+        public void setAccessToken(String v) { this.accessToken = v; }
+        public String getVerifyToken() { return verifyToken; }
+        public void setVerifyToken(String v) { this.verifyToken = v; }
+        public String getAppSecret() { return appSecret; }
+        public void setAppSecret(String v) { this.appSecret = v; }
     }
 
     public static class Email {
