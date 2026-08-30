@@ -45,4 +45,10 @@ class OrderServiceImpl implements OrderService {
     public void addShipment(UUID orderId, long shipmentTotalPaise) {
         parcelOrderRepository.addShipment(orderId, shipmentTotalPaise);
     }
+
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void removeShipment(UUID orderId, long shipmentTotalPaise) {
+        parcelOrderRepository.removeShipment(orderId, shipmentTotalPaise);
+    }
 }

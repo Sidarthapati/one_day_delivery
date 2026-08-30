@@ -49,6 +49,7 @@ class CancellationServiceImpl implements CancellationService {
     private final ShipmentStateMachine stateMachine;
     private final PaymentPort paymentPort;
     private final com.oneday.orders.service.WalletService walletService;
+    private final com.oneday.orders.service.OrderService orderService;
     private final ApplicationEventPublisher events;
 
     CancellationServiceImpl(ShipmentRepository shipmentRepository,
@@ -58,6 +59,7 @@ class CancellationServiceImpl implements CancellationService {
                             ShipmentStateMachine stateMachine,
                             PaymentPort paymentPort,
                             com.oneday.orders.service.WalletService walletService,
+                            com.oneday.orders.service.OrderService orderService,
                             ApplicationEventPublisher events) {
         this.shipmentRepository = shipmentRepository;
         this.paymentTransactionRepository = paymentTransactionRepository;
@@ -66,6 +68,7 @@ class CancellationServiceImpl implements CancellationService {
         this.stateMachine = stateMachine;
         this.paymentPort = paymentPort;
         this.walletService = walletService;
+        this.orderService = orderService;
         this.events = events;
     }
 
@@ -161,6 +164,13 @@ class CancellationServiceImpl implements CancellationService {
         shipment.setCancelledAt(Instant.now());
         shipment.setCancellationReason(reason);
         shipmentRepository.save(shipment);
+
+        // Back the cancelled shipment out of its parent order's rollup so parcel_count / total always
+        // reflect the live children (order-repair "remove" is just a cancel from the order's view). Same
+        // transaction as the cancel — count/total can never drift from the shipments that remain.
+        if (shipment.getOrderId() != null) {
+            orderService.removeShipment(shipment.getOrderId(), shipment.getTotalPricePaise());
+        }
 
         // Rich CANCELLED event (reason + refund) — mapped to Kafka AFTER_COMMIT.
         events.publishEvent(new ShipmentCancelled(

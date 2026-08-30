@@ -27,5 +27,12 @@ public interface OrderService {
     /** Atomically folds one booked shipment into the order rollup (count + 1, total += amount). */
     void addShipment(UUID orderId, long shipmentTotalPaise);
 
+    /**
+     * Atomically backs one removed/cancelled shipment out of the order rollup (count − 1, total −= amount,
+     * both floored at 0). Called when a shipment is cancelled so the parent order's parcel count and total
+     * always reflect its live children. Must run inside the cancelling transaction.
+     */
+    void removeShipment(UUID orderId, long shipmentTotalPaise);
+
     record CreatedOrder(UUID id, String orderRef) {}
 }
