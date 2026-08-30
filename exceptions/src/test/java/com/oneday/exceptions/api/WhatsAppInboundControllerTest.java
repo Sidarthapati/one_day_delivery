@@ -41,10 +41,12 @@ class WhatsAppInboundControllerTest {
     }
 
     @Test
-    void receiveAcceptsWhenNoAppSecretConfigured() {
-        var c = new WhatsAppInboundController(mapper, "t", ""); // stub mode — signature not checked
+    void receiveRejectsWhenNoAppSecretConfigured() {
+        // Public endpoint: with no secret we can't verify authenticity, so an unsigned POST is rejected
+        // rather than trusted — nobody can push forged inbound messages until the account is connected.
+        var c = new WhatsAppInboundController(mapper, "t", "");
         assertThat(c.receive(null, PAYLOAD.getBytes(StandardCharsets.UTF_8)).getStatusCode())
-                .isEqualTo(HttpStatus.OK);
+                .isEqualTo(HttpStatus.FORBIDDEN);
     }
 
     @Test

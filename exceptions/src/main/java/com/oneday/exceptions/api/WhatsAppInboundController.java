@@ -33,7 +33,9 @@ import java.util.HexFormat;
  * is the receiving seam, not a validated integration.
  *
  * <p>Public (no JWT) because Meta calls it unauthenticated — authenticity comes from the signature, not
- * a bearer token. Always answers 200 on POST so Meta doesn't retry-storm; a bad signature is 403.
+ * a bearer token. Because the path is public, an <b>unverifiable</b> POST is rejected: until an app
+ * secret is configured (no BSP account yet) every POST is 403, so nobody can push forged inbound
+ * messages. Once configured, a valid signature 200s and a bad one 403s.
  */
 @RestController
 @RequestMapping("/webhooks/whatsapp")
@@ -72,8 +74,11 @@ class WhatsAppInboundController {
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<Void> receive(@RequestHeader(name = "X-Hub-Signature-256", required = false) String signature,
                                  @RequestBody byte[] rawBody) {
-        if (!appSecret.isBlank() && !signatureValid(signature, rawBody)) {
-            log.warn("[whatsapp:inbound] rejected — bad or missing X-Hub-Signature-256");
+        // Reject anything we can't authenticate. No app secret configured → we can't verify → don't trust
+        // it (the path is public). A configured secret with a bad/missing signature is likewise rejected.
+        if (appSecret.isBlank() || !signatureValid(signature, rawBody)) {
+            log.warn("[whatsapp:inbound] rejected — unverifiable (app secret configured={}, signature present={})",
+                    !appSecret.isBlank(), signature != null);
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         try {
@@ -91,12 +96,22 @@ class WhatsAppInboundController {
             for (JsonNode change : entry.path("changes")) {
                 for (JsonNode msg : change.path("value").path("messages")) {
                     String from = msg.path("from").asText(null);
-                    String text = msg.path("text").path("body").asText("");
-                    // TODO(#182): resolve `from` → open support ticket and append as a customer message.
-                    log.info("[whatsapp:inbound] from={} text={} — logged only (ticket routing deferred)", from, text);
+                    int len = msg.path("text").path("body").asText("").length();
+                    // Don't log PII in plaintext — mask the number, and log only the message length, not the
+                    // body. TODO(#182): resolve `from` → open support ticket and append as a customer message.
+                    log.info("[whatsapp:inbound] from={} chars={} — received (ticket routing deferred)",
+                            maskPhone(from), len);
                 }
             }
         }
+    }
+
+    /** Mask a phone number for logs — keep only the last 4 digits ("…6789"), never the whole number. */
+    private static String maskPhone(String phone) {
+        if (phone == null || phone.length() <= 4) {
+            return "…";
+        }
+        return "…" + phone.substring(phone.length() - 4);
     }
 
     /** Constant-time compare of the HMAC-SHA256 of the raw body against the "sha256=" header. */
