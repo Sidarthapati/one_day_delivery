@@ -263,4 +263,14 @@ public class Shipment extends MutableBaseEntity {
     // existed (and for any caller whose id is not a UUID, e.g. test fixtures).
     @Column(name = "booked_by_user_id", updatable = false)
     private UUID bookedByUserId;
+
+    // ── Return linkage (return framework) ─────────────────────────────────
+    // A return is a NEW child shipment (<ref>_R) under the same order with reversed geography.
+    // Set on the CHILD, points to the original it returns (born-with, immutable).
+    @Column(name = "return_of_shipment_id", updatable = false)
+    private UUID returnOfShipmentId;
+
+    // Set on the ORIGINAL when a return child is spawned (mutable — populated later).
+    @Column(name = "return_shipment_id")
+    private UUID returnShipmentId;
 }

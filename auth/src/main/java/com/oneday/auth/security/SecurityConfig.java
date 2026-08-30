@@ -106,6 +106,8 @@ public class SecurityConfig {
                         // Public "Talk to sales" capture + white-label shipment tracking (token-scoped).
                         .requestMatchers(HttpMethod.POST, "/api/sales/leads").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()
+                        // No-login receiver delivery accept/reject — the opaque link token is the capability.
+                        .requestMatchers("/public/**").permitAll()
                         .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
                         // Security disclosure (RFC 9116) — must be publicly fetchable.
                         .requestMatchers("/.well-known/**").permitAll()

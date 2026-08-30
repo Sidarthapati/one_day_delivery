@@ -6,6 +6,7 @@ import com.oneday.common.kafka.events.BaseShipmentEvent;
 import com.oneday.common.kafka.events.ShipmentCancelledEvent;
 import com.oneday.common.kafka.events.ShipmentCreatedEvent;
 import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
+import com.oneday.dispatch.domain.DeferReason;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.AssignmentResult;
@@ -17,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
@@ -46,15 +48,18 @@ public class ShipmentEventsConsumer {
     private final DispatchQueueRepository queueRepository;
     private final GridService gridService;
     private final com.oneday.dispatch.service.ScheduledPickupService scheduledPickupService;
+    private final com.oneday.dispatch.config.DispatchProperties props;
 
     public ShipmentEventsConsumer(DispatchService dispatchService,
                                   DispatchQueueRepository queueRepository,
                                   GridService gridService,
-                                  com.oneday.dispatch.service.ScheduledPickupService scheduledPickupService) {
+                                  com.oneday.dispatch.service.ScheduledPickupService scheduledPickupService,
+                                  com.oneday.dispatch.config.DispatchProperties props) {
         this.dispatchService = dispatchService;
         this.queueRepository = queueRepository;
         this.gridService = gridService;
         this.scheduledPickupService = scheduledPickupService;
+        this.props = props;
     }
 
     @RabbitListener(queues = DispatchMessagingTopology.SHIPMENTS_QUEUE)
@@ -143,9 +148,16 @@ public class ShipmentEventsConsumer {
      * task (e.g. the demo assigned it synchronously) is skipped on redelivery.
      */
     private void handleStateChanged(ShipmentStateChangedEvent event) {
-        if (event.getToState() != ShipmentState.HANDED_TO_DROP_VAN) {
-            return;
+        ShipmentState to = event.getToState();
+        if (to == ShipmentState.HANDED_TO_DROP_VAN) {
+            handleDeliveryAssign(event);
+        } else if (to == ShipmentState.DROP_ASSIGNED) {
+            handleDeliveryReschedule(event);
         }
+    }
+
+    /** M4 HANDED_TO_DROP_VAN (delivery assignment / M11 REASSIGN_DELIVERY) → assign a delivery task now. */
+    private void handleDeliveryAssign(ShipmentStateChangedEvent event) {
         UUID shipmentId = event.getShipmentId();
         if (event.getDropType() != null && event.getDropType() != com.oneday.common.domain.enums.DropType.DA_DELIVERY) {
             return;   // SELF_COLLECT etc. — no DA leg
@@ -170,6 +182,35 @@ public class ShipmentEventsConsumer {
         AssignmentResult result = dispatchService.assignDelivery(shipmentId, loc.cityId(), lat, lon, tileId,
                 event.getOrderId(), event.getOrderRef());
         log.debug("Delivery assignment for shipment {}: {}", shipmentId, result.outcome());
+    }
+
+    /**
+     * M4 DROP_ASSIGNED reached from an ops delivery reschedule (M11 RESCHEDULE_DELIVERY: DELIVERY_FAILED
+     * → DROP_ASSIGNED) — a shipment whose last delivery FAILED and now has no active DELIVERY task. Park
+     * it for next-day redelivery (any shift) instead of the old dead-end. The DROP_ASSIGNED that echoes
+     * back from a normal assignment still has its active task → the deferral is a no-op there.
+     */
+    private void handleDeliveryReschedule(ShipmentStateChangedEvent event) {
+        UUID shipmentId = event.getShipmentId();
+        if (queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.DELIVERY).isPresent()) {
+            return;   // normal assignment echo — a live delivery task already exists
+        }
+        Double lat = event.getDestLat();
+        Double lon = event.getDestLon();
+        if (lat == null || lon == null) {
+            log.debug("Shipment {} DROP_ASSIGNED reschedule without dest coordinates — skipping redelivery park",
+                    shipmentId);
+            return;
+        }
+        ServiceableAtResponse loc = gridService.serviceableAt(lat, lon);
+        if (loc == null || loc.cityId() == null) {
+            log.error("Shipment {} reschedule drop point ({},{}) outside every grid — cannot re-park", shipmentId, lat, lon);
+            return;
+        }
+        UUID tileId = event.getDestTileId() != null ? event.getDestTileId() : loc.hexId();
+        LocalDate tomorrow = LocalDate.now(java.time.ZoneId.of(props.getShift().getZone())).plusDays(1);
+        dispatchService.deferDeliveryForRetry(shipmentId, loc.cityId(), tileId, lat, lon,
+                event.getOrderId(), event.getOrderRef(), tomorrow, null, DeferReason.DELIVERY_FAILED);
     }
 
     /**

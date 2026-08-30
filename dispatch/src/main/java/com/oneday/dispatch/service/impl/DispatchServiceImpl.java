@@ -183,6 +183,14 @@ class DispatchServiceImpl implements DispatchService {
         if (!"PENDING".equals(deferred.getStatus())) {
             return AssignmentResult.deferred(deferredId, deferred.getDeferReason());
         }
+        // Hold while the parcel is still being carried back: a recall-for-reschedule spawns a
+        // RETURN_TO_HUB, and we must not assign a new delivery before it lands at the hub. Only an
+        // in-flight (QUEUED/IN_PROGRESS) carry-back holds — a COMPLETED one means it's back, so proceed.
+        if (queueRepository.findActiveByShipmentIdAndTaskType(deferred.getShipmentId(), TaskType.RETURN_TO_HUB)
+                .filter(t -> t.getStatus() == TaskStatus.QUEUED || t.getStatus() == TaskStatus.IN_PROGRESS)
+                .isPresent()) {
+            return AssignmentResult.deferred(deferredId, deferred.getDeferReason());
+        }
         // paymentMode is not carried on the deferred row → null on retry (COD prioritisation is later).
         AssignmentResult result = assign(new Request(deferred.getShipmentId(), deferred.getCityId(),
                 deferred.getTaskType(), deferred.getTaskLat(), deferred.getTaskLon(),
@@ -392,6 +400,38 @@ class DispatchServiceImpl implements DispatchService {
         deferredRepository.save(deferred);
         metrics.assignment(result.get().outcome(), deferred.getCityId());
         return result.get();
+    }
+
+    @Override
+    @Transactional
+    public void deferDeliveryForRetry(UUID shipmentId, UUID cityId, UUID tileId, double lat, double lon,
+                                      UUID orderId, String orderRef, LocalDate targetDate, String targetShift,
+                                      DeferReason reason) {
+        // Idempotent: skip if the delivery is already live or already parked for retry.
+        if (queueRepository.findActiveByShipmentIdAndTaskType(shipmentId, TaskType.DELIVERY).isPresent()) {
+            log.debug("Shipment {} still has an active DELIVERY task — not deferring for retry", shipmentId);
+            return;
+        }
+        if (!deferredRepository.findByShipmentIdAndTaskTypeAndStatus(shipmentId, TaskType.DELIVERY, "PENDING").isEmpty()) {
+            log.debug("Shipment {} already has a PENDING delivery deferral — not re-parking", shipmentId);
+            return;
+        }
+        DeferredDispatch d = new DeferredDispatch();
+        d.setCityId(cityId);
+        d.setShipmentId(shipmentId);
+        d.setOrderId(orderId);
+        d.setOrderRef(orderRef);
+        d.setTaskType(TaskType.DELIVERY);
+        d.setTileId(tileId);
+        d.setTaskLat(lat);
+        d.setTaskLon(lon);
+        d.setDeferReason(reason);
+        d.setStatus("PENDING");
+        d.setOperatingDate(targetDate);
+        d.setTargetShift(targetShift);
+        deferredRepository.save(d);
+        log.info("Parked delivery of shipment {} for redelivery on {} shift {} ({})",
+                shipmentId, targetDate, targetShift, reason);
     }
 
     @Override

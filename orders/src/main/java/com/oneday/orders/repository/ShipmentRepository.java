@@ -45,6 +45,9 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
 
     Optional<Shipment> findByTrackToken(String trackToken);
 
+    /** The return child (<ref>_R) spawned for an original shipment, if one exists (idempotency guard). */
+    Optional<Shipment> findByReturnOfShipmentId(UUID originalShipmentId);
+
     /** Unbounded list — use only when result set is known to be small (e.g. admin tooling). */
     List<Shipment> findByState(ShipmentState state);
 

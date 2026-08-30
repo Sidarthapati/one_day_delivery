@@ -147,7 +147,7 @@ class ExceptionCaseServiceImpl implements ExceptionCaseService {
         }
         ExceptionCase c = live.get();
         switch (toState) {
-            case RTO_INITIATED, RTO_IN_TRANSIT -> {
+            case RTO_INITIATED -> {
                 c.setStatus(ExceptionStatus.RTO);
                 c.setDisposition(Disposition.RETURNED);
                 caseRepo.save(c);

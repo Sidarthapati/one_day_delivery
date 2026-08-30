@@ -12,4 +12,5 @@ public enum ScanEventType {
     HUB_DEST_OUT,           // HUB_RETURN: DA collected a dest parcel from the hub for last-mile (ledger only)
     DA_CUSTODY_TRANSFER,    // midday absence: covering DA collected an in-custody parcel from the absent DA (ledger only)
     DELIVERED,              // DA delivered the box (custody fact only, Option A — DROPPED stays OTP-owned)
+    HUB_RETURN_IN,          // delivery-failure carry-back: DA scanned an in-hand parcel back in at the hub (dock-receive)
 }

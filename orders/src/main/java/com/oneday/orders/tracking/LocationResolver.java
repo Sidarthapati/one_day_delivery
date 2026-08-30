@@ -78,9 +78,9 @@ public class LocationResolver {
             case DISPATCHED_TO_AIRPORT, DISPATCHED_TO_HUB -> LocationKind.MOVING_SHUTTLE;
             case AT_ORIGIN_HUB, ORIGIN_HUB_PROCESSING, IN_TAKEOFF_BAG,
                  AT_DEST_HUB, DEST_HUB_PROCESSING, AWAITING_HUB_COLLECT,
-                 DELIVERY_FAILED, RTO_INITIATED -> LocationKind.STATIONARY_HUB;
+                 DELIVERY_FAILED, RTO_INITIATED, HELD_AT_HUB -> LocationKind.STATIONARY_HUB;
             case AT_AIRPORT, LANDED -> LocationKind.STATIONARY_AIRPORT;
-            case DEPARTED, RTO_IN_TRANSIT -> LocationKind.ON_FLIGHT;
+            case DEPARTED -> LocationKind.ON_FLIGHT;
             case DROPPED, HUB_COLLECTED, RTO_COMPLETED -> LocationKind.DELIVERED;
         };
     }

@@ -33,7 +33,8 @@ class MerchantAnalyticsServiceImpl implements MerchantAnalyticsService {
     private static final Set<ShipmentState> DELIVERED =
             EnumSet.of(ShipmentState.DROPPED, ShipmentState.HUB_COLLECTED);
     private static final Set<ShipmentState> RTO =
-            EnumSet.of(ShipmentState.RTO_INITIATED, ShipmentState.RTO_IN_TRANSIT, ShipmentState.RTO_COMPLETED);
+            EnumSet.of(ShipmentState.RTO_INITIATED, ShipmentState.RTO_COMPLETED,
+                    ShipmentState.HELD_AT_HUB);
     /** Busiest few destinations are enough for the dashboard; there are only 5 serviceable cities today. */
     private static final int TOP_DESTINATIONS = 6;
 

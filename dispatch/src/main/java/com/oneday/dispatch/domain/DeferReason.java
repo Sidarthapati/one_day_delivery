@@ -6,5 +6,10 @@ public enum DeferReason {
     CRON_INFEASIBLE,
     CRON_LOCKED,
     DA_ABSENT,
-    SHIFT_ENDED
+    SHIFT_ENDED,
+    // Redelivery: the receiver proactively rejected today's delivery and picked a next-day shift — the
+    // delivery is parked for that day/shift (a courtesy reschedule, not a failed attempt).
+    RECEIVER_REJECTED,
+    // Redelivery: a delivery attempt failed and is re-parked for a later day/shift retry.
+    DELIVERY_FAILED
 }

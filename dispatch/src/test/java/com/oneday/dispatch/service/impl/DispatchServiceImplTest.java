@@ -253,6 +253,32 @@ class DispatchServiceImplTest {
     }
 
     @Test
+    void reassignDeferredHeldWhileReturnToHubInFlightThenProceedsOnceItCompletes() {
+        UUID da = readyDa(0);
+        feasibleAt(0);
+        UUID shipment = UUID.randomUUID();
+        // A redelivery is deferred (DA not serving the tile yet) → PENDING deferred row.
+        daStatus.setTerritory(da, List.of());
+        AssignmentResult deferred = service.assignDelivery(shipment, city, 12.98, 77.62, tile, null, null);
+        assertThat(deferred.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);
+
+        // ...but the parcel's carry-back to the hub is still in flight, and the DA now serves the tile.
+        DispatchQueue carry = persistReturnToHub(da, shipment, TaskStatus.IN_PROGRESS);
+        daStatus.setTerritory(da, List.of(tile));
+
+        // Held: must not assign a new delivery before the parcel is back at the hub.
+        AssignmentResult held = service.reassignDeferred(deferred.deferredId());
+        assertThat(held.outcome()).isEqualTo(AssignmentOutcome.DEFERRED);
+        assertThat(deferredRepo.findById(deferred.deferredId()).orElseThrow().getStatus()).isEqualTo("PENDING");
+
+        // Once the carry-back completes, the same retry proceeds.
+        carry.setStatus(TaskStatus.COMPLETED);
+        queueRepo.saveAndFlush(carry);
+        AssignmentResult retried = service.reassignDeferred(deferred.deferredId());
+        assertThat(retried.outcome()).isEqualTo(AssignmentOutcome.ASSIGNED);
+    }
+
+    @Test
     void crossTerritoryAssignsToSparseNeighbourWhenBothConditionsMet() {
         props.getCrossTerritory().setEnabled(true);
         UUID overloadedDa = readyDa(0);
@@ -347,6 +373,22 @@ class DispatchServiceImplTest {
         d.setTaskLon(77.61);
         d.setTileId(tile);
         d.setQueuePosition(pos);
+        d.setStatus(status);
+        d.setCronSafe(true);
+        d.setOperatingDate(today);
+        return queueRepo.saveAndFlush(d);
+    }
+
+    private DispatchQueue persistReturnToHub(UUID da, UUID shipment, TaskStatus status) {
+        DispatchQueue d = new DispatchQueue();
+        d.setDaId(da);
+        d.setCityId(city);
+        d.setShipmentId(shipment);
+        d.setTaskType(TaskType.RETURN_TO_HUB);
+        d.setTaskLat(12.97);
+        d.setTaskLon(77.61);
+        d.setTileId(tile);
+        d.setQueuePosition(0);
         d.setStatus(status);
         d.setCronSafe(true);
         d.setOperatingDate(today);

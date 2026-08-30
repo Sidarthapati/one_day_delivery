@@ -75,6 +75,12 @@ public class DeferredDispatch extends MutableBaseEntity {
     @Column(name = "operating_date", nullable = false)
     private LocalDate operatingDate;
 
+    // Redelivery: the shift this deferral is targeted at (SHIFT_1 | SHIFT_2). NULL = any shift (default,
+    // so ordinary pickup/delivery deferrals are unaffected). The retry job only re-assigns a row whose
+    // target_shift is null or matches the currently-active shift.
+    @Column(name = "target_shift", length = 20)
+    private String targetShift;
+
     @PrePersist
     void prePersist() {
         if (deferredAt == null) {

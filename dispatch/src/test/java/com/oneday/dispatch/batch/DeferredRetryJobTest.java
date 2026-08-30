@@ -78,7 +78,7 @@ class DeferredRetryJobTest {
     void successfulRetryNeitherBumpsNorEscalates() {
         shiftLoaded();
         DeferredDispatch d = pending(0);
-        when(deferredRepo.findPendingForRetry(eq(city), any())).thenReturn(List.of(d));
+        when(deferredRepo.findPendingForRetry(eq(city), any(), any(), any())).thenReturn(List.of(d));
         when(dispatchService.reassignDeferred(any())).thenReturn(AssignmentResult.assigned(da, 0));
 
         job.retry();
@@ -92,7 +92,7 @@ class DeferredRetryJobTest {
     void failedRetryBumpsRetryAfterAndCount() {
         shiftLoaded();
         DeferredDispatch d = pending(0);
-        when(deferredRepo.findPendingForRetry(eq(city), any())).thenReturn(List.of(d));
+        when(deferredRepo.findPendingForRetry(eq(city), any(), any(), any())).thenReturn(List.of(d));
         when(dispatchService.reassignDeferred(any()))
                 .thenReturn(AssignmentResult.deferred(UUID.randomUUID(), DeferReason.CRON_INFEASIBLE));
 
@@ -109,7 +109,7 @@ class DeferredRetryJobTest {
     void escalatesAfterMaxRetries() {
         shiftLoaded();
         DeferredDispatch d = pending(props.getDeferred().getMaxRetries() - 1);   // one short of the cap
-        when(deferredRepo.findPendingForRetry(eq(city), any())).thenReturn(List.of(d));
+        when(deferredRepo.findPendingForRetry(eq(city), any(), any(), any())).thenReturn(List.of(d));
         when(dispatchService.reassignDeferred(any()))
                 .thenReturn(AssignmentResult.deferred(UUID.randomUUID(), DeferReason.CRON_INFEASIBLE));
 

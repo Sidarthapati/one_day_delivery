@@ -72,4 +72,20 @@ public interface DaTaskService {
      * {@code parcelScans} must be non-empty.
      */
     DaTaskView recordCustodyCollect(UUID daId, UUID taskId, List<String> parcelScans);
+
+    /**
+     * Delivery-failure carry-back: a RETURN_TO_HUB task (QUEUED/IN_PROGRESS) → COMPLETED when the DA
+     * scans the in-hand undelivered parcel back in at the hub. Emits the M8 hub-return dock-receive scan
+     * (the re-entry point for the return / next-day redelivery pipeline).
+     */
+    DaTaskView recordReturnedToHub(UUID daId, UUID taskId);
+
+    /**
+     * Proactively pull a still-out delivery back for a receiver reschedule (not a door failure): cancel
+     * the live DELIVERY task and, if the DA already had it in hand (IN_PROGRESS), spawn a RETURN_TO_HUB
+     * carry-back so the parcel comes back to the hub instead of a wasted door attempt. Emits no
+     * DROP_FAILED (the reject is counted as an attempt separately by M11). Returns {@code true} if a task
+     * was recalled, {@code false} if there was no live delivery task (caller then just defers).
+     */
+    boolean recallDeliveryForReschedule(UUID shipmentId);
 }
