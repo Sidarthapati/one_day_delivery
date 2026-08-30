@@ -4,6 +4,7 @@ import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.exceptions.dto.PostMessageRequest;
 import com.oneday.exceptions.dto.SupportTicketRequest;
 import com.oneday.exceptions.dto.SupportTicketResponse;
+import com.oneday.exceptions.domain.TicketCategory;
 import com.oneday.exceptions.dto.TicketActionRequest;
 import com.oneday.exceptions.dto.TicketQueueResponse;
 import com.oneday.exceptions.service.SupportTicketService;
@@ -87,9 +88,10 @@ public class SupportTicketController {
     public TicketQueueResponse queue(
             @AuthenticationPrincipal AuthUserDetails principal,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) TicketCategory category) {
         Authz.requireRole(principal, Authz.CALL_CENTER_AGENT, Authz.SUPERVISOR, Authz.STATION_MANAGER);
-        Page<SupportTicketResponse> p = service.queue(page, size);
+        Page<SupportTicketResponse> p = service.queue(page, size, category);
         return new TicketQueueResponse(p.getContent(), p.getNumber(), p.getSize(),
                 p.getTotalElements(), p.getTotalPages());
     }

@@ -35,6 +35,11 @@ public class SupportTicket extends MutableBaseEntity {
     @Column(name = "channel", nullable = false, updatable = false)
     private TicketChannel channel;
 
+    /** What the ticket is about (set at intake); nullable = untagged. Drives the ops-queue filter. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "category", length = 20)
+    private TicketCategory category;
+
     /** Optional shipment this ticket is about (validated best-effort at intake). */
     @Column(name = "shipment_ref", updatable = false)
     private String shipmentRef;

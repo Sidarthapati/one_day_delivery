@@ -1,5 +1,6 @@
 package com.oneday.exceptions.dto;
 
+import com.oneday.exceptions.domain.TicketCategory;
 import com.oneday.exceptions.domain.TicketChannel;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -11,6 +12,7 @@ import jakarta.validation.constraints.Size;
  */
 public record SupportTicketRequest(
         @NotNull TicketChannel channel,
+        TicketCategory category,                 // optional — what it's about; null = untagged
         @Size(max = 64) String shipmentRef,     // optional — the shipment this is about
         @Size(max = 200) String subject,
         @Size(max = 4000) String body,

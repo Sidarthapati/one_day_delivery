@@ -1,6 +1,7 @@
 package com.oneday.exceptions.service.impl;
 
 import com.oneday.exceptions.domain.SupportTicket;
+import com.oneday.exceptions.domain.TicketCategory;
 import com.oneday.exceptions.domain.TicketChannel;
 import com.oneday.exceptions.domain.TicketStatus;
 import com.oneday.exceptions.dto.SupportTicketRequest;
@@ -41,7 +42,7 @@ class SupportTicketServiceImplTest {
 
     @Test
     void callbackWithoutPhoneIsRejected() {
-        var req = new SupportTicketRequest(TicketChannel.CALLBACK, null, "call me", null, null);
+        var req = new SupportTicketRequest(TicketChannel.CALLBACK, null, null, "call me", null, null);
         assertThatThrownBy(() -> service.create(USER, "B2B_USER", req))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("contactPhone");
@@ -50,7 +51,7 @@ class SupportTicketServiceImplTest {
 
     @Test
     void ticketWithoutBodyIsRejected() {
-        var req = new SupportTicketRequest(TicketChannel.TICKET, null, "subject only", "  ", null);
+        var req = new SupportTicketRequest(TicketChannel.TICKET, null, null, "subject only", "  ", null);
         assertThatThrownBy(() -> service.create(USER, "B2B_USER", req))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("body");
@@ -60,7 +61,7 @@ class SupportTicketServiceImplTest {
     @Test
     void unknownShipmentRefIsRejected() {
         when(shipmentLookup.findByRef("1DD-NOPE")).thenReturn(Optional.empty());
-        var req = new SupportTicketRequest(TicketChannel.TICKET, "1DD-NOPE", null, "where is it?", null);
+        var req = new SupportTicketRequest(TicketChannel.TICKET, null, "1DD-NOPE", null, "where is it?", null);
         assertThatThrownBy(() -> service.create(USER, "B2B_USER", req))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("Unknown shipment");
@@ -70,16 +71,19 @@ class SupportTicketServiceImplTest {
     @Test
     void validTicketIsPersistedOpenWithRaiser() {
         when(repo.save(any(SupportTicket.class))).thenAnswer(i -> i.getArgument(0));
-        var req = new SupportTicketRequest(TicketChannel.TICKET, null, "Damaged box", "Arrived crushed", null);
+        var req = new SupportTicketRequest(
+                TicketChannel.TICKET, TicketCategory.DAMAGE, null, "Damaged box", "Arrived crushed", null);
 
         SupportTicketResponse resp = service.create(USER, "B2B_USER", req);
 
         assertThat(resp.status()).isEqualTo(TicketStatus.OPEN);
         assertThat(resp.body()).isEqualTo("Arrived crushed");
+        assertThat(resp.category()).isEqualTo(TicketCategory.DAMAGE);
         var saved = org.mockito.ArgumentCaptor.forClass(SupportTicket.class);
         verify(repo).save(saved.capture());
         assertThat(saved.getValue().getRaisedByUserId()).isEqualTo(USER);
         assertThat(saved.getValue().getRaisedByRole()).isEqualTo("B2B_USER");
+        assertThat(saved.getValue().getCategory()).isEqualTo(TicketCategory.DAMAGE);
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.oneday.exceptions.service.impl;
 
 import com.oneday.exceptions.domain.SupportTicket;
 import com.oneday.exceptions.domain.SupportTicketMessage;
+import com.oneday.exceptions.domain.TicketCategory;
 import com.oneday.exceptions.domain.TicketChannel;
 import com.oneday.exceptions.domain.TicketStatus;
 import com.oneday.exceptions.dto.SupportTicketMessageResponse;
@@ -69,6 +70,7 @@ class SupportTicketServiceImpl implements SupportTicketService {
         t.setRaisedByUserId(raisedByUserId);
         t.setRaisedByRole(raisedByRole);
         t.setChannel(request.channel());
+        t.setCategory(request.category());
         t.setShipmentRef(shipmentRef);
         t.setSubject(subject);
         t.setBody(body);
@@ -95,9 +97,12 @@ class SupportTicketServiceImpl implements SupportTicketService {
 
     @Override
     @Transactional(readOnly = true)
-    public Page<SupportTicketResponse> queue(int page, int size) {
+    public Page<SupportTicketResponse> queue(int page, int size, TicketCategory category) {
         Pageable pageable = PageRequest.of(Math.max(0, page), Math.min(Math.max(1, size), MAX_PAGE_SIZE));
-        return repository.findByResolvedAtIsNullOrderByCreatedAtDesc(pageable).map(SupportTicketResponse::from);
+        Page<SupportTicket> p = category == null
+                ? repository.findByResolvedAtIsNullOrderByCreatedAtDesc(pageable)
+                : repository.findByResolvedAtIsNullAndCategoryOrderByCreatedAtDesc(category, pageable);
+        return p.map(SupportTicketResponse::from);
     }
 
     @Override

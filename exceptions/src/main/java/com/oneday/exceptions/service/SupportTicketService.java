@@ -2,6 +2,7 @@ package com.oneday.exceptions.service;
 
 import com.oneday.exceptions.dto.SupportTicketRequest;
 import com.oneday.exceptions.dto.SupportTicketResponse;
+import com.oneday.exceptions.domain.TicketCategory;
 import com.oneday.exceptions.domain.TicketStatus;
 import org.springframework.data.domain.Page;
 
@@ -29,8 +30,8 @@ public interface SupportTicketService {
      */
     SupportTicketResponse postMineMessage(UUID raisedByUserId, UUID ticketId, String body);
 
-    /** Ops queue: live (unresolved) tickets, freshest first. */
-    Page<SupportTicketResponse> queue(int page, int size);
+    /** Ops queue: live (unresolved) tickets, freshest first; optionally filtered to one category (null = all). */
+    Page<SupportTicketResponse> queue(int page, int size, TicketCategory category);
 
     /** One ticket by id for an ops agent, with its conversation thread (404 if unknown). */
     SupportTicketResponse detail(UUID ticketId);

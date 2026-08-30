@@ -1,6 +1,7 @@
 package com.oneday.exceptions.repository;
 
 import com.oneday.exceptions.domain.SupportTicket;
+import com.oneday.exceptions.domain.TicketCategory;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -32,4 +33,7 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicket, UU
 
     /** The ops queue: live (unresolved) tickets, freshest first. */
     Page<SupportTicket> findByResolvedAtIsNullOrderByCreatedAtDesc(Pageable pageable);
+
+    /** The ops queue filtered to one category (live tickets, freshest first). */
+    Page<SupportTicket> findByResolvedAtIsNullAndCategoryOrderByCreatedAtDesc(TicketCategory category, Pageable pageable);
 }
