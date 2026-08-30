@@ -174,10 +174,34 @@ class MerchantAnalyticsServiceImplTest {
 
         MerchantAnalyticsResponse r = service().forAccount(acct, 30);
 
-        // Untagged (null) + the since-deleted id both fold into "Uncategorised" (3 + 1 = 4), busiest first.
+        // Named categories busiest-first, then Uncategorised pinned last (untagged 3 + since-deleted id 1 = 4).
         assertThat(r.categorySplit()).extracting("category", "count").containsExactly(
                 tuple("Electronics", 5L),
-                tuple("Uncategorised", 4L),
-                tuple("Apparel", 2L));
+                tuple("Apparel", 2L),
+                tuple("Uncategorised", 4L));
+    }
+
+    @Test
+    void categorySplitCapsNamedCategoriesAtTopTenPlusOther() {
+        // 12 named categories with descending counts 12..1, plus some untagged parcels.
+        List<MerchantCategory> defs = new java.util.ArrayList<>();
+        List<CategoryCount> counts = new java.util.ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            UUID id = UUID.randomUUID();
+            defs.add(mcat(id, "Cat" + i));
+            counts.add(cat(id, 12 - i)); // Cat0=12, Cat1=11, … Cat11=1
+        }
+        counts.add(cat(null, 100)); // untagged
+        when(categories.findByB2bAccountIdOrderByName(acct)).thenReturn(defs);
+        when(shipments.categorySplitForAccount(eq(acct), any())).thenReturn(counts);
+
+        MerchantAnalyticsResponse r = service().forAccount(acct, 30);
+
+        // Top 10 named (Cat0..Cat9), then "Other" = the tail (Cat10=2 + Cat11=1 = 3), then Uncategorised.
+        assertThat(r.categorySplit()).hasSize(12); // 10 + Other + Uncategorised
+        assertThat(r.categorySplit()).element(0).extracting("category", "count").containsExactly("Cat0", 12L);
+        assertThat(r.categorySplit()).element(9).extracting("category", "count").containsExactly("Cat9", 3L);
+        assertThat(r.categorySplit()).element(10).extracting("category", "count").containsExactly("Other", 3L);
+        assertThat(r.categorySplit()).element(11).extracting("category", "count").containsExactly("Uncategorised", 100L);
     }
 }

@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -37,6 +38,10 @@ class MerchantAnalyticsServiceImpl implements MerchantAnalyticsService {
     private static final int TOP_DESTINATIONS = 6;
 
     private static final String UNCATEGORISED = "Uncategorised";
+    private static final String OTHER = "Other";
+    /** Cap the named-category rows so a merchant who (ab)uses categories as per-order tags can't blow up the
+     *  payload or the chart; everything past the busiest few folds into "Other". */
+    private static final int TOP_CATEGORIES = 10;
 
     private final ShipmentRepository shipments;
     private final MerchantCategoryRepository categories;
@@ -99,15 +104,41 @@ class MerchantAnalyticsServiceImpl implements MerchantAnalyticsService {
         for (MerchantCategory c : categories.findByB2bAccountIdOrderByName(accountId)) {
             names.put(c.getId(), c.getName());
         }
-        Map<String, Long> byName = new LinkedHashMap<>();
-        shipments.categorySplitForAccount(accountId, since).forEach(row -> {
-            String name = row.getCategoryId() == null ? UNCATEGORISED
-                    : names.getOrDefault(row.getCategoryId(), UNCATEGORISED);
-            byName.merge(name, row.getCount(), Long::sum);
-        });
-        return byName.entrySet().stream()
+        // Named-category totals (archived categories still resolve to their real name), plus the untagged
+        // bucket kept aside — "Uncategorised" is meaningful and always shown, never folded into "Other".
+        Map<String, Long> named = new LinkedHashMap<>();
+        long uncategorised = 0;
+        for (var row : shipments.categorySplitForAccount(accountId, since)) {
+            if (row.getCategoryId() == null) {
+                uncategorised += row.getCount();
+                continue;
+            }
+            named.merge(names.getOrDefault(row.getCategoryId(), UNCATEGORISED), row.getCount(), Long::sum);
+        }
+        // A resolved name may itself be "Uncategorised" (a since-deleted id we couldn't resolve) — treat it
+        // the same as untagged rather than as a named category.
+        uncategorised += named.getOrDefault(UNCATEGORISED, 0L);
+        named.remove(UNCATEGORISED);
+
+        List<Map.Entry<String, Long>> sorted = named.entrySet().stream()
                 .sorted(Comparator.comparingLong(Map.Entry<String, Long>::getValue).reversed())
-                .map(e -> new CategoryCount(e.getKey(), e.getValue()))
                 .toList();
+
+        List<CategoryCount> out = new ArrayList<>();
+        long other = 0;
+        for (int i = 0; i < sorted.size(); i++) {
+            if (i < TOP_CATEGORIES) {
+                out.add(new CategoryCount(sorted.get(i).getKey(), sorted.get(i).getValue()));
+            } else {
+                other += sorted.get(i).getValue();   // everything past the busiest few
+            }
+        }
+        if (other > 0) {
+            out.add(new CategoryCount(OTHER, other));
+        }
+        if (uncategorised > 0) {
+            out.add(new CategoryCount(UNCATEGORISED, uncategorised));
+        }
+        return out;
     }
 }

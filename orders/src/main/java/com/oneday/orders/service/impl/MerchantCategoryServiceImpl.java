@@ -8,6 +8,7 @@ import com.oneday.orders.service.MerchantCategoryService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -23,7 +24,7 @@ class MerchantCategoryServiceImpl implements MerchantCategoryService {
     @Override
     @Transactional(readOnly = true)
     public List<MerchantCategoryResponse> list(UUID accountId) {
-        return repository.findByB2bAccountIdOrderByName(accountId).stream()
+        return repository.findByB2bAccountIdAndArchivedAtIsNullOrderByName(accountId).stream()
                 .map(MerchantCategoryResponse::from)
                 .toList();
     }
@@ -42,7 +43,7 @@ class MerchantCategoryServiceImpl implements MerchantCategoryService {
     @Override
     @Transactional
     public MerchantCategoryResponse rename(UUID accountId, UUID categoryId, MerchantCategoryRequest request) {
-        MerchantCategory entity = repository.findByIdAndB2bAccountId(categoryId, accountId)
+        MerchantCategory entity = repository.findByIdAndB2bAccountIdAndArchivedAtIsNull(categoryId, accountId)
                 .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + categoryId));
         String name = request.getName().trim();
         if (!name.equalsIgnoreCase(entity.getName())) {
@@ -55,15 +56,16 @@ class MerchantCategoryServiceImpl implements MerchantCategoryService {
     @Override
     @Transactional
     public void delete(UUID accountId, UUID categoryId) {
-        MerchantCategory entity = repository.findByIdAndB2bAccountId(categoryId, accountId)
+        MerchantCategory entity = repository.findByIdAndB2bAccountIdAndArchivedAtIsNull(categoryId, accountId)
                 .orElseThrow(() -> new CategoryNotFoundException("Category not found: " + categoryId));
-        // Existing shipments keep their category_id (a snapshot of the tag at booking); deleting the
-        // definition just removes it from the pick list. No cascade needed.
-        repository.delete(entity);
+        // Soft-delete: existing shipments keep their category_id, and the archived row stays so reports
+        // still resolve the name. It just drops out of the pick list. No cascade, no history lost.
+        entity.setArchivedAt(Instant.now());
+        repository.save(entity);
     }
 
     private void requireUnique(UUID accountId, String name) {
-        if (repository.existsByB2bAccountIdAndNameIgnoreCase(accountId, name)) {
+        if (repository.existsByB2bAccountIdAndNameIgnoreCaseAndArchivedAtIsNull(accountId, name)) {
             throw new DuplicateCategoryException("Category already exists: " + name);
         }
     }

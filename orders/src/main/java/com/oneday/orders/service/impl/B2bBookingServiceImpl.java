@@ -144,9 +144,12 @@ class B2bBookingServiceImpl implements B2bBookingService {
             throw new AccountAccessException(
                     "Caller is not authorized for B2B account: " + req.getB2bAccountId());
         }
-        // Category (optional) must be one of THIS merchant's own — never another account's category.
+        // Category (optional) must be one of THIS merchant's own LIVE categories — never another
+        // account's, and never an archived (soft-deleted) one.
         if (req.getCategoryId() != null
-                && merchantCategoryRepository.findByIdAndB2bAccountId(req.getCategoryId(), req.getB2bAccountId()).isEmpty()) {
+                && merchantCategoryRepository
+                        .findByIdAndB2bAccountIdAndArchivedAtIsNull(req.getCategoryId(), req.getB2bAccountId())
+                        .isEmpty()) {
             throw new BookingService.InvalidBookingRequestException(
                     "Unknown category for this account: " + req.getCategoryId());
         }

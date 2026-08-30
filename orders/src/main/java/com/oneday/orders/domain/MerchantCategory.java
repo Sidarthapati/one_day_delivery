@@ -8,6 +8,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -26,4 +27,9 @@ public class MerchantCategory extends MutableBaseEntity {
 
     @Column(name = "name", length = 60, nullable = false)
     private String name;
+
+    /** When the merchant archived (soft-deleted) this category. Null = live. Archived rows stay so
+     *  reports still resolve the name of parcels tagged with them, but drop out of the pick list. */
+    @Column(name = "archived_at")
+    private Instant archivedAt;
 }

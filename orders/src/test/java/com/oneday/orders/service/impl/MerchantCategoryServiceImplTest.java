@@ -40,7 +40,7 @@ class MerchantCategoryServiceImplTest {
 
     @Test
     void createTrimsNameAndStampsTheCallersAccount() {
-        when(repo.existsByB2bAccountIdAndNameIgnoreCase(ACCOUNT, "Electronics")).thenReturn(false);
+        when(repo.existsByB2bAccountIdAndNameIgnoreCaseAndArchivedAtIsNull(ACCOUNT, "Electronics")).thenReturn(false);
         when(repo.save(any(MerchantCategory.class))).thenAnswer(inv -> inv.getArgument(0));
 
         MerchantCategoryResponse resp = service.create(ACCOUNT, req("  Electronics  "));
@@ -54,7 +54,7 @@ class MerchantCategoryServiceImplTest {
 
     @Test
     void createRejectsADuplicateName() {
-        when(repo.existsByB2bAccountIdAndNameIgnoreCase(ACCOUNT, "Apparel")).thenReturn(true);
+        when(repo.existsByB2bAccountIdAndNameIgnoreCaseAndArchivedAtIsNull(ACCOUNT, "Apparel")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create(ACCOUNT, req("Apparel")))
                 .isInstanceOf(MerchantCategoryService.DuplicateCategoryException.class);
@@ -64,7 +64,7 @@ class MerchantCategoryServiceImplTest {
     @Test
     void renameOfAnotherMerchantsCategoryIsNotFound() {
         UUID foreignId = UUID.randomUUID();
-        when(repo.findByIdAndB2bAccountId(foreignId, ACCOUNT)).thenReturn(Optional.empty());
+        when(repo.findByIdAndB2bAccountIdAndArchivedAtIsNull(foreignId, ACCOUNT)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.rename(ACCOUNT, foreignId, req("Hijack")))
                 .isInstanceOf(MerchantCategoryService.CategoryNotFoundException.class);
@@ -73,12 +73,29 @@ class MerchantCategoryServiceImplTest {
     @Test
     void deleteIsScopedToTheCallersAccount() {
         UUID id = UUID.randomUUID();
-        when(repo.findByIdAndB2bAccountId(id, ACCOUNT)).thenReturn(Optional.empty());
+        when(repo.findByIdAndB2bAccountIdAndArchivedAtIsNull(id, ACCOUNT)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.delete(ACCOUNT, id))
                 .isInstanceOf(MerchantCategoryService.CategoryNotFoundException.class);
-        // Looked up strictly within the caller's account — never a bare findById.
-        verify(repo).findByIdAndB2bAccountId(eq(id), eq(ACCOUNT));
+        // Looked up strictly within the caller's account (live only) — never a bare findById.
+        verify(repo).findByIdAndB2bAccountIdAndArchivedAtIsNull(eq(id), eq(ACCOUNT));
+        verify(repo, never()).delete(any());
+    }
+
+    @Test
+    void deleteArchivesRatherThanHardDeleting() {
+        UUID id = UUID.randomUUID();
+        MerchantCategory live = new MerchantCategory();
+        live.setB2bAccountId(ACCOUNT);
+        live.setName("Diwali Sale");
+        when(repo.findByIdAndB2bAccountIdAndArchivedAtIsNull(id, ACCOUNT)).thenReturn(Optional.of(live));
+        when(repo.save(any(MerchantCategory.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.delete(ACCOUNT, id);
+
+        var saved = forClass(MerchantCategory.class);
+        verify(repo).save(saved.capture());
+        assertThat(saved.getValue().getArchivedAt()).isNotNull(); // soft-deleted, history preserved
         verify(repo, never()).delete(any());
     }
 }
