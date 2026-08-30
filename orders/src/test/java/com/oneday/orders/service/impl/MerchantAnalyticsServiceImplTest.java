@@ -1,9 +1,12 @@
 package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.enums.ShipmentState;
+import com.oneday.orders.domain.MerchantCategory;
 import com.oneday.orders.dto.MerchantAnalyticsResponse;
 import com.oneday.orders.repository.AccountTotals;
+import com.oneday.orders.repository.CategoryCount;
 import com.oneday.orders.repository.CityCount;
+import com.oneday.orders.repository.MerchantCategoryRepository;
 import com.oneday.orders.repository.OnTimeStat;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.repository.StateCount;
@@ -17,6 +20,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -25,8 +29,36 @@ import static org.mockito.Mockito.when;
 class MerchantAnalyticsServiceImplTest {
 
     @Mock private ShipmentRepository shipments;
+    @Mock private MerchantCategoryRepository categories;
 
     private final UUID acct = UUID.randomUUID();
+
+    private MerchantAnalyticsServiceImpl service() {
+        return new MerchantAnalyticsServiceImpl(shipments, categories);
+    }
+
+    private static CategoryCount cat(UUID id, long n) {
+        return new CategoryCount() {
+            @Override
+            public UUID getCategoryId() { return id; }
+            @Override
+            public long getCount() { return n; }
+        };
+    }
+
+    /** A real MerchantCategory with a set id + name (id has no setter, so reflect it in). */
+    private static MerchantCategory mcat(UUID id, String name) {
+        MerchantCategory c = new MerchantCategory();
+        c.setName(name);
+        try {
+            var idField = com.oneday.common.domain.BaseEntity.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.set(c, id);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+        return c;
+    }
 
     private static StateCount state(ShipmentState s, long c) {
         return new StateCount() {
@@ -78,7 +110,7 @@ class MerchantAnalyticsServiceImplTest {
         when(shipments.destinationSplitForAccount(eq(acct), any())).thenReturn(List.of(
                 city("DEL", 9), city("BLR", 7)));
 
-        MerchantAnalyticsServiceImpl svc = new MerchantAnalyticsServiceImpl(shipments);
+        MerchantAnalyticsServiceImpl svc = service();
         MerchantAnalyticsResponse r = svc.forAccount(acct, 30);
 
         assertThat(r.totalShipments()).isEqualTo(16);
@@ -106,7 +138,7 @@ class MerchantAnalyticsServiceImplTest {
         when(shipments.onTimeForAccount(eq(acct), any(), any())).thenReturn(onTime(0, 0));
         when(shipments.destinationSplitForAccount(eq(acct), any())).thenReturn(List.of());
 
-        MerchantAnalyticsResponse r = new MerchantAnalyticsServiceImpl(shipments).forAccount(acct, null);
+        MerchantAnalyticsResponse r = service().forAccount(acct, null);
 
         assertThat(r.totalShipments()).isZero();
         assertThat(r.deliveryRatePct()).isNull();  // nothing rateable
@@ -123,10 +155,53 @@ class MerchantAnalyticsServiceImplTest {
         when(shipments.onTimeForAccount(eq(acct), any(), any())).thenReturn(onTime(0, 0));
         when(shipments.destinationSplitForAccount(eq(acct), any())).thenReturn(List.of());
 
-        MerchantAnalyticsResponse r = new MerchantAnalyticsServiceImpl(shipments).forAccount(acct, 7);
+        MerchantAnalyticsResponse r = service().forAccount(acct, 7);
 
         assertThat(r.totalShipments()).isEqualTo(4);
         assertThat(r.cancelled()).isEqualTo(4);
         assertThat(r.deliveryRatePct()).isNull(); // total - cancelled = 0 → not rateable
+    }
+
+    @Test
+    void categorySplitResolvesNamesAndFoldsUntagged() {
+        UUID electronics = UUID.randomUUID();
+        UUID apparel = UUID.randomUUID();
+        UUID deleted = UUID.randomUUID(); // a category id no longer in the account's list
+        when(categories.findByB2bAccountIdOrderByName(acct)).thenReturn(List.of(
+                mcat(electronics, "Electronics"), mcat(apparel, "Apparel")));
+        when(shipments.categorySplitForAccount(eq(acct), any())).thenReturn(List.of(
+                cat(electronics, 5), cat(null, 3), cat(apparel, 2), cat(deleted, 1)));
+
+        MerchantAnalyticsResponse r = service().forAccount(acct, 30);
+
+        // Named categories busiest-first, then Uncategorised pinned last (untagged 3 + since-deleted id 1 = 4).
+        assertThat(r.categorySplit()).extracting("category", "count").containsExactly(
+                tuple("Electronics", 5L),
+                tuple("Apparel", 2L),
+                tuple("Uncategorised", 4L));
+    }
+
+    @Test
+    void categorySplitCapsNamedCategoriesAtTopTenPlusOther() {
+        // 12 named categories with descending counts 12..1, plus some untagged parcels.
+        List<MerchantCategory> defs = new java.util.ArrayList<>();
+        List<CategoryCount> counts = new java.util.ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            UUID id = UUID.randomUUID();
+            defs.add(mcat(id, "Cat" + i));
+            counts.add(cat(id, 12 - i)); // Cat0=12, Cat1=11, … Cat11=1
+        }
+        counts.add(cat(null, 100)); // untagged
+        when(categories.findByB2bAccountIdOrderByName(acct)).thenReturn(defs);
+        when(shipments.categorySplitForAccount(eq(acct), any())).thenReturn(counts);
+
+        MerchantAnalyticsResponse r = service().forAccount(acct, 30);
+
+        // Top 10 named (Cat0..Cat9), then "Other" = the tail (Cat10=2 + Cat11=1 = 3), then Uncategorised.
+        assertThat(r.categorySplit()).hasSize(12); // 10 + Other + Uncategorised
+        assertThat(r.categorySplit()).element(0).extracting("category", "count").containsExactly("Cat0", 12L);
+        assertThat(r.categorySplit()).element(9).extracting("category", "count").containsExactly("Cat9", 3L);
+        assertThat(r.categorySplit()).element(10).extracting("category", "count").containsExactly("Other", 3L);
+        assertThat(r.categorySplit()).element(11).extracting("category", "count").containsExactly("Uncategorised", 100L);
     }
 }

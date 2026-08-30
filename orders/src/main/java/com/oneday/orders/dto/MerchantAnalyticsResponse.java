@@ -20,6 +20,7 @@ import java.util.List;
  * @param codValuePaise     total COD goods-value handled, in paise
  * @param avgShipmentPaise  gmvPaise ÷ totalShipments (0 when no shipments)
  * @param topDestinations   busiest destination cities first
+ * @param categorySplit     shipment count per merchant category, busiest first (untagged → "Uncategorised")
  */
 public record MerchantAnalyticsResponse(
         Integer windowDays,
@@ -33,8 +34,12 @@ public record MerchantAnalyticsResponse(
         long gmvPaise,
         long codValuePaise,
         long avgShipmentPaise,
-        List<DestinationCount> topDestinations) {
+        List<DestinationCount> topDestinations,
+        List<CategoryCount> categorySplit) {
 
     /** One destination city with its shipment count. */
     public record DestinationCount(String city, long count) {}
+
+    /** One merchant category with its shipment count. */
+    public record CategoryCount(String category, long count) {}
 }
