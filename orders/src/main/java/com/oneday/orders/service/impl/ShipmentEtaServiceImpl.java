@@ -36,16 +36,24 @@ class ShipmentEtaServiceImpl implements ShipmentEtaService {
     private final B2bAccountRepository accounts;
     private final NotificationPort notificationPort;
 
-    /** ponytail: a small grace so a tiny slip doesn't spam the customer. Tune per SLA sensitivity. */
-    private final long graceMinutes;
+    /**
+     * Dynamic-ETA rule (Discussion-2 xiii): only tell the customer when the delivery will slip more than
+     * a materiality threshold past the promise — a day, by default. Below it, a revision is silent (the
+     * ETA is still recorded). Configurable via {@code orders.eta.delay-threshold-minutes} (1440 = 24h).
+     */
+    private final long delayThresholdMinutes;
 
     ShipmentEtaServiceImpl(ShipmentRepository shipments, B2bAccountRepository accounts,
                            NotificationPort notificationPort,
-                           @Value("${orders.eta.delay-grace-minutes:15}") long graceMinutes) {
+                           @Value("${orders.eta.delay-threshold-minutes:1440}") long delayThresholdMinutes) {
+        if (delayThresholdMinutes < 0) {
+            throw new IllegalArgumentException(
+                    "orders.eta.delay-threshold-minutes must be >= 0, was " + delayThresholdMinutes);
+        }
         this.shipments = shipments;
         this.accounts = accounts;
         this.notificationPort = notificationPort;
-        this.graceMinutes = graceMinutes;
+        this.delayThresholdMinutes = delayThresholdMinutes;
     }
 
     @Override
@@ -66,7 +74,9 @@ class ShipmentEtaServiceImpl implements ShipmentEtaService {
         s.setEtaUpdated(newEta);
         // Dirty-checking persists the change; no explicit save needed inside the transaction.
 
-        boolean delayed = promised != null && newEta.isAfter(promised.plus(Duration.ofMinutes(graceMinutes)));
+        // Only a slip past the materiality threshold (default 24h) is a delay worth telling the customer.
+        boolean delayed = promised != null
+                && newEta.isAfter(promised.plus(Duration.ofMinutes(delayThresholdMinutes)));
         boolean notified = false;
         if (delayed) {
             notified = notifyCustomer(s, promised, newEta);

@@ -36,10 +36,10 @@ class ShipmentEtaServiceImplTest {
     @Mock private B2bAccountRepository accounts;
     @Mock private NotificationPort notificationPort;
 
-    private static final long GRACE = 15;
+    private static final long THRESHOLD_MINUTES = 24 * 60; // 24h — the dynamic-ETA materiality rule
 
     private ShipmentEtaServiceImpl service() {
-        return new ShipmentEtaServiceImpl(shipments, accounts, notificationPort, GRACE);
+        return new ShipmentEtaServiceImpl(shipments, accounts, notificationPort, THRESHOLD_MINUTES);
     }
 
     private Shipment b2cShipment(Instant promised) {
@@ -54,10 +54,10 @@ class ShipmentEtaServiceImplTest {
     }
 
     @Test
-    void slipBeyondGrace_notifiesTheSender_andRecordsNewEta() {
+    void slipBeyondADay_notifiesTheSender_andRecordsNewEta() {
         Instant promised = Instant.parse("2026-08-27T10:00:00Z");
         Shipment s = b2cShipment(promised);
-        Instant newEta = promised.plus(Duration.ofHours(3)); // clearly late
+        Instant newEta = promised.plus(Duration.ofHours(30)); // more than a day late
 
         ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", newEta, "flight delayed", "ops-1", null);
 
@@ -76,10 +76,10 @@ class ShipmentEtaServiceImplTest {
     }
 
     @Test
-    void earlierOrWithinGrace_isNotADelay_andDoesNotNotify() {
+    void lateButWithinADay_isNotADelay_andDoesNotNotify() {
         Instant promised = Instant.parse("2026-08-27T10:00:00Z");
         b2cShipment(promised);
-        Instant newEta = promised.plus(Duration.ofMinutes(5)); // within the 15-min grace
+        Instant newEta = promised.plus(Duration.ofHours(6)); // late, but under the 24h threshold
 
         ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", newEta, null, "ops-1", null);
 
@@ -91,7 +91,7 @@ class ShipmentEtaServiceImplTest {
     @Test
     void noPromisedEta_cannotBeADelay() {
         b2cShipment(null); // never got an ETA at booking
-        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", Instant.parse("2026-08-27T20:00:00Z"), null, "ops-1", null);
+        ReviseEtaResponse r = service().reviseEta("1DD-DEL-1", Instant.parse("2026-08-28T20:00:00Z"), null, "ops-1", null);
         assertThat(r.delayed()).isFalse();
         verify(notificationPort, never()).send(any());
     }
@@ -107,12 +107,12 @@ class ShipmentEtaServiceImplTest {
         when(shipments.findByShipmentRef("1DD-DEL-7")).thenReturn(Optional.of(s));
 
         // A MAA manager (scope "MAA") touches neither origin nor dest → 404, nothing notified.
-        assertThatThrownBy(() -> service().reviseEta("1DD-DEL-7", Instant.parse("2026-08-27T20:00:00Z"), null, "sm-maa", "MAA"))
+        assertThatThrownBy(() -> service().reviseEta("1DD-DEL-7", Instant.parse("2026-08-28T20:00:00Z"), null, "sm-maa", "MAA"))
                 .isInstanceOf(ResponseStatusException.class);
         verify(notificationPort, never()).send(any());
 
         // The destination-city manager (scope "BLR") is in scope → allowed, and it's a delay.
-        assertThat(service().reviseEta("1DD-DEL-7", Instant.parse("2026-08-27T20:00:00Z"), null, "sm-blr", "BLR").delayed())
+        assertThat(service().reviseEta("1DD-DEL-7", Instant.parse("2026-08-28T20:00:00Z"), null, "sm-blr", "BLR").delayed())
                 .isTrue();
     }
 
@@ -134,7 +134,7 @@ class ShipmentEtaServiceImplTest {
         acc.setSupportPhone("+919111111111");
         when(accounts.findById(accountId)).thenReturn(Optional.of(acc));
 
-        ReviseEtaResponse r = service().reviseEta("1DD-BLR-9", promised.plus(Duration.ofHours(4)), null, "ops-1", null);
+        ReviseEtaResponse r = service().reviseEta("1DD-BLR-9", promised.plus(Duration.ofHours(30)), null, "ops-1", null);
 
         assertThat(r.customerNotified()).isTrue();
         ArgumentCaptor<NotificationRequest> req = ArgumentCaptor.forClass(NotificationRequest.class);
