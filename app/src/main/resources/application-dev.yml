@@ -19,3 +19,9 @@ consolidator:
     url: ${CONSOLIDATOR_DATASOURCE_URL:jdbc:postgresql://localhost:5432/oneday?currentSchema=consolidator_mock}
     username: ${CONSOLIDATOR_DATASOURCE_USERNAME:oneday}
     password: ${CONSOLIDATOR_DATASOURCE_PASSWORD:secret}
+
+# Receiver accept/reject landing page — local convenience default (the base application.yml has none,
+# so cloud envs must set CUSTOMER_LANDING_BASE_URL explicitly). Override via env if desired.
+orders:
+  delivery:
+    customer-landing-base-url: ${CUSTOMER_LANDING_BASE_URL:http://localhost:3000}

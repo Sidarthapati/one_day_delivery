@@ -184,7 +184,9 @@ orders:
   # Receiver accept/reject landing page (no-login). The base URL is per-environment via the
   # CUSTOMER_LANDING_BASE_URL env var; the localhost default is a dev fallback only — never a prod URL.
   delivery:
-    customer-landing-base-url: ${CUSTOMER_LANDING_BASE_URL:http://localhost:3000}
+    # No baked default — every deployment must set CUSTOMER_LANDING_BASE_URL (else the service
+    # logs a warning and skips the prompt). Local dev gets a localhost default in application-dev.yml.
+    customer-landing-base-url: ${CUSTOMER_LANDING_BASE_URL:}
 
 # Live tracking (M4). Per-city hub + airport coordinates for the static-node fallbacks and the
 # route line; keyed by IATA code (the catalog also accepts DELHI/MUMBAI/... forms). Coordinates are

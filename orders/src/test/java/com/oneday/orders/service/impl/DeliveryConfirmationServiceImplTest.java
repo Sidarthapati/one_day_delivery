@@ -150,6 +150,28 @@ class DeliveryConfirmationServiceImplTest {
     }
 
     @Test
+    void acceptOnExpiredConfirmationNoOps() {
+        DeliveryConfirmation c = expired();
+        when(confirmationRepo.findByTokenHash(anyString())).thenReturn(Optional.of(c));
+
+        service.accept("tok");
+
+        assertThat(c.getStatus()).isEqualTo(DeliveryConfirmationStatus.PENDING);   // unchanged
+        verify(confirmationRepo, never()).save(any());
+    }
+
+    @Test
+    void rejectOnExpiredConfirmationNoOpsAndDoesNotPublish() {
+        DeliveryConfirmation c = expired();
+        when(confirmationRepo.findByTokenHash(anyString())).thenReturn(Optional.of(c));
+
+        service.reject("tok", "SHIFT_2");
+
+        assertThat(c.getStatus()).isEqualTo(DeliveryConfirmationStatus.PENDING);   // unchanged
+        verify(eventPublisher, never()).publish(anyString(), any());
+    }
+
+    @Test
     void getByUnknownTokenIs404() {
         when(confirmationRepo.findByTokenHash(anyString())).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.getByToken("nope"))
@@ -172,6 +194,12 @@ class DeliveryConfirmationServiceImplTest {
         c.setShipmentId(shipmentId);
         c.setStatus(DeliveryConfirmationStatus.PENDING);
         c.setExpiresAt(Instant.now().plus(1, ChronoUnit.HOURS));
+        return c;
+    }
+
+    private DeliveryConfirmation expired() {
+        DeliveryConfirmation c = pending();
+        c.setExpiresAt(Instant.now().minus(1, ChronoUnit.HOURS));
         return c;
     }
 }

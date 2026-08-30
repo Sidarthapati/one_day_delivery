@@ -183,6 +183,14 @@ class DispatchServiceImpl implements DispatchService {
         if (!"PENDING".equals(deferred.getStatus())) {
             return AssignmentResult.deferred(deferredId, deferred.getDeferReason());
         }
+        // Hold while the parcel is still being carried back: a recall-for-reschedule spawns a
+        // RETURN_TO_HUB, and we must not assign a new delivery before it lands at the hub. Only an
+        // in-flight (QUEUED/IN_PROGRESS) carry-back holds — a COMPLETED one means it's back, so proceed.
+        if (queueRepository.findActiveByShipmentIdAndTaskType(deferred.getShipmentId(), TaskType.RETURN_TO_HUB)
+                .filter(t -> t.getStatus() == TaskStatus.QUEUED || t.getStatus() == TaskStatus.IN_PROGRESS)
+                .isPresent()) {
+            return AssignmentResult.deferred(deferredId, deferred.getDeferReason());
+        }
         // paymentMode is not carried on the deferred row → null on retry (COD prioritisation is later).
         AssignmentResult result = assign(new Request(deferred.getShipmentId(), deferred.getCityId(),
                 deferred.getTaskType(), deferred.getTaskLat(), deferred.getTaskLon(),

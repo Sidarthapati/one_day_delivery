@@ -62,11 +62,13 @@ run (same-city already collapses to delivery and is complete):
 
 ## Verification gaps (not defects)
 
-- [ ] **VERIFY-1 — boot the delivery-outcomes flow in a HUB_RETURN city.** The e2e ran on
-  DEL↔BOM (VAN_MEETING). The new carry-back / reject / RTO-child features rest on shared
-  meeting-mode-agnostic logic + unit tests for HUB_RETURN, but were never booted in a HUB_RETURN
-  city (`city_fleet_config` = HUB_RETURN + routing `@Primary CityMeetingModeAdapter`). Should work
-  by construction; confirm with a booted run. Not a known defect.
+- [x] **VERIFY-1 — boot the delivery-outcomes flow in a HUB_RETURN city.** ✅ Done 2026-08-30 —
+  booted **both** DEL + BOM as HUB_RETURN (no vans) against throwaway `oneday_hr_e2e` + isolated
+  vhost `hr-e2e`. All three workstreams passed live: A carry-back (`COLLECTED_FROM_HUB`→fail→
+  `RETURN_TO_HUB`), C return child `_R` (Mumbai→Delhi, both legs HUB_RETURN) → original
+  `RTO_COMPLETED`, B receiver reject → `deferred_dispatch` re-park + FIX-3 `CUSTOMER_REJECTED`
+  attempt. `requireHubReturnCity` guard + `CityMeetingModePort` mapping fired; all DLQs empty.
+  Report + landing-page screenshots in `docs/escalation/delivery-outcomes-hub-return-e2e/`.
 
 ## Answered, no change needed (recorded for the triage)
 
@@ -102,3 +104,28 @@ Skipped (with reason):
   deleted state would contradict the feature. Not applicable.
 - **REQUIRES_NEW for AFTER_COMMIT listeners**: already fixed in `e2f3e89` (CodeRabbit confirmed).
 - **oneday-web page.tsx "run typecheck/build"**: process reminder — ran `pnpm -r typecheck` (exit 0).
+
+## CodeRabbit triage — round 2 (2026-08-30, on the fix push)
+
+Fixed:
+- **DeliveryConfirmationServiceImpl** (accept/reject) — enforce expiry before mutating: new
+  `respondable(c)` gate (PENDING **and** `expiresAt` in the future **and** parcel not concluded), so an
+  expired PENDING token can no longer be accepted, or rejected-and-republished, before `expireStale` runs.
+- **application.yml / application-dev.yml** — dropped the `http://localhost:3000` default from the shared
+  `orders.delivery.customer-landing-base-url` (staging/prod inherited it and would send unusable receiver
+  links); empty default now → the service's missing-config warning fires. Localhost default moved to the
+  dev profile.
+- **DispatchServiceImpl.reassignDeferred** — hold a PENDING deferral while an active `RETURN_TO_HUB`
+  exists for the shipment, so a next-day retry can't assign a new delivery before the carry-back lands.
+- **oneday-web station page.tsx** — added `HELD_AT_HUB` to `TERMINAL_STATES` so the console stops
+  offering Cancel on a held return.
+
+Deferred (with reason):
+- **Idempotent rejected-confirmation processing** (Major, heavy lift): `ReceiverRejectedExceptionConsumer`
+  → `captureDaFailure` bumps `attempt_no` per message, and `ReceiverRejectedEvent` carries no event/
+  confirmation id, so a RabbitMQ redelivery could double-count a rejection toward the cap. This is the
+  **platform-wide `captureDaFailure` pattern** (no M11 attempt path is deduplicated today); FIX-3 only
+  newly routes rejects through it. Mitigations in place: the reject source is idempotent (only a
+  PENDING→REJECTED transition publishes the event). A durable dedup key (event/confirmation id + an
+  `idempotency`-style table) is the right fix but is a broader M11 change — tracked as a follow-up, not
+  blocking this PR.

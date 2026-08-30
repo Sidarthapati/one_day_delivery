@@ -147,7 +147,7 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
     @Transactional
     public DeliveryConfirmationView accept(String token) {
         DeliveryConfirmation c = load(token);
-        if (c.getStatus() == DeliveryConfirmationStatus.PENDING && stillActionable(c.getShipmentId())) {
+        if (respondable(c)) {
             c.setStatus(DeliveryConfirmationStatus.ACCEPTED);
             c.setRespondedAt(Instant.now());
             confirmationRepository.save(c);
@@ -160,7 +160,7 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
     public DeliveryConfirmationView reject(String token, String targetShift) {
         String shift = normaliseShift(targetShift);
         DeliveryConfirmation c = load(token);
-        if (c.getStatus() == DeliveryConfirmationStatus.PENDING && stillActionable(c.getShipmentId())) {
+        if (respondable(c)) {
             c.setStatus(DeliveryConfirmationStatus.REJECTED);
             c.setResponseShift(shift);
             c.setRespondedAt(Instant.now());
@@ -224,6 +224,13 @@ class DeliveryConfirmationServiceImpl implements DeliveryConfirmationService {
         return shipmentRepository.findById(shipmentId)
                 .map(s -> !CONCLUDED.contains(s.getState()))
                 .orElse(false);
+    }
+
+    /** A confirmation can be answered only while PENDING, not past its expiry, and the parcel not concluded. */
+    private boolean respondable(DeliveryConfirmation c) {
+        return c.getStatus() == DeliveryConfirmationStatus.PENDING
+                && c.getExpiresAt() != null && c.getExpiresAt().isAfter(Instant.now())
+                && stillActionable(c.getShipmentId());
     }
 
     /**
