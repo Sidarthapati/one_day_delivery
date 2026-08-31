@@ -35,8 +35,10 @@ class SupportTicketServiceImplTest {
     private final SupportTicketRepository repo = mock(SupportTicketRepository.class);
     private final SupportTicketMessageRepository messages = mock(SupportTicketMessageRepository.class);
     private final ShipmentLookupService shipmentLookup = mock(ShipmentLookupService.class);
+    private final com.oneday.exceptions.integration.JiraPort jira =
+            mock(com.oneday.exceptions.integration.JiraPort.class);
     private final SupportTicketServiceImpl service =
-            new SupportTicketServiceImpl(repo, messages, shipmentLookup);
+            new SupportTicketServiceImpl(repo, messages, shipmentLookup, jira);
 
     private static final UUID USER = UUID.randomUUID();
 
