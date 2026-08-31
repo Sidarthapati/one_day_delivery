@@ -5,14 +5,14 @@
 
 -- Running balance = cash the DA is currently holding on the company's behalf. Lockable row that
 -- serialises concurrent postings, mirroring b2b_accounts.wallet_balance_paise.
-CREATE TABLE da_cod_balance (
+CREATE TABLE IF NOT EXISTS da_cod_balance (
     da_user_id         UUID PRIMARY KEY,
     cash_in_hand_paise BIGINT      NOT NULL DEFAULT 0,
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Append-only history; the balance above is reconstructable from it. Never mutated after insert.
-CREATE TABLE da_cod_ledger (
+CREATE TABLE IF NOT EXISTS da_cod_ledger (
     id                  UUID        PRIMARY KEY,
     da_user_id          UUID        NOT NULL,
     -- COLLECTION (+ took cash at delivery), DEPOSIT (- handed cash in), ADJUSTMENT (± admin correction)
@@ -24,7 +24,7 @@ CREATE TABLE da_cod_ledger (
     created_by          UUID,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_da_cod_ledger_da ON da_cod_ledger (da_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_da_cod_ledger_da ON da_cod_ledger (da_user_id, created_at DESC);
 
 -- NOTE: the ledger is authoritative for cash movements from here on. Existing cod_collection /
 -- cod_cash_deposit rows are NOT backfilled — the per-DA time-ordered reconstruction / cutover
