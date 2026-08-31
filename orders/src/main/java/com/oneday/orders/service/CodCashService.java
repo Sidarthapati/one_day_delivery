@@ -3,7 +3,9 @@ package com.oneday.orders.service;
 import com.oneday.orders.dto.AdminCodReconciliationRow;
 import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.DaCodCashSummaryResponse;
+import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.UUID;
@@ -21,8 +23,11 @@ public interface CodCashService {
     /** Record a cash deposit the DA has handed in. */
     CodCashDepositResponse recordDeposit(UUID daUserId, RecordCodDepositRequest request);
 
-    /** The DA's own position: collected vs deposited, with their deposit history. */
+    /** The DA's own position: collected vs deposited + authoritative cash-in-hand, with deposit history. */
     DaCodCashSummaryResponse daSummary(UUID daUserId);
+
+    /** A page of the DA's cash-in-hand ledger (append-only movement history), newest first. */
+    List<DaCodLedgerEntryResponse> daLedger(UUID daUserId, Pageable pageable);
 
     // ── Admin ─────────────────────────────────────────────────────────────────
 
