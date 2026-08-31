@@ -108,6 +108,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/track/**").permitAll()
                         // No-login receiver delivery accept/reject — the opaque link token is the capability.
                         .requestMatchers("/public/**").permitAll()
+                        // Inbound WhatsApp webhook (Meta) — unauthenticated by design; the handler
+                        // verifies Meta's challenge token / X-Hub-Signature-256 itself.
+                        .requestMatchers("/webhooks/whatsapp").permitAll()
                         .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
                         // Security disclosure (RFC 9116) — must be publicly fetchable.
                         .requestMatchers("/.well-known/**").permitAll()
