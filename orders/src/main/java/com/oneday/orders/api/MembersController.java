@@ -2,6 +2,7 @@ package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.AddMemberRequest;
+import com.oneday.orders.dto.MemberKycRequest;
 import com.oneday.orders.dto.MemberResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
 import com.oneday.orders.service.B2bMemberService;
@@ -51,6 +52,21 @@ class MembersController {
                               @Valid @RequestBody AddMemberRequest request) {
         UUID caller = UUID.fromString(Authz.requireUserId(principal));
         return members.add(ownedAccountId(principal), caller, request.email());
+    }
+
+    /** The caller's own member row (incl. KYC status). */
+    @GetMapping("/me")
+    public MemberResponse me(@AuthenticationPrincipal AuthUserDetails principal) {
+        UUID caller = UUID.fromString(Authz.requireUserId(principal));
+        return members.me(ownedAccountId(principal), caller);
+    }
+
+    /** The caller verifies their own KYC by PAN — flips their own member row to VERIFIED. Any member. */
+    @PostMapping("/me/kyc")
+    public MemberResponse verifyMyKyc(@AuthenticationPrincipal AuthUserDetails principal,
+                                      @Valid @RequestBody MemberKycRequest request) {
+        UUID caller = UUID.fromString(Authz.requireUserId(principal));
+        return members.verifyMyKyc(ownedAccountId(principal), caller, request.pan(), request.name());
     }
 
     /** Remove a member from the caller's account. OWNER-only; the owner can't be removed. */
