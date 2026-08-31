@@ -13,6 +13,8 @@ import java.util.UUID;
 
 public interface AuthService {
     LoginResponse login(LoginRequest request);
+    /** Password login that binds the session to {@code deviceId} (X-Device-Id) for device policy. */
+    LoginResponse login(LoginRequest request, String deviceId);
     LoginResponse register(RegisterRequest request);
     LoginResponse loginWithGoogle(GoogleLoginRequest request);
     OtpRequestResponse requestOtp(OtpRequestRequest request);

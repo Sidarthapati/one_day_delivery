@@ -41,8 +41,10 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ResponseEntity.ok(authService.login(request));
+    public ResponseEntity<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request,
+            @RequestHeader(value = "X-Device-Id", required = false) String deviceId) {
+        return ResponseEntity.ok(authService.login(request, deviceId));
     }
 
     @PostMapping("/register")

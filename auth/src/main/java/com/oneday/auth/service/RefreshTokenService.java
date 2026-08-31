@@ -15,6 +15,18 @@ public interface RefreshTokenService {
     Issued issue(User user);
 
     /**
+     * Mint a refresh token bound to {@code deviceId} (X-Device-Id). Enables single-active-device
+     * enforcement and lets ops see which physical device holds a session. Null deviceId = unbound.
+     */
+    Issued issue(User user, String deviceId);
+
+    /**
+     * Revoke this user's still-active sessions on any device other than {@code deviceId} (the
+     * single-active-device sweep). No-op when deviceId is null. Returns the number revoked.
+     */
+    int revokeOtherDevices(User user, String deviceId);
+
+    /**
      * Validate + rotate a presented raw refresh token: revoke it and mint its successor in the same
      * family. Reuse of an already-revoked token revokes the entire family and throws.
      */

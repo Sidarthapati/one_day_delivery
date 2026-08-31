@@ -74,13 +74,14 @@ class AuthServiceSocialOtpTest {
         when(jwtService.expiryFor(any(User.class))).thenReturn(Instant.now().plusSeconds(3600));
 
         RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
-        when(refreshTokenService.issue(any(User.class))).thenReturn(
+        when(refreshTokenService.issue(any(User.class), any())).thenReturn(
                 new RefreshTokenService.Issued("raw-refresh", Instant.now().plusSeconds(1_209_600)));
 
         service = new AuthServiceImpl(userRepository, roleRepository, apiKeyRepository,
                 auditLogRepository, otpRepository, jwtService, passwordEncoder,
                 googleTokenVerifier, otpSender, new OtpProperties(),
-                refreshTokenService, new RefreshTokenProperties());
+                refreshTokenService, new RefreshTokenProperties(),
+                new com.oneday.auth.config.DeviceBindingProperties());
     }
 
     @Test
