@@ -48,8 +48,9 @@ class NotificationTemplateResolverImpl implements NotificationTemplateResolver {
                 "Your Godspeed wallet is running low",
                 "Your Godspeed wallet balance is now ₹{balance}. Top up to keep shipping without interruption."));
 
+        // Delay comms also go out on WhatsApp — the channel is stubbed (logs) until a BSP account lands.
         TEMPLATES.put(NotificationEventType.SHIPMENT_DELAYED, new Template(
-                EnumSet.of(NotificationChannel.EMAIL, NotificationChannel.SMS),
+                EnumSet.of(NotificationChannel.EMAIL, NotificationChannel.SMS, NotificationChannel.WHATSAPP),
                 "Your Godspeed delivery {shipment_ref} is running late",
                 "Your shipment {shipment_ref} is now expected by {new_eta} (was {original_eta}). "
                         + "No action is needed to keep it — or cancel for a full refund if the new time doesn't work."));
