@@ -2,17 +2,20 @@ package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.AdminCodReconciliationRow;
+import com.oneday.orders.dto.AdminDaCashRow;
 import com.oneday.orders.dto.CodAccountBalanceResponse;
 import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.CodCollectionResponse;
 import com.oneday.orders.dto.CodRemittanceResponse;
 import com.oneday.orders.dto.CreateRemittanceRequest;
+import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import com.oneday.orders.dto.MarkRemittancePaidRequest;
 import com.oneday.orders.dto.ReconcileDepositRequest;
 import com.oneday.orders.domain.CodCollectionState;
 import com.oneday.orders.service.CodCashService;
 import com.oneday.orders.service.CodRemittanceService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,12 +39,24 @@ import java.util.UUID;
 @RequestMapping("/api/v1/admin/cod")
 class AdminCodController {
 
+    private static final String STATION_MANAGER = "STATION_MANAGER";
+    private static final String ADMIN = "ADMIN";
+
     private final CodRemittanceService cod;
     private final CodCashService codCash;
 
     AdminCodController(CodRemittanceService cod, CodCashService codCash) {
         this.cod = cod;
         this.codCash = codCash;
+    }
+
+    /**
+     * The city a station manager is scoped to, or null for an ADMIN (who sees every city). The DA-cash
+     * endpoints below pass this to the service, which filters/enforces access by it.
+     */
+    private static String cityFilter(AuthUserDetails principal) {
+        return ADMIN.equals(principal.getUser().getRole().getName())
+                ? null : principal.getUser().getCityId();
     }
 
     /** Vendors that currently have a payout-available balance, largest first. */
@@ -100,30 +115,49 @@ class AdminCodController {
         return cod.payout(id);
     }
 
-    // ── DA cash reconciliation ───────────────────────────────────────────────────
+    // ── DA cash (station manager + admin) ─────────────────────────────────────────
 
-    /** Per-DA collected-vs-deposited cash, riders with the largest outstanding first. */
+    /** Every DA's live cash-in-hand, most-holding first. Station managers see their own city; admin, all. */
+    @GetMapping("/cash/da-balances")
+    public List<AdminDaCashRow> daBalances(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        return codCash.daCashBalances(cityFilter(principal));
+    }
+
+    /** One DA's cash-in-hand passbook (append-only, running balance), newest first. City-gated. */
+    @GetMapping("/cash/da/{daUserId}/ledger")
+    public List<DaCodLedgerEntryResponse> daLedger(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("daUserId") UUID daUserId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        int capped = Math.min(Math.max(1, size), 200);
+        return codCash.managerDaLedger(daUserId, PageRequest.of(Math.max(0, page), capped), cityFilter(principal));
+    }
+
+    /** Per-DA collected-vs-deposited cash + ledger balance, riders with the largest outstanding first. */
     @GetMapping("/cash/reconciliation")
     public List<AdminCodReconciliationRow> reconciliation(@AuthenticationPrincipal AuthUserDetails principal) {
-        Authz.requireRole(principal, "ADMIN");
+        Authz.requireRole(principal, STATION_MANAGER);
         return codCash.reconciliation();
     }
 
     /** Every declared cash deposit, newest first. */
     @GetMapping("/cash/deposits")
     public List<CodCashDepositResponse> deposits(@AuthenticationPrincipal AuthUserDetails principal) {
-        Authz.requireRole(principal, "ADMIN");
+        Authz.requireRole(principal, STATION_MANAGER);
         return codCash.allDeposits();
     }
 
-    /** Verify a deposit: matched → RECONCILED, else DISCREPANCY. PATCH (not idempotency-gated). */
+    /** Verify a deposit: matched → RECONCILED, else DISCREPANCY. PATCH (not idempotency-gated). City-gated. */
     @PatchMapping("/cash/deposits/{id}")
     public CodCashDepositResponse reconcile(
             @AuthenticationPrincipal AuthUserDetails principal,
             @PathVariable("id") UUID id,
             @Valid @RequestBody ReconcileDepositRequest request) {
-        Authz.requireRole(principal, "ADMIN");
-        UUID adminId = UUID.fromString(Authz.requireUserId(principal));
-        return codCash.reconcile(id, adminId, request.reconciled(), request.note());
+        Authz.requireRole(principal, STATION_MANAGER);
+        UUID actorId = UUID.fromString(Authz.requireUserId(principal));
+        return codCash.reconcile(id, actorId, request.reconciled(), request.note(), cityFilter(principal));
     }
 }

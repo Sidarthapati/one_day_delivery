@@ -1,6 +1,7 @@
 package com.oneday.orders.service;
 
 import com.oneday.orders.dto.AdminCodReconciliationRow;
+import com.oneday.orders.dto.AdminDaCashRow;
 import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.DaCodCashSummaryResponse;
 import com.oneday.orders.dto.DaCodLedgerEntryResponse;
@@ -29,14 +30,31 @@ public interface CodCashService {
     /** A page of the DA's cash-in-hand ledger (append-only movement history), newest first. */
     List<DaCodLedgerEntryResponse> daLedger(UUID daUserId, Pageable pageable);
 
-    // ── Admin ─────────────────────────────────────────────────────────────────
+    // ── Station / Admin ─────────────────────────────────────────────────────────
 
-    /** Per-DA collected-vs-deposited, riders with the largest outstanding cash first. */
+    /**
+     * Every DA's live cash-in-hand for the station/admin worklist (#191), most-holding first.
+     * {@code cityFilter} scopes the list to one city (a station manager sees their own city); null =
+     * every city (admin).
+     */
+    List<AdminDaCashRow> daCashBalances(String cityFilter);
+
+    /**
+     * A page of one DA's cash-in-hand ledger for a manager/admin (#191). {@code cityFilter} enforces
+     * access — a manager scoped to a city can't read a DA in another city (403); null = admin, no gate.
+     */
+    List<DaCodLedgerEntryResponse> managerDaLedger(UUID daUserId, Pageable pageable, String cityFilter);
+
+    /** Per-DA collected-vs-deposited + authoritative ledger balance, riders with the largest outstanding first. */
     List<AdminCodReconciliationRow> reconciliation();
 
     /** Every declared deposit, newest first. */
     List<CodCashDepositResponse> allDeposits();
 
-    /** Admin verdict on a deposit: matched → RECONCILED, else DISCREPANCY. */
-    CodCashDepositResponse reconcile(UUID depositId, UUID adminId, boolean reconciled, String note);
+    /**
+     * Manager/admin verdict on a deposit: matched → RECONCILED, else DISCREPANCY. {@code cityFilter}
+     * enforces access — a manager can only reconcile a deposit whose DA is in their city (403); null =
+     * admin, no gate.
+     */
+    CodCashDepositResponse reconcile(UUID depositId, UUID actorId, boolean reconciled, String note, String cityFilter);
 }
