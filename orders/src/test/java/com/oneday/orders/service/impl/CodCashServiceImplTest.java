@@ -180,11 +180,46 @@ class CodCashServiceImplTest {
         when(codLedger.cashInHand(da)).thenReturn(300L);
         when(userService.getUser(da)).thenReturn(user(da, "BLR"));
 
-        var rows = service().reconciliation();
+        var rows = service().reconciliation(null); // admin: every city
         assertThat(rows).singleElement().satisfies(r -> {
             assertThat(r.variancePaise()).isEqualTo(300L);       // collected − deposited
             assertThat(r.cashInHandPaise()).isEqualTo(300L);     // authoritative ledger balance
             assertThat(r.daName()).isEqualTo("DA BLR");
         });
+    }
+
+    @Test
+    void reconciliation_scopedManager_hidesOtherCities() {
+        UUID blr = UUID.randomUUID();
+        UUID del = UUID.randomUUID();
+        when(collections.findDasWithCollectedCash()).thenReturn(List.of(blr, del));
+        when(deposits.findDistinctDaIds()).thenReturn(List.of());
+        when(collections.sumCollectedByDa(any())).thenReturn(1000L);
+        when(collections.countCollectedByDa(any())).thenReturn(1L);
+        when(deposits.sumDepositedByDa(any())).thenReturn(0L);
+        when(codLedger.cashInHand(any())).thenReturn(1000L);
+        when(userService.getUser(blr)).thenReturn(user(blr, "BLR"));
+        when(userService.getUser(del)).thenReturn(user(del, "DEL"));
+
+        var rows = service().reconciliation("BLR"); // manager scoped to BLR sees only BLR's rider
+        assertThat(rows).singleElement()
+                .satisfies(r -> assertThat(r.daUserId()).isEqualTo(blr));
+    }
+
+    @Test
+    void allDeposits_scopedManager_hidesOtherCities() {
+        UUID blr = UUID.randomUUID();
+        UUID del = UUID.randomUUID();
+        CodCashDeposit inCity = new CodCashDeposit();
+        inCity.setDaUserId(blr);
+        CodCashDeposit otherCity = new CodCashDeposit();
+        otherCity.setDaUserId(del);
+        when(deposits.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(inCity, otherCity));
+        when(userService.getUser(blr)).thenReturn(user(blr, "BLR"));
+        when(userService.getUser(del)).thenReturn(user(del, "DEL"));
+
+        var rows = service().allDeposits("BLR"); // manager scoped to BLR
+        assertThat(rows).singleElement()
+                .satisfies(r -> assertThat(r.daUserId()).isEqualTo(blr));
     }
 }

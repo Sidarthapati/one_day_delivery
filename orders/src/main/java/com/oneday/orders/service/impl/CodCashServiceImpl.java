@@ -133,30 +133,44 @@ class CodCashServiceImpl implements CodCashService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<AdminCodReconciliationRow> reconciliation() {
+    public List<AdminCodReconciliationRow> reconciliation(String cityFilter) {
         // Union of DAs that collected cash and DAs that declared deposits.
         Set<UUID> das = new LinkedHashSet<>(collections.findDasWithCollectedCash());
         das.addAll(deposits.findDistinctDaIds());
         return das.stream()
                 .map(da -> {
+                    UserResponse u = tryGetUser(da);
+                    // A city-scoped manager only sees their own city's riders; a DA whose city can't be
+                    // resolved is hidden from a scoped manager (fail-closed) but shown to admin.
+                    if (cityFilter != null && (u == null || !cityFilter.equals(u.cityId()))) {
+                        return null;
+                    }
                     long collected = collections.sumCollectedByDa(da);
                     long count = collections.countCollectedByDa(da);
                     long deposited = deposits.sumDepositedByDa(da);
-                    UserResponse u = tryGetUser(da);
                     return new AdminCodReconciliationRow(da,
                             u == null ? null : u.name(),
                             u == null ? null : u.email(),
                             count, collected, deposited, collected - deposited,
                             codLedger.cashInHand(da));
                 })
+                .filter(java.util.Objects::nonNull)
                 .sorted(Comparator.comparingLong(AdminCodReconciliationRow::variancePaise).reversed())
                 .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<CodCashDepositResponse> allDeposits() {
+    public List<CodCashDepositResponse> allDeposits(String cityFilter) {
+        // Resolve each DA's city at most once; a deposit whose DA isn't in the manager's city (or
+        // can't be resolved) is hidden from a scoped manager but shown to admin (null filter).
+        java.util.Map<UUID, Boolean> inCity = new java.util.HashMap<>();
         return deposits.findAllByOrderByCreatedAtDesc().stream()
+                .filter(d -> cityFilter == null
+                        || inCity.computeIfAbsent(d.getDaUserId(), id -> {
+                            UserResponse u = tryGetUser(id);
+                            return u != null && cityFilter.equals(u.cityId());
+                        }))
                 .map(CodCashDepositResponse::from).toList();
     }
 

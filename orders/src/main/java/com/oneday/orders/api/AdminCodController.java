@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -55,8 +56,16 @@ class AdminCodController {
      * endpoints below pass this to the service, which filters/enforces access by it.
      */
     private static String cityFilter(AuthUserDetails principal) {
-        return ADMIN.equals(principal.getUser().getRole().getName())
-                ? null : principal.getUser().getCityId();
+        if (ADMIN.equals(principal.getUser().getRole().getName())) {
+            return null; // admin sees every city
+        }
+        String cityId = principal.getUser().getCityId();
+        if (cityId == null) {
+            // Fail closed: a non-admin with no city assignment must not fall through to the null
+            // (= admin, unscoped) branch and read every city's cash.
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No city is assigned to your account.");
+        }
+        return cityId;
     }
 
     /** Vendors that currently have a payout-available balance, largest first. */
@@ -140,14 +149,14 @@ class AdminCodController {
     @GetMapping("/cash/reconciliation")
     public List<AdminCodReconciliationRow> reconciliation(@AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, STATION_MANAGER);
-        return codCash.reconciliation();
+        return codCash.reconciliation(cityFilter(principal));
     }
 
     /** Every declared cash deposit, newest first. */
     @GetMapping("/cash/deposits")
     public List<CodCashDepositResponse> deposits(@AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, STATION_MANAGER);
-        return codCash.allDeposits();
+        return codCash.allDeposits(cityFilter(principal));
     }
 
     /** Verify a deposit: matched → RECONCILED, else DISCREPANCY. PATCH (not idempotency-gated). City-gated. */

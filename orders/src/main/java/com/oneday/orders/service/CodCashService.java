@@ -45,11 +45,19 @@ public interface CodCashService {
      */
     List<DaCodLedgerEntryResponse> managerDaLedger(UUID daUserId, Pageable pageable, String cityFilter);
 
-    /** Per-DA collected-vs-deposited + authoritative ledger balance, riders with the largest outstanding first. */
-    List<AdminCodReconciliationRow> reconciliation();
+    /**
+     * Per-DA collected-vs-deposited + authoritative ledger balance, riders with the largest outstanding
+     * first. {@code cityFilter} scopes the list to one city (a station manager sees their own city);
+     * null = every city (admin). A DA whose city can't be resolved is hidden from a scoped manager.
+     */
+    List<AdminCodReconciliationRow> reconciliation(String cityFilter);
 
-    /** Every declared deposit, newest first. */
-    List<CodCashDepositResponse> allDeposits();
+    /**
+     * Every declared deposit, newest first. {@code cityFilter} scopes the list to one city (a station
+     * manager sees their own city); null = every city (admin). A deposit whose DA's city can't be
+     * resolved is hidden from a scoped manager.
+     */
+    List<CodCashDepositResponse> allDeposits(String cityFilter);
 
     /**
      * Manager/admin verdict on a deposit: matched → RECONCILED, else DISCREPANCY. {@code cityFilter}
