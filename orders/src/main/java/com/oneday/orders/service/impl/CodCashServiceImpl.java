@@ -1,15 +1,21 @@
 package com.oneday.orders.service.impl;
 
+import com.oneday.auth.dto.response.UserResponse;
+import com.oneday.auth.exception.UserNotFoundException;
+import com.oneday.auth.service.UserService;
 import com.oneday.orders.domain.CodCashDeposit;
 import com.oneday.orders.domain.CodCashDepositState;
+import com.oneday.orders.domain.DaCodBalance;
 import com.oneday.orders.domain.DaCodLedgerType;
 import com.oneday.orders.dto.AdminCodReconciliationRow;
+import com.oneday.orders.dto.AdminDaCashRow;
 import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.DaCodCashSummaryResponse;
 import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
 import com.oneday.orders.repository.CodCashDepositRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
+import com.oneday.orders.repository.DaCodBalanceRepository;
 import com.oneday.orders.service.CodCashService;
 import com.oneday.orders.service.CodLedgerService;
 import org.springframework.data.domain.Pageable;
@@ -34,12 +40,17 @@ class CodCashServiceImpl implements CodCashService {
     private final CodCashDepositRepository deposits;
     private final CodCollectionRepository collections;
     private final CodLedgerService codLedger;
+    private final DaCodBalanceRepository balances;
+    private final UserService userService;
 
     CodCashServiceImpl(CodCashDepositRepository deposits, CodCollectionRepository collections,
-                       CodLedgerService codLedger) {
+                       CodLedgerService codLedger, DaCodBalanceRepository balances,
+                       UserService userService) {
         this.deposits = deposits;
         this.collections = collections;
         this.codLedger = codLedger;
+        this.balances = balances;
+        this.userService = userService;
     }
 
     @Override
@@ -95,39 +106,110 @@ class CodCashServiceImpl implements CodCashService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<AdminCodReconciliationRow> reconciliation() {
+    public List<AdminDaCashRow> daCashBalances(String cityFilter) {
+        return balances.findAllByOrderByCashInHandPaiseDesc().stream()
+                .map(b -> {
+                    UserResponse u = tryGetUser(b.getDaUserId());
+                    return new AdminDaCashRow(
+                            b.getDaUserId(),
+                            u == null ? null : u.name(),
+                            u == null ? null : u.email(),
+                            u == null ? null : u.cityId(),
+                            b.getCashInHandPaise(),
+                            deposits.lastDepositAt(b.getDaUserId()));
+                })
+                // A city-scoped manager only sees their own city's riders; a DA whose city can't be
+                // resolved is hidden from a scoped manager (can't confirm they belong) but shown to admin.
+                .filter(row -> cityFilter == null || cityFilter.equals(row.cityId()))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaCodLedgerEntryResponse> managerDaLedger(UUID daUserId, Pageable pageable, String cityFilter) {
+        assertCityAccess(daUserId, cityFilter);
+        return codLedger.history(daUserId, pageable);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AdminCodReconciliationRow> reconciliation(String cityFilter) {
         // Union of DAs that collected cash and DAs that declared deposits.
         Set<UUID> das = new LinkedHashSet<>(collections.findDasWithCollectedCash());
         das.addAll(deposits.findDistinctDaIds());
         return das.stream()
                 .map(da -> {
+                    UserResponse u = tryGetUser(da);
+                    // A city-scoped manager only sees their own city's riders; a DA whose city can't be
+                    // resolved is hidden from a scoped manager (fail-closed) but shown to admin.
+                    if (cityFilter != null && (u == null || !cityFilter.equals(u.cityId()))) {
+                        return null;
+                    }
                     long collected = collections.sumCollectedByDa(da);
                     long count = collections.countCollectedByDa(da);
                     long deposited = deposits.sumDepositedByDa(da);
-                    return new AdminCodReconciliationRow(da, count, collected, deposited, collected - deposited);
+                    return new AdminCodReconciliationRow(da,
+                            u == null ? null : u.name(),
+                            u == null ? null : u.email(),
+                            count, collected, deposited, collected - deposited,
+                            codLedger.cashInHand(da));
                 })
+                .filter(java.util.Objects::nonNull)
                 .sorted(Comparator.comparingLong(AdminCodReconciliationRow::variancePaise).reversed())
                 .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<CodCashDepositResponse> allDeposits() {
+    public List<CodCashDepositResponse> allDeposits(String cityFilter) {
+        // Resolve each DA's city at most once; a deposit whose DA isn't in the manager's city (or
+        // can't be resolved) is hidden from a scoped manager but shown to admin (null filter).
+        java.util.Map<UUID, Boolean> inCity = new java.util.HashMap<>();
         return deposits.findAllByOrderByCreatedAtDesc().stream()
+                .filter(d -> cityFilter == null
+                        || inCity.computeIfAbsent(d.getDaUserId(), id -> {
+                            UserResponse u = tryGetUser(id);
+                            return u != null && cityFilter.equals(u.cityId());
+                        }))
                 .map(CodCashDepositResponse::from).toList();
     }
 
     @Override
     @Transactional
-    public CodCashDepositResponse reconcile(UUID depositId, UUID adminId, boolean reconciled, String note) {
+    public CodCashDepositResponse reconcile(UUID depositId, UUID actorId, boolean reconciled, String note,
+                                            String cityFilter) {
         CodCashDeposit d = deposits.findById(depositId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Deposit not found"));
+        assertCityAccess(d.getDaUserId(), cityFilter);
         d.setStatus(reconciled ? CodCashDepositState.RECONCILED : CodCashDepositState.DISCREPANCY);
-        d.setReconciledBy(adminId);
+        d.setReconciledBy(actorId);
         d.setReconciledAt(Instant.now());
         if (note != null && !note.isBlank()) {
             d.setNote(note.trim());
         }
         return CodCashDepositResponse.from(deposits.save(d));
+    }
+
+    /** Resolve a user to name/email/city, or null if the record isn't found. Best-effort enrichment. */
+    private UserResponse tryGetUser(UUID userId) {
+        try {
+            return userService.getUser(userId);
+        } catch (UserNotFoundException e) {
+            return null;
+        }
+    }
+
+    /**
+     * A city-scoped manager may only act on a DA in their own city. {@code cityFilter} null ⇒ admin,
+     * no gate. A DA whose city can't be resolved is refused to a scoped manager (fail-closed).
+     */
+    private void assertCityAccess(UUID daUserId, String cityFilter) {
+        if (cityFilter == null) {
+            return;
+        }
+        UserResponse u = tryGetUser(daUserId);
+        if (u == null || !cityFilter.equals(u.cityId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "This delivery associate isn't in your city.");
+        }
     }
 }

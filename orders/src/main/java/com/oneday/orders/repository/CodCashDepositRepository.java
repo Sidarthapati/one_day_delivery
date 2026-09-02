@@ -25,4 +25,8 @@ public interface CodCashDepositRepository extends JpaRepository<CodCashDeposit, 
     /** Distinct DAs that have declared at least one deposit. */
     @Query("SELECT DISTINCT d.daUserId FROM CodCashDeposit d")
     List<UUID> findDistinctDaIds();
+
+    /** When the DA last handed cash in — null if never (for the station DA-cash worklist, #191). */
+    @Query("SELECT MAX(d.createdAt) FROM CodCashDeposit d WHERE d.daUserId = :daUserId")
+    java.time.Instant lastDepositAt(@Param("daUserId") UUID daUserId);
 }

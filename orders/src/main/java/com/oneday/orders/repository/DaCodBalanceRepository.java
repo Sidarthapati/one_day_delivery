@@ -8,10 +8,14 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface DaCodBalanceRepository extends JpaRepository<DaCodBalance, UUID> {
+
+    /** Every DA's cash-in-hand, most-holding first — powers the station/admin DA-cash worklist (#191). */
+    List<DaCodBalance> findAllByOrderByCashInHandPaiseDesc();
 
     /**
      * Idempotently create the DA's balance row (zero) if it doesn't exist. Called before the locking
