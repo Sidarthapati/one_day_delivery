@@ -146,9 +146,12 @@ class AttendanceServiceImpl implements AttendanceService {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "No location available — enable GPS and try again");
             }
-            // A mock-provider fix must never back a check-in (a spoofer's last ping sits at the hub).
+            // An untrusted fix must never back a check-in — not just a mock provider, but also a
+            // teleport (velocity) or clock-skew flag, since any of those makes the last ping's
+            // hub position unreliable (a spoofer's last ping sits at the hub).
             if (props.getGps().getIntegrity().isMockedBlocksAttendance()
-                    && Boolean.TRUE.equals(last.getMocked())) {
+                    && (Boolean.TRUE.equals(last.getMocked())
+                        || last.isVelocityFlag() || last.isTsSkewFlag())) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                         "Location integrity check failed — disable mock/developer location and try again");
             }

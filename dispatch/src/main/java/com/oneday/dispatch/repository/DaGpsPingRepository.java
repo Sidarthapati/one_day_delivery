@@ -37,7 +37,7 @@ public interface DaGpsPingRepository extends JpaRepository<DaGpsPing, UUID> {
                    sum(case when p.velocityFlag = true then 1 else 0 end) as velocityCount,
                    sum(case when p.tsSkewFlag = true then 1 else 0 end) as skewCount
             from DaGpsPing p
-            where p.recordedAt between :from and :to
+            where p.recordedAt >= :from and p.recordedAt < :to
             group by p.daId
             """)
     List<DaPingIntegrityAggregate> aggregateIntegrityByDa(@Param("from") Instant from,
