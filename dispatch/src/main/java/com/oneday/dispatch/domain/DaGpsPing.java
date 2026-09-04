@@ -34,6 +34,32 @@ public class DaGpsPing extends BaseEntity {
     @Column(name = "recorded_at", nullable = false, updatable = false)
     private Instant recordedAt;
 
+    // ── location-trust signals (Phase 1) — all set once at insert, never mutated ──
+
+    /** Device reported the fix came from a mock-location provider (Android isMock). Null on old builds. */
+    @Column(name = "mocked", updatable = false)
+    private Boolean mocked;
+
+    /** Device-reported horizontal accuracy in metres, if sent. */
+    @Column(name = "accuracy_m", updatable = false)
+    private Double accuracyM;
+
+    /** Device-reported speed in m/s, if sent. */
+    @Column(name = "speed_mps", updatable = false)
+    private Double speedMps;
+
+    /** Server found an impossible jump (teleport) from the previous fix. */
+    @Column(name = "velocity_flag", nullable = false, updatable = false)
+    private boolean velocityFlag;
+
+    /** Device fix time is implausibly far from server receive time. */
+    @Column(name = "ts_skew_flag", nullable = false, updatable = false)
+    private boolean tsSkewFlag;
+
+    /** 0-100 rollup of the trust signals (higher = less trustworthy). */
+    @Column(name = "risk_score", nullable = false, updatable = false)
+    private int riskScore;
+
     public DaGpsPing(UUID daId, double lat, double lon, Instant recordedAt) {
         this.daId = daId;
         this.lat = lat;

@@ -49,8 +49,28 @@ class RefreshTokenServiceImpl implements RefreshTokenService {
     @Override
     @Transactional
     public Issued issue(User user) {
-        Minted minted = mint(user, UUID.randomUUID());
+        return issue(user, null);
+    }
+
+    @Override
+    @Transactional
+    public Issued issue(User user, String deviceId) {
+        Minted minted = mint(user, UUID.randomUUID(), deviceId);
         return new Issued(minted.rawToken(), minted.entity().getExpiresAt());
+    }
+
+    @Override
+    @Transactional
+    public int revokeOtherDevices(User user, String deviceId) {
+        if (deviceId == null || deviceId.isBlank()) {
+            return 0; // nothing to bind against — leave existing sessions untouched
+        }
+        int revoked = repository.revokeOtherDevices(user.getId(), deviceId, Instant.now());
+        if (revoked > 0) {
+            log.info("Single-active-device: revoked {} session(s) for user {} on other devices",
+                    revoked, user.getId());
+        }
+        return revoked;
     }
 
     @Override
@@ -78,7 +98,8 @@ class RefreshTokenServiceImpl implements RefreshTokenService {
         User user = userRepository.findActiveByIdWithRole(current.getUser().getId())
                 .orElseThrow(() -> new InvalidRefreshTokenException("User not found or inactive"));
 
-        Minted next = mint(user, current.getFamilyId());
+        // Carry the device binding forward across rotation, so the family stays tied to its device.
+        Minted next = mint(user, current.getFamilyId(), current.getDeviceId());
         // The bulk claim already set revoked_at in the DB; set it on the managed entity too (so the
         // flush doesn't reset it) and record the rotation lineage.
         current.setRevokedAt(now);
@@ -115,7 +136,7 @@ class RefreshTokenServiceImpl implements RefreshTokenService {
         });
     }
 
-    private Minted mint(User user, UUID familyId) {
+    private Minted mint(User user, UUID familyId, String deviceId) {
         byte[] bytes = new byte[RAW_TOKEN_BYTES];
         secureRandom.nextBytes(bytes);
         String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
@@ -124,6 +145,7 @@ class RefreshTokenServiceImpl implements RefreshTokenService {
         entity.setTokenHash(sha256Hex(rawToken));
         entity.setUser(user);
         entity.setFamilyId(familyId);
+        entity.setDeviceId(deviceId);
         entity.setExpiresAt(Instant.now().plus(properties.getTtl()));
         entity = repository.save(entity); // flush to populate the generated id for replacedById
 

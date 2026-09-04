@@ -35,6 +35,13 @@ public interface DaStatusService {
     void updateGps(UUID daId, double lat, double lon, Instant timestamp);
 
     /**
+     * Record a ping carrying its evaluated location-trust signals (mock flag, accuracy, plausibility
+     * flags, risk score) onto the append-only breadcrumb. The live position/heartbeat is still updated
+     * so the ops map keeps moving, but a caller can inspect the stored {@code risk_score} afterwards.
+     */
+    void updateGps(UUID daId, GpsSample sample);
+
+    /**
      * The DA's GPS breadcrumb trail between {@code from} and {@code to} (inclusive), oldest first.
      * Reads the append-only {@code da_gps_ping} table — unlike the live status, this survives pod
      * restarts and captures every recorded fix (route replay).

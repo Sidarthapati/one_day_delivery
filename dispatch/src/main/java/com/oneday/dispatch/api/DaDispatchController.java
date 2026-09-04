@@ -1,6 +1,7 @@
 package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.dispatch.dto.request.AttestRequest;
 import com.oneday.dispatch.dto.request.CustodyCollectRequest;
 import com.oneday.dispatch.dto.request.DropCompletedRequest;
 import com.oneday.dispatch.dto.request.GpsPingRequest;
@@ -8,13 +9,20 @@ import com.oneday.dispatch.dto.request.HubHandoffRequest;
 import com.oneday.dispatch.dto.request.OtpVerifyRequest;
 import com.oneday.dispatch.dto.request.TaskFailedRequest;
 import com.oneday.dispatch.dto.request.VanHandoffRequest;
+import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.service.AttendanceService;
 import com.oneday.dispatch.service.DaStatusService;
+import com.oneday.dispatch.service.DeviceAttestationService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
 import com.oneday.dispatch.service.GpsFixView;
+import com.oneday.dispatch.service.GpsPlausibilityService;
+import com.oneday.dispatch.service.GpsPlausibilityService.GpsPlausibility;
+import com.oneday.dispatch.service.GpsSample;
+import com.oneday.dispatch.service.IpReputationService;
 import com.oneday.dispatch.service.OtpVerificationService;
 import com.oneday.dispatch.service.model.DaLiveStatus;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -46,14 +54,54 @@ public class DaDispatchController {
     private final DaTaskService daTaskService;
     private final OtpVerificationService otpVerificationService;
     private final AttendanceService attendanceService;
+    private final GpsPlausibilityService gpsPlausibilityService;
+    private final IpReputationService ipReputationService;
+    private final DeviceAttestationService deviceAttestationService;
+    private final DispatchProperties props;
 
     public DaDispatchController(DaStatusService daStatusService, DaTaskService daTaskService,
                                OtpVerificationService otpVerificationService,
-                               AttendanceService attendanceService) {
+                               AttendanceService attendanceService,
+                               GpsPlausibilityService gpsPlausibilityService,
+                               IpReputationService ipReputationService,
+                               DeviceAttestationService deviceAttestationService,
+                               DispatchProperties props) {
         this.daStatusService = daStatusService;
         this.daTaskService = daTaskService;
         this.otpVerificationService = otpVerificationService;
         this.attendanceService = attendanceService;
+        this.gpsPlausibilityService = gpsPlausibilityService;
+        this.ipReputationService = ipReputationService;
+        this.deviceAttestationService = deviceAttestationService;
+        this.props = props;
+    }
+
+    /** Issue a single-use nonce for a Play Integrity attestation (DA-self). */
+    @PostMapping("/integrity/nonce")
+    public DeviceAttestationService.Nonce attestationNonce(
+            @PathVariable UUID daId, @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        return deviceAttestationService.issueNonce(daId);
+    }
+
+    /** Submit the Play Integrity token for the issued nonce; returns the verdict (DA-self). */
+    @PostMapping("/integrity/attest")
+    public DeviceAttestationService.AttestationVerdict attest(
+            @PathVariable UUID daId, @AuthenticationPrincipal AuthUserDetails principal,
+            @Valid @RequestBody AttestRequest request) {
+        Authz.requireDaSelf(principal, daId);
+        return deviceAttestationService.verify(daId, request.nonce(), request.token());
+    }
+
+    /** Client IP for reputation checks — the rightmost X-Forwarded-For hop (proxy-set, hard to spoof),
+     *  else the socket address. Mirrors the auth RateLimitFilter's convention. */
+    private static String clientIp(HttpServletRequest request) {
+        String xff = request.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            String[] hops = xff.split(",");
+            return hops[hops.length - 1].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     /** The DA's task queue for the day (the app's home list). Each item carries taskLat/taskLon for Open-in-Maps. */
@@ -68,16 +116,33 @@ public class DaDispatchController {
     @PostMapping("/gps")
     public ResponseEntity<Void> gps(@PathVariable UUID daId,
                                     @AuthenticationPrincipal AuthUserDetails principal,
-                                    @Valid @RequestBody GpsPingRequest request) {
+                                    @Valid @RequestBody GpsPingRequest request,
+                                    HttpServletRequest httpRequest) {
         Authz.requireDaSelf(principal, daId);
-        Instant ts = request.timestamp() != null ? request.timestamp() : Instant.now();
-        daStatusService.updateGps(daId, request.lat(), request.lon(), ts);
+        Instant serverNow = Instant.now();
+        Instant ts = request.timestamp() != null ? request.timestamp() : serverNow;
+
+        // Evaluate trust BEFORE storing, so impossible-travel is measured against the prior fix.
+        GpsPlausibility trust = gpsPlausibilityService.evaluate(
+                daId, request.lat(), request.lon(), ts, request.accuracy(), request.mocked(), serverNow);
+        // Soft IP signal (Phase 5): a datacenter/VPN client IP raises the risk score for ops review but
+        // never blocks (hybrid posture) — so it's not part of trusted()/attendance gating below.
+        IpReputationService.IpReputation ip = ipReputationService.evaluate(clientIp(httpRequest));
+        int riskScore = Math.min(100, trust.riskScore() + ip.riskBump());
+        daStatusService.updateGps(daId, new GpsSample(
+                request.lat(), request.lon(), ts, request.accuracy(), request.speed(), request.mocked(),
+                trust.velocityFlag(), trust.tsSkewFlag(), riskScore));
+
         // Reactive geocoded attendance: an on-shift DA within the hub geofence is auto-marked present.
-        // Uses the in-memory live status (city + shift) so the hot ping path takes no extra DB read.
-        DaLiveStatus live = daStatusService.getLiveStatus(daId);
-        if (live != null && live.getCityId() != null) {
-            attendanceService.onGpsFix(daId, live.getCityId(), live.getShiftType(),
-                    request.lat(), request.lon(), ts);
+        // Only a trusted fix may establish presence — a mocked/teleported/skewed ping is recorded for
+        // ops review but never counts as being at the hub. Uses in-memory live status (no extra DB read).
+        boolean gate = props.getGps().getIntegrity().isMockedBlocksAttendance();
+        if (!gate || trust.trusted()) {
+            DaLiveStatus live = daStatusService.getLiveStatus(daId);
+            if (live != null && live.getCityId() != null) {
+                attendanceService.onGpsFix(daId, live.getCityId(), live.getShiftType(),
+                        request.lat(), request.lon(), ts);
+            }
         }
         return ResponseEntity.noContent().build();
     }

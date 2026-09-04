@@ -50,8 +50,8 @@
         <!-- Override Spring Boot 3.2.5's managed versions to patched releases that clear the
              HIGH/CRITICAL CVEs flagged by Trivy. Same minor/patch lines (drop-in compatible):
              tomcat 10.1.20 → 10.1.59 (CVE-2025-24813, CVE-2026-41293/43512/43515,
-                 and CVE-2026-65182/65905/68525 — bypass/authn-bypass, fixed in 10.1.58;
-                 10.1.58 was never published to Central so we take the next line 10.1.59),
+                 CVE-2026-65182/65905/68525 — security-constraint/DIGEST/FORM auth bypass;
+                 fixed in 10.1.58 but that patch was never published to Central, so use 10.1.59),
              spring-security 6.2.7 → 6.2.8 (CVE-2024-38827 case-sensitive auth bypass; latest 6.2.x),
              postgresql 42.6.x → 42.7.12 (CVE-2026-42198, CVE-2026-54291 SCRAM-SHA-256-PLUS downgrade),
              spring-framework 6.1.6 → 6.1.14 (path-traversal CVE-2024-38816/38819, DoS CVE-2024-38809),

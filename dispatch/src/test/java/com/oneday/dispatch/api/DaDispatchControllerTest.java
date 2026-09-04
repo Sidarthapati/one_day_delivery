@@ -1,25 +1,32 @@
 package com.oneday.dispatch.api;
 
 import com.oneday.auth.security.AuthUserDetails;
+import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.dto.request.GpsPingRequest;
 import com.oneday.dispatch.dto.request.HubHandoffRequest;
 import com.oneday.dispatch.dto.request.OtpVerifyRequest;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
+import com.oneday.dispatch.service.GpsPlausibilityService;
+import com.oneday.dispatch.service.GpsPlausibilityService.GpsPlausibility;
+import com.oneday.dispatch.service.GpsSample;
+import com.oneday.dispatch.service.IpReputationService;
+import com.oneday.dispatch.service.IpReputationService.IpReputation;
 import com.oneday.dispatch.service.OtpVerificationService;
+import org.springframework.mock.web.MockHttpServletRequest;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
@@ -33,6 +40,7 @@ class DaDispatchControllerTest {
     private DaStatusService daStatusService;
     private DaTaskService daTaskService;
     private OtpVerificationService otpVerificationService;
+    private GpsPlausibilityService gpsPlausibilityService;
     private DaDispatchController controller;
 
     private final UUID da = UUID.randomUUID();
@@ -43,16 +51,25 @@ class DaDispatchControllerTest {
         daStatusService = mock(DaStatusService.class);
         daTaskService = mock(DaTaskService.class);
         otpVerificationService = mock(OtpVerificationService.class);
+        gpsPlausibilityService = mock(GpsPlausibilityService.class);
+        // Default: every fix is trusted, so attendance is not gated in the unrelated tests.
+        when(gpsPlausibilityService.evaluate(any(), anyDouble(), anyDouble(), any(), any(), any(), any()))
+                .thenReturn(new GpsPlausibility(true, false, false, false, false, 0));
+        IpReputationService ipReputationService = mock(IpReputationService.class);
+        when(ipReputationService.evaluate(any())).thenReturn(IpReputation.clean());
         controller = new DaDispatchController(daStatusService, daTaskService, otpVerificationService,
-                mock(com.oneday.dispatch.service.AttendanceService.class));
+                mock(com.oneday.dispatch.service.AttendanceService.class), gpsPlausibilityService,
+                ipReputationService, mock(com.oneday.dispatch.service.DeviceAttestationService.class),
+                new DispatchProperties());
         when(daTaskService.markEnRoute(any(), any())).thenReturn(sampleView());
     }
 
     @Test
     void gpsDelegatesAndReturns204() {
-        var resp = controller.gps(da, principal(da, "DELIVERY_ASSOCIATE"), new GpsPingRequest(12.9, 77.6, null));
+        var resp = controller.gps(da, principal(da, "DELIVERY_ASSOCIATE"),
+                new GpsPingRequest(12.9, 77.6, null, null, null, null), new MockHttpServletRequest());
         assertThat(resp.getStatusCode().value()).isEqualTo(204);
-        verify(daStatusService).updateGps(eq(da), eq(12.9), eq(77.6), any(Instant.class));
+        verify(daStatusService).updateGps(eq(da), any(GpsSample.class));
     }
 
     @Test
