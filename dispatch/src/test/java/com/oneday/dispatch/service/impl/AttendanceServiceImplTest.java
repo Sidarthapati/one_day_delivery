@@ -158,6 +158,30 @@ class AttendanceServiceImplTest {
     }
 
     @Test
+    void checkIn_noCoords_fallbackPingFlaggedForTeleport_returns422() {
+        // No coords supplied → falls back to the last stored ping. That ping is a velocity (teleport)
+        // flag, so its hub position can't be trusted to back a check-in.
+        DaStatus da = new DaStatus();
+        da.setDaId(daId);
+        da.setCityId(cityId);
+        da.setShiftType("SHIFT_1");
+        when(daStatusRepository.findByDaId(daId)).thenReturn(Optional.of(da));
+        when(attendanceRepository.findByDaIdAndAttendanceDate(eq(daId), any())).thenReturn(Optional.empty());
+
+        DaGpsPing last = new DaGpsPing();
+        last.setDaId(daId);
+        last.setLat(HUB_LAT);
+        last.setLon(HUB_LON);
+        last.setRecordedAt(Instant.now());
+        last.setVelocityFlag(true); // teleport — untrusted even though it's sitting at the hub
+        when(daGpsPingRepository.findTopByDaIdOrderByRecordedAtDesc(daId)).thenReturn(last);
+
+        assertThatThrownBy(() -> service.checkIn(daId, null, null))
+                .hasMessageContaining("integrity check failed");
+        verify(attendanceRepository, never()).save(any());
+    }
+
+    @Test
     void today_present_returnsPresentEntry() {
         DaAttendance present = new DaAttendance();
         present.setDaId(daId);

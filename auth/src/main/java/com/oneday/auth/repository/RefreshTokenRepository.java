@@ -35,6 +35,19 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
     int revokeFamily(@Param("familyId") UUID familyId, @Param("now") Instant now);
 
     /**
+     * Single-active-device sweep: revoke this user's still-active tokens on any OTHER device (or with
+     * no device binding). Called on a fresh login from {@code deviceId} so only the newest device
+     * keeps a live session. Returns rows revoked.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE RefreshToken t SET t.revokedAt = :now "
+            + "WHERE t.user.id = :userId AND t.revokedAt IS NULL "
+            + "AND (t.deviceId IS NULL OR t.deviceId <> :deviceId)")
+    int revokeOtherDevices(@Param("userId") UUID userId, @Param("deviceId") String deviceId,
+                           @Param("now") Instant now);
+
+    /**
      * Delete tokens already past their expiry. Revoked-but-unexpired rows are kept until they'd
      * expire anyway, so reuse detection still fires for a stolen token within its natural lifetime.
      */

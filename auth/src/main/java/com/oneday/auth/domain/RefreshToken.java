@@ -38,6 +38,10 @@ public class RefreshToken extends BaseEntity {
     @Column(name = "replaced_by_id")
     private UUID replacedById;
 
+    /** The physical device (X-Device-Id) this family was minted on; null if the client sent none. */
+    @Column(name = "device_id", length = 64)
+    private String deviceId;
+
     public boolean isRevoked() {
         return revokedAt != null;
     }

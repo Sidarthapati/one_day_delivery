@@ -9,6 +9,7 @@ import com.oneday.dispatch.repository.DaGpsPingRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.GpsFixView;
+import com.oneday.dispatch.service.GpsSample;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.dispatch.service.model.DaQueue;
 import org.slf4j.Logger;
@@ -94,10 +95,26 @@ class DaStatusServiceImpl implements DaStatusService {
 
     @Override
     public void updateGps(UUID daId, double lat, double lon, Instant timestamp) {
+        updateGps(daId, GpsSample.trusted(lat, lon, timestamp));
+    }
+
+    @Override
+    public void updateGps(UUID daId, GpsSample sample) {
+        double lat = sample.lat();
+        double lon = sample.lon();
+        Instant timestamp = sample.recordedAt();
+
         // Append-only breadcrumb FIRST, unconditionally — the route trail must capture every ping even
-        // when the DA has no shift loaded in memory (ad-hoc tracking / route replay). ponytail: one insert
-        // per ping, fine at current DA volume; batch-buffer if ping QPS ever climbs.
-        daGpsPingRepository.save(new DaGpsPing(daId, lat, lon, timestamp));
+        // when the DA has no shift loaded in memory (ad-hoc tracking / route replay). Even a low-trust
+        // fix is stored (with its risk score) so ops can review it; it just won't drive attendance.
+        DaGpsPing ping = new DaGpsPing(daId, lat, lon, timestamp);
+        ping.setMocked(sample.mocked());
+        ping.setAccuracyM(sample.accuracyM());
+        ping.setSpeedMps(sample.speedMps());
+        ping.setVelocityFlag(sample.velocityFlag());
+        ping.setTsSkewFlag(sample.tsSkewFlag());
+        ping.setRiskScore(sample.riskScore());
+        daGpsPingRepository.save(ping);
 
         DaLiveStatus live = liveStatus.get(daId);
         if (live == null) {

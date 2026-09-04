@@ -70,6 +70,10 @@ public class DispatchProperties {
     private Absence absence = new Absence();
     @NestedConfigurationProperty
     private Attendance attendance = new Attendance();
+    @NestedConfigurationProperty
+    private IpReputation ipReputation = new IpReputation();
+    @NestedConfigurationProperty
+    private Attestation attestation = new Attestation();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -103,6 +107,54 @@ public class DispatchProperties {
     public void setAbsence(Absence absence) { this.absence = absence; }
     public Attendance getAttendance() { return attendance; }
     public void setAttendance(Attendance attendance) { this.attendance = attendance; }
+    public IpReputation getIpReputation() { return ipReputation; }
+    public void setIpReputation(IpReputation ipReputation) { this.ipReputation = ipReputation; }
+    public Attestation getAttestation() { return attestation; }
+    public void setAttestation(Attestation attestation) { this.attestation = attestation; }
+
+    /**
+     * Device attestation (Play Integrity, Phase 2). {@code enabled}=false ships a permissive stub
+     * verifier (UNKNOWN verdict) so the nonce flow works in dev without Google keys; production sets
+     * enabled=true and wires the real verifier with {@code GOOGLE_PLAY_INTEGRITY_*} credentials.
+     */
+    public static class Attestation {
+        private boolean enabled = false;
+        /** How long an issued nonce is valid before it must be re-requested. */
+        private int nonceTtlSeconds = 300;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getNonceTtlSeconds() { return nonceTtlSeconds; }
+        public void setNonceTtlSeconds(int nonceTtlSeconds) { this.nonceTtlSeconds = nonceTtlSeconds; }
+    }
+
+    /**
+     * VPN/datacenter IP reputation — a SOFT anti-abuse signal (Phase 5). A ping from a
+     * datacenter/VPN/proxy range adds {@code riskBump} to that ping's risk score (surfaced to ops);
+     * it never blocks. The starter CIDR list covers a few well-known cloud/VPN ranges; extend it via
+     * {@code dispatch.ip-reputation.datacenter-cidrs} or point at a richer feed later.
+     */
+    public static class IpReputation {
+        private boolean enabled = true;
+        private int riskBump = 15;
+        /** IPv4 CIDR ranges treated as datacenter/VPN. A conservative starter set of major clouds. */
+        private List<String> datacenterCidrs = new ArrayList<>(List.of(
+                "3.0.0.0/8",       // AWS
+                "13.32.0.0/12",    // AWS/CloudFront
+                "34.0.0.0/8",      // Google Cloud
+                "35.184.0.0/13",   // Google Cloud
+                "104.16.0.0/12",   // Cloudflare
+                "146.70.0.0/15",   // M247 (common VPN exit)
+                "185.220.100.0/22" // Tor/VPN exit range
+        ));
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getRiskBump() { return riskBump; }
+        public void setRiskBump(int riskBump) { this.riskBump = riskBump; }
+        public List<String> getDatacenterCidrs() { return datacenterCidrs; }
+        public void setDatacenterCidrs(List<String> datacenterCidrs) { this.datacenterCidrs = datacenterCidrs; }
+    }
 
     /** Cron-meeting protection (the hard constraint). */
     public static class Cron {
@@ -207,6 +259,37 @@ public class DispatchProperties {
         }
         public String getTrailPurgeCron() { return trailPurgeCron; }
         public void setTrailPurgeCron(String trailPurgeCron) { this.trailPurgeCron = trailPurgeCron; }
+
+        /** Location-trust plausibility thresholds for each incoming ping (Phase 1). */
+        private Integrity integrity = new Integrity();
+        public Integrity getIntegrity() { return integrity; }
+        public void setIntegrity(Integrity integrity) { this.integrity = integrity; }
+
+        /**
+         * Server-side plausibility limits. A DA can travel fast but not teleport, and a phone's clock
+         * can drift but not by hours; a fix that breaks these is flagged (and excluded from attendance)
+         * rather than trusted. {@code mockedBlocksAttendance} keeps a mock-provider fix from ever
+         * establishing presence.
+         */
+        public static class Integrity {
+            /** Ground speed between two consecutive fixes above this (km/h) is an impossible jump. */
+            private double maxSpeedKmph = 150.0;
+            /** Device fix time further than this from server receive time (seconds) is skewed. */
+            private long timestampSkewToleranceSeconds = 120;
+            /** Accuracy worse (larger) than this many metres is treated as low-trust. */
+            private double maxAccuracyMeters = 200.0;
+            /** A mock-provider fix (or one that fails plausibility) never marks the DA present. */
+            private boolean mockedBlocksAttendance = true;
+
+            public double getMaxSpeedKmph() { return maxSpeedKmph; }
+            public void setMaxSpeedKmph(double maxSpeedKmph) { this.maxSpeedKmph = maxSpeedKmph; }
+            public long getTimestampSkewToleranceSeconds() { return timestampSkewToleranceSeconds; }
+            public void setTimestampSkewToleranceSeconds(long v) { this.timestampSkewToleranceSeconds = v; }
+            public double getMaxAccuracyMeters() { return maxAccuracyMeters; }
+            public void setMaxAccuracyMeters(double maxAccuracyMeters) { this.maxAccuracyMeters = maxAccuracyMeters; }
+            public boolean isMockedBlocksAttendance() { return mockedBlocksAttendance; }
+            public void setMockedBlocksAttendance(boolean v) { this.mockedBlocksAttendance = v; }
+        }
     }
 
     public static class Osrm {

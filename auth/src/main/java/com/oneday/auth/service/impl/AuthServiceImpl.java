@@ -1,5 +1,6 @@
 package com.oneday.auth.service.impl;
 
+import com.oneday.auth.config.DeviceBindingProperties;
 import com.oneday.auth.config.OtpProperties;
 import com.oneday.auth.domain.ApiKey;
 import com.oneday.auth.domain.AuthProvider;
@@ -73,6 +74,7 @@ class AuthServiceImpl implements AuthService {
     private final OtpProperties otpProperties;
     private final RefreshTokenService refreshTokenService;
     private final RefreshTokenProperties refreshTokenProperties;
+    private final DeviceBindingProperties deviceBindingProperties;
     private final SecureRandom secureRandom = new SecureRandom();
 
     AuthServiceImpl(UserRepository userRepository,
@@ -86,7 +88,8 @@ class AuthServiceImpl implements AuthService {
             OtpSender otpSender,
             OtpProperties otpProperties,
             RefreshTokenService refreshTokenService,
-            RefreshTokenProperties refreshTokenProperties) {
+            RefreshTokenProperties refreshTokenProperties,
+            DeviceBindingProperties deviceBindingProperties) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.apiKeyRepository = apiKeyRepository;
@@ -99,11 +102,18 @@ class AuthServiceImpl implements AuthService {
         this.otpProperties = otpProperties;
         this.refreshTokenService = refreshTokenService;
         this.refreshTokenProperties = refreshTokenProperties;
+        this.deviceBindingProperties = deviceBindingProperties;
     }
 
     @Override
     @Transactional
     public LoginResponse login(LoginRequest request) {
+        return login(request, null);
+    }
+
+    @Override
+    @Transactional
+    public LoginResponse login(LoginRequest request, String deviceId) {
         User user = userRepository.findByEmail(request.email())
                 .filter(User::isActive)
                 .orElseThrow(BadCredentialsException::new);
@@ -114,7 +124,7 @@ class AuthServiceImpl implements AuthService {
             throw new BadCredentialsException();
         }
 
-        return toLoginResponse(user);
+        return toLoginResponse(user, deviceId);
     }
 
     @Override
@@ -347,10 +357,20 @@ class AuthServiceImpl implements AuthService {
     }
 
     private LoginResponse toLoginResponse(User user) {
+        return toLoginResponse(user, null);
+    }
+
+    private LoginResponse toLoginResponse(User user, String deviceId) {
         String token = jwtService.createToken(user);
         Instant expiresAt = jwtService.expiryFor(user);
+
+        // Single-active-device (Phase 4): a fresh login from an applicable role kicks that user's
+        // sessions off every other device before minting the new device-bound session.
+        if (deviceBindingProperties.appliesTo(user.getRole().getName())) {
+            refreshTokenService.revokeOtherDevices(user, deviceId);
+        }
         String refreshToken = refreshTokenProperties.isEnabled()
-                ? refreshTokenService.issue(user).rawToken()
+                ? refreshTokenService.issue(user, deviceId).rawToken()
                 : null;
         return new LoginResponse(token, expiresAt, user.getRole().getName(),
                 user.getCityId(), user.getName(), user.getPhone(), user.isMustChangePassword(),

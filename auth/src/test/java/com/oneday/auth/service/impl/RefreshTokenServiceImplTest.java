@@ -95,6 +95,24 @@ class RefreshTokenServiceImplTest {
                 return n;
             }
         });
+        // Single-active-device sweep: revoke this user's active tokens bound to any other device.
+        when(repository.revokeOtherDevices(any(), any(), any())).thenAnswer(inv -> {
+            synchronized (store) {
+                UUID uid = inv.getArgument(0);
+                String dev = inv.getArgument(1);
+                Instant now = inv.getArgument(2);
+                int n = 0;
+                for (RefreshToken t : store.values()) {
+                    boolean sameUser = t.getUser() != null && uid.equals(idOf(t.getUser()));
+                    boolean otherDevice = t.getDeviceId() == null || !t.getDeviceId().equals(dev);
+                    if (sameUser && t.getRevokedAt() == null && otherDevice) {
+                        t.setRevokedAt(now);
+                        n++;
+                    }
+                }
+                return n;
+            }
+        });
 
         Role role = new Role();
         role.setName("C2C_CUSTOMER");
@@ -118,6 +136,35 @@ class RefreshTokenServiceImplTest {
         // Stored under the SHA-256 hash — never the raw token itself.
         assertThat(store).hasSize(1);
         assertThat(store).doesNotContainKey(issued.rawToken());
+    }
+
+    @Test
+    void issue_bindsDevice_andRotationCarriesItForward() {
+        RefreshTokenService.Issued issued = service.issue(user, "device-1");
+        RefreshToken entity = store.values().iterator().next();
+        assertThat(entity.getDeviceId()).isEqualTo("device-1");
+
+        // A rotation stays tied to the same physical device (the session, not the token, is bound).
+        RefreshTokenService.Rotation rot = service.rotate(issued.rawToken());
+        RefreshToken next = store.get(sha256Hex(rot.rawToken()));
+        assertThat(next.getDeviceId()).isEqualTo("device-1");
+    }
+
+    @Test
+    void revokeOtherDevices_kicksSessionsOnOtherDevices() {
+        service.issue(user, "old-device"); // an active session on the DA's previous phone
+
+        int revoked = service.revokeOtherDevices(user, "new-device");
+
+        assertThat(revoked).isEqualTo(1);
+        assertThat(store.values().stream().filter(RefreshToken::isActive).count()).isZero();
+    }
+
+    @Test
+    void revokeOtherDevices_noopWhenDeviceIdBlank() {
+        service.issue(user, "old-device");
+        assertThat(service.revokeOtherDevices(user, null)).isZero();
+        assertThat(store.values().stream().filter(RefreshToken::isActive).count()).isEqualTo(1);
     }
 
     @Test
