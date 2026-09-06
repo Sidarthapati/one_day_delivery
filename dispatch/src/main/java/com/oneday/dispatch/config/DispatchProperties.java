@@ -69,6 +69,8 @@ public class DispatchProperties {
     @NestedConfigurationProperty
     private Absence absence = new Absence();
     @NestedConfigurationProperty
+    private Disposition disposition = new Disposition();
+    @NestedConfigurationProperty
     private Attendance attendance = new Attendance();
     @NestedConfigurationProperty
     private IpReputation ipReputation = new IpReputation();
@@ -105,6 +107,8 @@ public class DispatchProperties {
     public void setDlq(Dlq dlq) { this.dlq = dlq; }
     public Absence getAbsence() { return absence; }
     public void setAbsence(Absence absence) { this.absence = absence; }
+    public Disposition getDisposition() { return disposition; }
+    public void setDisposition(Disposition disposition) { this.disposition = disposition; }
     public Attendance getAttendance() { return attendance; }
     public void setAttendance(Attendance attendance) { this.attendance = attendance; }
     public IpReputation getIpReputation() { return ipReputation; }
@@ -192,6 +196,45 @@ public class DispatchProperties {
         }
         public long getAutoApplySweepMs() { return autoApplySweepMs; }
         public void setAutoApplySweepMs(long autoApplySweepMs) { this.autoApplySweepMs = autoApplySweepMs; }
+    }
+
+    /**
+     * DA self-service dispositions (breaks / auxiliary company-work / day-off). A personal BREAK
+     * auto-approves within the DA's deadline-aware slots and this daily allowance; an overstay past the
+     * scheduled end + {@code escalateAfterMinutes} is marked OVERSTAYED and surfaced to the station
+     * manager. The pre-cron / pre-hub-return protected window a slot must avoid reuses
+     * {@code dispatch.cron.freeze-minutes}.
+     */
+    public static class Disposition {
+        /** Total personal-break minutes a DA may take per day (splittable across BREAK dispositions). */
+        private int dailyAllowanceMinutes = 60;
+        /** Minimum length of a single break, and the minimum usable slot width. */
+        private int minBreakMinutes = 30;
+        /** Grace past the scheduled end before a disposition is marked OVERSTAYED + escalated. */
+        private int escalateAfterMinutes = 30;
+        /** The in-app overstay banner escalates one level per this many minutes past the scheduled end. */
+        private int escalationStepMinutes = 5;
+        /** Cap on the escalation level (banner urgency). */
+        private int maxEscalationLevel = 5;
+        /** How often {@code DispositionMonitorJob} sweeps overstays / reconciles closed breaks. */
+        private int sweepSeconds = 60;
+        /** BREAK reasons (enum names) that do NOT consume the daily allowance, e.g. EV_CHARGING if freed. */
+        private List<String> nonCountingReasons = new ArrayList<>();
+
+        public int getDailyAllowanceMinutes() { return dailyAllowanceMinutes; }
+        public void setDailyAllowanceMinutes(int v) { this.dailyAllowanceMinutes = v; }
+        public int getMinBreakMinutes() { return minBreakMinutes; }
+        public void setMinBreakMinutes(int v) { this.minBreakMinutes = v; }
+        public int getEscalateAfterMinutes() { return escalateAfterMinutes; }
+        public void setEscalateAfterMinutes(int v) { this.escalateAfterMinutes = v; }
+        public int getEscalationStepMinutes() { return escalationStepMinutes; }
+        public void setEscalationStepMinutes(int v) { this.escalationStepMinutes = v; }
+        public int getMaxEscalationLevel() { return maxEscalationLevel; }
+        public void setMaxEscalationLevel(int v) { this.maxEscalationLevel = v; }
+        public int getSweepSeconds() { return sweepSeconds; }
+        public void setSweepSeconds(int v) { this.sweepSeconds = v; }
+        public List<String> getNonCountingReasons() { return nonCountingReasons; }
+        public void setNonCountingReasons(List<String> v) { this.nonCountingReasons = v; }
     }
 
     /**

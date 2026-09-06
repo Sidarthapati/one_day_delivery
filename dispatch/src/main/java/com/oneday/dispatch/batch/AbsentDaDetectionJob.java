@@ -47,8 +47,11 @@ public class AbsentDaDetectionJob {
         Duration threshold = Duration.ofMinutes(props.getDa().getAbsentThresholdMinutes());
         for (UUID daId : daStatusService.loadedDaIds()) {
             DaStatusEnum status = daStatusService.getStatus(daId);
-            // OFFLINE (never pinged) and already-ABSENT DAs are not re-flagged.
-            if (status == null || status == DaStatusEnum.OFFLINE || status == DaStatusEnum.ABSENT) {
+            // OFFLINE (never pinged) and already-ABSENT DAs are not re-flagged. ON_BREAK DAs are on an
+            // approved disposition (territory held) — a lapsed heartbeat is expected (phone pocketed at
+            // lunch), so they must NOT flip to ABSENT; the disposition monitor handles their overstay.
+            if (status == null || status == DaStatusEnum.OFFLINE || status == DaStatusEnum.ABSENT
+                    || status == DaStatusEnum.ON_BREAK) {
                 continue;
             }
             DaLiveStatus live = daStatusService.getLiveStatus(daId);
