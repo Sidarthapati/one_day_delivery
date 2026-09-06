@@ -179,7 +179,7 @@ class DaDispositionServiceImpl implements DaDispositionService {
 
     @Override
     @Transactional
-    public DispositionResponse end(UUID daId, UUID actorUserId) {
+    public DispositionResponse end(UUID daId) {
         DaDisposition d = repository.findFirstByDaIdAndStatusIn(daId, IN_EFFECT)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "No active break to end"));
         Instant now = clock.instant();

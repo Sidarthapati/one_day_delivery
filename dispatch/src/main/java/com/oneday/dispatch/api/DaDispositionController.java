@@ -58,7 +58,7 @@ public class DaDispositionController {
     public DispositionResponse end(@PathVariable UUID daId,
                                    @AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireDaSelf(principal, daId);
-        return service.end(daId, Authz.requireUserId(principal));
+        return service.end(daId);
     }
 
     // ── Manager-facing ─────────────────────────────────────────────────────────

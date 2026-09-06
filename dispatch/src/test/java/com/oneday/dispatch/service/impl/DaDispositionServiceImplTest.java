@@ -169,7 +169,7 @@ class DaDispositionServiceImplTest {
         service.setClock(Clock.fixed(at(9, 10), IST));   // returned after 10 of 30 min
         when(repository.findFirstByDaIdAndStatusIn(any(), any())).thenReturn(Optional.of(active));
         when(daStatusService.getStatus(DA)).thenReturn(DaStatusEnum.ON_BREAK);
-        DispositionResponse resp = service.end(DA, DA);
+        DispositionResponse resp = service.end(DA);
         assertThat(resp.status()).isEqualTo(DispositionStatus.COMPLETED);
         assertThat(resp.durationMinutes()).isEqualTo(10);   // charged actual, not the reserved 30
         verify(daStatusService).updateStatus(DA, DaStatusEnum.IDLE);

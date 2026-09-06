@@ -25,7 +25,7 @@ public interface DaDispositionService {
     DispositionResponse request(UUID daId, DispositionRequest request, UUID actorUserId);
 
     /** The DA taps "I'm back": closes their active break/auxiliary and restores them to work. */
-    DispositionResponse end(UUID daId, UUID actorUserId);
+    DispositionResponse end(UUID daId);
 
     /** Station manager approves a PENDING AUXILIARY request (→ ACTIVE, ON_BREAK). */
     DispositionResponse approve(UUID dispositionId, UUID managerId, UUID scopeCityId);
