@@ -61,8 +61,10 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
     private static final List<TaskStatus> ACTIVE = List.of(TaskStatus.QUEUED, TaskStatus.IN_PROGRESS);
 
     // On-shift DAs (any of these) are candidates for the absence picker; OFFLINE / ABSENT are excluded.
+    // ON_BREAK is on-shift too: a DA overstaying a break may need to be marked absent + reassigned.
     private static final List<DaStatusEnum> ON_SHIFT = List.of(
-            DaStatusEnum.IDLE, DaStatusEnum.IN_PROGRESS, DaStatusEnum.CRON_LOCKED, DaStatusEnum.AT_CRON);
+            DaStatusEnum.IDLE, DaStatusEnum.IN_PROGRESS, DaStatusEnum.CRON_LOCKED, DaStatusEnum.AT_CRON,
+            DaStatusEnum.ON_BREAK);
 
     private final GridService gridService;
     private final DispatchQueueRepository queueRepository;
