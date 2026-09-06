@@ -9,11 +9,15 @@ import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.events.HubScanSeamProducer;
+import com.oneday.dispatch.domain.DaLocationStub;
+import com.oneday.dispatch.dto.response.DaStubView;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
+import com.oneday.dispatch.repository.DaLocationStubRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DaTaskService;
 import com.oneday.dispatch.service.DaTaskView;
+import com.oneday.dispatch.service.LocationStubService;
 import com.oneday.dispatch.service.model.DaQueue;
 import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.log.AuditLog;
@@ -33,7 +37,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -58,6 +64,8 @@ class DaTaskServiceImpl implements DaTaskService {
     private final ShipmentContactPort shipmentContactPort;
     private final QueueReorderService queueReorderService;
     private final CityMeetingModePort meetingModePort;
+    private final LocationStubService locationStubService;
+    private final DaLocationStubRepository stubRepository;
 
     DaTaskServiceImpl(DispatchQueueRepository queueRepository,
                       DaCronAssignmentRepository cronRepository,
@@ -68,7 +76,9 @@ class DaTaskServiceImpl implements DaTaskService {
                       ShipmentRefPort shipmentRefPort,
                       ShipmentContactPort shipmentContactPort,
                       QueueReorderService queueReorderService,
-                      CityMeetingModePort meetingModePort) {
+                      CityMeetingModePort meetingModePort,
+                      LocationStubService locationStubService,
+                      DaLocationStubRepository stubRepository) {
         this.queueRepository = queueRepository;
         this.cronRepository = cronRepository;
         this.daStatusService = daStatusService;
@@ -79,6 +89,8 @@ class DaTaskServiceImpl implements DaTaskService {
         this.shipmentRefPort = shipmentRefPort;
         this.shipmentContactPort = shipmentContactPort;
         this.meetingModePort = meetingModePort;
+        this.locationStubService = locationStubService;
+        this.stubRepository = stubRepository;
     }
 
     @Override
@@ -92,6 +104,37 @@ class DaTaskServiceImpl implements DaTaskService {
         return rows.stream()
                 .map(r -> DaTaskView.of(r, refs.get(r.getShipmentId()), contacts.get(r.getShipmentId())))
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaStubView> listStubs(UUID daId, LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of(props.getShift().getZone()));
+        List<DaLocationStub> stubs = stubRepository.findByDaIdAndOperatingDateOrderByOpenedAtAsc(daId, day);
+        if (stubs.isEmpty()) {
+            return List.of();
+        }
+        // One ref/contact batch across every task in the day's visits (no N+1 per stub).
+        Map<UUID, List<DispatchQueue>> tasksByStub = new LinkedHashMap<>();
+        List<UUID> shipmentIds = new ArrayList<>();
+        for (DaLocationStub s : stubs) {
+            List<DispatchQueue> ts = queueRepository.findByStubIdOrderByQueuePosition(s.getId());
+            tasksByStub.put(s.getId(), ts);
+            ts.forEach(t -> shipmentIds.add(t.getShipmentId()));
+        }
+        Map<UUID, String> refs = shipmentRefPort.refsFor(shipmentIds);
+        Map<UUID, ShipmentContact> contacts = shipmentContactPort.contactsFor(shipmentIds);
+
+        return stubs.stream().map(s -> {
+            List<DispatchQueue> ts = tasksByStub.getOrDefault(s.getId(), List.of());
+            List<DaTaskView> items = ts.stream()
+                    .map(t -> DaTaskView.of(t, refs.get(t.getShipmentId()), contacts.get(t.getShipmentId())))
+                    .toList();
+            String address = items.stream().map(DaTaskView::addressText).filter(a -> a != null).findFirst().orElse(null);
+            return new DaStubView(s.getId(), s.getStatus().name(), address, s.getStubLat(), s.getStubLon(),
+                    s.getOpenedAt(), s.getClosedAt(), s.getTaskCount(), s.getProcessedCount(),
+                    s.getFailedCount(), s.getDwellSeconds(), items);
+        }).toList();
     }
 
     @Override
@@ -116,6 +159,7 @@ class DaTaskServiceImpl implements DaTaskService {
             if (task.getArrivedAt() == null) {
                 task.setArrivedAt(Instant.now());
                 DaTaskView view = save(task);
+                locationStubService.onArrived(task);   // start the location visit's tap-dwell clock
                 AuditLog.event("da.arrived_at_stop")
                         .kv("taskId", taskId)
                         .kv("shipmentId", task.getShipmentId())
@@ -173,6 +217,7 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStatus(TaskStatus.COMPLETED);
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
+            locationStubService.onTerminal(task);
             recordCronHandoff(daId, task.getOperatingDate(), parcelScans.size());
             onComplete.accept(task);
             // Head removed → re-rank the remaining tail against the new head (cron-aware).
@@ -191,6 +236,7 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStatus(TaskStatus.FAILED);
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
+            locationStubService.onTerminal(task);
             // A custody collect is a pickup-shaped custody take → PICKUP_FAILED (not DROP_FAILED),
             // so M11 triages a failed hand-off correctly rather than as a delivery miss.
             if (task.getTaskType() == TaskType.DELIVERY) {
@@ -241,6 +287,7 @@ class DaTaskServiceImpl implements DaTaskService {
         carry.setAssignedAt(Instant.now());
         carry.setOperatingDate(failedDelivery.getOperatingDate());
         carry.setQueuePosition(nextPosition(daId, failedDelivery.getOperatingDate()));
+        locationStubService.attach(carry);   // the carry-back hub drop is its own location visit
         queueRepository.save(carry);
         QueueMirror.rebuild(daStatusService, queueRepository, daId, failedDelivery.getOperatingDate());
     }
@@ -267,6 +314,7 @@ class DaTaskServiceImpl implements DaTaskService {
             }
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
+            locationStubService.onTerminal(task);
             // M8-SEAM: the hub dock-receive scan (ledger). PR3's return framework consumes this to re-enter
             // the parcel into the pipeline; on its own it records the parcel is back in hub custody.
             hubScanSeamProducer.emitHubReturnIn(task.getShipmentId());
@@ -300,6 +348,7 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStatus(TaskStatus.CANCELLED);
             task.setCompletedAt(Instant.now());
             queueRepository.save(task);
+            locationStubService.onTerminal(task);
             // Parcel already collected → give the DA a modelled way back instead of a doomed door attempt.
             if (parcelInHand) {
                 spawnReturnToHub(daId, task);
@@ -389,6 +438,7 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setStatus(TaskStatus.COMPLETED);
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
+            locationStubService.onTerminal(task);
             daEventProducer.emitDropCompleted(daId, task.getCityId(), task.getShipmentId());
             if (codCollected) {
                 daEventProducer.emitCodCollected(daId, task.getCityId(), task.getShipmentId());
@@ -416,6 +466,7 @@ class DaTaskServiceImpl implements DaTaskService {
             }
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
+            locationStubService.onTerminal(task);
             // M8-SEAM (best-effort): append the DA→DA custody scan to the ledger. The authoritative record
             // that custody moved is the committed dispatch_queue transition above (this task COMPLETED +
             // the onward leg) — the scan is a ledger bridge until M8 owns it, so a publish hiccup must
@@ -469,6 +520,7 @@ class DaTaskServiceImpl implements DaTaskService {
         onward.setAssignedAt(Instant.now());
         onward.setOperatingDate(collect.getOperatingDate());
         onward.setQueuePosition(nextPosition(daId, collect.getOperatingDate()));
+        locationStubService.attach(onward);   // the resumed onward leg is a visit at its destination
         queueRepository.save(onward);
     }
 

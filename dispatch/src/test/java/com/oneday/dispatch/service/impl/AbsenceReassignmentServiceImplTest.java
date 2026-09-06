@@ -52,6 +52,7 @@ class AbsenceReassignmentServiceImplTest {
     @Mock private com.oneday.dispatch.repository.DaStatusRepository daStatusRepository;
     @Mock private com.oneday.common.port.DaDirectoryPort daDirectory;
     @Mock private QueueReorderService reorderService;
+    @Mock private com.oneday.dispatch.service.LocationStubService locationStubService;
 
     private AbsenceReassignmentServiceImpl service;
 
@@ -61,7 +62,7 @@ class AbsenceReassignmentServiceImplTest {
         props.getShift().setZone("Asia/Kolkata");
         props.getAbsence().setAutoApproveTimeoutMinutes(5);
         service = new AbsenceReassignmentServiceImpl(gridService, queueRepository, absenceRepository,
-                daStatusService, daStatusRepository, daDirectory, reorderService, props);
+                daStatusService, daStatusRepository, daDirectory, reorderService, locationStubService, props);
     }
 
     private AbsenceReassignmentPlan planWithTileAToMeena() {

@@ -28,6 +28,21 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
     /** All tasks for a city on a date (demo state + reset). */
     List<DispatchQueue> findByCityIdAndOperatingDate(UUID cityId, LocalDate operatingDate);
 
+    /** The tasks in one location-stub visit, in execution order (dwell read model). */
+    List<DispatchQueue> findByStubIdOrderByQueuePosition(UUID stubId);
+
+    /**
+     * Non-terminal tasks still open in a location-stub visit (QUEUED/IN_PROGRESS). Zero → the visit is
+     * done and the stub can be closed. DEFERRED/terminal rows don't keep a visit open.
+     */
+    @Query("""
+            select count(d) from DispatchQueue d
+            where d.stubId = :stubId
+              and d.status in (com.oneday.dispatch.domain.TaskStatus.QUEUED,
+                               com.oneday.dispatch.domain.TaskStatus.IN_PROGRESS)
+            """)
+    long countOpenTasksInStub(@Param("stubId") UUID stubId);
+
     /** Active-task counts per (city, tile, status) for a date — feeds the tile-queue-depth publisher. */
     @Query("""
             select new com.oneday.dispatch.repository.TileDepthCount(d.cityId, d.tileId, d.status, count(d))

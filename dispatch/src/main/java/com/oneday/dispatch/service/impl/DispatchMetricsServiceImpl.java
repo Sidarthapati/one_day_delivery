@@ -2,18 +2,24 @@ package com.oneday.dispatch.service.impl;
 
 import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.common.port.DaDirectoryPort.DaContact;
+import com.oneday.common.port.ShipmentContactPort;
+import com.oneday.common.port.ShipmentContactPort.ShipmentContact;
 import com.oneday.common.port.ShipmentRefPort;
 import com.oneday.common.port.ShipmentSlaPort;
 import com.oneday.common.port.ShipmentSlaPort.SlaStatus;
+import com.oneday.dispatch.domain.DaLocationStub;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
+import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DaDetailResponse.DaTaskItem;
 import com.oneday.dispatch.dto.response.DaDetailResponse.DayStops;
+import com.oneday.dispatch.dto.response.DaLocationStubView;
 import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats.DaPace;
 import com.oneday.dispatch.repository.DaDayStopsRow;
+import com.oneday.dispatch.repository.DaLocationStubRepository;
 import com.oneday.dispatch.repository.DaPaceRow;
 import com.oneday.dispatch.repository.DaScorecardRow;
 import com.oneday.dispatch.repository.DeliveryOutcome;
@@ -30,7 +36,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -44,18 +52,23 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final DispatchQueueRepository queueRepository;
+    private final DaLocationStubRepository stubRepository;
     private final DaDirectoryPort daDirectory;
     private final ShipmentSlaPort shipmentSla;
     private final ShipmentRefPort shipmentRef;
+    private final ShipmentContactPort shipmentContact;
     private final DaStatusService daStatus;
 
-    DispatchMetricsServiceImpl(DispatchQueueRepository queueRepository, DaDirectoryPort daDirectory,
+    DispatchMetricsServiceImpl(DispatchQueueRepository queueRepository,
+                               DaLocationStubRepository stubRepository, DaDirectoryPort daDirectory,
                                ShipmentSlaPort shipmentSla, ShipmentRefPort shipmentRef,
-                               DaStatusService daStatus) {
+                               ShipmentContactPort shipmentContact, DaStatusService daStatus) {
         this.queueRepository = queueRepository;
+        this.stubRepository = stubRepository;
         this.daDirectory = daDirectory;
         this.shipmentSla = shipmentSla;
         this.shipmentRef = shipmentRef;
+        this.shipmentContact = shipmentContact;
         this.daStatus = daStatus;
     }
 
@@ -148,6 +161,56 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
                 .sorted(Comparator.comparingLong(DaScorecard::stopsDone).reversed()
                         .thenComparing(Comparator.comparingLong(DaScorecard::stopsPending).reversed()))
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaLocationStubView> daDwell(UUID daId, LocalDate date, UUID scopeCityId) {
+        scopedTasks(daId, date, scopeCityId);   // reuse the city guard (404 if the DA has no task here today)
+
+        List<DaLocationStub> stubs = stubRepository.findByDaIdAndOperatingDateOrderByOpenedAtAsc(daId, date);
+        if (scopeCityId != null) {
+            stubs = stubs.stream().filter(s -> scopeCityId.equals(s.getCityId())).toList();
+        }
+        if (stubs.isEmpty()) {
+            return List.of();
+        }
+
+        // One ref/contact batch across every task in the day's visits (no N+1 per stub).
+        Map<UUID, List<DispatchQueue>> tasksByStub = new LinkedHashMap<>();
+        List<UUID> shipmentIds = new ArrayList<>();
+        for (DaLocationStub s : stubs) {
+            List<DispatchQueue> ts = queueRepository.findByStubIdOrderByQueuePosition(s.getId());
+            tasksByStub.put(s.getId(), ts);
+            ts.forEach(t -> shipmentIds.add(t.getShipmentId()));
+        }
+        Map<UUID, String> refs = shipmentRef.refsFor(shipmentIds);
+        Map<UUID, ShipmentContact> contacts = shipmentContact.contactsFor(shipmentIds);
+
+        return stubs.stream().map(s -> {
+            List<DispatchQueue> ts = tasksByStub.getOrDefault(s.getId(), List.of());
+            String address = ts.stream()
+                    .map(t -> addressOf(t, contacts.get(t.getShipmentId())))
+                    .filter(a -> a != null)
+                    .findFirst().orElse(null);
+            List<DaLocationStubView.Item> items = ts.stream()
+                    .map(t -> new DaLocationStubView.Item(refs.get(t.getShipmentId()), t.getOrderRef(),
+                            t.getTaskType().name(), t.getStatus().name()))
+                    .toList();
+            return new DaLocationStubView(s.getId(), s.getStatus().name(), s.getLocationKey(),
+                    s.getStubLat(), s.getStubLon(), address, s.getTileId(),
+                    s.getOpenedAt(), s.getFirstArrivedAt(), s.getLastCompletedAt(), s.getClosedAt(),
+                    s.getTaskCount(), s.getProcessedCount(), s.getFailedCount(),
+                    s.getDwellSeconds(), items);
+        }).toList();
+    }
+
+    /** Display address for a task: the sender end for a PICKUP, the receiver end otherwise. */
+    private static String addressOf(DispatchQueue t, ShipmentContact c) {
+        if (c == null) {
+            return null;
+        }
+        return t.getTaskType() == TaskType.PICKUP ? c.originAddress() : c.destAddress();
     }
 
     private static DaScorecard toScorecard(DaScorecardRow r, Instant now, DaContact contact) {

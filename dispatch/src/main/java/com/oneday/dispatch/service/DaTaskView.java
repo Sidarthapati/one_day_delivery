@@ -24,6 +24,9 @@ public record DaTaskView(
         String shipmentRef,
         UUID orderId,
         String orderRef,
+        // The persisted location-stub "visit" this task belongs to (da_location_stub.id) — lets the DA app
+        // bind its group-tasks-by-location card to the real stub. Null on legacy/pre-stub tasks.
+        UUID stubId,
         TaskType taskType,
         TaskStatus status,
         int queuePosition,
@@ -47,7 +50,7 @@ public record DaTaskView(
 
     public static DaTaskView of(DispatchQueue row, String shipmentRef) {
         return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef,
-                row.getOrderId(), row.getOrderRef(), row.getTaskType(),
+                row.getOrderId(), row.getOrderRef(), row.getStubId(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
                 null, null, null, null, row.isPickedUp(), row.getCollectFromDaId());
@@ -61,7 +64,7 @@ public record DaTaskView(
         String addr = c == null ? null : pickup ? c.originAddress() : c.destAddress();
         Long cod = c == null ? null : c.codAmountPaise();
         return new DaTaskView(row.getId(), row.getShipmentId(), shipmentRef,
-                row.getOrderId(), row.getOrderRef(), row.getTaskType(),
+                row.getOrderId(), row.getOrderRef(), row.getStubId(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
                 name, phone, addr, cod, row.isPickedUp(), row.getCollectFromDaId());

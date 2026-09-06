@@ -44,6 +44,12 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "order_ref", length = 30, updatable = false)
     private String orderRef;
 
+    // The location-stub "visit" this task belongs to (da_location_stub.id) — the persisted backing of the
+    // DA app's group-tasks-by-location. Nullable bare UUID (no FK), set once at assignment. Powers dwell
+    // (time-at-location) metrics; see DaLocationStub.
+    @Column(name = "stub_id", updatable = false)
+    private UUID stubId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "task_type", nullable = false, updatable = false, length = 20)
     private TaskType taskType;

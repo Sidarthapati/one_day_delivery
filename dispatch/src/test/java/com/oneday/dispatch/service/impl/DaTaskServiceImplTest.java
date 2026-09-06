@@ -9,6 +9,7 @@ import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.repository.DaCronAssignmentRepository;
 import com.oneday.dispatch.repository.DaGpsPingRepository;
+import com.oneday.dispatch.repository.DaLocationStubRepository;
 import com.oneday.dispatch.repository.DaStatusRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.DaTaskService;
@@ -49,6 +50,7 @@ class DaTaskServiceImplTest {
     @Autowired DaCronAssignmentRepository cronRepo;
     @Autowired DaStatusRepository daStatusRepo;
     @Autowired DaGpsPingRepository daGpsPingRepo;
+    @Autowired DaLocationStubRepository stubRepo;
 
     private final UUID da = UUID.randomUUID();
     private final UUID city = UUID.randomUUID();
@@ -75,7 +77,8 @@ class DaTaskServiceImplTest {
         when(meetingModePort.modeFor(any())).thenReturn(MeetingMode.HUB_RETURN);
         refs.clear();
         service = new DaTaskServiceImpl(queueRepo, cronRepo, daStatus, events, props, scanSeam,
-                ids -> refs, ids -> java.util.Map.of(), reorder, meetingModePort);
+                ids -> refs, ids -> java.util.Map.of(), reorder, meetingModePort,
+                mock(com.oneday.dispatch.service.LocationStubService.class), stubRepo);
     }
 
     @Test

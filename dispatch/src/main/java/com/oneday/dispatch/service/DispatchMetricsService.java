@@ -1,6 +1,7 @@
 package com.oneday.dispatch.service;
 
 import com.oneday.dispatch.dto.response.DaDetailResponse;
+import com.oneday.dispatch.dto.response.DaLocationStubView;
 import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 
@@ -37,4 +38,12 @@ public interface DispatchMetricsService {
      * first. {@code scopeCityId} null → all cities (ADMIN); otherwise restrict to that city.
      */
     List<DaScorecard> scorecards(LocalDate date, UUID scopeCityId);
+
+    /**
+     * A DA's location "visits" for a date (the DA-detail time-at-location section): one row per visit with
+     * its dwell (tap-measured, GPS cross-checked) and the orders/shipments worked there, chronological. Same
+     * city scope as {@link #daDetail}: a STATION_MANAGER can only inspect a DA with tasks in their city that
+     * day (else 404); {@code scopeCityId} null → any city (ADMIN).
+     */
+    List<DaLocationStubView> daDwell(UUID daId, LocalDate date, UUID scopeCityId);
 }

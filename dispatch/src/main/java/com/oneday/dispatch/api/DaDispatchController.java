@@ -10,6 +10,7 @@ import com.oneday.dispatch.dto.request.OtpVerifyRequest;
 import com.oneday.dispatch.dto.request.TaskFailedRequest;
 import com.oneday.dispatch.dto.request.VanHandoffRequest;
 import com.oneday.dispatch.config.DispatchProperties;
+import com.oneday.dispatch.dto.response.DaStubView;
 import com.oneday.dispatch.service.AttendanceService;
 import com.oneday.dispatch.service.DaStatusService;
 import com.oneday.dispatch.service.DeviceAttestationService;
@@ -111,6 +112,18 @@ public class DaDispatchController {
                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         Authz.requireDaSelf(principal, daId);
         return daTaskService.listTasks(daId, date);
+    }
+
+    /**
+     * The DA's day as server-defined location "tickets" (one per {@code da_location_stub} visit), each
+     * carrying the tasks at that doorstep — the app's "Today's tickets" list. Same auth as {@link #tasks}.
+     */
+    @GetMapping("/stubs")
+    public List<DaStubView> stubs(@PathVariable UUID daId,
+                                  @AuthenticationPrincipal AuthUserDetails principal,
+                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        Authz.requireDaSelf(principal, daId);
+        return daTaskService.listStubs(daId, date);
     }
 
     @PostMapping("/gps")

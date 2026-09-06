@@ -93,7 +93,8 @@ class DispatchServiceImplTest {
                 new com.oneday.dispatch.metrics.DispatchMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         QueueReorderService queueReorder = mock(QueueReorderService.class);
         service = new DispatchServiceImpl(queueRepo, deferredRepo, auditRepo, cronRepo,
-                daStatus, feasibility, loadScore, adjacent, grid, daEventProducer, metrics, queueReorder, props);
+                daStatus, feasibility, loadScore, adjacent, grid, daEventProducer, metrics, queueReorder,
+                mock(com.oneday.dispatch.service.LocationStubService.class), props);
     }
 
     private UUID readyDa(int existingQueued) {

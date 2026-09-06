@@ -23,6 +23,7 @@ import com.oneday.dispatch.service.AdjacentDaProvider;
 import com.oneday.dispatch.service.AssignmentResult;
 import com.oneday.dispatch.service.CronFeasibilityService;
 import com.oneday.dispatch.service.DaStatusService;
+import com.oneday.dispatch.service.LocationStubService;
 import com.oneday.dispatch.service.DispatchService;
 import com.oneday.dispatch.service.FeasibilityRequest;
 import com.oneday.dispatch.service.FeasibilityResult;
@@ -74,6 +75,7 @@ class DispatchServiceImpl implements DispatchService {
     private final DaEventProducer daEventProducer;
     private final DispatchMetrics metrics;
     private final QueueReorderService queueReorderService;
+    private final LocationStubService locationStubService;
     private final DispatchProperties props;
 
     DispatchServiceImpl(DispatchQueueRepository queueRepository,
@@ -88,6 +90,7 @@ class DispatchServiceImpl implements DispatchService {
                         DaEventProducer daEventProducer,
                         DispatchMetrics metrics,
                         QueueReorderService queueReorderService,
+                        LocationStubService locationStubService,
                         DispatchProperties props) {
         this.queueRepository = queueRepository;
         this.deferredRepository = deferredRepository;
@@ -101,6 +104,7 @@ class DispatchServiceImpl implements DispatchService {
         this.daEventProducer = daEventProducer;
         this.metrics = metrics;
         this.queueReorderService = queueReorderService;
+        this.locationStubService = locationStubService;
         this.props = props;
     }
 
@@ -165,6 +169,7 @@ class DispatchServiceImpl implements DispatchService {
         daStatusService.withDaLock(daId, () -> {
             row.setStatus(TaskStatus.CANCELLED);
             queueRepository.save(row);
+            locationStubService.onTerminal(row);   // close the location visit if this was its last open task
             resequence(daId, date);
             rebuildMemQueue(daId, date);
             // A drop changes the queue — re-score the remaining tail (cron-aware).
@@ -286,7 +291,9 @@ class DispatchServiceImpl implements DispatchService {
             }
         }
         queueRepository.saveAll(activeRows);
-        queueRepository.save(newRow(daId, req, tileId, date, absolutePosition, crossTerritory, cronActive));
+        DispatchQueue newTask = newRow(daId, req, tileId, date, absolutePosition, crossTerritory, cronActive);
+        locationStubService.attach(newTask);   // bind to (or open) this DA's location visit for dwell metrics
+        queueRepository.save(newTask);
         rebuildMemQueue(daId, date);
         // Re-score the QUEUED tail by distance + aging for every DA. For cron DAs the reorder keeps the
         // cron cutoff feasible (tasks that don't fit are parked beyond_cron), so it is safe to run here.
