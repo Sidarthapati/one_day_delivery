@@ -76,6 +76,8 @@ public class DispatchProperties {
     private IpReputation ipReputation = new IpReputation();
     @NestedConfigurationProperty
     private Attestation attestation = new Attestation();
+    @NestedConfigurationProperty
+    private Stub stub = new Stub();
 
     public Cron getCron() { return cron; }
     public void setCron(Cron cron) { this.cron = cron; }
@@ -115,6 +117,21 @@ public class DispatchProperties {
     public void setIpReputation(IpReputation ipReputation) { this.ipReputation = ipReputation; }
     public Attestation getAttestation() { return attestation; }
     public void setAttestation(Attestation attestation) { this.attestation = attestation; }
+    public Stub getStub() { return stub; }
+    public void setStub(Stub stub) { this.stub = stub; }
+
+    /**
+     * DA location-stub (time-at-location) metric. {@code coordPrecision} is the decimal places a task
+     * coordinate is rounded to when grouping tasks into a location visit (5 ≈ 1.1m, matching the DA app's
+     * {@code groupTasksByLocation}).
+     */
+    public static class Stub {
+        /** Decimal places task coordinates are rounded to when grouping into a location (5 ≈ 1.1m). */
+        private int coordPrecision = 5;
+
+        public int getCoordPrecision() { return coordPrecision; }
+        public void setCoordPrecision(int coordPrecision) { this.coordPrecision = coordPrecision; }
+    }
 
     /**
      * Device attestation (Play Integrity, Phase 2). {@code enabled}=false ships a permissive stub

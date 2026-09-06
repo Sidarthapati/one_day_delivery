@@ -21,6 +21,7 @@ import com.oneday.dispatch.repository.DaAbsenceEventRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
 import com.oneday.dispatch.service.AbsenceReassignmentService;
 import com.oneday.dispatch.service.DaStatusService;
+import com.oneday.dispatch.service.LocationStubService;
 import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.grid.dto.response.AbsenceReassignmentPlan;
 import com.oneday.grid.dto.response.AbsenceReassignmentPlan.HexReassignment;
@@ -73,6 +74,7 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
     private final DaStatusRepository daStatusRepository;
     private final DaDirectoryPort daDirectory;
     private final QueueReorderService reorderService;
+    private final LocationStubService locationStubService;
     private final DispatchProperties props;
 
     AbsenceReassignmentServiceImpl(GridService gridService,
@@ -82,6 +84,7 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                                    DaStatusRepository daStatusRepository,
                                    DaDirectoryPort daDirectory,
                                    QueueReorderService reorderService,
+                                   LocationStubService locationStubService,
                                    DispatchProperties props) {
         this.gridService = gridService;
         this.queueRepository = queueRepository;
@@ -90,6 +93,7 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
         this.daStatusRepository = daStatusRepository;
         this.daDirectory = daDirectory;
         this.reorderService = reorderService;
+        this.locationStubService = locationStubService;
         this.props = props;
     }
 
@@ -277,6 +281,7 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                     DispatchQueue collect = custodyCollectRow(newOwner, row, absentDa, at, date);
                     daStatusService.withDaLock(newOwner, () -> {
                         collect.setQueuePosition(nextPosition(newOwner, date));
+                        locationStubService.attach(collect);   // the meet-point is the new owner's location visit
                         queueRepository.save(collect);
                         QueueMirror.rebuild(daStatusService, queueRepository, newOwner, date);
                         return null;
@@ -286,6 +291,7 @@ class AbsenceReassignmentServiceImpl implements AbsenceReassignmentService {
                     DispatchQueue copy = followHexRow(newOwner, row, date);
                     daStatusService.withDaLock(newOwner, () -> {
                         copy.setQueuePosition(nextPosition(newOwner, date));
+                        locationStubService.attach(copy);   // the followed task is a visit at its location
                         queueRepository.save(copy);
                         // Not the cron gate: place it, then let the reorder park it before / beyond the cron.
                         reorderService.reorder(newOwner, date);

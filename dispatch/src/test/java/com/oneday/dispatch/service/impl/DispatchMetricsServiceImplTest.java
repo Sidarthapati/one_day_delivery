@@ -35,10 +35,14 @@ class DispatchMetricsServiceImplTest {
             mock(com.oneday.common.port.ShipmentSlaPort.class);
     private final com.oneday.common.port.ShipmentRefPort refPort =
             mock(com.oneday.common.port.ShipmentRefPort.class);
+    private final com.oneday.common.port.ShipmentContactPort contactPort =
+            mock(com.oneday.common.port.ShipmentContactPort.class);
+    private final com.oneday.dispatch.repository.DaLocationStubRepository stubRepo =
+            mock(com.oneday.dispatch.repository.DaLocationStubRepository.class);
     private final com.oneday.dispatch.service.DaStatusService daStatus =
             mock(com.oneday.dispatch.service.DaStatusService.class);
     private final DispatchMetricsServiceImpl svc =
-            new DispatchMetricsServiceImpl(repo, directory, slaPort, refPort, daStatus);
+            new DispatchMetricsServiceImpl(repo, stubRepo, directory, slaPort, refPort, contactPort, daStatus);
     private final LocalDate date = LocalDate.now();
 
     private record Outcome(long completed, long failed) implements DeliveryOutcome {

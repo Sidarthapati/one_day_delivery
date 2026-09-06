@@ -1,5 +1,7 @@
 package com.oneday.dispatch.service;
 
+import com.oneday.dispatch.dto.response.DaStubView;
+
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +19,14 @@ public interface DaTaskService {
      * {@code date} null → the DA's current operating day (shift zone).
      */
     List<DaTaskView> listTasks(UUID daId, LocalDate date);
+
+    /**
+     * The DA's day grouped into location "tickets" — one {@link DaStubView} per {@code da_location_stub}
+     * visit, each carrying the tasks at that doorstep. The server-authoritative counterpart to
+     * {@link #listTasks}: the app renders one card per stub straight from this rather than re-grouping
+     * tasks by coordinates. Chronological by {@code opened_at}. {@code date} null → the current day.
+     */
+    List<DaStubView> listStubs(UUID daId, LocalDate date);
 
     /** PICKUP task QUEUED → IN_PROGRESS (DA travelling to the sender). */
     DaTaskView markEnRoute(UUID daId, UUID taskId);

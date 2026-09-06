@@ -3,6 +3,7 @@ package com.oneday.dispatch.api;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.dispatch.dto.request.AssignDeferredRequest;
 import com.oneday.dispatch.dto.response.DaDetailResponse;
+import com.oneday.dispatch.dto.response.DaLocationStubView;
 import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DeferredAssignResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
@@ -102,6 +103,22 @@ public class StationDispatchController {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
         return dispatchMetricsService.daTrail(daId, date != null ? date : LocalDate.now(), scopeCityId);
+    }
+
+    /**
+     * A DA's location "visits" for a date — the time-at-location section on the DA-detail page: per visit,
+     * how long the DA spent there (tap-measured, GPS cross-checked) and the orders worked, chronological.
+     * Same city scope as {@link #daDetail}: a STATION_MANAGER only sees a DA with tasks in their city that
+     * day (else 404); ADMIN any.
+     */
+    @GetMapping("/dispatch/da/{daId}/dwell")
+    public List<DaLocationStubView> daDwell(
+            @PathVariable UUID daId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return dispatchMetricsService.daDwell(daId, date != null ? date : LocalDate.now(), scopeCityId);
     }
 
     @GetMapping("/dispatch/tiles/{tileId}/queue")
