@@ -58,6 +58,24 @@ public interface CancellationService {
      */
     CancellationResponse cancelAsStationManager(String shipmentRef, String reason, String userId, String cityScope);
 
+    /**
+     * Ops-initiated mid-transit RTO (feature iii) for ADMIN — turn an <em>in-custody</em> shipment into
+     * a return-to-sender without a delivery attempt. Unlike {@link #cancelAsAdmin}, this never refunds
+     * a not-yet-in-custody shipment: a shipment not in custody (nothing physical to return), or
+     * out-for-delivery / terminal, is rejected with {@link CancellationNotAllowedException} (409). The
+     * return either fires now (already at a hub / pulled from an OPEN origin bag) or is scheduled to
+     * fire at the parcel's next hub arrival.
+     */
+    CancellationResponse initiateRtoAsAdmin(String shipmentRef, String reason, String userId);
+
+    /**
+     * Ops-initiated mid-transit RTO for STATION_MANAGER — city-scoped like
+     * {@link #cancelAsStationManager}: only the shipment's current custodian city may act (else 404).
+     * @see #initiateRtoAsAdmin
+     */
+    CancellationResponse initiateRtoAsStationManager(String shipmentRef, String reason, String userId,
+                                                     String cityScope);
+
     /** Thrown when the shipment's current state is past the cancellation cutoff (HTTP 409). */
     class CancellationNotAllowedException extends RuntimeException {
         public CancellationNotAllowedException(String message) { super(message); }

@@ -63,7 +63,8 @@ class ReturnServiceImplTest {
         pricingPort = mock(PricingPort.class);
         stateMachine = mock(ShipmentStateMachine.class);
         service = new ReturnServiceImpl(shipmentRepo, historyRepo, accountRepo, orderService,
-                serviceabilityPort, pricingPort, stateMachine);
+                serviceabilityPort, pricingPort, stateMachine,
+                mock(com.oneday.orders.service.RtoWorklistService.class));
 
         when(shipmentRepo.save(any(Shipment.class))).thenAnswer(inv -> inv.getArgument(0));
         when(serviceabilityPort.check(any()))
@@ -122,6 +123,30 @@ class ReturnServiceImplTest {
         assertThat(child.getTotalPricePaise()).isEqualTo(10000L);
         assertThat(child.getPaymentMode()).isEqualTo(PaymentMode.PREPAID); // never COD on a return
         verify(orderService).addShipment(orderId, 10000L);
+    }
+
+    @Test
+    void sameCityLaneReturnsToTheSenderWithinTheOriginCity() {
+        Shipment orig = original(CustomerType.B2C, null);
+        orig.setState(ShipmentState.AT_ORIGIN_HUB);
+        when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(orig));
+
+        service.initiateReturn(originalId, ReturnReason.POST_CUSTODY_CANCEL,
+                ReturnService.ReturnLane.SAME_CITY_FROM_ORIGIN, ctx);
+
+        Shipment child = capturedChild();
+        // Same-city: never left the origin city — both ends are DEL, delivered back to the sender.
+        assertThat(child.getOriginCity()).isEqualTo("DEL");
+        assertThat(child.getDestCity()).isEqualTo("DEL");
+        assertThat(child.getReceiverName()).isEqualTo("Aarav"); // original sender
+        assertThat(child.getState()).isEqualTo(ShipmentState.AT_ORIGIN_HUB);
+        verify(stateMachine).transition(eq(originalId), eq(ShipmentState.RTO_INITIATED), any());
+        // POST_CUSTODY_CANCEL stamps the RTO intent on the *locked* original here (in this persistence
+        // context), so it commits with the transition — the cancel router / deferred resolver must not
+        // re-save their own stale copies (open-in-view is off). This is the fix for the state-persistence
+        // bug where a stale re-save clobbered RTO_INITIATED back to the hub state.
+        assertThat(orig.getRtoRequestedAt()).isNotNull();
+        assertThat(orig.getRtoResolvedAt()).isNotNull();
     }
 
     @Test

@@ -2,14 +2,17 @@ package com.oneday.orders.service.impl;
 
 import com.oneday.common.domain.enums.CustomerType;
 import com.oneday.common.domain.enums.PaymentMode;
+import com.oneday.common.domain.enums.ReturnReason;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.common.log.AuditLog;
+import com.oneday.common.port.HubRecallPort;
 import com.oneday.orders.domain.B2bAccount;
 import com.oneday.orders.domain.PaymentTransaction;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.domain.enums.PaymentStatus;
 import com.oneday.orders.domain.enums.RefundStatus;
 import com.oneday.orders.dto.CancellationResponse;
+import com.oneday.orders.dto.CancellationResponse.Disposition;
 import com.oneday.orders.dto.CancellationResponse.RefundSummary;
 import com.oneday.orders.events.ShipmentCancelled;
 import com.oneday.orders.repository.B2bAccountRepository;
@@ -19,17 +22,22 @@ import com.oneday.orders.service.B2bBookingService.AccountAccessException;
 import com.oneday.orders.service.CancellationPolicy;
 import com.oneday.orders.service.CancellationService;
 import com.oneday.orders.service.PaymentPort;
+import com.oneday.orders.service.ReturnService;
+import com.oneday.orders.service.ReturnService.ReturnLane;
 import com.oneday.orders.service.ShipmentCustody;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * @see CancellationService
@@ -42,6 +50,20 @@ class CancellationServiceImpl implements CancellationService {
     /** Typical Razorpay settlement window communicated to the customer. */
     private static final int REFUND_ESTIMATED_DAYS = 5;
 
+    // ── Mid-transit RTO routing (feature iii) ─────────────────────────────
+    // In-custody states from which a cancel is turned into an RTO instead of a refund. Anything else
+    // (pre-custody → refund via the policy; out-for-delivery / DELIVERY_FAILED → existing delivery
+    // exception flow; terminal → 409) is not routed here.
+    private static final Set<ShipmentState> RTO_PRE_HUB = EnumSet.of(
+            ShipmentState.PICKED_UP, ShipmentState.HANDED_TO_PICKUP_VAN, ShipmentState.RETURNED_TO_HUB);
+    private static final Set<ShipmentState> RTO_ORIGIN_HUB = EnumSet.of(
+            ShipmentState.AT_ORIGIN_HUB, ShipmentState.ORIGIN_HUB_PROCESSING, ShipmentState.IN_TAKEOFF_BAG);
+    private static final Set<ShipmentState> RTO_COMMITTED_TRANSIT = EnumSet.of(
+            ShipmentState.DISPATCHED_TO_AIRPORT, ShipmentState.AT_AIRPORT, ShipmentState.DEPARTED,
+            ShipmentState.LANDED, ShipmentState.DISPATCHED_TO_HUB);
+    private static final Set<ShipmentState> RTO_DEST_HUB = EnumSet.of(
+            ShipmentState.AT_DEST_HUB, ShipmentState.DEST_HUB_PROCESSING);
+
     private final ShipmentRepository shipmentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final B2bAccountRepository b2bAccountRepository;
@@ -51,6 +73,8 @@ class CancellationServiceImpl implements CancellationService {
     private final com.oneday.orders.service.WalletService walletService;
     private final com.oneday.orders.service.OrderService orderService;
     private final ApplicationEventPublisher events;
+    private final ReturnService returnService;
+    private final ObjectProvider<HubRecallPort> hubRecallProvider;
 
     CancellationServiceImpl(ShipmentRepository shipmentRepository,
                             PaymentTransactionRepository paymentTransactionRepository,
@@ -60,7 +84,9 @@ class CancellationServiceImpl implements CancellationService {
                             PaymentPort paymentPort,
                             com.oneday.orders.service.WalletService walletService,
                             com.oneday.orders.service.OrderService orderService,
-                            ApplicationEventPublisher events) {
+                            ApplicationEventPublisher events,
+                            ReturnService returnService,
+                            ObjectProvider<HubRecallPort> hubRecallProvider) {
         this.shipmentRepository = shipmentRepository;
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.b2bAccountRepository = b2bAccountRepository;
@@ -70,6 +96,8 @@ class CancellationServiceImpl implements CancellationService {
         this.walletService = walletService;
         this.orderService = orderService;
         this.events = events;
+        this.returnService = returnService;
+        this.hubRecallProvider = hubRecallProvider;
     }
 
     @Override
@@ -124,14 +152,40 @@ class CancellationServiceImpl implements CancellationService {
         return doCancel(shipment, reason, userId, true);
     }
 
+    @Override
+    @Transactional
+    public CancellationResponse initiateRtoAsAdmin(String shipmentRef, String reason, String userId) {
+        Shipment shipment = shipmentRepository.findByShipmentRef(shipmentRef)
+                .orElseThrow(() -> new EntityNotFoundException("Shipment not found: " + shipmentRef));
+        return routeToRto(shipment, reason, userId);
+    }
+
+    @Override
+    @Transactional
+    public CancellationResponse initiateRtoAsStationManager(String shipmentRef, String reason,
+                                                            String userId, String cityScope) {
+        Shipment shipment = shipmentRepository.findByShipmentRef(shipmentRef)
+                .orElseThrow(() -> new EntityNotFoundException("Shipment not found: " + shipmentRef));
+
+        String custodyCity = ShipmentCustody.custodian(shipment.getState()) == ShipmentCustody.Custodian.ORIGIN
+                ? shipment.getOriginCity()
+                : shipment.getDestCity();
+        if (!cityScope.equals(custodyCity)) {
+            // Not this station's parcel to act on — 404, not 403 (same reasoning as the cancel guards).
+            throw new EntityNotFoundException("Shipment not found: " + shipmentRef);
+        }
+        return routeToRto(shipment, reason, userId);
+    }
+
     private CancellationResponse doCancel(Shipment shipment, String reason, String userId,
                                           boolean bypassOwnership) {
         String shipmentRef = shipment.getShipmentRef();
         boolean isB2b = shipment.getCustomerType() == CustomerType.B2B;
 
+        // Not yet in custody → refund/cancel (below). In custody → turn the cancel into an RTO: the
+        // goods are already ours, so we send them back to the sender rather than just refunding.
         if (!cancellationPolicy.isCancellable(shipment.getState(), shipment.getPickupType())) {
-            throw new CancellationNotAllowedException(
-                    "Shipment " + shipmentRef + " can no longer be cancelled in state " + shipment.getState());
+            return routeToRto(shipment, reason, userId);
         }
 
         ShipmentState cancelledAtState = shipment.getState();
@@ -189,6 +243,110 @@ class CancellationServiceImpl implements CancellationService {
         log.info("Cancelled shipment {} at state {} (refundInitiated={})",
                 shipmentRef, cancelledAtState, refundInitiated);
         return new CancellationResponse(shipmentRef, ShipmentState.CANCELLED, refund);
+    }
+
+    /**
+     * In-custody cancel → RTO (feature iii). Not-yet-in-custody shipments never reach here (the policy
+     * refunds them). The return is either fired now (already at a hub, or pulled from an OPEN origin
+     * bag) or scheduled (still in transit) to fire when the parcel next reaches a hub. Return
+     * children, already-returning originals, out-for-delivery and terminal states are not routed here.
+     */
+    private CancellationResponse routeToRto(Shipment shipment, String reason, String userId) {
+        ShipmentState state = shipment.getState();
+        String ref = shipment.getShipmentRef();
+
+        // A return child can't be returned again (the doorstep flow holds an exhausted child at the hub).
+        if (shipment.getReturnOfShipmentId() != null) {
+            throw new CancellationNotAllowedException(
+                    "Shipment " + ref + " is a return — it cannot be returned again");
+        }
+        // Already returning (e.g. a repeat click) — report the existing child, don't mint another.
+        if (shipment.getReturnShipmentId() != null) {
+            Shipment child = shipmentRepository.findById(shipment.getReturnShipmentId()).orElse(null);
+            return new CancellationResponse(ref, state, null, Disposition.RETURN_INITIATED,
+                    child != null ? child.getShipmentRef() : null);
+        }
+
+        // The RTO intent (who/why/when) is recorded on the shipment row. For the *immediate* branches
+        // that stamp happens inside initiateReturn (on the instance it locks and transitions — open-in-view
+        // is off, so `shipment` here is a different persistence-context copy we must not re-save; see
+        // resolveNow). For the *deferred* branch it happens in scheduleDeferred, which owns and saves this
+        // same instance with no competing transition.
+
+        // Origin hub: pull from the flight bag if still OPEN → same-city return now; if the bag is
+        // already sealed the parcel is committed to fly → defer to the destination hub.
+        if (RTO_ORIGIN_HUB.contains(state)) {
+            HubRecallPort recall = hubRecallProvider.getIfAvailable();
+            HubRecallPort.RecallOutcome outcome = recall != null
+                    ? recall.recallAtOrigin(shipment.getId())
+                    : HubRecallPort.RecallOutcome.COMMITTED; // no hub wiring → treat as committed (safe)
+            if (!outcome.isRecalled()) {
+                return scheduleDeferred(shipment, reason, userId,
+                        "bag already sealed — returns from the destination hub");
+            }
+            // A parcel pulled from an OPEN bag must be physically fished out — flag it on the worklist.
+            boolean needsPull = outcome == HubRecallPort.RecallOutcome.PULLED_FROM_BAG;
+            return resolveNow(shipment, reason, userId, ReturnLane.SAME_CITY_FROM_ORIGIN, needsPull);
+        }
+
+        // Already at the destination hub → reverse-lane return now (nothing to pull).
+        if (RTO_DEST_HUB.contains(state)) {
+            return resolveNow(shipment, reason, userId, ReturnLane.REVERSE_FROM_DEST, false);
+        }
+
+        // Pre-hub in hand, or committed and still in transit → defer; the resolver fires at the next
+        // hub (origin hub → same-city; dest hub → reverse-lane).
+        if (RTO_PRE_HUB.contains(state) || RTO_COMMITTED_TRANSIT.contains(state)) {
+            return scheduleDeferred(shipment, reason, userId,
+                    "resolves when the parcel reaches its next hub");
+        }
+
+        // Out-for-delivery / DELIVERY_FAILED / terminal — the doorstep RTO + delivery-exception flows
+        // own those; a mid-transit cancel does not apply.
+        throw new CancellationNotAllowedException(
+                "Shipment " + ref + " cannot be returned from state " + state);
+    }
+
+    /** Spawn the return child immediately and mark the intent resolved. */
+    private CancellationResponse resolveNow(Shipment shipment, String reason, String userId,
+                                            ReturnLane lane, boolean needsBagPull) {
+        // NB: open-in-view is off, so initiateReturn runs in its own persistence context — the
+        // `shipment` instance here is a *different* managed copy than the one it locks and transitions
+        // to RTO_INITIATED. Re-saving this stale copy afterwards would clobber that transition back to
+        // its old state, so we must NOT mutate/save it here. initiateReturn stamps rto_requested_at /
+        // rto_resolved_at on the locked instance itself (it's a POST_CUSTODY_CANCEL return).
+        ReturnService.ReturnResult result = returnService.initiateReturn(
+                shipment.getId(), ReturnReason.POST_CUSTODY_CANCEL, lane, needsBagPull,
+                TransitionContext.fromApi(userId, shipment.getShipmentRef()).withNotes(reason));
+        AuditLog.event("shipment.rto_from_cancel")
+                .kv("shipmentRef", shipment.getShipmentRef())
+                .kv("resolution", "IMMEDIATE")
+                .kv("lane", lane.name())
+                .kv("returnChildRef", result.childShipmentRef())
+                .log();
+        log.info("In-custody cancel of {} → return child {} ({}, immediate)",
+                shipment.getShipmentRef(), result.childShipmentRef(), lane);
+        return new CancellationResponse(shipment.getShipmentRef(), ShipmentState.RTO_INITIATED, null,
+                Disposition.RETURN_INITIATED, result.childShipmentRef());
+    }
+
+    /** Record the intent; {@code RtoIntentResolver} fires the return at the parcel's next hub arrival. */
+    private CancellationResponse scheduleDeferred(Shipment shipment, String reason, String userId, String why) {
+        // Deferred: stamp the intent on this same (owned) instance and save it. No transition competes
+        // here, so this is safe. rto_resolved_at stays null until the resolver mints the child at the hub.
+        shipment.setRtoRequestedAt(Instant.now());
+        shipment.setRtoRequestedBy(userId != null && userId.length() <= 64 ? userId : null);
+        shipment.setRtoReason(reason);
+        shipmentRepository.save(shipment);
+        AuditLog.event("shipment.rto_from_cancel")
+                .kv("shipmentRef", shipment.getShipmentRef())
+                .kv("resolution", "DEFERRED")
+                .kv("atState", shipment.getState())
+                .log();
+        log.info("In-custody cancel of {} at {} → RTO scheduled ({})",
+                shipment.getShipmentRef(), shipment.getState(), why);
+        return new CancellationResponse(shipment.getShipmentRef(), shipment.getState(), null,
+                Disposition.RETURN_SCHEDULED, null);
     }
 
     /** B2B: reverse the shipping charge — refund the wallet, or decrement outstanding credit. */

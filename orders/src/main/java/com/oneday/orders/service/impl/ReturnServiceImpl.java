@@ -31,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -53,6 +54,7 @@ class ReturnServiceImpl implements ReturnService {
     private final ServiceabilityPort serviceabilityPort;
     private final PricingPort pricingPort;
     private final ShipmentStateMachine stateMachine;
+    private final com.oneday.orders.service.RtoWorklistService rtoWorklistService;
 
     ReturnServiceImpl(ShipmentRepository shipmentRepository,
                       ShipmentStateHistoryRepository historyRepository,
@@ -60,7 +62,8 @@ class ReturnServiceImpl implements ReturnService {
                       OrderService orderService,
                       ServiceabilityPort serviceabilityPort,
                       PricingPort pricingPort,
-                      ShipmentStateMachine stateMachine) {
+                      ShipmentStateMachine stateMachine,
+                      com.oneday.orders.service.RtoWorklistService rtoWorklistService) {
         this.shipmentRepository = shipmentRepository;
         this.historyRepository = historyRepository;
         this.b2bAccountRepository = b2bAccountRepository;
@@ -68,11 +71,26 @@ class ReturnServiceImpl implements ReturnService {
         this.serviceabilityPort = serviceabilityPort;
         this.pricingPort = pricingPort;
         this.stateMachine = stateMachine;
+        this.rtoWorklistService = rtoWorklistService;
     }
 
     @Override
     @Transactional
     public ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, TransitionContext ctx) {
+        return initiateReturn(originalShipmentId, reason, ReturnLane.REVERSE_FROM_DEST, false, ctx);
+    }
+
+    @Override
+    @Transactional
+    public ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, ReturnLane lane,
+                                       TransitionContext ctx) {
+        return initiateReturn(originalShipmentId, reason, lane, false, ctx);
+    }
+
+    @Override
+    @Transactional
+    public ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, ReturnLane lane,
+                                       boolean needsBagPull, TransitionContext ctx) {
         // Lock the original for the whole tx so concurrent RTO_INITIATED calls serialize on it — the
         // idempotency check below then can't be raced into a duplicate-child uniqueness error.
         Shipment original = shipmentRepository.findByIdWithLock(originalShipmentId)
@@ -87,16 +105,27 @@ class ReturnServiceImpl implements ReturnService {
             return new ReturnResult(existing.getId(), existing.getShipmentRef(), originalShipmentId);
         }
 
-        // Reverse the geography and re-resolve serviceability for the return lane (dest → sender).
+        // Where the return starts (the hub the parcel already sits in) and where it goes (the sender).
+        // REVERSE_FROM_DEST: fly back — return origin = original dest. SAME_CITY_FROM_ORIGIN: never flew
+        // — return origin = original origin, so both ends are the origin city.
+        boolean sameCity = lane == ReturnLane.SAME_CITY_FROM_ORIGIN;
+        String fromPincode  = sameCity ? original.getOriginPincode() : original.getDestPincode();
+        String fromCity     = sameCity ? original.getOriginCity()    : original.getDestCity();
+        Address fromAddress = sameCity ? original.getOriginAddress() : original.getDestAddress();
+        // The return always delivers to the original sender's door (original origin).
+        String toPincode  = original.getOriginPincode();
+        String toCity     = original.getOriginCity();
+        Address toAddress = original.getOriginAddress();
+
         ServiceabilityResult sr = serviceabilityPort.check(new ServiceabilityQuery(
-                original.getDestPincode(), original.getOriginPincode(),
-                latOf(original.getDestAddress()), lonOf(original.getDestAddress()),
-                latOf(original.getOriginAddress()), lonOf(original.getOriginAddress())));
+                fromPincode, toPincode,
+                latOf(fromAddress), lonOf(fromAddress),
+                latOf(toAddress), lonOf(toAddress)));
         if (!sr.serviceable()) {
             // A return whose sender area is no longer serviceable is rare; proceed best-effort with
             // whatever tiles resolved so the parcel still leaves the hub — ops handles the tail.
-            log.warn("Return lane {}→{} not serviceable for original {} — proceeding best-effort",
-                    original.getDestCity(), original.getOriginCity(), originalShipmentId);
+            log.warn("Return lane {}→{} ({}) not serviceable for original {} — proceeding best-effort",
+                    fromCity, toCity, lane, originalShipmentId);
         }
 
         boolean b2b = original.getCustomerType() == CustomerType.B2B && original.getB2bAccountId() != null;
@@ -112,10 +141,10 @@ class ReturnServiceImpl implements ReturnService {
 
         QuoteResult quote = pricingPort.computeQuote(new QuoteRequest(
                 original.getCustomerType(), sr.deliveryType(),
-                original.getDestCity(), original.getOriginCity(),
+                fromCity, toCity,
                 chargeableGrams, original.getDeclaredValuePaise(), rateCardId, childPaymentMode));
 
-        Shipment child = mintChild(original, sr, quote, childPaymentMode);
+        Shipment child = mintChild(original, lane, sr, quote, childPaymentMode);
         shipmentRepository.save(child);
 
         // Roll the return into the same parcel order (child under the same order_id).
@@ -137,23 +166,54 @@ class ReturnServiceImpl implements ReturnService {
         // Link both directions and mark the original as returning. The child is delivered → the
         // completion listener drives the original RTO_INITIATED → RTO_COMPLETED.
         original.setReturnShipmentId(child.getId());
+
+        // Mid-transit cancel → RTO: stamp the intent on the *locked* original here, in this persistence
+        // context, so it commits together with the RTO_INITIATED transition. open-in-view is off, so the
+        // caller holds a different instance it must not re-save — doing the stamp there would clobber the
+        // transition back to the old state (see CancellationServiceImpl.resolveNow / RtoIntentResolver).
+        // requested_* is left as the deferred flow already set it when present; resolved_at marks now.
+        if (reason == ReturnReason.POST_CUSTODY_CANCEL) {
+            Instant now = Instant.now();
+            if (original.getRtoRequestedAt() == null) {
+                original.setRtoRequestedAt(now);
+                String by = ctx.getTriggeredBy();
+                original.setRtoRequestedBy(by != null && by.length() <= 64 ? by : null);
+                original.setRtoReason(ctx.getNotes());
+            }
+            original.setRtoResolvedAt(now);
+        }
+
         shipmentRepository.save(original);
         stateMachine.transition(originalShipmentId, ShipmentState.RTO_INITIATED, ctx);
+
+        // Tell the return hub to physically turn the parcel around (pull from bag if needed, then sort).
+        rtoWorklistService.record(original.getShipmentRef(), child.getShipmentRef(),
+                child.getOriginCity(), lane.name(), needsBagPull);
 
         AuditLog.event("return.initiated")
                 .kv("originalShipmentId", originalShipmentId)
                 .kv("childShipmentId", child.getId())
                 .kv("childShipmentRef", child.getShipmentRef())
                 .kv("reason", reason.name())
+                .kv("lane", lane.name())
                 .kv("billedPaise", account != null ? quote.totalPricePaise() : 0L)
                 .log();
 
         return new ReturnResult(child.getId(), child.getShipmentRef(), originalShipmentId);
     }
 
-    /** Build the reversed child shipment, born at the origin hub. */
-    private Shipment mintChild(Shipment original, ServiceabilityResult sr, QuoteResult quote,
-                               PaymentMode childPaymentMode) {
+    /**
+     * Build the return child, born at the hub the parcel already sits in.
+     * <ul>
+     *   <li>{@code REVERSE_FROM_DEST} — reverse the geography: return origin = original dest, sender =
+     *       original receiver; delivered back to the original sender (the classic fly-back return).</li>
+     *   <li>{@code SAME_CITY_FROM_ORIGIN} — the parcel never left the origin city: return origin =
+     *       original origin, delivered straight back to the original sender within the same city.</li>
+     * </ul>
+     */
+    private Shipment mintChild(Shipment original, ReturnLane lane, ServiceabilityResult sr,
+                               QuoteResult quote, PaymentMode childPaymentMode) {
+        boolean sameCity = lane == ReturnLane.SAME_CITY_FROM_ORIGIN;
         Shipment c = new Shipment();
         c.setShipmentRef(original.getShipmentRef() + "_R");
         c.setReturnOfShipmentId(original.getId());
@@ -164,20 +224,33 @@ class ReturnServiceImpl implements ReturnService {
         c.setCategoryId(original.getCategoryId());
         c.setBookedByUserId(original.getBookedByUserId());
 
-        // Reversed geography: return origin = original dest; return dest = original sender.
-        c.setSenderName(original.getReceiverName());
-        c.setSenderPhone(original.getReceiverPhone());
-        c.setSenderEmail(original.getReceiverEmail());
-        c.setOriginAddress(original.getDestAddress());
-        c.setOriginCity(original.getDestCity());
-        c.setOriginPincode(original.getDestPincode());
+        // Return geography — always delivered back to the original sender (original origin). The return
+        // origin is the original dest (reverse-lane) or the original origin (same-city pre-flight recall).
+        if (sameCity) {
+            // Same-city: "from" is the origin hub / sender's own city. Sender fields mirror the original
+            // sender (a return to self within the city).
+            c.setSenderName(original.getSenderName());
+            c.setSenderPhone(original.getSenderPhone());
+            c.setSenderEmail(original.getSenderEmail());
+            c.setOriginAddress(original.getOriginAddress());
+            c.setOriginCity(original.getOriginCity());
+            c.setOriginPincode(original.getOriginPincode());
+            c.setCityId(original.getOriginCity());
+        } else {
+            c.setSenderName(original.getReceiverName());
+            c.setSenderPhone(original.getReceiverPhone());
+            c.setSenderEmail(original.getReceiverEmail());
+            c.setOriginAddress(original.getDestAddress());
+            c.setOriginCity(original.getDestCity());
+            c.setOriginPincode(original.getDestPincode());
+            c.setCityId(original.getDestCity());   // new origin city drives auth scoping
+        }
         c.setReceiverName(original.getSenderName());
         c.setReceiverPhone(original.getSenderPhone());
         c.setReceiverEmail(original.getSenderEmail());
         c.setDestAddress(original.getOriginAddress());
         c.setDestCity(original.getOriginCity());
         c.setDestPincode(original.getOriginPincode());
-        c.setCityId(original.getDestCity());   // new origin city drives auth scoping
 
         // Same physical parcel — carry the dimensions over verbatim.
         c.setWeightGrams(original.getWeightGrams());
@@ -187,7 +260,7 @@ class ReturnServiceImpl implements ReturnService {
         c.setVolumetricWeightGrams(original.getVolumetricWeightGrams());
         c.setChargeableWeightGrams(original.getChargeableWeightGrams());
 
-        // Reverse-lane pricing.
+        // Return-lane pricing.
         c.setDeclaredValuePaise(original.getDeclaredValuePaise());
         c.setQuotedPricePaise(quote.totalPricePaise() - quote.taxPaise());
         c.setTaxPaise(quote.taxPaise());

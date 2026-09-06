@@ -273,4 +273,20 @@ public class Shipment extends MutableBaseEntity {
     // Set on the ORIGINAL when a return child is spawned (mutable — populated later).
     @Column(name = "return_shipment_id")
     private UUID returnShipmentId;
+
+    // ── Mid-transit RTO intent (feature iii) ──────────────────────────────
+    // A return requested while the parcel is in custody but not yet at a hub is recorded here and
+    // resolved when the parcel next reaches a hub (origin hub → same-city return; dest hub →
+    // reverse-lane return). rto_resolved_at is stamped once the return child has been spawned.
+    @Column(name = "rto_requested_at")
+    private Instant rtoRequestedAt;
+
+    @Column(name = "rto_requested_by", length = 64)
+    private String rtoRequestedBy;
+
+    @Column(name = "rto_reason", length = 500)
+    private String rtoReason;
+
+    @Column(name = "rto_resolved_at")
+    private Instant rtoResolvedAt;
 }
