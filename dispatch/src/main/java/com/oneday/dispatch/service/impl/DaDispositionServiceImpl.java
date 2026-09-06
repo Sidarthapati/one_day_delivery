@@ -20,6 +20,7 @@ import com.oneday.dispatch.service.model.DaLiveStatus;
 import com.oneday.dispatch.service.model.DaQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -88,7 +89,8 @@ class DaDispositionServiceImpl implements DaDispositionService {
     public DispositionSlotsResponse slots(UUID daId) {
         DispatchProperties.Disposition cfg = props.getDisposition();
         DaLiveStatus live = daStatusService.getLiveStatus(daId);
-        DaDisposition activeRow = repository.findFirstByDaIdAndStatusIn(daId, LIVE).orElse(null);
+        DaDisposition activeRow =
+                repository.findFirstByDaIdAndOperatingDateAndStatusIn(daId, today(), LIVE).orElse(null);
         DispositionResponse active = activeRow != null ? DispositionResponse.of(activeRow) : null;
         int remaining = remainingAllowance(daId, cfg);
         if (live == null || live.getShiftType() == null) {
@@ -104,10 +106,20 @@ class DaDispositionServiceImpl implements DaDispositionService {
     @Override
     @Transactional
     public DispositionResponse request(UUID daId, DispositionRequest req, UUID actorUserId) {
+        try {
+            return doRequest(daId, req, actorUserId);
+        } catch (DataIntegrityViolationException race) {
+            // Lost the check-then-insert race against uq_da_disposition_live_per_da — surface the same
+            // 409 the pre-check would have (Spring would otherwise map this to a 500).
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "You already have an active or pending request");
+        }
+    }
+
+    private DispositionResponse doRequest(UUID daId, DispositionRequest req, UUID actorUserId) {
         if (req == null || req.category() == null || req.reason() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "category and reason are required");
         }
-        if (repository.findFirstByDaIdAndStatusIn(daId, LIVE).isPresent()) {
+        if (repository.findFirstByDaIdAndOperatingDateAndStatusIn(daId, today(), LIVE).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "You already have an active or pending request");
         }
         DaLiveStatus live = daStatusService.getLiveStatus(daId);
@@ -135,10 +147,16 @@ class DaDispositionServiceImpl implements DaDispositionService {
         if (req.category() == DispositionCategory.BREAK) {
             activateBreak(d, req, live, cfg);
         } else {
-            // AUXILIARY / DAY_OFF — manager decides; the DA keeps working until approved.
+            // AUXILIARY / DAY_OFF — manager decides; the DA keeps working until approved. DAY_OFF ignores
+            // any minutes; an AUXILIARY estimate is optional (open-ended) but, if given, must be positive
+            // (a zero/negative estimate would put scheduledEnd in the past → instantly OVERSTAYED).
+            Integer minutes = req.category() == DispositionCategory.DAY_OFF ? null : req.minutes();
+            if (minutes != null && minutes <= 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "minutes must be positive");
+            }
             d.setStatus(DispositionStatus.PENDING);
-            d.setDurationMinutes(req.minutes());
-            repository.save(d);
+            d.setDurationMinutes(minutes);
+            repository.saveAndFlush(d);
             log.info("DA {} raised {} ({}) — PENDING manager approval", daId, req.category(), req.reason());
         }
         return DispositionResponse.of(d);
@@ -169,8 +187,15 @@ class DaDispositionServiceImpl implements DaDispositionService {
         d.setScheduledStart(now);
         d.setActualStart(now);
         d.setScheduledEnd(end);
-        repository.save(d);
+        repository.saveAndFlush(d);
         daStatusService.withDaLock(d.getDaId(), () -> {
+            // Re-check under the lock: if a cron freeze flipped the DA to CRON_LOCKED between the guard in
+            // doRequest and here, cron wins — don't clobber it (mirrors approve / restoreToWork).
+            DaStatusEnum current = daStatusService.getStatus(d.getDaId());
+            if (!REQUESTABLE_FROM.contains(current)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Cannot start a break while " + current);
+            }
             daStatusService.updateStatus(d.getDaId(), DaStatusEnum.ON_BREAK);
             return null;
         });
@@ -180,7 +205,7 @@ class DaDispositionServiceImpl implements DaDispositionService {
     @Override
     @Transactional
     public DispositionResponse end(UUID daId) {
-        DaDisposition d = repository.findFirstByDaIdAndStatusIn(daId, IN_EFFECT)
+        DaDisposition d = repository.findFirstByDaIdAndOperatingDateAndStatusIn(daId, today(), IN_EFFECT)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "No active break to end"));
         Instant now = clock.instant();
         d.setActualEnd(now);
@@ -274,7 +299,20 @@ class DaDispositionServiceImpl implements DaDispositionService {
     @Transactional
     public void sweep(Instant now) {
         DispatchProperties.Disposition cfg = props.getDisposition();
-        for (DaDisposition d : repository.findByOperatingDateAndStatus(today(), DispositionStatus.ACTIVE)) {
+        LocalDate today = today();
+        // Close any live row carried over from a prior day (an OVERSTAYED break never reconciled, or an
+        // un-actioned PENDING day-off) so it can never permanently block the DA's future requests.
+        for (DaDisposition stale : repository.findByOperatingDateBeforeAndStatusIn(today, LIVE)) {
+            log.warn("Auto-cancelling carry-over {} disposition {} for DA {} from {}",
+                    stale.getStatus(), stale.getId(), stale.getDaId(), stale.getOperatingDate());
+            stale.setStatus(DispositionStatus.CANCELLED);
+            if (stale.getActualEnd() == null) {
+                stale.setActualEnd(now);
+            }
+            repository.save(stale);
+            restoreToWork(stale.getDaId());
+        }
+        for (DaDisposition d : repository.findByOperatingDateAndStatus(today, DispositionStatus.ACTIVE)) {
             // Reconcile: if the DA is no longer ON_BREAK (cron freeze took over, or a manager marked them
             // absent), the break is effectively over — close it so the allowance/records stay honest.
             DaStatusEnum status = daStatusService.getStatus(d.getDaId());

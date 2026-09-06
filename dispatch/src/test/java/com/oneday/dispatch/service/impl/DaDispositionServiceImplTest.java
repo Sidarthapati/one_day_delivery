@@ -81,7 +81,9 @@ class DaDispositionServiceImplTest {
         lenient().when(daStatusService.withDaLock(any(), any()))
                 .thenAnswer(i -> ((Supplier<?>) i.getArgument(1)).get());
         lenient().when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
-        lenient().when(repository.findFirstByDaIdAndStatusIn(any(), any())).thenReturn(Optional.empty());
+        lenient().when(repository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        lenient().when(repository.findFirstByDaIdAndOperatingDateAndStatusIn(any(), any(), any()))
+                .thenReturn(Optional.empty());
         lenient().when(repository.findByDaIdAndOperatingDate(any(), any())).thenReturn(List.of());
     }
 
@@ -128,7 +130,7 @@ class DaDispositionServiceImplTest {
 
     @Test
     void secondConcurrentRequest_isRefused() {
-        when(repository.findFirstByDaIdAndStatusIn(any(), any()))
+        when(repository.findFirstByDaIdAndOperatingDateAndStatusIn(any(), any(), any()))
                 .thenReturn(Optional.of(breakRow(DispositionStatus.ACTIVE, 30)));
         assertThatThrownBy(() -> service.request(DA,
                 new DispositionRequest(DispositionCategory.BREAK, DispositionReason.LUNCH, 30, null), DA))
@@ -167,7 +169,8 @@ class DaDispositionServiceImplTest {
         DaDisposition active = breakRow(DispositionStatus.ACTIVE, 30);
         active.setActualStart(at(9, 0));
         service.setClock(Clock.fixed(at(9, 10), IST));   // returned after 10 of 30 min
-        when(repository.findFirstByDaIdAndStatusIn(any(), any())).thenReturn(Optional.of(active));
+        when(repository.findFirstByDaIdAndOperatingDateAndStatusIn(any(), any(), any()))
+                .thenReturn(Optional.of(active));
         when(daStatusService.getStatus(DA)).thenReturn(DaStatusEnum.ON_BREAK);
         DispositionResponse resp = service.end(DA);
         assertThat(resp.status()).isEqualTo(DispositionStatus.COMPLETED);
@@ -196,6 +199,48 @@ class DaDispositionServiceImplTest {
         when(daStatusService.getStatus(DA)).thenReturn(DaStatusEnum.CRON_LOCKED);   // cron took over
         service.sweep(at(9, 15));
         assertThat(active.getStatus()).isEqualTo(DispositionStatus.COMPLETED);
+    }
+
+    @Test
+    void concurrentInsertRace_isMappedTo409() {
+        // Guard passes (no live row) but the unique index rejects the insert on flush → surface a 409.
+        when(repository.saveAndFlush(any())).thenThrow(
+                new org.springframework.dao.DataIntegrityViolationException("uq_da_disposition_live_per_da"));
+        assertThatThrownBy(() -> service.request(DA,
+                new DispositionRequest(DispositionCategory.BREAK, DispositionReason.LUNCH, 30, null), DA))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("active or pending");
+        verify(daStatusService, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    void auxiliaryWithNonPositiveMinutes_isRejected() {
+        assertThatThrownBy(() -> service.request(DA,
+                new DispositionRequest(DispositionCategory.AUXILIARY, DispositionReason.COMPANY_WORK, 0, "x"), DA))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("minutes must be positive");
+    }
+
+    @Test
+    void breakIsRefusedIfCronLockTakesOverBeforeTheStatusFlip() {
+        // IDLE at the doRequest guard, then CRON_LOCKED by the time we re-check inside the lock → cron wins.
+        when(daStatusService.getStatus(DA))
+                .thenReturn(DaStatusEnum.IDLE, DaStatusEnum.CRON_LOCKED);
+        assertThatThrownBy(() -> service.request(DA,
+                new DispositionRequest(DispositionCategory.BREAK, DispositionReason.LUNCH, 30, null), DA))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Cannot start a break");
+        verify(daStatusService, never()).updateStatus(any(), any());
+    }
+
+    @Test
+    void sweepCancelsCarryOverRowsFromPriorDays() {
+        DaDisposition stale = breakRow(DispositionStatus.OVERSTAYED, 30);
+        stale.setOperatingDate(day.minusDays(1));
+        when(repository.findByOperatingDateBeforeAndStatusIn(any(), any())).thenReturn(List.of(stale));
+        service.sweep(at(9, 0));
+        assertThat(stale.getStatus()).isEqualTo(DispositionStatus.CANCELLED);
+        assertThat(stale.getActualEnd()).isNotNull();
     }
 
     private DaDisposition breakRow(DispositionStatus status, int minutes) {

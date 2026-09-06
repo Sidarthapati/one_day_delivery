@@ -14,7 +14,7 @@ all-or-nothing "mark absent → full flood-fill." Three categories, one hold mec
 |---|---|---|---|
 | **BREAK** (personal) | **Auto**, within a slot + allowance | **Counts** (60 min/day, splittable) | LUNCH · REST · EV_CHARGING · OTHER — *extensible* |
 | **AUXILIARY** (company work) | **Manager-approved** (raise → PENDING → approve/reject) | Doesn't count | COMPANY_WORK · OTHER + note |
-| **DAY_OFF** | **Manager-approved** → existing reassignment | — | — |
+| **DAY_OFF** | Raised → PENDING; the manager actions it via the **existing attendance `mark absent → absenceApply`** flow (the disposition `approve` endpoint accepts AUXILIARY only and rejects DAY_OFF), or **Reject** | — | — |
 
 All three, once active, put the DA in **`ON_BREAK`** (territory held, **nothing written to the grid**);
 the category + reason ride on the record and show in the app/console. A day-off reuses the existing
