@@ -144,6 +144,14 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
             + "AND s.createdAt >= :since")
     AccountTotals sumTotalsForAccount(@Param("accountId") UUID accountId, @Param("since") Instant since);
 
+    // Per-member spend for the budget check: shipping charge (totalPricePaise, same basis as the credit
+    // check) booked by one member since the period start, excluding CANCELLED bookings. COALESCE keeps
+    // it 0 for a member with none. COD is buyer→vendor money, not the member's spend, so it's excluded.
+    @Query("SELECT COALESCE(SUM(s.totalPricePaise), 0) FROM Shipment s "
+            + "WHERE s.bookedByUserId = :bookedByUserId AND s.createdAt >= :since "
+            + "AND s.state <> com.oneday.common.domain.enums.ShipmentState.CANCELLED")
+    long sumMemberSpendSince(@Param("bookedByUserId") UUID bookedByUserId, @Param("since") Instant since);
+
     // Destination-city split (only 5 serviceable cities, so a tiny result set), busiest first.
     @Query("SELECT s.destCity AS city, COUNT(s) AS count FROM Shipment s "
             + "WHERE s.b2bAccountId = :accountId AND s.createdAt >= :since "

@@ -45,4 +45,13 @@ public class B2bAccountMember extends MutableBaseEntity {
 
     @Column(name = "name", length = 200)
     private String name;
+
+    /**
+     * Per-member spend cap in paise for the current calendar month, or {@code null} for no limit
+     * (owners, and members the account owner hasn't capped). Enforced at booking alongside the
+     * account-level credit check — a member can be blocked by their own budget while the account
+     * still has credit.
+     */
+    @Column(name = "spend_limit_paise")
+    private Long spendLimitPaise;
 }

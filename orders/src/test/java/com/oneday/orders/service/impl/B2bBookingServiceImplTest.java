@@ -51,6 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -60,6 +61,7 @@ import static org.mockito.Mockito.when;
 class B2bBookingServiceImplTest {
 
     @Mock private B2bAccountRepository b2bAccountRepository;
+    @Mock private com.oneday.orders.repository.B2bAccountMemberRepository b2bAccountMemberRepository;
     @Mock private ServiceabilityPort serviceabilityPort;
     @Mock private PricingPort pricingPort;
     @Mock private EtaPort etaPort;
@@ -85,6 +87,7 @@ class B2bBookingServiceImplTest {
 
     private static final String IDEMPOTENCY_KEY = "idem-b2b-123";
     private static final UUID   OWNER_ID        = UUID.randomUUID();
+    private static final UUID   MEMBER_ID       = UUID.randomUUID();
     private static final String USER_ID         = OWNER_ID.toString();
     private static final String SHIPMENT_REF    = "1DD-BLR-20260530-00001";
     private static final UUID   SHIPMENT_ID     = UUID.randomUUID();
@@ -100,7 +103,7 @@ class B2bBookingServiceImplTest {
         lenient().when(orderService.createOrder(any(), any(), anyString(), anyString(), any()))
                 .thenReturn(new OrderService.CreatedOrder(UUID.randomUUID(), "1DD-ORD-BLR-20260530-00001"));
         service = new B2bBookingServiceImpl(
-                b2bAccountRepository, serviceabilityPort, pricingPort, etaPort,
+                b2bAccountRepository, b2bAccountMemberRepository, serviceabilityPort, pricingPort, etaPort,
                 shipmentRefService, orderService, shipmentRepository, historyRepository,
                 codCollectionRepository, org.mockito.Mockito.mock(com.oneday.orders.repository.MerchantCategoryRepository.class),
                 stateMapper, walletService, org.mockito.Mockito.mock(PickupSlotCapacity.class), new TransactionTemplate(NO_OP_TX),
@@ -193,13 +196,15 @@ class B2bBookingServiceImplTest {
         verify(shipmentRepository, never()).save(any());
     }
 
-    // ── ownership (fail closed) ──────────────────────────────────────────────
+    // ── membership access (fail closed) ──────────────────────────────────────
 
     @Test
-    void book_callerDoesNotOwnAccount_throwsAccountAccessException() {
-        B2bAccount ownedByOther = activeAccount(0L, 1_000_000L);
-        ownedByOther.setOwnerUserId(UUID.randomUUID()); // a different user owns it
-        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(ownedByOther));
+    void book_callerNotAMember_throwsAccountAccessException() {
+        B2bAccount account = activeAccount(0L, 1_000_000L);
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        // No membership stub: the caller is not on the account → fail closed before serviceability.
+        when(b2bAccountMemberRepository.findByB2bAccountIdAndUserId(ACCOUNT_ID, OWNER_ID))
+                .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID))
                 .isInstanceOf(B2bBookingService.AccountAccessException.class);
@@ -209,15 +214,74 @@ class B2bBookingServiceImplTest {
     }
 
     @Test
-    void book_accountHasNoOwner_throwsAccountAccessException() {
-        B2bAccount noOwner = activeAccount(0L, 1_000_000L);
-        noOwner.setOwnerUserId(null); // fail closed: an ownerless account is not drawable
-        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(noOwner));
+    void book_memberOfAccount_isAllowedToBook() {
+        // A non-owner MEMBER (uncapped) can book — the guard is membership, not ownership.
+        String memberId = MEMBER_ID.toString();
+        B2bAccount account = activeAccount(0L, 1_000_000L);
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(b2bAccountRepository.findByIdForUpdate(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        stubMember(member(MEMBER_ID, com.oneday.orders.domain.MemberRole.MEMBER, null));
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
+        when(shipmentRepository.save(any())).thenAnswer(inv -> {
+            Shipment s = inv.getArgument(0);
+            ReflectionTestUtils.setField(s, "id", SHIPMENT_ID);
+            return s;
+        });
+        when(b2bAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, USER_ID))
-                .isInstanceOf(B2bBookingService.AccountAccessException.class);
+        BookingResponse resp = service.book(bookingRequest(), IDEMPOTENCY_KEY, memberId);
+
+        assertThat(resp.getShipmentRef()).isEqualTo(SHIPMENT_REF);
+        verify(shipmentRepository).save(any());
+    }
+
+    // ── per-member budget (independent of account credit) ────────────────────
+
+    @Test
+    void book_memberBudgetExceeded_throwsEvenWhenAccountHasCredit() {
+        String memberId = MEMBER_ID.toString();
+        B2bAccount account = activeAccount(0L, 1_000_000L); // account has plenty of credit
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(b2bAccountRepository.findByIdForUpdate(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        // Member capped at ₹50; already spent ₹48 this month; this booking (₹47.20) tips them over.
+        stubMember(member(MEMBER_ID, com.oneday.orders.domain.MemberRole.MEMBER, 5_000L));
+        when(shipmentRepository.sumMemberSpendSince(eq(MEMBER_ID), any())).thenReturn(4_800L);
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+        // generateRef is NOT stubbed — the budget check throws before a shipment ref is minted.
+
+        assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, memberId))
+                .isInstanceOf(B2bBookingService.MemberBudgetExceededException.class);
 
         verify(shipmentRepository, never()).save(any());
+    }
+
+    @Test
+    void book_memberWithinBudget_isAllowed() {
+        String memberId = MEMBER_ID.toString();
+        B2bAccount account = activeAccount(0L, 1_000_000L);
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(b2bAccountRepository.findByIdForUpdate(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        // Capped at ₹100, spent ₹10, booking ₹47.20 → well within.
+        stubMember(member(MEMBER_ID, com.oneday.orders.domain.MemberRole.MEMBER, 10_000L));
+        when(shipmentRepository.sumMemberSpendSince(eq(MEMBER_ID), any())).thenReturn(1_000L);
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+        when(shipmentRefService.generateRef(anyString())).thenReturn(SHIPMENT_REF);
+        when(shipmentRepository.save(any())).thenAnswer(inv -> {
+            Shipment s = inv.getArgument(0);
+            ReflectionTestUtils.setField(s, "id", SHIPMENT_ID);
+            return s;
+        });
+        when(b2bAccountRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        BookingResponse resp = service.book(bookingRequest(), IDEMPOTENCY_KEY, memberId);
+
+        assertThat(resp.getShipmentRef()).isEqualTo(SHIPMENT_REF);
     }
 
     // ── credit limit exceeded ──────────────────────────────────────────────
@@ -314,6 +378,26 @@ class B2bBookingServiceImplTest {
     private void stubAccount(B2bAccount account) {
         when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
         when(b2bAccountRepository.findByIdForUpdate(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        // Caller (OWNER_ID) is a member of the account; owner has no spend cap, so the budget check skips.
+        stubMember(member(OWNER_ID, com.oneday.orders.domain.MemberRole.OWNER, null));
+    }
+
+    /** Both the access lookup and the FOR-UPDATE budget lookup resolve the caller to this member row. */
+    private void stubMember(com.oneday.orders.domain.B2bAccountMember m) {
+        lenient().when(b2bAccountMemberRepository.findByB2bAccountIdAndUserId(ACCOUNT_ID, m.getUserId()))
+                .thenReturn(Optional.of(m));
+        lenient().when(b2bAccountMemberRepository.findByAccountAndUserForUpdate(ACCOUNT_ID, m.getUserId()))
+                .thenReturn(Optional.of(m));
+    }
+
+    private static com.oneday.orders.domain.B2bAccountMember member(
+            UUID userId, com.oneday.orders.domain.MemberRole role, Long spendLimitPaise) {
+        com.oneday.orders.domain.B2bAccountMember m = new com.oneday.orders.domain.B2bAccountMember();
+        m.setB2bAccountId(ACCOUNT_ID);
+        m.setUserId(userId);
+        m.setRole(role);
+        m.setSpendLimitPaise(spendLimitPaise);
+        return m;
     }
 
     private void stubServiceability(boolean serviceable, DeliveryType deliveryType) {

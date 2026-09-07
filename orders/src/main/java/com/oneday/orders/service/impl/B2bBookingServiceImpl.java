@@ -22,6 +22,8 @@ import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.domain.ShipmentStateHistory;
 import com.oneday.orders.dto.B2bBookingRequest;
 import com.oneday.orders.dto.BookingResponse;
+import com.oneday.orders.domain.B2bAccountMember;
+import com.oneday.orders.repository.B2bAccountMemberRepository;
 import com.oneday.orders.repository.B2bAccountRepository;
 import com.oneday.orders.repository.CodCollectionRepository;
 import com.oneday.orders.repository.MerchantCategoryRepository;
@@ -59,6 +61,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private static final Logger log = LoggerFactory.getLogger(B2bBookingServiceImpl.class);
 
     private final B2bAccountRepository b2bAccountRepository;
+    private final B2bAccountMemberRepository b2bAccountMemberRepository;
     private final ServiceabilityPort serviceabilityPort;
     private final PricingPort pricingPort;
     private final EtaPort etaPort;
@@ -83,6 +86,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
     private final ScheduledExecutorService scheduler;
 
     B2bBookingServiceImpl(B2bAccountRepository b2bAccountRepository,
+                          B2bAccountMemberRepository b2bAccountMemberRepository,
                           ServiceabilityPort serviceabilityPort,
                           PricingPort pricingPort,
                           EtaPort etaPort,
@@ -101,6 +105,7 @@ class B2bBookingServiceImpl implements B2bBookingService {
                           TimeLimiterRegistry timeLimiterRegistry,
                           @Qualifier("resilienceScheduler") ScheduledExecutorService resilienceScheduler) {
         this.b2bAccountRepository = b2bAccountRepository;
+        this.b2bAccountMemberRepository = b2bAccountMemberRepository;
         this.serviceabilityPort   = serviceabilityPort;
         this.pricingPort          = pricingPort;
         this.etaPort              = etaPort;
@@ -138,11 +143,15 @@ class B2bBookingServiceImpl implements B2bBookingService {
             throw new AccountInactiveException(
                     "B2B account is inactive: " + req.getB2bAccountId());
         }
-        // Ownership: the caller must own the account. Fail CLOSED — a null ownerUserId must NOT
-        // let any B2B user draw down this account's credit/wallet. ADMIN-on-behalf is not modelled yet.
-        if (account.getOwnerUserId() == null || !account.getOwnerUserId().toString().equals(userId)) {
+        // Access: the caller must be a MEMBER (or OWNER) of the account — owners are members too,
+        // backfilled by V4_44. Fail CLOSED — a non-member (or an unparseable user id) must NOT draw
+        // down this account's credit/wallet. ADMIN-on-behalf is not modelled yet.
+        java.util.UUID callerId = UserIds.parse(userId);
+        if (callerId == null
+                || b2bAccountMemberRepository
+                        .findByB2bAccountIdAndUserId(req.getB2bAccountId(), callerId).isEmpty()) {
             throw new AccountAccessException(
-                    "Caller is not authorized for B2B account: " + req.getB2bAccountId());
+                    "Caller is not a member of B2B account: " + req.getB2bAccountId());
         }
         // Category (optional) must be one of THIS merchant's own LIVE categories — never another
         // account's, and never an archived (soft-deleted) one.
@@ -228,6 +237,27 @@ class B2bBookingServiceImpl implements B2bBookingService {
         B2bAccount account = b2bAccountRepository.findByIdForUpdate(req.getB2bAccountId())
                 .orElseThrow(() -> new AccountNotFoundException(
                         "B2B account not found inside transaction: " + req.getB2bAccountId()));
+
+        // ── 5a-budget. Per-member spend cap (independent of account credit) ────
+        // A member with a spend_limit_paise can be blocked by their own monthly budget even while the
+        // account still has credit. Owners and uncapped members (null limit) are exempt. The member row
+        // is locked FOR UPDATE so a member's concurrent bookings serialize on this check.
+        java.util.UUID bookerId = UserIds.parse(userId);
+        if (bookerId != null) {
+            B2bAccountMember member = b2bAccountMemberRepository
+                    .findByAccountAndUserForUpdate(req.getB2bAccountId(), bookerId)
+                    .orElse(null);
+            if (member != null && member.getSpendLimitPaise() != null) {
+                Instant monthStart = MonthWindow.startOfCurrentMonth();
+                long spent = shipmentRepository.sumMemberSpendSince(bookerId, monthStart);
+                if (spent + quote.totalPricePaise() > member.getSpendLimitPaise()) {
+                    throw new B2bBookingService.MemberBudgetExceededException(
+                            "Monthly spend budget exceeded for member " + bookerId + " on account "
+                            + req.getB2bAccountId() + ": spent " + spent + " + booking "
+                            + quote.totalPricePaise() + " > limit " + member.getSpendLimitPaise());
+                }
+            }
+        }
 
         // ── 5b. Funding: WALLET debit or CREDIT check ──────────────────────────
         // Default: an account with a credit line ships on credit; otherwise it must recharge first.

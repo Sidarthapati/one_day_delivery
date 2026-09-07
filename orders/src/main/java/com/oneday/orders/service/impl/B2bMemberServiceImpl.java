@@ -12,6 +12,7 @@ import com.oneday.orders.domain.MemberRole;
 import com.oneday.orders.dto.MemberResponse;
 import com.oneday.orders.repository.B2bAccountMemberRepository;
 import com.oneday.orders.repository.B2bAccountRepository;
+import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.B2bMemberService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -29,22 +30,35 @@ class B2bMemberServiceImpl implements B2bMemberService {
 
     private final B2bAccountMemberRepository members;
     private final B2bAccountRepository accounts;
+    private final ShipmentRepository shipments;
     private final UserService userService;
     private final KycPort kycPort;
 
     B2bMemberServiceImpl(B2bAccountMemberRepository members, B2bAccountRepository accounts,
-                         UserService userService, KycPort kycPort) {
+                         ShipmentRepository shipments, UserService userService, KycPort kycPort) {
         this.members = members;
         this.accounts = accounts;
+        this.shipments = shipments;
         this.userService = userService;
         this.kycPort = kycPort;
+    }
+
+    /** This calendar month's spend for a member (0 when uncapped — no need to query if there's no limit). */
+    private long spentThisMonth(B2bAccountMember m) {
+        if (m.getSpendLimitPaise() == null) {
+            return 0L;
+        }
+        return shipments.sumMemberSpendSince(m.getUserId(), MonthWindow.startOfCurrentMonth());
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<MemberResponse> list(UUID accountId) {
+        // Spend is queried only for capped members (spentThisMonth short-circuits uncapped to 0), so a
+        // team of mostly-uncapped members costs no extra queries. ponytail: per-capped-member sum, fine
+        // at pilot team sizes; fold into one grouped query if teams ever get large.
         return members.findByB2bAccountIdOrderByCreatedAtAsc(accountId).stream()
-                .map(MemberResponse::from)
+                .map(m -> MemberResponse.withSpend(m, spentThisMonth(m)))
                 .toList();
     }
 
@@ -101,8 +115,26 @@ class B2bMemberServiceImpl implements B2bMemberService {
     @Transactional(readOnly = true)
     public MemberResponse me(UUID accountId, UUID callerUserId) {
         return members.findByB2bAccountIdAndUserId(accountId, callerUserId)
-                .map(MemberResponse::from)
+                .map(m -> MemberResponse.withSpend(m, spentThisMonth(m)))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not a member of this account"));
+    }
+
+    @Override
+    @Transactional
+    public MemberResponse setSpendLimit(UUID accountId, UUID callerUserId, UUID targetUserId,
+                                        Long spendLimitPaise) {
+        requireOwner(accountId, callerUserId);
+        B2bAccountMember target = members.findByB2bAccountIdAndUserId(accountId, targetUserId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not a member of this account"));
+        // The owner is exempt from budgets — capping the account owner is meaningless (they manage the
+        // account and the shared credit line), so reject it rather than storing a limit that never bites.
+        if (target.getRole() == MemberRole.OWNER) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "The account owner isn't subject to a member budget.");
+        }
+        target.setSpendLimitPaise(spendLimitPaise);   // null clears the cap
+        B2bAccountMember saved = members.save(target);
+        return MemberResponse.withSpend(saved, spentThisMonth(saved));
     }
 
     @Override
