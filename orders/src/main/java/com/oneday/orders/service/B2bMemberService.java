@@ -28,6 +28,13 @@ public interface B2bMemberService {
     void remove(UUID accountId, UUID callerUserId, UUID targetUserId);
 
     /**
+     * Set (or clear, when {@code spendLimitPaise} is null) a member's monthly spend budget. OWNER-only;
+     * the owner is exempt from budgets and cannot be capped. Returns the target's updated row with the
+     * new limit and this-month spend.
+     */
+    MemberResponse setSpendLimit(UUID accountId, UUID callerUserId, UUID targetUserId, Long spendLimitPaise);
+
+    /**
      * The caller verifies their own KYC by PAN (Discussion-2 xii). On a verified PAN whose name matches,
      * the caller's membership flips to VERIFIED. 404 if the caller isn't a member; 422 if the PAN fails
      * or the name doesn't match. Returns the caller's updated member row.

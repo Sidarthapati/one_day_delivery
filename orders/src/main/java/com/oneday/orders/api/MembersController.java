@@ -2,6 +2,7 @@ package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.AddMemberRequest;
+import com.oneday.orders.dto.MemberBudgetRequest;
 import com.oneday.orders.dto.MemberKycRequest;
 import com.oneday.orders.dto.MemberResponse;
 import com.oneday.orders.repository.B2bAccountRepository;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -67,6 +69,15 @@ class MembersController {
                                       @Valid @RequestBody MemberKycRequest request) {
         UUID caller = UUID.fromString(Authz.requireUserId(principal));
         return members.verifyMyKyc(ownedAccountId(principal), caller, request.pan(), request.name());
+    }
+
+    /** Set or clear a member's monthly spend budget (null clears it). OWNER-only; the owner isn't cappable. */
+    @PutMapping("/{userId}/budget")
+    public MemberResponse setBudget(@AuthenticationPrincipal AuthUserDetails principal,
+                                    @PathVariable UUID userId,
+                                    @Valid @RequestBody MemberBudgetRequest request) {
+        UUID caller = UUID.fromString(Authz.requireUserId(principal));
+        return members.setSpendLimit(ownedAccountId(principal), caller, userId, request.spendLimitPaise());
     }
 
     /** Remove a member from the caller's account. OWNER-only; the owner can't be removed. */

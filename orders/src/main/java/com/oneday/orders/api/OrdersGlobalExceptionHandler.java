@@ -255,6 +255,14 @@ class OrdersGlobalExceptionHandler {
         return pd;
     }
 
+    @ExceptionHandler(B2bBookingService.MemberBudgetExceededException.class)
+    ProblemDetail handleMemberBudgetExceeded(B2bBookingService.MemberBudgetExceededException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.PAYMENT_REQUIRED);
+        pd.setTitle("Member spend budget exceeded");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
     /**
      * Authz gates ({@link Authz}) throw {@link ResponseStatusException} (401/403). Handle it here so
      * the chosen status + reason are written as a ProblemDetail in-process. Otherwise the framework

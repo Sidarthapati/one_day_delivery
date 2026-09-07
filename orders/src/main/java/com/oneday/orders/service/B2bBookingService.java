@@ -27,8 +27,13 @@ public interface B2bBookingService {
         public CreditLimitExceededException(String message) { super(message); }
     }
 
-    /** Caller is authenticated but does not own the requested B2B account → 403. */
+    /** Caller is authenticated but is not a member of the requested B2B account → 403. */
     class AccountAccessException extends RuntimeException {
         public AccountAccessException(String message) { super(message); }
+    }
+
+    /** The booking member has a per-member spend limit and this booking would exceed it → 402. */
+    class MemberBudgetExceededException extends RuntimeException {
+        public MemberBudgetExceededException(String message) { super(message); }
     }
 }

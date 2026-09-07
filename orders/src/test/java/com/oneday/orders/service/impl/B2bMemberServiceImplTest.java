@@ -34,6 +34,7 @@ class B2bMemberServiceImplTest {
 
     @Mock private B2bAccountMemberRepository members;
     @Mock private B2bAccountRepository accounts;
+    @Mock private com.oneday.orders.repository.ShipmentRepository shipments;
     @Mock private UserService userService;
     @Mock private KycPort kycPort;
 
@@ -41,7 +42,7 @@ class B2bMemberServiceImplTest {
     private final UUID owner = UUID.randomUUID();
 
     private B2bMemberServiceImpl service() {
-        return new B2bMemberServiceImpl(members, accounts, userService, kycPort);
+        return new B2bMemberServiceImpl(members, accounts, shipments, userService, kycPort);
     }
 
     private void accountPan(String pan) {

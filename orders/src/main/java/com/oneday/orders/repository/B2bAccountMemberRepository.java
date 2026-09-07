@@ -1,7 +1,11 @@
 package com.oneday.orders.repository;
 
 import com.oneday.orders.domain.B2bAccountMember;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -14,6 +18,15 @@ public interface B2bAccountMemberRepository extends JpaRepository<B2bAccountMemb
 
     /** The caller's membership in a specific account (for the owner-only guard). */
     Optional<B2bAccountMember> findByB2bAccountIdAndUserId(UUID b2bAccountId, UUID userId);
+
+    /**
+     * The caller's membership, locked FOR UPDATE — so a member's concurrent bookings serialize on the
+     * per-member spend check (mirrors {@code B2bAccountRepository.findByIdForUpdate} for account credit).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT m FROM B2bAccountMember m WHERE m.b2bAccountId = :accountId AND m.userId = :userId")
+    Optional<B2bAccountMember> findByAccountAndUserForUpdate(@Param("accountId") UUID accountId,
+                                                            @Param("userId") UUID userId);
 
     /** True if this user already belongs to any account (a user is on at most one account in v1). */
     boolean existsByUserId(UUID userId);
