@@ -60,6 +60,17 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
     /** Paginated variant — preferred for service-layer and API use; avoids full-table loads. */
     Page<Shipment> findByStateAndCityId(ShipmentState state, String cityId, Pageable pageable);
 
+    /**
+     * Stranded mid-transit RTO intents: an intent was recorded ({@code rto_requested_at}) but never
+     * resolved ({@code rto_resolved_at} null) and no child minted, yet the parcel is already sitting at
+     * a resolvable hub state. Normally the on-arrival {@code RtoIntentResolver} handles these; this is
+     * the reconcile backstop for when that AFTER_COMMIT listener failed. Backed by the partial index
+     * {@code idx_shipment_rto_pending}. Bounded via Pageable so one sweep can't load an unbounded set.
+     */
+    @Query("SELECT s FROM Shipment s WHERE s.rtoRequestedAt IS NOT NULL AND s.rtoResolvedAt IS NULL "
+            + "AND s.returnOfShipmentId IS NULL AND s.returnShipmentId IS NULL AND s.state IN :states")
+    List<Shipment> findStrandedRtoIntents(@Param("states") Collection<ShipmentState> states, Pageable pageable);
+
     boolean existsByIdempotencyKey(String idempotencyKey);
 
     // Used to verify that the read transformer on customer_type enables WHERE-clause filtering.

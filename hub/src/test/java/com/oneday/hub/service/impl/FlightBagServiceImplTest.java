@@ -171,7 +171,7 @@ class FlightBagServiceImplTest {
         FlightBag bag = openBag(bagId);
         bag.setParcelCount(2);
         bag.setWeightGrams(3000);
-        when(flightBagRepository.findById(bagId)).thenReturn(Optional.of(bag));
+        when(flightBagRepository.findByIdForUpdate(bagId)).thenReturn(Optional.of(bag)); // seal locks the bag row
         when(flightBagItemRepository.findByBagIdAndStatus(bagId, FlightBagItemStatus.IN_BAG)).thenReturn(List.of(
                 FlightBagItem.builder().bagId(bagId).parcelId(UUID.randomUUID()).shipmentRef("BLR-1").weightGrams(1000).status(FlightBagItemStatus.IN_BAG).build(),
                 FlightBagItem.builder().bagId(bagId).parcelId(UUID.randomUUID()).shipmentRef("BLR-2").weightGrams(2000).status(FlightBagItemStatus.IN_BAG).build()));

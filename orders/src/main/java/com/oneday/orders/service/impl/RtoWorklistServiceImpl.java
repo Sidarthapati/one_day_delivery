@@ -34,6 +34,10 @@ class RtoWorklistServiceImpl implements RtoWorklistService {
     public void record(String originalRef, String childRef, String returnHubCity, String lane,
                        boolean needsBagPull) {
         // Idempotent per child (child_ref is unique) — a re-mint/replay won't duplicate the item.
+        // The check-then-insert isn't raced for the same childRef: record() is only reached from
+        // ReturnServiceImpl.initiateReturn, which holds a PESSIMISTIC_WRITE lock on the original shipment
+        // and returns early (existing child) on a replay — so two threads can't concurrently mint the
+        // same childRef and both reach this insert. The unique constraint is the last-resort backstop.
         if (repository.findByChildRef(childRef).isPresent()) {
             return;
         }

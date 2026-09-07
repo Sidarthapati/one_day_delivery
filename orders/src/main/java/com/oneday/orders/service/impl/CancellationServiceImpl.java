@@ -336,7 +336,7 @@ class CancellationServiceImpl implements CancellationService {
         // here, so this is safe. rto_resolved_at stays null until the resolver mints the child at the hub.
         shipment.setRtoRequestedAt(Instant.now());
         shipment.setRtoRequestedBy(userId != null && userId.length() <= 64 ? userId : null);
-        shipment.setRtoReason(reason);
+        shipment.setRtoReason(clampReason(reason));
         shipmentRepository.save(shipment);
         AuditLog.event("shipment.rto_from_cancel")
                 .kv("shipmentRef", shipment.getShipmentRef())
@@ -347,6 +347,14 @@ class CancellationServiceImpl implements CancellationService {
                 shipment.getShipmentRef(), shipment.getState(), why);
         return new CancellationResponse(shipment.getShipmentRef(), shipment.getState(), null,
                 Disposition.RETURN_SCHEDULED, null);
+    }
+
+    /** {@code shipments.rto_reason} is VARCHAR(500); clamp so an oversized reason can't fail the tx. */
+    static String clampReason(String reason) {
+        if (reason == null || reason.length() <= 500) {
+            return reason;
+        }
+        return reason.substring(0, 500);
     }
 
     /** B2B: reverse the shipping charge — refund the wallet, or decrement outstanding credit. */

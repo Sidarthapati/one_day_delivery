@@ -60,7 +60,7 @@ class HubRecallAdapterTest {
         FlightBagItem it = item();
         when(itemRepo.findFirstByParcelIdAndStatus(shipmentId, FlightBagItemStatus.IN_BAG))
                 .thenReturn(Optional.of(it));
-        when(bagRepo.findById(bagId)).thenReturn(Optional.of(bag(FlightBagStatus.OPEN)));
+        when(bagRepo.findByIdForUpdate(bagId)).thenReturn(Optional.of(bag(FlightBagStatus.OPEN))); // recall locks the bag
 
         RecallOutcome outcome = adapter.recallAtOrigin(shipmentId);
 
@@ -74,7 +74,7 @@ class HubRecallAdapterTest {
     void sealedBagIsCommitted() {
         when(itemRepo.findFirstByParcelIdAndStatus(shipmentId, FlightBagItemStatus.IN_BAG))
                 .thenReturn(Optional.of(item()));
-        when(bagRepo.findById(bagId)).thenReturn(Optional.of(bag(FlightBagStatus.SEALED)));
+        when(bagRepo.findByIdForUpdate(bagId)).thenReturn(Optional.of(bag(FlightBagStatus.SEALED)));
 
         assertThat(adapter.recallAtOrigin(shipmentId)).isEqualTo(RecallOutcome.COMMITTED);
         verify(itemRepo, never()).save(any());

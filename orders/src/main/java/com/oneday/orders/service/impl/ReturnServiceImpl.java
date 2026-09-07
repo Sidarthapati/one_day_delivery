@@ -178,7 +178,9 @@ class ReturnServiceImpl implements ReturnService {
                 original.setRtoRequestedAt(now);
                 String by = ctx.getTriggeredBy();
                 original.setRtoRequestedBy(by != null && by.length() <= 64 ? by : null);
-                original.setRtoReason(ctx.getNotes());
+                // rto_reason is VARCHAR(500) — clamp so an oversized note can't fail the transaction.
+                String notes = ctx.getNotes();
+                original.setRtoReason(notes != null && notes.length() > 500 ? notes.substring(0, 500) : notes);
             }
             original.setRtoResolvedAt(now);
         }

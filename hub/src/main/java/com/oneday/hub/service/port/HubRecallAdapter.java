@@ -19,10 +19,10 @@ import java.util.UUID;
 /**
  * Real M7 backing for {@link HubRecallPort} (mid-transit RTO). Resolves a shipment to its current
  * flight-bag item; if the bag is still {@code OPEN} the item is flipped {@code REMOVED} (append-only,
- * bag counts decremented) and the parcel is {@link RecallOutcome#RECALLED}. A parcel not currently in
- * a bag is also {@code RECALLED} (nothing to pull). A {@code SEALED}/{@code DISPATCHED} bag has its
- * manifest generated and AWB booked, so the parcel is {@link RecallOutcome#COMMITTED} — it must fly
- * and RTO from the destination hub. Never unseals a bag.
+ * bag counts decremented) and the parcel is {@link RecallOutcome#PULLED_FROM_BAG}. A parcel not
+ * currently in a bag is {@link RecallOutcome#NOT_BAGGED} (nothing to pull). A {@code SEALED}/
+ * {@code DISPATCHED} bag has its manifest generated and AWB booked, so the parcel is
+ * {@link RecallOutcome#COMMITTED} — it must fly and RTO from the destination hub. Never unseals a bag.
  */
 @Component
 class HubRecallAdapter implements HubRecallPort {
@@ -52,7 +52,9 @@ class HubRecallAdapter implements HubRecallPort {
             return RecallOutcome.NOT_BAGGED;
         }
 
-        FlightBag bag = flightBagRepository.findById(item.getBagId()).orElse(null);
+        // Lock the bag row before reading its status and mutating counts, so a concurrent seal can't
+        // slip in between the OPEN check and the pull (seal takes the same lock — see FlightBagServiceImpl).
+        FlightBag bag = flightBagRepository.findByIdForUpdate(item.getBagId()).orElse(null);
         if (bag == null || bag.getStatus() != FlightBagStatus.OPEN) {
             // Sealed/dispatched/handed-over → manifest generated + AWB booked; must fly.
             return RecallOutcome.COMMITTED;

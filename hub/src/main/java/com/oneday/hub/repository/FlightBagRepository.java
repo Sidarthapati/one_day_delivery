@@ -2,8 +2,11 @@ package com.oneday.hub.repository;
 
 import com.oneday.hub.domain.FlightBagStatus;
 import com.oneday.hub.domain.FlightBag;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -11,6 +14,15 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface FlightBagRepository extends JpaRepository<FlightBag, UUID> {
+
+    /**
+     * SELECT ... FOR UPDATE on one bag. Recall (mid-transit RTO) and seal both read the bag status
+     * then mutate; taking a row lock first serializes them so a parcel can't be pulled from a bag a
+     * concurrent seal has just committed (and vice-versa).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM FlightBag b WHERE b.id = :id")
+    Optional<FlightBag> findByIdForUpdate(@Param("id") UUID id);
 
     /** The lazy-create lookup: the open bag for a (flight, date, dest_hub), if one exists. */
     Optional<FlightBag> findByFlightNoAndFlightDateAndDestHubAndStatus(

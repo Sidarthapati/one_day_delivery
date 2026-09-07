@@ -157,7 +157,10 @@ class FlightBagServiceImpl implements FlightBagService {
     @Override
     @Transactional
     public SealResult seal(UUID bagId) {
-        FlightBag bag = requireBag(bagId);
+        // Lock the bag row for the whole seal so a concurrent mid-transit recall (HubRecallAdapter,
+        // which takes the same lock) can't pull a parcel out of a bag we're sealing, or vice-versa.
+        FlightBag bag = flightBagRepository.findByIdForUpdate(bagId)
+                .orElseThrow(() -> new BagNotFoundException(bagId));
         if (bag.getStatus() != FlightBagStatus.OPEN) {
             throw new IllegalBagStateException("Bag " + bagId + " is already " + bag.getStatus());
         }
