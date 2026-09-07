@@ -5,6 +5,7 @@ import com.oneday.orders.dto.AdminDaCashRow;
 import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.DaCodCashSummaryResponse;
 import com.oneday.orders.dto.DaCodLedgerEntryResponse;
+import com.oneday.orders.dto.DepositRecordedResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
 import org.springframework.data.domain.Pageable;
 
@@ -21,8 +22,12 @@ public interface CodCashService {
 
     // ── DA (own) ────────────────────────────────────────────────────────────────
 
-    /** Record a cash deposit the DA has handed in. */
-    CodCashDepositResponse recordDeposit(UUID daUserId, RecordCodDepositRequest request);
+    /**
+     * The DA declares a cash deposit they're about to hand in. Returns the deposit plus a one-time
+     * handoff code the DA presents to the station cashier — cash-in-hand only drops once the station
+     * verifies receipt (see {@link #verifyHandoff}), not at declaration.
+     */
+    DepositRecordedResponse recordDeposit(UUID daUserId, RecordCodDepositRequest request);
 
     /** The DA's own position: collected vs deposited + authoritative cash-in-hand, with deposit history. */
     DaCodCashSummaryResponse daSummary(UUID daUserId);
@@ -65,4 +70,25 @@ public interface CodCashService {
      * admin, no gate.
      */
     CodCashDepositResponse reconcile(UUID depositId, UUID actorId, boolean reconciled, String note, String cityFilter);
+
+    // ── Verified custody chain: DA → station → bank (Discussion-3 ix) ─────────────
+
+    /**
+     * The station cashier confirms receipt of the DA's cash by entering the handoff OTP. Moves the
+     * deposit DEPOSITED → HANDED_OVER, records who received it, and only now posts the DA's cash-in-hand
+     * deduction (the cash has physically left the rider). {@code cityFilter} gates the station manager to
+     * their own city. 422 if the code is wrong/expired.
+     */
+    CodCashDepositResponse verifyHandoff(UUID depositId, String otp, UUID receivedBy, String cityFilter);
+
+    /** Station records the bank deposit slip: HANDED_OVER → BANK_DEPOSITED. City-gated. */
+    CodCashDepositResponse markBankDeposited(UUID depositId, String bankDepositRef, String cityFilter);
+
+    /**
+     * Finance (or the provider webhook) confirms the credit landed in the company account:
+     * BANK_DEPOSITED → BANK_CONFIRMED. Triggers FIFO settlement of the DA's oldest in-custody collections
+     * up to the total cash now confirmed — those collections become remittable to their vendors.
+     * {@code cityFilter} null for admin/webhook (no city gate).
+     */
+    CodCashDepositResponse confirmBankCredit(UUID depositId, String bankCreditRef, String cityFilter);
 }

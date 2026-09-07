@@ -48,6 +48,14 @@ class OrdersGlobalExceptionHandler {
         return pd;
     }
 
+    @ExceptionHandler(com.oneday.orders.service.CashHandoffOtpService.OtpVerificationException.class)
+    ProblemDetail handleHandoffOtp(com.oneday.orders.service.CashHandoffOtpService.OtpVerificationException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        pd.setTitle("Cash handoff not verified");
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
+
     // M2 has no rate configured for this lane (e.g. a serviceable city absent from the rate sheet).
     // Surface it as a clear 422 instead of a generic 500 so booking/cart show why pricing failed.
     @ExceptionHandler(NoRateConfiguredException.class)

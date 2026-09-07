@@ -111,6 +111,9 @@ public class SecurityConfig {
                         // Inbound WhatsApp webhook (Meta) — unauthenticated by design; the handler
                         // verifies Meta's challenge token / X-Hub-Signature-256 itself.
                         .requestMatchers("/webhooks/whatsapp").permitAll()
+                        // Inbound bank-credit webhook (COD settlement) — unauthenticated by design; the
+                        // handler verifies the provider's HMAC signature itself (disabled until configured).
+                        .requestMatchers(HttpMethod.POST, "/webhooks/cod/bank-credit").permitAll()
                         .requestMatchers("/", "/index.html", "/*.js", "/*.css", "/css/**", "/js/**").permitAll()
                         // Security disclosure (RFC 9116) — must be publicly fetchable.
                         .requestMatchers("/.well-known/**").permitAll()

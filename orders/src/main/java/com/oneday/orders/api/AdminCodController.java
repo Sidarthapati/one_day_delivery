@@ -3,14 +3,17 @@ package com.oneday.orders.api;
 import com.oneday.auth.security.AuthUserDetails;
 import com.oneday.orders.dto.AdminCodReconciliationRow;
 import com.oneday.orders.dto.AdminDaCashRow;
+import com.oneday.orders.dto.BankDepositedRequest;
 import com.oneday.orders.dto.CodAccountBalanceResponse;
 import com.oneday.orders.dto.CodCashDepositResponse;
+import com.oneday.orders.dto.ConfirmBankCreditRequest;
 import com.oneday.orders.dto.CodCollectionResponse;
 import com.oneday.orders.dto.CodRemittanceResponse;
 import com.oneday.orders.dto.CreateRemittanceRequest;
 import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import com.oneday.orders.dto.MarkRemittancePaidRequest;
 import com.oneday.orders.dto.ReconcileDepositRequest;
+import com.oneday.orders.dto.VerifyHandoffRequest;
 import com.oneday.orders.domain.CodCollectionState;
 import com.oneday.orders.service.CodCashService;
 import com.oneday.orders.service.CodRemittanceService;
@@ -168,5 +171,42 @@ class AdminCodController {
         Authz.requireRole(principal, STATION_MANAGER);
         UUID actorId = UUID.fromString(Authz.requireUserId(principal));
         return codCash.reconcile(id, actorId, request.reconciled(), request.note(), cityFilter(principal));
+    }
+
+    // ── Verified custody chain: DA → station → bank (Discussion-3 ix) ──────────────
+
+    /** Station confirms receipt of the DA's cash via the handoff code: DEPOSITED → HANDED_OVER. City-gated. */
+    @PostMapping("/cash/deposits/{id}/handoff")
+    public CodCashDepositResponse verifyHandoff(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("id") UUID id,
+            @Valid @RequestBody VerifyHandoffRequest request) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        UUID actorId = UUID.fromString(Authz.requireUserId(principal));
+        return codCash.verifyHandoff(id, request.otp(), actorId, cityFilter(principal));
+    }
+
+    /** Station records the bank deposit slip: HANDED_OVER → BANK_DEPOSITED. City-gated. */
+    @PostMapping("/cash/deposits/{id}/bank-deposited")
+    public CodCashDepositResponse bankDeposited(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("id") UUID id,
+            @Valid @RequestBody BankDepositedRequest request) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        return codCash.markBankDeposited(id, request.bankDepositRef(), cityFilter(principal));
+    }
+
+    /**
+     * Finance confirms the credit landed in our bank: BANK_DEPOSITED → BANK_CONFIRMED (manual ops path;
+     * the provider webhook is the automated path). ADMIN-only, no city gate — settles the DA's collections
+     * FIFO so they become remittable.
+     */
+    @PostMapping("/cash/deposits/{id}/bank-confirmed")
+    public CodCashDepositResponse bankConfirmed(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("id") UUID id,
+            @Valid @RequestBody ConfirmBankCreditRequest request) {
+        Authz.requireRole(principal, "ADMIN");
+        return codCash.confirmBankCredit(id, request.bankCreditRef(), null);
     }
 }

@@ -2,7 +2,9 @@ package com.oneday.orders.repository;
 
 import com.oneday.orders.domain.CodCollection;
 import com.oneday.orders.domain.CodCollectionState;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -22,10 +24,31 @@ public interface CodCollectionRepository extends JpaRepository<CodCollection, UU
 
     int countByB2bAccountIdAndState(UUID b2bAccountId, CodCollectionState state);
 
-    /** COLLECTED but not yet assigned to a remittance — the amount available to pay out. */
+    /**
+     * COLLECTED, unremitted, AND whose cash has reached the bank (BANK_SETTLED) — the amount available
+     * to pay out. The settlement gate (Discussion-3 ix) means a vendor is never paid before the buyer's
+     * cash is confirmed in our account; existing pre-migration collections were grandfathered SETTLED.
+     */
     @Query("SELECT c FROM CodCollection c WHERE c.b2bAccountId = :accountId "
-            + "AND c.state = com.oneday.orders.domain.CodCollectionState.COLLECTED AND c.remittanceId IS NULL")
+            + "AND c.state = com.oneday.orders.domain.CodCollectionState.COLLECTED AND c.remittanceId IS NULL "
+            + "AND c.settlementState = com.oneday.orders.domain.CodCollectionSettlementState.BANK_SETTLED")
     List<CodCollection> findRemittable(@Param("accountId") UUID accountId);
+
+    /**
+     * A DA's still-in-custody collections, oldest first — the FIFO order in which a bank-confirmed
+     * deposit settles them. Locked FOR UPDATE so a concurrent confirmation can't double-allocate a row.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM CodCollection c WHERE c.collectedByDaId = :daId "
+            + "AND c.state = com.oneday.orders.domain.CodCollectionState.COLLECTED "
+            + "AND c.settlementState = com.oneday.orders.domain.CodCollectionSettlementState.IN_CUSTODY "
+            + "ORDER BY c.collectedAt ASC, c.id ASC")
+    List<CodCollection> findInCustodyByDaForUpdate(@Param("daId") UUID daId);
+
+    /** Σ of a DA's collections already settled to the bank — the amount FIFO allocation has consumed. */
+    @Query("SELECT COALESCE(SUM(c.amountPaise), 0) FROM CodCollection c WHERE c.collectedByDaId = :daId "
+            + "AND c.settlementState = com.oneday.orders.domain.CodCollectionSettlementState.BANK_SETTLED")
+    long sumBankSettledByDa(@Param("daId") UUID daId);
 
     /** Σ amount for one account in a given state (0 when none). */
     @Query("SELECT COALESCE(SUM(c.amountPaise), 0) FROM CodCollection c "
