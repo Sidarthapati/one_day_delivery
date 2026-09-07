@@ -47,4 +47,27 @@ public class CodCashDeposit extends BaseEntity {
 
     @Column(name = "reconciled_at")
     private Instant reconciledAt;
+
+    // ── Verified custody chain (Discussion-3 ix) ──────────────────────────────────
+
+    /** The station user who confirmed receipt of the cash via the handoff OTP. */
+    @Column(name = "received_by")
+    private UUID receivedBy;
+
+    @Column(name = "handed_over_at")
+    private Instant handedOverAt;
+
+    /** The station's actual bank deposit slip reference (distinct from the DA's idempotency depositRef). */
+    @Column(name = "bank_deposit_ref", length = 80)
+    private String bankDepositRef;
+
+    @Column(name = "bank_deposited_at")
+    private Instant bankDepositedAt;
+
+    /** Finance/provider reference for the confirmed inbound credit. */
+    @Column(name = "bank_credit_ref", length = 80)
+    private String bankCreditRef;
+
+    @Column(name = "bank_confirmed_at")
+    private Instant bankConfirmedAt;
 }

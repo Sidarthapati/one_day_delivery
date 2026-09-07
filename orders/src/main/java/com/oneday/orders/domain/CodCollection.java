@@ -50,4 +50,12 @@ public class CodCollection extends BaseEntity {
     // The delivery associate who collected the cash (transition actor); null for hub-collect / old rows.
     @Column(name = "collected_by_da_id")
     private UUID collectedByDaId;
+
+    // Whether the buyer's cash has reached the company bank (Discussion-3 ix). Gates remittance.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "settlement_state", length = 20, nullable = false)
+    private CodCollectionSettlementState settlementState = CodCollectionSettlementState.IN_CUSTODY;
+
+    @Column(name = "bank_settled_at")
+    private Instant bankSettledAt;
 }

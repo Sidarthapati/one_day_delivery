@@ -1,9 +1,9 @@
 package com.oneday.orders.api;
 
 import com.oneday.auth.security.AuthUserDetails;
-import com.oneday.orders.dto.CodCashDepositResponse;
 import com.oneday.orders.dto.DaCodCashSummaryResponse;
 import com.oneday.orders.dto.DaCodLedgerEntryResponse;
+import com.oneday.orders.dto.DepositRecordedResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
 import com.oneday.orders.service.CodCashService;
 import jakarta.validation.Valid;
@@ -37,9 +37,13 @@ class DaCodController {
         this.codCash = codCash;
     }
 
+    /**
+     * Declare a cash deposit. Returns the deposit plus a one-time handoff code the DA shows the station
+     * cashier — the cash-in-hand deduction is posted only when the station verifies receipt.
+     */
     @PostMapping("/deposits")
     @ResponseStatus(HttpStatus.CREATED)
-    public CodCashDepositResponse recordDeposit(
+    public DepositRecordedResponse recordDeposit(
             @AuthenticationPrincipal AuthUserDetails principal,
             @Valid @RequestBody RecordCodDepositRequest request) {
         return codCash.recordDeposit(callerDaId(principal), request);

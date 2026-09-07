@@ -5,6 +5,9 @@ import com.oneday.auth.exception.UserNotFoundException;
 import com.oneday.auth.service.UserService;
 import com.oneday.orders.domain.CodCashDeposit;
 import com.oneday.orders.domain.CodCashDepositState;
+import com.oneday.orders.domain.CodCollection;
+import com.oneday.orders.domain.CodCollectionSettlementState;
+import com.oneday.orders.domain.CodCollectionState;
 import com.oneday.orders.domain.DaCodBalance;
 import com.oneday.orders.dto.AdminDaCashRow;
 import com.oneday.orders.dto.CodCashDepositResponse;
@@ -47,9 +50,10 @@ class CodCashServiceImplTest {
     @Mock private CodLedgerService codLedger;
     @Mock private DaCodBalanceRepository balances;
     @Mock private UserService userService;
+    @Mock private com.oneday.orders.service.CashHandoffOtpService handoffOtp;
 
     private CodCashServiceImpl service() {
-        return new CodCashServiceImpl(deposits, collections, codLedger, balances, userService);
+        return new CodCashServiceImpl(deposits, collections, codLedger, balances, userService, handoffOtp);
     }
 
     private static DaCodBalance balance(UUID da, long paise) {
@@ -73,31 +77,113 @@ class CodCashServiceImplTest {
         existing.setDepositRef("REF-1");
         existing.setStatus(CodCashDepositState.DEPOSITED);
         when(deposits.findByDaUserIdAndDepositRef(da, "REF-1")).thenReturn(Optional.of(existing));
+        when(handoffOtp.generate(existing.getId())).thenReturn("0000");
 
-        CodCashDepositResponse resp =
-                service().recordDeposit(da, new RecordCodDepositRequest(500L, "REF-1", null));
+        var resp = service().recordDeposit(da, new RecordCodDepositRequest(500L, "REF-1", null));
 
-        assertThat(resp.id()).isEqualTo(existing.getId());
+        assertThat(resp.deposit().id()).isEqualTo(existing.getId());
         verify(deposits, never()).save(any());
         verify(deposits, never()).saveAndFlush(any());
-        // An idempotent repeat must NOT post to the ledger again (no double debit of cash-in-hand).
+        // An idempotent repeat must NOT post to the ledger (cash-in-hand only moves at verified handoff).
         verify(codLedger, never()).post(any(), any(), org.mockito.ArgumentMatchers.anyLong(),
                 any(), any(), any());
     }
 
     @Test
-    void recordDeposit_newRef_inserts() {
+    void recordDeposit_newRef_insertsAndIssuesHandoffCode_noLedgerPostYet() {
         UUID da = UUID.randomUUID();
         when(deposits.findByDaUserIdAndDepositRef(da, "REF-2")).thenReturn(Optional.empty());
-        when(deposits.saveAndFlush(any(CodCashDeposit.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(deposits.saveAndFlush(any(CodCashDeposit.class))).thenAnswer(inv -> {
+            CodCashDeposit d = inv.getArgument(0);
+            ReflectionTestUtils.setField(d, "id", UUID.randomUUID());
+            return d;
+        });
+        when(handoffOtp.generate(any())).thenReturn("4271");
 
-        CodCashDepositResponse resp =
-                service().recordDeposit(da, new RecordCodDepositRequest(700L, "REF-2", "note"));
+        var resp = service().recordDeposit(da, new RecordCodDepositRequest(700L, "REF-2", "note"));
 
-        assertThat(resp.amountPaise()).isEqualTo(700L);
+        assertThat(resp.deposit().amountPaise()).isEqualTo(700L);
+        assertThat(resp.handoffOtp()).isEqualTo("4271");
         verify(deposits).saveAndFlush(any(CodCashDeposit.class));
-        // A new deposit posts a negative (DEPOSIT) movement to the DA's cash-in-hand ledger.
-        verify(codLedger).post(eq(da), eq(DaCodLedgerType.DEPOSIT), eq(-700L), eq("REF-2"), any(), eq(da));
+        // Declaration does NOT touch cash-in-hand — that happens only when the station verifies receipt.
+        verify(codLedger, never()).post(any(), any(), org.mockito.ArgumentMatchers.anyLong(),
+                any(), any(), any());
+    }
+
+    // ── Verified custody chain (Discussion-3 ix) ──────────────────────────────────
+
+    private CodCashDeposit deposit(UUID id, UUID da, long paise, CodCashDepositState state) {
+        CodCashDeposit d = new CodCashDeposit();
+        ReflectionTestUtils.setField(d, "id", id);
+        d.setDaUserId(da);
+        d.setAmountPaise(paise);
+        d.setDepositRef("REF-" + id);
+        d.setStatus(state);
+        return d;
+    }
+
+    @Test
+    void verifyHandoff_postsLedgerDeductionAndMovesToHandedOver() {
+        UUID id = UUID.randomUUID();
+        UUID da = UUID.randomUUID();
+        UUID station = UUID.randomUUID();
+        CodCashDeposit d = deposit(id, da, 700L, CodCashDepositState.DEPOSITED);
+        when(deposits.findByIdForUpdate(id)).thenReturn(Optional.of(d));
+        when(deposits.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var resp = service().verifyHandoff(id, "4271", station, null);
+
+        verify(handoffOtp).verify(id, "4271");
+        assertThat(resp.status()).isEqualTo(CodCashDepositState.HANDED_OVER);
+        // Cash physically left the rider — NOW the cash-in-hand deduction posts.
+        verify(codLedger).post(eq(da), eq(DaCodLedgerType.DEPOSIT), eq(-700L), any(), any(), eq(station));
+    }
+
+    @Test
+    void verifyHandoff_wrongState_conflicts_andDoesNotPost() {
+        UUID id = UUID.randomUUID();
+        CodCashDeposit d = deposit(id, UUID.randomUUID(), 700L, CodCashDepositState.HANDED_OVER);
+        when(deposits.findByIdForUpdate(id)).thenReturn(Optional.of(d));
+
+        assertThatThrownBy(() -> service().verifyHandoff(id, "4271", UUID.randomUUID(), null))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(handoffOtp, never()).verify(any(), any());
+        verify(codLedger, never()).post(any(), any(), org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void confirmBankCredit_settlesOldestInCustodyCollectionsFifo() {
+        UUID id = UUID.randomUUID();
+        UUID da = UUID.randomUUID();
+        CodCashDeposit d = deposit(id, da, 1000L, CodCashDepositState.BANK_DEPOSITED);
+        when(deposits.findByIdForUpdate(id)).thenReturn(Optional.of(d));
+        when(deposits.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // Confirmed cash so far = 1000; nothing settled yet → 1000 settleable.
+        when(deposits.sumBankConfirmedByDa(da)).thenReturn(1000L);
+        when(collections.sumBankSettledByDa(da)).thenReturn(0L);
+        // Oldest-first: 400, 400, 400. FIFO covers the first two (800 ≤ 1000); the third (would be 1200) waits.
+        CodCollection c1 = collection(da, 400L);
+        CodCollection c2 = collection(da, 400L);
+        CodCollection c3 = collection(da, 400L);
+        when(collections.findInCustodyByDaForUpdate(da)).thenReturn(List.of(c1, c2, c3));
+        when(collections.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service().confirmBankCredit(id, "UTR-XYZ", null);
+
+        assertThat(d.getStatus()).isEqualTo(CodCashDepositState.BANK_CONFIRMED);
+        assertThat(c1.getSettlementState()).isEqualTo(CodCollectionSettlementState.BANK_SETTLED);
+        assertThat(c2.getSettlementState()).isEqualTo(CodCollectionSettlementState.BANK_SETTLED);
+        assertThat(c3.getSettlementState()).isEqualTo(CodCollectionSettlementState.IN_CUSTODY); // not fully covered
+    }
+
+    private static CodCollection collection(UUID da, long paise) {
+        CodCollection c = new CodCollection();
+        ReflectionTestUtils.setField(c, "id", UUID.randomUUID());
+        c.setCollectedByDaId(da);
+        c.setAmountPaise(paise);
+        c.setState(CodCollectionState.COLLECTED);
+        c.setSettlementState(CodCollectionSettlementState.IN_CUSTODY);
+        return c;
     }
 
     // ── #191 station DA-cash view + city scoping ──────────────────────────────────
