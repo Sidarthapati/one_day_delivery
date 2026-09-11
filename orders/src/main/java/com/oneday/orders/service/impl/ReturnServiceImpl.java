@@ -77,20 +77,13 @@ class ReturnServiceImpl implements ReturnService {
     @Override
     @Transactional
     public ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, TransitionContext ctx) {
-        return initiateReturn(originalShipmentId, reason, ReturnLane.REVERSE_FROM_DEST, false, ctx);
+        return initiateReturn(originalShipmentId, reason, ReturnLane.REVERSE_FROM_DEST, ctx);
     }
 
     @Override
     @Transactional
     public ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, ReturnLane lane,
                                        TransitionContext ctx) {
-        return initiateReturn(originalShipmentId, reason, lane, false, ctx);
-    }
-
-    @Override
-    @Transactional
-    public ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, ReturnLane lane,
-                                       boolean needsBagPull, TransitionContext ctx) {
         // Lock the original for the whole tx so concurrent RTO_INITIATED calls serialize on it — the
         // idempotency check below then can't be raced into a duplicate-child uniqueness error.
         Shipment original = shipmentRepository.findByIdWithLock(originalShipmentId)
@@ -188,9 +181,10 @@ class ReturnServiceImpl implements ReturnService {
         shipmentRepository.save(original);
         stateMachine.transition(originalShipmentId, ShipmentState.RTO_INITIATED, ctx);
 
-        // Tell the return hub to physically turn the parcel around (pull from bag if needed, then sort).
+        // Tell the return hub to physically turn the parcel around, then sort. R4: there is no bag-pull
+        // path any more — a same-city return is decided before the parcel is bagged, so needsBagPull=false.
         rtoWorklistService.record(original.getShipmentRef(), child.getShipmentRef(),
-                child.getOriginCity(), lane.name(), needsBagPull);
+                child.getOriginCity(), lane.name(), false);
 
         AuditLog.event("return.initiated")
                 .kv("originalShipmentId", originalShipmentId)
@@ -253,6 +247,11 @@ class ReturnServiceImpl implements ReturnService {
         c.setDestAddress(original.getOriginAddress());
         c.setDestCity(original.getOriginCity());
         c.setDestPincode(original.getOriginPincode());
+
+        // Same physical parcel — reuse the SAME barcode (R1: no new label, no re-boxing). The child and
+        // original share one parcel_id string (no unique constraint); a scan of that label resolves to the
+        // active shipment (the live child once RTO is on) via ShipmentLookupService.findActiveByParcelId.
+        c.setParcelId(original.getParcelId());
 
         // Same physical parcel — carry the dimensions over verbatim.
         c.setWeightGrams(original.getWeightGrams());

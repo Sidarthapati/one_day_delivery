@@ -45,6 +45,13 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
 
     Optional<Shipment> findByTrackToken(String trackToken);
 
+    /**
+     * All shipments carrying a given physical barcode (R1: the original and its return child <ref>_R
+     * share one parcel_id — no unique constraint). At most two rows; the resolver prefers the live
+     * return child. Empty until M8 stamps the label (parcel_id is null at booking).
+     */
+    List<Shipment> findByParcelId(String parcelId);
+
     /** The return child (<ref>_R) spawned for an original shipment, if one exists (idempotency guard). */
     Optional<Shipment> findByReturnOfShipmentId(UUID originalShipmentId);
 

@@ -14,14 +14,18 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** The reconcile backstop re-resolves stranded RTO intents by the parcel's current hub state. */
+/**
+ * The reconcile backstop re-resolves stranded RTO intents. Under the R4 dock-receive gate it only
+ * sweeps the destination hub (reverse lane) — a same-city (pre-hub) intent resolves on the
+ * AFTER_COMMIT transition into the origin hub and is guarded from flying by the hub, so sweeping the
+ * origin hub here would wrongly same-city a committed intent cancelled while already at the origin hub.
+ */
 class RtoIntentReconcileJobTest {
 
     private final ShipmentRepository shipmentRepo = mock(ShipmentRepository.class);
@@ -42,18 +46,18 @@ class RtoIntentReconcileJobTest {
     }
 
     @Test
-    void resolvesEachByHubStateLane() {
-        Shipment origin = at(ShipmentState.AT_ORIGIN_HUB);
-        Shipment dest = at(ShipmentState.AT_DEST_HUB);
+    void resolvesEachAtDestHubReverseLane() {
+        Shipment a = at(ShipmentState.AT_DEST_HUB);
+        Shipment b = at(ShipmentState.AT_DEST_HUB);
         when(shipmentRepo.findStrandedRtoIntents(any(), any(Pageable.class)))
-                .thenReturn(List.of(origin, dest));
+                .thenReturn(List.of(a, b));
         stubReturn();
 
         job.reconcile();
 
-        verify(returnService).initiateReturn(eq(origin.getId()), eq(ReturnReason.POST_CUSTODY_CANCEL),
-                eq(ReturnLane.SAME_CITY_FROM_ORIGIN), any());
-        verify(returnService).initiateReturn(eq(dest.getId()), eq(ReturnReason.POST_CUSTODY_CANCEL),
+        verify(returnService).initiateReturn(eq(a.getId()), eq(ReturnReason.POST_CUSTODY_CANCEL),
+                eq(ReturnLane.REVERSE_FROM_DEST), any());
+        verify(returnService).initiateReturn(eq(b.getId()), eq(ReturnReason.POST_CUSTODY_CANCEL),
                 eq(ReturnLane.REVERSE_FROM_DEST), any());
     }
 
@@ -63,8 +67,6 @@ class RtoIntentReconcileJobTest {
 
         job.reconcile();
 
-        verify(returnService, org.mockito.Mockito.never())
-                .initiateReturn(any(), any(), any(), anyBoolean(), any());
         verify(returnService, org.mockito.Mockito.never())
                 .initiateReturn(any(), any(), any(), any());
     }

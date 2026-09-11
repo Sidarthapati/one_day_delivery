@@ -6,7 +6,6 @@ import com.oneday.auth.domain.User;
 import com.oneday.auth.repository.ApiKeyRepository;
 import com.oneday.auth.service.AuthService;
 import com.oneday.auth.service.UserService;
-import com.oneday.common.port.HubRecallPort;
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.DropType;
 import com.oneday.common.domain.enums.PaymentMode;
@@ -103,8 +102,6 @@ abstract class OrdersE2eSupport {
     @MockBean protected UserService userService;
     // Implemented in onboarding (off the orders test classpath); B2bMemberServiceImpl needs it — mock.
     @MockBean protected com.oneday.common.port.KycPort kycPort;
-    // Implemented in hub/M7 (off the orders test classpath) — mock so mid-transit RTO recall resolves.
-    @MockBean protected HubRecallPort hubRecallPort;
 
     /** Default happy-path stubs for the external ports; individual tests override as needed. */
     @BeforeEach

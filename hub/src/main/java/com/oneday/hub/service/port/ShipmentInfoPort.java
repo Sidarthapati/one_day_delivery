@@ -30,6 +30,18 @@ public interface ShipmentInfoPort {
             String destCity,
             String destPincode,
             UUID destTileId,
-            Instant slaDeadline) {
+            Instant slaDeadline,
+            // R4: parcel has an unresolved mid-transit RTO intent (cancel before the hub scan). At the
+            // origin dock this makes receiving skip the outbound flight sort so the parcel is turned
+            // around same-city rather than flown.
+            boolean pendingRto) {
+
+        /** Back-compat constructor (pendingRto defaults false) for callers that don't set it. */
+        public ParcelInfo(UUID shipmentId, String shipmentRef, ShipmentState state, int chargeableWeightGrams,
+                          DropType dropType, DeliveryType deliveryType, String originCity, String destCity,
+                          String destPincode, UUID destTileId, Instant slaDeadline) {
+            this(shipmentId, shipmentRef, state, chargeableWeightGrams, dropType, deliveryType,
+                    originCity, destCity, destPincode, destTileId, slaDeadline, false);
+        }
     }
 }

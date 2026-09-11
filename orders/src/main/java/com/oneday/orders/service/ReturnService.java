@@ -52,14 +52,6 @@ public interface ReturnService {
     ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, ReturnLane lane,
                                 TransitionContext ctx);
 
-    /**
-     * As {@link #initiateReturn(UUID, ReturnReason, ReturnLane, TransitionContext)}, but records on the
-     * hub RTO worklist that the parcel was pulled from an OPEN flight bag and must be physically fished
-     * out before the return child is sorted. Only the origin-hub open-bag recall sets this true.
-     */
-    ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, ReturnLane lane,
-                                boolean needsBagPull, TransitionContext ctx);
-
     /** The return child spawned for an original shipment. */
     record ReturnResult(UUID childShipmentId, String childShipmentRef, UUID originalShipmentId) {}
 }

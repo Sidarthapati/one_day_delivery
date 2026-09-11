@@ -34,9 +34,12 @@ public class RtoIntentReconcileJob {
     private static final String SOURCE = "rto-intent-reconcile";
     private static final int BATCH = 100;
 
-    /** The two states the resolver acts on: origin hub → same-city, dest hub → reverse-lane. */
-    private static final Set<ShipmentState> HUB_STATES =
-            EnumSet.of(ShipmentState.AT_ORIGIN_HUB, ShipmentState.AT_DEST_HUB);
+    // Dest hub only (R4). A same-city (pre-hub) intent resolves on the AFTER_COMMIT transition INTO
+    // AT_ORIGIN_HUB and is guarded from flying by HubReceivingService; sweeping AT_ORIGIN_HUB here would
+    // wrongly same-city a *committed* intent that was cancelled while already at the origin hub (which
+    // must fly and return reverse-lane). So the backstop only re-resolves reverse-lane intents that have
+    // reached the destination hub.
+    private static final Set<ShipmentState> HUB_STATES = EnumSet.of(ShipmentState.AT_DEST_HUB);
 
     private final ShipmentRepository shipmentRepository;
     private final ReturnService returnService;
@@ -59,11 +62,10 @@ public class RtoIntentReconcileJob {
         if (stranded.isEmpty()) {
             return;
         }
-        log.warn("RTO reconcile: {} stranded intent(s) at a hub — re-resolving", stranded.size());
+        log.warn("RTO reconcile: {} stranded intent(s) at the dest hub — re-resolving", stranded.size());
         for (Shipment s : stranded) {
-            ReturnLane lane = s.getState() == ShipmentState.AT_ORIGIN_HUB
-                    ? ReturnLane.SAME_CITY_FROM_ORIGIN
-                    : ReturnLane.REVERSE_FROM_DEST;
+            // Only AT_DEST_HUB is swept (see HUB_STATES) → always the reverse lane.
+            ReturnLane lane = ReturnLane.REVERSE_FROM_DEST;
             try {
                 ReturnService.ReturnResult r = returnService.initiateReturn(
                         s.getId(), ReturnReason.POST_CUSTODY_CANCEL, lane,

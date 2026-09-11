@@ -93,6 +93,18 @@ class HubReceivingServiceImpl implements HubReceivingService {
                 eventProducer.emitSameCityOutbound(parcel.shipmentId(), hubId, hubId);
                 return inboundDispatch(receiptId, hubId, parcel, now);
             }
+            // R4 forward-guard: a parcel carrying an unresolved RTO intent (the cancel arrived BEFORE this
+            // hub scan) must NOT be sorted onto the outbound flight. The dock scan above records the
+            // AT_ORIGIN_HUB arrival, which triggers orders' RtoIntentResolver to mint the same-city return
+            // child; we just park the parcel here (no flight sort) so it can be turned around same-city.
+            if (parcel.pendingRto()) {
+                AuditLog.event("hub.outbound_sort_skipped_for_rto")
+                        .kv("shipmentRef", parcel.shipmentRef())
+                        .kv("parcelId", parcel.shipmentId())
+                        .kv("hubId", hubId)
+                        .log();
+                return new ReceiveResult(receiptId, parcel.shipmentId(), parcel.shipmentRef(), true, null, null, null);
+            }
             SortService.SortResult sort = sortService.resolveOutbound(hubId, parcel, now);
             return new ReceiveResult(receiptId, parcel.shipmentId(), parcel.shipmentRef(), true, null, sort, null);
         }
