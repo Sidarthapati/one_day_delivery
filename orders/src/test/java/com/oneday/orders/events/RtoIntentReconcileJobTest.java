@@ -33,10 +33,17 @@ class RtoIntentReconcileJobTest {
     private final RtoIntentReconcileJob job = new RtoIntentReconcileJob(shipmentRepo, returnService);
 
     private Shipment at(ShipmentState state) {
+        return at(state, null);
+    }
+
+    private Shipment at(ShipmentState state, ReturnLane lane) {
         Shipment s = new Shipment();
         ReflectionTestUtils.setField(s, "id", UUID.randomUUID());
         s.setShipmentRef("1DD-DEL-20260906-000" + state.ordinal());
         s.setState(state);
+        if (lane != null) {
+            s.setRtoLane(lane.name());
+        }
         return s;
     }
 
@@ -59,6 +66,31 @@ class RtoIntentReconcileJobTest {
                 eq(ReturnLane.REVERSE_FROM_DEST), any());
         verify(returnService).initiateReturn(eq(b.getId()), eq(ReturnReason.POST_CUSTODY_CANCEL),
                 eq(ReturnLane.REVERSE_FROM_DEST), any());
+    }
+
+    @Test
+    void resolvesStrandedSameCityIntentAtOriginHub() {
+        // A pre-hub same-city intent whose AFTER_COMMIT resolver failed is stranded at the origin hub —
+        // the backstop must recover it on the SAME_CITY lane (its stored lane).
+        Shipment s = at(ShipmentState.AT_ORIGIN_HUB, ReturnLane.SAME_CITY_FROM_ORIGIN);
+        when(shipmentRepo.findStrandedRtoIntents(any(), any(Pageable.class))).thenReturn(List.of(s));
+        stubReturn();
+
+        job.reconcile();
+
+        verify(returnService).initiateReturn(eq(s.getId()), eq(ReturnReason.POST_CUSTODY_CANCEL),
+                eq(ReturnLane.SAME_CITY_FROM_ORIGIN), any());
+    }
+
+    @Test
+    void skipsReverseIntentStillAtOriginHub() {
+        // A committed (REVERSE) intent sitting at the origin hub hasn't flown yet — do NOT resolve it here.
+        Shipment s = at(ShipmentState.AT_ORIGIN_HUB, ReturnLane.REVERSE_FROM_DEST);
+        when(shipmentRepo.findStrandedRtoIntents(any(), any(Pageable.class))).thenReturn(List.of(s));
+
+        job.reconcile();
+
+        verify(returnService, org.mockito.Mockito.never()).initiateReturn(any(), any(), any(), any());
     }
 
     @Test

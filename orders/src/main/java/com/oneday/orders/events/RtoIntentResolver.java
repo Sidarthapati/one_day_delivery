@@ -48,12 +48,13 @@ public class RtoIntentResolver {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onShipmentTransitioned(ShipmentTransitioned e) {
-        ReturnLane lane = switch (e.toState()) {
+        // The lane this hub arrival can resolve: origin hub → same-city, dest hub → reverse.
+        ReturnLane hubLane = switch (e.toState()) {
             case AT_ORIGIN_HUB -> ReturnLane.SAME_CITY_FROM_ORIGIN;
             case AT_DEST_HUB   -> ReturnLane.REVERSE_FROM_DEST;
             default -> null;
         };
-        if (lane == null) {
+        if (hubLane == null) {
             return; // not a hub arrival — nothing to resolve here
         }
 
@@ -62,6 +63,14 @@ public class RtoIntentResolver {
                 || s.getReturnOfShipmentId() != null          // a return child never RTOs itself
                 || s.getRtoRequestedAt() == null              // no pending intent
                 || s.getRtoResolvedAt() != null) {            // already resolved
+            return;
+        }
+
+        // Resolve on the intent's own lane. Only fire when this hub IS that lane's resolution hub — a
+        // REVERSE intent must not resolve at the origin hub (it still has to fly). The stored lane is the
+        // source of truth (set at cancel time); fall back to the hub-derived lane for any intent with none.
+        ReturnLane lane = laneOf(s.getRtoLane(), hubLane);
+        if (lane != hubLane) {
             return;
         }
 
@@ -76,5 +85,17 @@ public class RtoIntentResolver {
 
         log.info("Mid-transit RTO intent on {} resolved at {} ({}) → return child {}",
                 s.getShipmentRef(), e.toState(), lane, result.childShipmentRef());
+    }
+
+    /** The stored lane if present and parseable, else the hub-derived fallback (legacy/unset intents). */
+    static ReturnLane laneOf(String stored, ReturnLane fallback) {
+        if (stored == null) {
+            return fallback;
+        }
+        try {
+            return ReturnLane.valueOf(stored);
+        } catch (IllegalArgumentException e) {
+            return fallback;
+        }
     }
 }

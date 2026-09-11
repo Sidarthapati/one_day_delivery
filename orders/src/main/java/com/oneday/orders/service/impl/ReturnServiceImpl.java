@@ -175,6 +175,9 @@ class ReturnServiceImpl implements ReturnService {
                 String notes = ctx.getNotes();
                 original.setRtoReason(notes != null && notes.length() > 500 ? notes.substring(0, 500) : notes);
             }
+            // Record the lane actually resolved (immediate path never had a deferred stamp; keeps the row
+            // consistent for audit and any reconcile that races the resolve).
+            original.setRtoLane(lane.name());
             original.setRtoResolvedAt(now);
         }
 

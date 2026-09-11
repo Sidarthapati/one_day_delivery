@@ -110,6 +110,19 @@ class RtoIntentResolverTest {
     }
 
     @Test
+    void reverseIntentReachingOriginHubIsSkipped() {
+        // A committed intent (cancel after the hub scan) carries REVERSE_FROM_DEST — it must fly and
+        // resolve at the dest hub, NOT be turned around same-city if it passes back through the origin hub.
+        Shipment s = pendingIntent();
+        s.setRtoLane(ReturnLane.REVERSE_FROM_DEST.name());
+        when(shipmentRepo.findById(shipmentId)).thenReturn(Optional.of(s));
+
+        resolver.onShipmentTransitioned(arrivedAt(ShipmentState.AT_ORIGIN_HUB));
+
+        verify(returnService, never()).initiateReturn(any(), any(), any(), any());
+    }
+
+    @Test
     void nonHubTransitionIsIgnored() {
         resolver.onShipmentTransitioned(new ShipmentTransitioned(shipmentId, "ref",
                 ShipmentState.DEPARTED, ShipmentState.LANDED, "sys", null, null));

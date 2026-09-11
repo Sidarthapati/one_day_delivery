@@ -75,7 +75,8 @@ public interface ShipmentRepository extends JpaRepository<Shipment, UUID> {
      * {@code idx_shipment_rto_pending}. Bounded via Pageable so one sweep can't load an unbounded set.
      */
     @Query("SELECT s FROM Shipment s WHERE s.rtoRequestedAt IS NOT NULL AND s.rtoResolvedAt IS NULL "
-            + "AND s.returnOfShipmentId IS NULL AND s.returnShipmentId IS NULL AND s.state IN :states")
+            + "AND s.returnOfShipmentId IS NULL AND s.returnShipmentId IS NULL AND s.state IN :states "
+            + "ORDER BY s.rtoRequestedAt ASC, s.id ASC")
     List<Shipment> findStrandedRtoIntents(@Param("states") Collection<ShipmentState> states, Pageable pageable);
 
     boolean existsByIdempotencyKey(String idempotencyKey);

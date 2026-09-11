@@ -87,6 +87,7 @@ class CancellationServiceImplTest {
         assertThat(r.disposition()).isEqualTo(Disposition.RETURN_SCHEDULED);
         assertThat(s.getRtoRequestedAt()).isNotNull();
         assertThat(s.getRtoResolvedAt()).isNull();
+        assertThat(s.getRtoLane()).isEqualTo(ReturnLane.SAME_CITY_FROM_ORIGIN.name()); // lane persisted for recovery
         verify(returnService, never()).initiateReturn(any(), any(), any(), any()); // deferred, fires at the hub
     }
 
@@ -118,6 +119,7 @@ class CancellationServiceImplTest {
         assertThat(r.disposition()).isEqualTo(Disposition.RETURN_SCHEDULED);
         assertThat(s.getRtoRequestedAt()).isNotNull();
         assertThat(s.getRtoResolvedAt()).isNull();
+        assertThat(s.getRtoLane()).isEqualTo(ReturnLane.REVERSE_FROM_DEST.name()); // committed → reverse from dest
         verify(returnService, never()).initiateReturn(any(), any(), any(), any());
     }
 

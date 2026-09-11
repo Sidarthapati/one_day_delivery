@@ -289,4 +289,11 @@ public class Shipment extends MutableBaseEntity {
 
     @Column(name = "rto_resolved_at")
     private Instant rtoResolvedAt;
+
+    // The return lane chosen at cancel time (ReturnService.ReturnLane name). Persisted so the reconcile
+    // backstop recovers a stranded intent on the correct lane — SAME_CITY_FROM_ORIGIN (pre-hub, resolves
+    // at the origin hub) vs REVERSE_FROM_DEST (hub-scanned/in-flight, resolves at the dest hub). Null
+    // until a deferred POST_CUSTODY_CANCEL intent is recorded.
+    @Column(name = "rto_lane", length = 24)
+    private String rtoLane;
 }

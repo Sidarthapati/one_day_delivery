@@ -226,4 +226,23 @@ class HubReceivingServiceImplTest {
                 ScanEventType.HUB_ORIGIN_IN, "OUTBOUND");
         verify(sortService, never()).resolveOutbound(any(), any(), any());
     }
+
+    @Test
+    void receive_sameCity_pendingRto_skipsDispatch() {
+        // R4: the pendingRto guard must run BEFORE the same-city branch — a same-city original with an
+        // unresolved RTO intent must be held for return resolution, not dispatched forward for delivery.
+        ShipmentInfoPort.ParcelInfo parcel = new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1",
+                ShipmentState.AT_ORIGIN_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.SAME_CITY,
+                "MUMBAI", "MUMBAI", "400001", UUID.randomUUID(), null, /* pendingRto */ true);
+        when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel));
+        stubReceiptSave();
+
+        HubReceivingService.ReceiveResult result = service().receive(hubId, "BLR-1");
+
+        assertThat(result.sort()).isNull();
+        assertThat(result.inboundSort()).isNull();
+        verify(eventProducer, never()).emitSameCityOutbound(any(), any(), any());
+        verify(sortService, never()).resolveInbound(any(), any(), any());
+        verify(sortService, never()).resolveOutbound(any(), any(), any());
+    }
 }

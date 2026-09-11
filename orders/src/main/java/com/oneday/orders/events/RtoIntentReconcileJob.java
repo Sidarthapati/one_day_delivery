@@ -34,12 +34,12 @@ public class RtoIntentReconcileJob {
     private static final String SOURCE = "rto-intent-reconcile";
     private static final int BATCH = 100;
 
-    // Dest hub only (R4). A same-city (pre-hub) intent resolves on the AFTER_COMMIT transition INTO
-    // AT_ORIGIN_HUB and is guarded from flying by HubReceivingService; sweeping AT_ORIGIN_HUB here would
-    // wrongly same-city a *committed* intent that was cancelled while already at the origin hub (which
-    // must fly and return reverse-lane). So the backstop only re-resolves reverse-lane intents that have
-    // reached the destination hub.
-    private static final Set<ShipmentState> HUB_STATES = EnumSet.of(ShipmentState.AT_DEST_HUB);
+    // Both hubs (R4). The stored lane (set at cancel time) disambiguates the two intents that can sit at
+    // AT_ORIGIN_HUB — a pre-hub same-city intent (resolve here) vs a committed intent cancelled at the
+    // origin hub (REVERSE — must fly first, resolve at the dest hub). Sweeping both hubs means a stranded
+    // same-city intent (whose AFTER_COMMIT resolver failed) is still recovered, not left pending forever.
+    private static final Set<ShipmentState> HUB_STATES =
+            EnumSet.of(ShipmentState.AT_ORIGIN_HUB, ShipmentState.AT_DEST_HUB);
 
     private final ShipmentRepository shipmentRepository;
     private final ReturnService returnService;
@@ -62,10 +62,18 @@ public class RtoIntentReconcileJob {
         if (stranded.isEmpty()) {
             return;
         }
-        log.warn("RTO reconcile: {} stranded intent(s) at the dest hub — re-resolving", stranded.size());
+        log.warn("RTO reconcile: {} stranded intent(s) at a hub — re-resolving", stranded.size());
         for (Shipment s : stranded) {
-            // Only AT_DEST_HUB is swept (see HUB_STATES) → always the reverse lane.
-            ReturnLane lane = ReturnLane.REVERSE_FROM_DEST;
+            // Resolve on the intent's own (stored) lane, and only when the parcel is at that lane's
+            // resolution hub. A REVERSE intent still sitting at the origin hub hasn't flown yet — skip it
+            // (the resolver/next sweep fires it once it reaches AT_DEST_HUB).
+            ReturnLane hubLane = s.getState() == ShipmentState.AT_ORIGIN_HUB
+                    ? ReturnLane.SAME_CITY_FROM_ORIGIN
+                    : ReturnLane.REVERSE_FROM_DEST;
+            ReturnLane lane = RtoIntentResolver.laneOf(s.getRtoLane(), hubLane);
+            if (lane != hubLane) {
+                continue; // not yet at this intent's resolution hub
+            }
             try {
                 ReturnService.ReturnResult r = returnService.initiateReturn(
                         s.getId(), ReturnReason.POST_CUSTODY_CANCEL, lane,

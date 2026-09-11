@@ -287,14 +287,14 @@ class CancellationServiceImpl implements CancellationService {
         // same-city return the moment the parcel is dock-received at the origin hub (a transition INTO
         // AT_ORIGIN_HUB), and HubReceivingService skips the outbound sort so it never flies.
         if (RTO_PRE_HUB.contains(state)) {
-            return scheduleDeferred(shipment, reason, userId,
+            return scheduleDeferred(shipment, reason, userId, ReturnLane.SAME_CITY_FROM_ORIGIN,
                     "resolves same-city when the parcel is received at the origin hub");
         }
 
         // Already hub-scanned (origin hub onward) or in flight → committed to fly (R4: no bag-pull).
         // Defer; the resolver fires a reverse-lane return when the parcel reaches the destination hub.
         if (RTO_ORIGIN_HUB.contains(state) || RTO_COMMITTED_TRANSIT.contains(state)) {
-            return scheduleDeferred(shipment, reason, userId,
+            return scheduleDeferred(shipment, reason, userId, ReturnLane.REVERSE_FROM_DEST,
                     "already hub-scanned — flies forward and returns from the destination hub");
         }
 
@@ -327,13 +327,16 @@ class CancellationServiceImpl implements CancellationService {
                 Disposition.RETURN_INITIATED, result.childShipmentRef());
     }
 
-    /** Record the intent; {@code RtoIntentResolver} fires the return at the parcel's next hub arrival. */
-    private CancellationResponse scheduleDeferred(Shipment shipment, String reason, String userId, String why) {
+    /** Record the intent + its lane; {@code RtoIntentResolver}/{@code RtoIntentReconcileJob} fire the
+     *  return on that lane at the parcel's resolution hub. */
+    private CancellationResponse scheduleDeferred(Shipment shipment, String reason, String userId,
+                                                  ReturnLane lane, String why) {
         // Deferred: stamp the intent on this same (owned) instance and save it. No transition competes
         // here, so this is safe. rto_resolved_at stays null until the resolver mints the child at the hub.
         shipment.setRtoRequestedAt(Instant.now());
         shipment.setRtoRequestedBy(userId != null && userId.length() <= 64 ? userId : null);
         shipment.setRtoReason(clampReason(reason));
+        shipment.setRtoLane(lane.name());
         shipmentRepository.save(shipment);
         AuditLog.event("shipment.rto_from_cancel")
                 .kv("shipmentRef", shipment.getShipmentRef())
