@@ -176,6 +176,46 @@ class ShipmentStateMachineTest {
                 extended.transition(shipmentId, ShipmentState.RTO_INITIATED, apiCtx));
     }
 
+    // Mid-transit RTO (feature iii): with the MidTransitRtoTransitions configurer applied, RTO_INITIATED
+    // is reachable from the origin-hub branching state IN_TAKEOFF_BAG (INTERCITY) — proving the
+    // delivery-type branch filter (which strips HANDED_TO_DROP_VAN) does NOT strip the new RTO edge.
+    @Test
+    void midTransitRto_fromInTakeoffBag_survivesBranchFilter() {
+        ShipmentStateMachine sm = withMidTransitRto();
+        shipmentIn(ShipmentState.IN_TAKEOFF_BAG, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY);
+
+        assertThatNoException().isThrownBy(() ->
+                sm.transition(shipmentId, ShipmentState.RTO_INITIATED, apiCtx));
+    }
+
+    // …and from the dest-hub branching state DEST_HUB_PROCESSING (DA_DELIVERY), where the drop-type
+    // branch strips AWAITING_HUB_COLLECT but must leave RTO_INITIATED intact.
+    @Test
+    void midTransitRto_fromDestHubProcessing_survivesBranchFilter() {
+        ShipmentStateMachine sm = withMidTransitRto();
+        shipmentIn(ShipmentState.DEST_HUB_PROCESSING, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY);
+
+        assertThatNoException().isThrownBy(() ->
+                sm.transition(shipmentId, ShipmentState.RTO_INITIATED, apiCtx));
+    }
+
+    // The base registry (no configurer) still rejects mid-transit RTO — the edge is contributed only
+    // by the configurer, not baked in.
+    @Test
+    void midTransitRto_isRejectedWithoutTheConfigurer() {
+        shipmentIn(ShipmentState.AT_DEST_HUB);
+
+        assertThatThrownBy(() -> stateMachine.transition(shipmentId, ShipmentState.RTO_INITIATED, apiCtx))
+                .isInstanceOf(IllegalStateTransitionException.class);
+    }
+
+    private ShipmentStateMachine withMidTransitRto() {
+        TransitionRegistry registry = new TransitionRegistry(
+                List.of(new com.oneday.orders.service.MidTransitRtoTransitions()));
+        registry.initialise();
+        return new ShipmentStateMachineImpl(shipmentRepo, historyRepo, registry, applicationEventPublisher);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private void shipmentIn(ShipmentState state) {

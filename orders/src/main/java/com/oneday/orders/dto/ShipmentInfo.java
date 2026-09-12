@@ -30,5 +30,10 @@ public record ShipmentInfo(
         // Order back-reference (null for legacy shipments booked before the Order → N abstraction).
         // Lets downstream ops modules (M11 exceptions/RTO) group a parcel with its order siblings.
         UUID orderId,
-        String orderRef) {
+        String orderRef,
+        // R4: an unresolved mid-transit RTO intent is recorded on this parcel (cancel arrived before the
+        // hub scan). M7 reads this at dock-receive to skip the outbound flight sort so the parcel is
+        // turned around same-city instead of flying. True ⇔ rto_requested_at set, rto_resolved_at null,
+        // no return child yet.
+        boolean pendingRto) {
 }

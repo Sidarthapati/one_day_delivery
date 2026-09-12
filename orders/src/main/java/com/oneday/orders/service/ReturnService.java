@@ -15,15 +15,42 @@ import java.util.UUID;
 public interface ReturnService {
 
     /**
-     * Spawn a return child for {@code originalShipmentId}. Idempotent per original — a second call
-     * returns the existing child rather than minting another.
+     * Which physical lane the return child travels, decided by where the parcel is when the return
+     * fires. Both births are at a hub and reuse the same {@code mintChild} + normal pipeline.
+     */
+    enum ReturnLane {
+        /**
+         * The parcel has reached (or will reach) the destination hub — the classic return: reverse the
+         * geography (return origin = original dest) and fly it back to the sender. This is the
+         * delivery-attempt RTO and every committed mid-transit case.
+         */
+        REVERSE_FROM_DEST,
+        /**
+         * The parcel never left the origin city (pre-flight recall) — deliver it straight back to the
+         * sender within the origin city (no flight): return origin = original origin, SAME_CITY.
+         */
+        SAME_CITY_FROM_ORIGIN
+    }
+
+    /**
+     * Spawn a {@link ReturnLane#REVERSE_FROM_DEST} return child (the delivery-attempt / dest-hub case).
+     * Equivalent to {@link #initiateReturn(UUID, ReturnReason, ReturnLane, TransitionContext)} with
+     * {@code REVERSE_FROM_DEST}.
+     */
+    ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, TransitionContext ctx);
+
+    /**
+     * Spawn a return child for {@code originalShipmentId} on the given {@code lane}. Idempotent per
+     * original — a second call returns the existing child rather than minting another.
      *
      * @param originalShipmentId the shipment being returned to its sender
-     * @param reason             why (drives nothing structural in v1; recorded for ops/audit)
+     * @param reason             why (recorded for ops/audit)
+     * @param lane               reverse-lane (fly back from the dest hub) vs same-city (from the origin hub)
      * @param ctx                transition metadata (who/what triggered it)
      * @return the minted (or pre-existing) return child's identity
      */
-    ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, TransitionContext ctx);
+    ReturnResult initiateReturn(UUID originalShipmentId, ReturnReason reason, ReturnLane lane,
+                                TransitionContext ctx);
 
     /** The return child spawned for an original shipment. */
     record ReturnResult(UUID childShipmentId, String childShipmentRef, UUID originalShipmentId) {}

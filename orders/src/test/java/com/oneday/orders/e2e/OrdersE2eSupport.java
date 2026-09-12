@@ -5,6 +5,7 @@ import com.oneday.auth.domain.Role;
 import com.oneday.auth.domain.User;
 import com.oneday.auth.repository.ApiKeyRepository;
 import com.oneday.auth.service.AuthService;
+import com.oneday.auth.service.UserService;
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.DropType;
 import com.oneday.common.domain.enums.PaymentMode;
@@ -97,6 +98,10 @@ abstract class OrdersE2eSupport {
     // tests stub them, everyone else just needs the beans present.
     @MockBean protected ObjectStoragePort objectStoragePort;
     @MockBean protected DimensionEngine dimensionEngine;
+    // Implemented in auth; CodCashServiceImpl (M4 COD ledger) needs it — mock so the context boots.
+    @MockBean protected UserService userService;
+    // Implemented in onboarding (off the orders test classpath); B2bMemberServiceImpl needs it — mock.
+    @MockBean protected com.oneday.common.port.KycPort kycPort;
 
     /** Default happy-path stubs for the external ports; individual tests override as needed. */
     @BeforeEach

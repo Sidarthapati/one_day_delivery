@@ -40,9 +40,11 @@ class CancellationE2eTest extends OrdersE2eSupport {
                 .isEqualTo(ShipmentState.CANCELLED);
     }
 
-    // Past the cancellation cutoff (parcel already on the pickup van) the request is refused with 409.
+    // In custody (parcel already on the pickup van) a cancel is no longer refused — it becomes a
+    // return-to-sender (feature iii). The parcel is pre-hub, so the RTO is scheduled to fire when it
+    // next reaches a hub; no refund is issued and the intent is recorded on the shipment.
     @Test
-    void cancelPastCutoff_returns409() throws Exception {
+    void cancelInCustody_becomesScheduledRto() throws Exception {
         String token = tokenFor("B2C_CUSTOMER", randomUserId());
         String ref = bookB2c(token, PaymentMode.PREPAID);
         drive(ref, ShipmentState.PICKUP_ASSIGNED, ShipmentState.PICKED_UP, ShipmentState.HANDED_TO_PICKUP_VAN);
@@ -50,7 +52,12 @@ class CancellationE2eTest extends OrdersE2eSupport {
         mvc.perform(delete("/api/v1/b2c/shipments/{ref}", ref)
                         .header("Authorization", "Bearer " + token)
                         .header("Idempotency-Key", idemKey()))
-                .andExpect(status().isConflict());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.disposition").value("RETURN_SCHEDULED"));
+
+        var shipment = shipmentRepository.findByShipmentRef(ref).orElseThrow();
+        assertThat(shipment.getRtoRequestedAt()).isNotNull();
+        assertThat(shipment.getRtoResolvedAt()).isNull(); // deferred — fires at the next hub
     }
 
     // Lane guard: a retail customer cannot cancel a B2B shipment via the B2C endpoint → 404.

@@ -268,7 +268,7 @@ class ExceptionCaseServiceImplTest {
         when(lookup.findByRef("1DD-BLR-1")).thenReturn(Optional.of(new com.oneday.orders.dto.ShipmentInfo(
                 shipmentId, "1DD-BLR-1", ShipmentState.PICKED_UP, 1000, null,
                 com.oneday.common.domain.enums.DeliveryType.INTERCITY, "BLR", "DEL", "110001", null, null,
-                orderId, "1DD-ORD-BLR-20260824-00001")));
+                orderId, "1DD-ORD-BLR-20260824-00001", false)));
 
         svc.captureDaFailure(shipmentId, "1DD-BLR-1", ExceptionType.DELIVERY_FAILED, ExceptionReason.UNKNOWN, false);
 

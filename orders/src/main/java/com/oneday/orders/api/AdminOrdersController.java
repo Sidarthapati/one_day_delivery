@@ -225,6 +225,29 @@ class AdminOrdersController {
     }
 
     /**
+     * Ops-initiated mid-transit RTO (feature iii) — turn an in-custody shipment into a return-to-sender
+     * without waiting for a delivery attempt. ADMIN acts on any shipment; STATION_MANAGER only on a
+     * shipment currently in their city's custody (else 404). A not-in-custody shipment (nothing to
+     * return) or an out-for-delivery / terminal shipment is rejected 409 — cancel it (which refunds) or
+     * use the delivery-exception flow instead. The response's {@code disposition} says whether the
+     * return fired now ({@code RETURN_INITIATED} + a {@code return_child_ref}) or is scheduled to fire
+     * at the parcel's next hub ({@code RETURN_SCHEDULED}).
+     */
+    @PostMapping("/{ref}/rto")
+    public CancellationResponse initiateRto(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("ref") String ref,
+            @RequestParam(value = "reason", required = false) String reason) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        String userId = Authz.requireUserId(principal);
+
+        String cityScope = cityScope(principal);
+        return cityScope != null
+                ? cancellationService.initiateRtoAsStationManager(ref, reason, userId, cityScope)
+                : cancellationService.initiateRtoAsAdmin(ref, reason, userId);
+    }
+
+    /**
      * Revise a shipment's delivery ETA. If the new ETA slips past what was promised at booking, the
      * customer is notified (the delay mail — new ETA + "wait, or cancel for a refund"). ADMIN revises
      * any lane; a STATION_MANAGER only a shipment touching their own city (a ref outside that scope

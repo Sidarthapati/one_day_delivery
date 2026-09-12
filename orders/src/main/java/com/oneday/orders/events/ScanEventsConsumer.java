@@ -122,6 +122,13 @@ public class ScanEventsConsumer {
             return;
         }
         shipmentRepository.findById(event.shipmentId()).ifPresentOrElse(s -> {
+            // R1: a return child <ref>_R is born already carrying the original's barcode (reused label).
+            // Never overwrite an existing parcel_id — labels are minted first-mile only; a return reuses.
+            if (s.getParcelId() != null) {
+                log.debug("Shipment {} already has parcelId {} — ignoring LABEL_GENERATED (reused label)",
+                        event.shipmentId(), s.getParcelId());
+                return;
+            }
             s.setParcelId(event.parcelId());
             shipmentRepository.save(s);
             log.debug("Stamped parcelId {} on shipment {}", event.parcelId(), event.shipmentId());

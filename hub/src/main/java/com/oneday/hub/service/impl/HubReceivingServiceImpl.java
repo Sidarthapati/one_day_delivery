@@ -88,6 +88,20 @@ class HubReceivingServiceImpl implements HubReceivingService {
             ScanEventType originScan = mode == ArrivalMode.SELF_DROP
                     ? ScanEventType.SELF_DROP_ACCEPTED : ScanEventType.HUB_ORIGIN_IN;
             arrivalScanProducer.emitArrival(parcel.shipmentId(), parcel.shipmentRef(), hubId, originScan, "OUTBOUND");
+            // R4 forward-guard — BEFORE any dispatch (same-city included): a parcel carrying an unresolved
+            // RTO intent (the cancel arrived BEFORE this hub scan) must NOT be dispatched forward. The dock
+            // scan above records the AT_ORIGIN_HUB arrival, which triggers orders' RtoIntentResolver to mint
+            // the same-city return child; we just park the parcel here so it can be turned around. This must
+            // precede the same-city branch — a same-city original returns within its own city, and
+            // inboundDispatch would otherwise deliver it forward before the resolver runs.
+            if (parcel.pendingRto()) {
+                AuditLog.event("hub.outbound_sort_skipped_for_rto")
+                        .kv("shipmentRef", parcel.shipmentRef())
+                        .kv("parcelId", parcel.shipmentId())
+                        .kv("hubId", hubId)
+                        .log();
+                return new ReceiveResult(receiptId, parcel.shipmentId(), parcel.shipmentRef(), true, null, null, null);
+            }
             if (isSameCity(parcel)) {
                 // §12 — origin hub IS the dest hub; collapse the air legs and sort straight for delivery.
                 eventProducer.emitSameCityOutbound(parcel.shipmentId(), hubId, hubId);

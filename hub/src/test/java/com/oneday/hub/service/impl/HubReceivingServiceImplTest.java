@@ -205,4 +205,44 @@ class HubReceivingServiceImplTest {
         assertThatThrownBy(() -> service().receive(hubId, "NOPE"))
                 .isInstanceOf(ParcelNotFoundException.class);
     }
+
+    @Test
+    void receive_originHub_pendingRto_skipsOutboundSort() {
+        // R4 forward-guard: a parcel carrying an unresolved RTO intent (cancel arrived before this hub
+        // scan) is dock-received (AT_ORIGIN_HUB recorded) but NOT sorted onto the outbound flight — the
+        // orders-side resolver turns it around same-city instead of it flying.
+        ShipmentInfoPort.ParcelInfo parcel = new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1",
+                ShipmentState.AT_ORIGIN_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                "DELHI", "MUMBAI", "400001", null, null, /* pendingRto */ true);
+        when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel));
+        stubReceiptSave();
+
+        HubReceivingService.ReceiveResult result = service().receive(hubId, "BLR-1");
+
+        // Dock arrival still recorded + scanned, but no outbound flight sort.
+        assertThat(result.sort()).isNull();
+        assertThat(result.inboundSort()).isNull();
+        verify(arrivalScanProducer).emitArrival(parcel.shipmentId(), "BLR-1", hubId,
+                ScanEventType.HUB_ORIGIN_IN, "OUTBOUND");
+        verify(sortService, never()).resolveOutbound(any(), any(), any());
+    }
+
+    @Test
+    void receive_sameCity_pendingRto_skipsDispatch() {
+        // R4: the pendingRto guard must run BEFORE the same-city branch — a same-city original with an
+        // unresolved RTO intent must be held for return resolution, not dispatched forward for delivery.
+        ShipmentInfoPort.ParcelInfo parcel = new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1",
+                ShipmentState.AT_ORIGIN_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.SAME_CITY,
+                "MUMBAI", "MUMBAI", "400001", UUID.randomUUID(), null, /* pendingRto */ true);
+        when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel));
+        stubReceiptSave();
+
+        HubReceivingService.ReceiveResult result = service().receive(hubId, "BLR-1");
+
+        assertThat(result.sort()).isNull();
+        assertThat(result.inboundSort()).isNull();
+        verify(eventProducer, never()).emitSameCityOutbound(any(), any(), any());
+        verify(sortService, never()).resolveInbound(any(), any(), any());
+        verify(sortService, never()).resolveOutbound(any(), any(), any());
+    }
 }

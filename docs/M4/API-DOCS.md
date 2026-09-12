@@ -302,6 +302,35 @@ notification service).
 
 ---
 
+## Cancellation & mid-transit RTO
+
+A merchant/customer **cancel** (`DELETE /api/v1/b2c/shipments/{ref}`, `DELETE /api/v1/b2b/shipments/{ref}`)
+now routes on custody, and the response carries a `disposition`:
+
+- **Not yet in custody** (through the `CancellationPolicy` refund cutoff — `BOOKED`, `PICKUP_ASSIGNED`,
+  `PICKED_UP`, `PICKUP_FAILED`, `AWAITING_SELF_DROP`) → cancelled + refunded, `disposition = CANCELLED`.
+- **In transit, past the cutoff** (`HANDED_TO_PICKUP_VAN` … `AT_DEST_HUB` / `DEST_HUB_PROCESSING`) → the
+  goods are already in our network, so the cancel becomes a **return-to-sender (RTO)** — no refund. The
+  return fires **now** if the parcel is at a hub, or if its origin flight bag is still `OPEN` (the parcel
+  is pulled from the bag and returned within the origin city, no flight): `disposition = RETURN_INITIATED`
+  with a `return_child_ref` (`<ref>_R`). If the parcel is still moving (or its bag is already sealed) the
+  return is **scheduled** to fire when it next reaches a hub: `disposition = RETURN_SCHEDULED`.
+- **Out for delivery / terminal** → not handled here (use the delivery-exception flow); `409`.
+
+The return child `<ref>_R` reverses the lane and travels the normal pipeline back to the sender; when it
+is delivered the original moves `RTO_INITIATED → RTO_COMPLETED`.
+
+### `POST /api/v1/admin/shipments/{ref}/rto`
+
+Ops-initiated mid-transit RTO (STATION_MANAGER — city-scoped to the current custodian city; ADMIN — any).
+Turns an **in-custody** shipment into a return without waiting for a delivery attempt. Same
+`disposition` outcomes as above. `Idempotency-Key` required (POST). A not-in-custody, out-for-delivery,
+terminal, or already-returning shipment → `409`.
+
+**Request:** optional `?reason=`. **Response:** `CancellationResponse` (`disposition`, `return_child_ref`).
+
+---
+
 ## Shared objects
 
 ### Address
