@@ -36,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -259,6 +260,53 @@ class DaTaskServiceImplTest {
         DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
         service.markFailed(da, delivery.getId(), "van never arrived");
         assertThat(carryBackFor(delivery.getShipmentId())).isNull();
+    }
+
+    @Test
+    void shiftCloseReturnsCancelInHandDeliveryAndSpawnShiftCloseCarryBack() {
+        // SC1: an in-hand delivery still open at shift close → the door attempt is cancelled (NOT a
+        // failure — no DROP_FAILED) and a SHIFT_CLOSE carry-back is spawned so it comes back to the hub.
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+
+        List<UUID> returned = service.spawnShiftCloseReturns(da, today);
+
+        assertThat(returned).containsExactly(delivery.getShipmentId());
+        assertThat(reload(delivery).getStatus()).isEqualTo(TaskStatus.CANCELLED);
+        DispatchQueue carry = carryBackFor(delivery.getShipmentId());
+        assertThat(carry).isNotNull();
+        assertThat(carry.getStatus()).isEqualTo(TaskStatus.QUEUED);
+        assertThat(carry.isPickedUp()).isTrue();
+        assertThat(carry.getReturnReason()).isEqualTo(com.oneday.dispatch.domain.CarryBackReason.SHIFT_CLOSE);
+        // Shift close is not a door failure.
+        verify(events, never()).emitDropFailed(any(), any(), any(), any());
+    }
+
+    @Test
+    void shiftCloseLeavesQueuedDeliveriesAndPickupsAlone() {
+        // Only in-hand (IN_PROGRESS) DELIVERY parcels are redirected. A QUEUED delivery was never
+        // collected; a pickup is already hub-bound.
+        DispatchQueue queuedDelivery = persist(TaskType.DELIVERY, TaskStatus.QUEUED);
+        DispatchQueue inHandPickup = persist(TaskType.PICKUP, TaskStatus.IN_PROGRESS);
+
+        assertThat(service.spawnShiftCloseReturns(da, today)).isEmpty();
+        assertThat(reload(queuedDelivery).getStatus()).isEqualTo(TaskStatus.QUEUED);
+        assertThat(reload(inHandPickup).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(carryBackFor(queuedDelivery.getShipmentId())).isNull();
+    }
+
+    @Test
+    void completingShiftCloseCarryBackEmitsShiftReturnScan() {
+        // The SHIFT_CLOSE carry-back completes with the distinct HUB_SHIFT_RETURN_IN scan (audit), NOT
+        // the delivery-failure HUB_RETURN_IN — the hub's own dock-receive then re-sorts the parcel.
+        DispatchQueue delivery = persist(TaskType.DELIVERY, TaskStatus.IN_PROGRESS);
+        service.spawnShiftCloseReturns(da, today);
+        DispatchQueue carry = carryBackFor(delivery.getShipmentId());
+
+        service.recordReturnedToHub(da, carry.getId());
+
+        assertThat(reload(carry).getStatus()).isEqualTo(TaskStatus.COMPLETED);
+        verify(scanSeam).emitHubShiftReturnIn(delivery.getShipmentId());
+        verify(scanSeam, never()).emitHubReturnIn(any());
     }
 
     @Test

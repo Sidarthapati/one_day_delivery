@@ -280,4 +280,48 @@ class DispatchMetricsServiceImplTest {
         assertThat(perHour).isGreaterThan(0.4);            // day-bounded, not spread across 2 days
         assertThat(perHour).isCloseTo(8.0 / 15.0, within(0.05));
     }
+
+    private DispatchQueue scTask(UUID da, UUID city, TaskType type, TaskStatus status,
+                                 com.oneday.dispatch.domain.CarryBackReason reason) {
+        DispatchQueue t = new DispatchQueue();
+        t.setDaId(da);
+        t.setCityId(city);
+        t.setShipmentId(UUID.randomUUID());
+        t.setTaskType(type);
+        t.setStatus(status);
+        t.setReturnReason(reason);
+        t.setOperatingDate(date);
+        return t;
+    }
+
+    @Test
+    void shiftCloseReconciliationListsOnlyOutstandingDasMostOutstandingFirst() {
+        UUID city = UUID.randomUUID();
+        UUID holding = UUID.randomUUID();   // still holding an in-hand delivery + a pending carry-back
+        UUID carrying = UUID.randomUUID();  // carry-back queued, nothing in hand
+        UUID done = UUID.randomUUID();       // carry-back completed → listed but reconciled
+        UUID clean = UUID.randomUUID();      // delivered everything → not listed at all
+        var SHIFT_CLOSE = com.oneday.dispatch.domain.CarryBackReason.SHIFT_CLOSE;
+        when(repo.findByOperatingDateAndOptionalCity(date, city)).thenReturn(List.of(
+                scTask(holding, city, TaskType.DELIVERY, TaskStatus.IN_PROGRESS, null),
+                scTask(holding, city, TaskType.RETURN_TO_HUB, TaskStatus.QUEUED, SHIFT_CLOSE),
+                scTask(carrying, city, TaskType.RETURN_TO_HUB, TaskStatus.IN_PROGRESS, SHIFT_CLOSE),
+                scTask(done, city, TaskType.RETURN_TO_HUB, TaskStatus.COMPLETED, SHIFT_CLOSE),
+                scTask(clean, city, TaskType.DELIVERY, TaskStatus.COMPLETED, null)));
+        when(directory.contactsFor(any())).thenReturn(Map.of(holding, new DaContact("Ravi", "+91900")));
+
+        var rows = svc.shiftCloseReconciliation(date, city);
+
+        // clean DA (delivered all) is omitted; the other three appear.
+        assertThat(rows).extracting(r -> r.daId()).containsExactlyInAnyOrder(holding, carrying, done);
+        // most-outstanding first: the DA still physically holding a parcel leads.
+        assertThat(rows.get(0).daId()).isEqualTo(holding);
+        assertThat(rows.get(0).inHandDeliveries()).isEqualTo(1);
+        assertThat(rows.get(0).carryBacksPending()).isEqualTo(1);
+        assertThat(rows.get(0).reconciled()).isFalse();
+        assertThat(rows.get(0).daName()).isEqualTo("Ravi");   // identity attached from the directory
+        var doneRow = rows.stream().filter(r -> r.daId().equals(done)).findFirst().orElseThrow();
+        assertThat(doneRow.reconciled()).isTrue();            // carry-back completed → reconciled
+        assertThat(doneRow.carryBacksDone()).isEqualTo(1);
+    }
 }

@@ -40,4 +40,7 @@ public interface AssetRepository extends JpaRepository<Asset, UUID> {
     List<Asset> findByCityIdAndStatusInOrderByHeldSinceAsc(UUID cityId, List<AssetStatus> statuses);
 
     Optional<Asset> findByCityIdAndRegistrationNumberIgnoreCase(UUID cityId, String registrationNumber);
+
+    /** Vans a DA has flagged for return that the station manager hasn't approved yet (A1 shift close). */
+    List<Asset> findByCityIdAndReturnRequestedTrueOrderByHeldSinceAsc(UUID cityId);
 }

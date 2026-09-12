@@ -30,6 +30,7 @@ public record AssetView(
         String currentHolderName,
         Instant heldSince,
         boolean ackPending,
+        boolean returnRequested,
         List<String> photoUrls,
         Instant createdAt,
         Instant updatedAt
