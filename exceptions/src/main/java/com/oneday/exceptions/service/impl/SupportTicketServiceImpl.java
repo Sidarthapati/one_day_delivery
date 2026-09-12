@@ -32,9 +32,12 @@ class SupportTicketServiceImpl implements SupportTicketService {
     private final SupportTicketRepository repository;
     private final SupportTicketMessageRepository messages;
     private final ShipmentLookupService shipmentLookup;
+    private final com.oneday.exceptions.integration.JiraPort jira;
 
     SupportTicketServiceImpl(SupportTicketRepository repository, SupportTicketMessageRepository messages,
-                             ShipmentLookupService shipmentLookup) {
+                             ShipmentLookupService shipmentLookup,
+                             com.oneday.exceptions.integration.JiraPort jira) {
+        this.jira = jira;
         this.repository = repository;
         this.messages = messages;
         this.shipmentLookup = shipmentLookup;
@@ -76,7 +79,16 @@ class SupportTicketServiceImpl implements SupportTicketService {
         t.setBody(body);
         t.setContactPhone(contactPhone);
         t.setStatus(TicketStatus.OPEN);
-        return SupportTicketResponse.from(repository.save(t));
+        SupportTicket saved = repository.save(t);
+
+        // Best-effort mirror to Jira (off unless configured) — a real ticket becomes an ops issue.
+        // Never breaks ticket creation: the client swallows failures and returns empty when disabled.
+        if (saved.getChannel() == TicketChannel.TICKET) {
+            jira.createIssue(
+                    subject != null ? subject : "Support ticket " + saved.getId(),
+                    (body != null ? body : "") + (shipmentRef != null ? "\n\nShipment: " + shipmentRef : ""));
+        }
+        return SupportTicketResponse.from(saved);
     }
 
     @Override
