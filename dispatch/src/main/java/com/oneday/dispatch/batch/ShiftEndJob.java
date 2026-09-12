@@ -6,6 +6,7 @@ import com.oneday.dispatch.domain.DeferReason;
 import com.oneday.dispatch.domain.DeferredDispatch;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
+import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.events.DaEventProducer;
 import com.oneday.dispatch.repository.DeferredDispatchRepository;
 import com.oneday.dispatch.repository.DispatchQueueRepository;
@@ -84,7 +85,14 @@ public class ShiftEndJob {
             UUID cityId = live.getCityId();
 
             List<DispatchQueue> queued = queueRepository
-                    .findByDaIdAndOperatingDateAndStatusIn(daId, date, List.of(TaskStatus.QUEUED));
+                    .findByDaIdAndOperatingDateAndStatusIn(daId, date, List.of(TaskStatus.QUEUED))
+                    .stream()
+                    // A RETURN_TO_HUB carry-back is a physical in-hand return, not a redeliverable task —
+                    // it must never be deferred (that would strand the parcel AND spawn a spurious
+                    // deferred_dispatch row). The DA scans it in via returned-to-hub; the SC1 carry-back's
+                    // re-sort, not the retry engine, owns redelivery. Leave these QUEUED.
+                    .filter(t -> t.getTaskType() != TaskType.RETURN_TO_HUB)
+                    .toList();
             for (DispatchQueue task : queued) {
                 task.setStatus(TaskStatus.DEFERRED);
                 deferredRepository.save(toDeferred(task, rolloverDate));

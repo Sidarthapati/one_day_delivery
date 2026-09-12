@@ -41,7 +41,10 @@ public record DaTaskView(
         boolean pickedUp,
         // Set only on a CUSTODY_COLLECT task: the absent DA this parcel is collected from
         // (task_lat/task_lon is the meet point). Null on ordinary pickups/deliveries.
-        UUID collectFromDaId) {
+        UUID collectFromDaId,
+        // Set only on a RETURN_TO_HUB task: why the parcel is coming back — DELIVERY_FAILURE,
+        // RESCHEDULE or SHIFT_CLOSE. Lets the DA app group shift-close returns separately. Null otherwise.
+        String returnReason) {
 
     /** Mutation responses don't need the ref/contact (the app already holds them from listTasks). */
     public static DaTaskView of(DispatchQueue row) {
@@ -53,7 +56,12 @@ public record DaTaskView(
                 row.getOrderId(), row.getOrderRef(), row.getStubId(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
-                null, null, null, null, row.isPickedUp(), row.getCollectFromDaId());
+                null, null, null, null, row.isPickedUp(), row.getCollectFromDaId(),
+                reasonName(row));
+    }
+
+    private static String reasonName(DispatchQueue row) {
+        return row.getReturnReason() == null ? null : row.getReturnReason().name();
     }
 
     /** List rows carry the field contact — sender end for a PICKUP, receiver end for a DELIVERY. */
@@ -67,6 +75,7 @@ public record DaTaskView(
                 row.getOrderId(), row.getOrderRef(), row.getStubId(), row.getTaskType(),
                 row.getStatus(), row.getQueuePosition(), row.getExpectedEta(),
                 row.getTaskLat(), row.getTaskLon(), row.getPaymentMode(),
-                name, phone, addr, cod, row.isPickedUp(), row.getCollectFromDaId());
+                name, phone, addr, cod, row.isPickedUp(), row.getCollectFromDaId(),
+                reasonName(row));
     }
 }

@@ -93,6 +93,13 @@ public class TransitionRegistry {
         register(ShipmentState.COLLECTED_FROM_HUB,    ShipmentState.DROPPED);
         register(ShipmentState.COLLECTED_FROM_HUB,    ShipmentState.DELIVERY_FAILED);
 
+        // ── Shift-close carry-back (SC1) ──────────────────────────────────────
+        // A DA holding an undelivered parcel at shift end brings it back to the dest hub; the hub
+        // re-receives (HUB_DEST_IN) and re-sorts it into a territory bag for the next shift. This is
+        // NOT a failed attempt — the in-hand parcel re-enters at the dest hub instead of the door.
+        register(ShipmentState.COLLECTED_FROM_HUB,    ShipmentState.AT_DEST_HUB);   // HUB_RETURN mode
+        register(ShipmentState.DROP_COLLECTED,        ShipmentState.AT_DEST_HUB);   // VAN_MEETING mode
+
         // ── Exception / failure paths (M11-driven) ───────────────────────────
         register(ShipmentState.PICKUP_FAILED,         ShipmentState.PICKUP_ASSIGNED);
         register(ShipmentState.PICKUP_FAILED,         ShipmentState.CANCELLED);

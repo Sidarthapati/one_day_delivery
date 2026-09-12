@@ -68,6 +68,9 @@ public class ScanEventsConsumer {
             // Delivery-failure carry-back dock-receive (parcel back in hub custody). Ledger only in v1 —
             // the return framework (PR3) consumes this to re-enter the parcel into the pipeline.
             case HUB_RETURN_IN         -> null;
+            // Shift-close carry-back (SC1): ledger only here — the hub consumes this scan and re-runs its
+            // dock-receive, whose HUB_DEST_IN scan is what actually drives the shipment to AT_DEST_HUB.
+            case HUB_SHIFT_RETURN_IN   -> null;
         };
         if (target == null) {
             log.debug("Scan event {} ignored for shipment {}", event.eventType(), event.shipmentId());

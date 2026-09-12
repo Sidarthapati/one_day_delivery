@@ -7,6 +7,7 @@ import com.oneday.common.port.ShipmentContactPort.ShipmentContact;
 import com.oneday.common.port.ShipmentRefPort;
 import com.oneday.common.port.ShipmentSlaPort;
 import com.oneday.common.port.ShipmentSlaPort.SlaStatus;
+import com.oneday.dispatch.domain.CarryBackReason;
 import com.oneday.dispatch.domain.DaLocationStub;
 import com.oneday.dispatch.domain.DispatchQueue;
 import com.oneday.dispatch.domain.TaskStatus;
@@ -18,6 +19,7 @@ import com.oneday.dispatch.dto.response.DaLocationStubView;
 import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats.DaPace;
+import com.oneday.dispatch.dto.response.ShiftCloseReconciliation;
 import com.oneday.dispatch.repository.DaDayStopsRow;
 import com.oneday.dispatch.repository.DaLocationStubRepository;
 import com.oneday.dispatch.repository.DaPaceRow;
@@ -161,6 +163,43 @@ class DispatchMetricsServiceImpl implements DispatchMetricsService {
                 .sorted(Comparator.comparingLong(DaScorecard::stopsDone).reversed()
                         .thenComparing(Comparator.comparingLong(DaScorecard::stopsPending).reversed()))
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ShiftCloseReconciliation> shiftCloseReconciliation(LocalDate date, UUID scopeCityId) {
+        Map<UUID, List<DispatchQueue>> byDa = queueRepository
+                .findByOperatingDateAndOptionalCity(date, scopeCityId).stream()
+                .filter(t -> t.getDaId() != null)
+                .collect(Collectors.groupingBy(DispatchQueue::getDaId));
+        Map<UUID, DaContact> contacts = daDirectory.contactsFor(List.copyOf(byDa.keySet()));
+        List<ShiftCloseReconciliation> rows = new ArrayList<>();
+        byDa.forEach((daId, ts) -> {
+            int inHand = (int) ts.stream()
+                    .filter(t -> t.getTaskType() == TaskType.DELIVERY && t.getStatus() == TaskStatus.IN_PROGRESS)
+                    .count();
+            int pending = (int) ts.stream().filter(t -> isShiftClose(t)
+                    && (t.getStatus() == TaskStatus.QUEUED || t.getStatus() == TaskStatus.IN_PROGRESS)).count();
+            int done = (int) ts.stream().filter(t -> isShiftClose(t)
+                    && t.getStatus() == TaskStatus.COMPLETED).count();
+            // Nothing in hand and no shift-close carry-back today → nothing to reconcile, don't list.
+            if (inHand == 0 && pending == 0 && done == 0) {
+                return;
+            }
+            DaContact c = contacts.get(daId);
+            rows.add(new ShiftCloseReconciliation(daId,
+                    c != null ? c.name() : null, c != null ? c.phone() : null,
+                    inHand, pending, done, inHand == 0 && pending == 0));
+        });
+        // Most outstanding first: still-holding, then pending carry-backs; reconciled rows sink.
+        rows.sort(Comparator.comparingInt(ShiftCloseReconciliation::inHandDeliveries).reversed()
+                .thenComparing(Comparator.comparingInt(ShiftCloseReconciliation::carryBacksPending).reversed()));
+        return rows;
+    }
+
+    private static boolean isShiftClose(DispatchQueue t) {
+        return t.getTaskType() == TaskType.RETURN_TO_HUB
+                && t.getReturnReason() == CarryBackReason.SHIFT_CLOSE;
     }
 
     @Override

@@ -7,6 +7,7 @@ import com.oneday.dispatch.dto.response.DaLocationStubView;
 import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DeferredAssignResponse;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
+import com.oneday.dispatch.dto.response.ShiftCloseReconciliation;
 import com.oneday.dispatch.dto.response.TileQueueResponse;
 import com.oneday.dispatch.service.DispatchMetricsService;
 import com.oneday.dispatch.service.GpsFixView;
@@ -119,6 +120,20 @@ public class StationDispatchController {
         Authz.requireRole(principal, Authz.STATION_MANAGER);
         UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
         return dispatchMetricsService.daDwell(daId, date != null ? date : LocalDate.now(), scopeCityId);
+    }
+
+    /**
+     * SC1 shift-close reconciliation for a date (defaults to today) — the Shift Close console's DA pane:
+     * which DAs still hold a parcel or have a shift-close carry-back in flight, most-outstanding first.
+     * Same city scope as the rest of this controller: STATION_MANAGER their own city, ADMIN all.
+     */
+    @GetMapping("/dispatch/shift-close/reconciliation")
+    public List<ShiftCloseReconciliation> shiftCloseReconciliation(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID scopeCityId = Authz.isAdmin(principal) ? null : managerCity(principal);
+        return dispatchMetricsService.shiftCloseReconciliation(date != null ? date : LocalDate.now(), scopeCityId);
     }
 
     @GetMapping("/dispatch/tiles/{tileId}/queue")

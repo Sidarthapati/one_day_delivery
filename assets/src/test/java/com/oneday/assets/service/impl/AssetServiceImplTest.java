@@ -46,6 +46,7 @@ class AssetServiceImplTest {
 
     @Mock AssetRepository assets;
     @Mock AssetCustodyEventRepository custody;
+    @Mock com.oneday.assets.repository.AssetShiftCloseRepository shiftCloses;
     @Mock ObjectStoragePort storage;
     @Mock DaDirectoryPort daDirectory;
     @Mock ApplicationEventPublisher appEvents;
@@ -59,7 +60,7 @@ class AssetServiceImplTest {
     @BeforeEach
     void setUp() {
         AssetProperties props = new AssetProperties();
-        service = new AssetServiceImpl(assets, custody, storage, props, daDirectory, appEvents);
+        service = new AssetServiceImpl(assets, custody, shiftCloses, storage, props, daDirectory, appEvents);
         when(assets.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(daDirectory.contactsFor(any())).thenReturn(Map.of(daId, new DaDirectoryPort.DaContact("Ravi", "9")));
     }
@@ -173,6 +174,83 @@ class AssetServiceImplTest {
                 .hasMessageContaining("409");
     }
 
+    // ── A1 shift close ───────────────────────────────────────────────
+
+    @Test
+    void requestVanReturn_flagsVan_andRecordsRequest() {
+        Asset van = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
+        when(assets.findByCurrentHolderTypeAndCurrentHolderIdAndStatusOrderByHeldSinceDesc(
+                HolderType.USER, daId, AssetStatus.ASSIGNED)).thenReturn(List.of(van));
+        when(assets.findByIdForUpdate(any())).thenReturn(Optional.of(van));   // the write lock (FOR UPDATE)
+
+        AssetView v = service.requestVanReturn(daId);
+
+        assertThat(v.returnRequested()).isTrue();
+        assertThat(v.status()).isEqualTo("ASSIGNED");   // still with the DA until the manager approves
+        ArgumentCaptor<AssetCustodyEvent> cap = ArgumentCaptor.forClass(AssetCustodyEvent.class);
+        verify(custody).save(cap.capture());
+        assertThat(cap.getValue().getEventType()).isEqualTo(AssetEventType.RETURN_REQUESTED);
+    }
+
+    @Test
+    void requestVanReturn_vanTransferredAwayUnderLock_notFound() {
+        Asset van = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
+        when(assets.findByCurrentHolderTypeAndCurrentHolderIdAndStatusOrderByHeldSinceDesc(
+                HolderType.USER, daId, AssetStatus.ASSIGNED)).thenReturn(List.of(van));
+        // A concurrent transfer moved the van to another DA before this transaction took the lock.
+        Asset moved = asset(AssetStatus.ASSIGNED, HolderType.USER, UUID.randomUUID());
+        when(assets.findByIdForUpdate(any())).thenReturn(Optional.of(moved));
+
+        assertThatThrownBy(() -> service.requestVanReturn(daId))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(custody, never()).save(any());
+    }
+
+    @Test
+    void approveVanReturn_movesVanBackToStation() {
+        UUID id = UUID.randomUUID();
+        Asset van = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
+        van.setReturnRequested(true);
+        when(assets.findByIdForUpdate(id)).thenReturn(Optional.of(van));
+
+        AssetView v = service.approveVanReturn(id, cityId, actor);
+
+        assertThat(v.status()).isEqualTo("IN_STOCK");
+        assertThat(v.currentHolderType()).isEqualTo("STATION");
+        assertThat(v.returnRequested()).isFalse();
+        ArgumentCaptor<AssetCustodyEvent> cap = ArgumentCaptor.forClass(AssetCustodyEvent.class);
+        verify(custody).save(cap.capture());
+        assertThat(cap.getValue().getEventType()).isEqualTo(AssetEventType.RETURNED);
+    }
+
+    @Test
+    void approveVanReturn_withoutPendingRequest_conflicts() {
+        UUID id = UUID.randomUUID();
+        when(assets.findByIdForUpdate(id)).thenReturn(Optional.of(asset(AssetStatus.ASSIGNED, HolderType.USER, daId)));
+        assertThatThrownBy(() -> service.approveVanReturn(id, cityId, actor))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409");
+        verify(custody, never()).save(any());
+    }
+
+    @Test
+    void closeShift_flagsVanNotBackAsDiscrepancy() {
+        Asset atStation = asset(AssetStatus.IN_STOCK, HolderType.STATION, null);
+        Asset outWithDa = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
+        when(assets.findByCityIdOrderByCreatedAtDesc(cityId)).thenReturn(List.of(atStation, outWithDa));
+        when(shiftCloses.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var close = service.closeShift(cityId, "SHIFT_1", java.time.LocalDate.now(), actor);
+
+        assertThat(close.vansTotal()).isEqualTo(2);
+        assertThat(close.vansOutstanding()).isEqualTo(1);
+        assertThat(close.discrepancyCount()).isEqualTo(1);
+        assertThat(close.atStationCount()).isEqualTo(1);
+        assertThat(close.outWithDaCount()).isEqualTo(1);
+        assertThat(close.outstanding()).hasSize(1);
+        verify(shiftCloses).save(any());
+    }
+
     @Test
     void transfer_movesHolderToNewDa() {
         UUID id = UUID.randomUUID();
@@ -189,6 +267,24 @@ class AssetServiceImplTest {
         verify(custody).save(cap.capture());
         assertThat(cap.getValue().getEventType()).isEqualTo(AssetEventType.TRANSFERRED);
         assertThat(cap.getValue().getFromHolderId()).isEqualTo(daId);
+    }
+
+    @Test
+    void transfer_clearsPendingReturnRequest_soApproveCantPullTheNewHoldersVan() {
+        UUID id = UUID.randomUUID();
+        UUID otherDa = UUID.randomUUID();
+        Asset van = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
+        van.setReturnRequested(true);   // DA-A had requested a return before the transfer
+        when(assets.findByIdForUpdate(id)).thenReturn(Optional.of(van));
+        when(daDirectory.contactsFor(any())).thenReturn(Map.of(otherDa, new DaDirectoryPort.DaContact("Sita", "8")));
+
+        AssetView v = service.transfer(id, otherDa, "shift swap", cityId, actor);
+
+        // The flag belonged to DA-A; after transfer to DA-B it must be cleared so a stale approve
+        // can't yank DA-B's van (conflict), not silently move it to the station.
+        assertThat(v.returnRequested()).isFalse();
+        assertThatThrownBy(() -> service.approveVanReturn(id, cityId, actor))
+                .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test

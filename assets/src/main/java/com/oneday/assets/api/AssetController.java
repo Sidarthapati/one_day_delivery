@@ -3,12 +3,14 @@ package com.oneday.assets.api;
 import com.oneday.assets.domain.AssetCategory;
 import com.oneday.assets.domain.AssetStatus;
 import com.oneday.assets.dto.AssetCustodyEventView;
+import com.oneday.assets.dto.AssetShiftCloseView;
 import com.oneday.assets.dto.AssetView;
 import com.oneday.assets.dto.ConditionRequest;
 import com.oneday.assets.dto.EvidenceUpload;
 import com.oneday.assets.dto.IssueRequest;
 import com.oneday.assets.dto.RegisterAssetRequest;
 import com.oneday.assets.dto.SelectVanRequest;
+import com.oneday.assets.dto.ShiftCloseRequest;
 import com.oneday.assets.dto.TransferRequest;
 import com.oneday.assets.service.AssetService;
 import com.oneday.auth.security.AuthUserDetails;
@@ -74,6 +76,44 @@ public class AssetController {
                                           @AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR);
         return assets.reconciliation(cityScope(principal, cityId));
+    }
+
+    // ── A1 shift close ───────────────────────────────────────────────
+
+    /** Vans a DA has flagged for return that the manager hasn't approved yet. */
+    @GetMapping("/assets/pending-returns")
+    public List<AssetView> pendingReturns(@RequestParam(required = false) UUID cityId,
+                                          @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR);
+        return assets.pendingVanReturns(cityScope(principal, cityId));
+    }
+
+    /** Station manager approves a pending van return → van back in the station store. */
+    @PostMapping("/assets/{id}/approve-return")
+    public AssetView approveReturn(@PathVariable UUID id, @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        return assets.approveVanReturn(id, scope(principal), Authz.requireUserId(principal));
+    }
+
+    /** Close the asset registry for a station shift — snapshot custody + flag any van not back. */
+    @PostMapping("/assets/shift-close")
+    public AssetShiftCloseView closeShift(@Valid @RequestBody ShiftCloseRequest req,
+                                          @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER);
+        UUID cityId = resolveCity(principal, req.cityId());
+        java.time.LocalDate date = req.date() != null
+                ? req.date() : java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
+        return assets.closeShift(cityId, req.shift(), date, Authz.requireUserId(principal));
+    }
+
+    /** The closes for a city on a date (defaults to today); the latest one is the incoming shift's opener. */
+    @GetMapping("/assets/shift-close")
+    public List<AssetShiftCloseView> shiftCloses(@RequestParam(required = false) UUID cityId,
+                                                 @RequestParam(required = false) java.time.LocalDate date,
+                                                 @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, Authz.STATION_MANAGER, Authz.SUPERVISOR);
+        java.time.LocalDate on = date != null ? date : java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
+        return assets.shiftCloses(cityScope(principal, cityId), on);
     }
 
     @GetMapping("/assets/{id}")
@@ -179,6 +219,13 @@ public class AssetController {
     public AssetView returnVan(@PathVariable UUID daId, @AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireDaSelf(principal, daId);
         return assets.returnVan(daId);
+    }
+
+    /** A1 shift close: DA taps "return van to hub custody" — awaits station-manager approval. */
+    @PostMapping("/assets/da/{daId}/return-van-request")
+    public AssetView requestVanReturn(@PathVariable UUID daId, @AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireDaSelf(principal, daId);
+        return assets.requestVanReturn(daId);
     }
 
     @PostMapping("/assets/{id}/acknowledge")

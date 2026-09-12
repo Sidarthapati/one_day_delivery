@@ -4,6 +4,7 @@ package com.oneday.assets.domain;
 public enum AssetEventType {
     REGISTERED,
     ISSUED,
+    RETURN_REQUESTED,   // A1: DA asked to return a van at shift close; awaiting station-manager approval
     RETURNED,
     TRANSFERRED,
     ACKNOWLEDGED,

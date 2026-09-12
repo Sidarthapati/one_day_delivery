@@ -22,6 +22,9 @@ public enum ArrivalMode {
             case HANDED_TO_PICKUP_VAN, RETURNED_TO_HUB, AT_ORIGIN_HUB -> VAN;
             case AWAITING_SELF_DROP -> SELF_DROP;
             case LANDED, DISPATCHED_TO_HUB, AT_DEST_HUB -> AIRPORT;
+            // Shift-close carry-back (SC1): a DA brings an undelivered in-hand parcel back to the dest hub.
+            // It re-enters the destination inbound sort exactly like a fresh arrival (→ territory bag).
+            case COLLECTED_FROM_HUB, DROP_COLLECTED -> AIRPORT;
             default -> throw new UndeterminedArrivalException(state);
         };
     }

@@ -13,7 +13,13 @@ import java.util.UUID;
  */
 public interface HubReceivingService {
 
-    /** Scan a parcel in at {@code hubId}; derives the arrival mode, records a receipt, runs the right sort. */
+    /**
+     * Scan a parcel in at {@code hubId}; derives the arrival mode, records a receipt, runs the right sort.
+     *
+     * <p>SC1: a DA's undelivered in-hand parcel returned at shift end
+     * ({@code COLLECTED_FROM_HUB}/{@code DROP_COLLECTED}) is recognized as a destination re-entry here —
+     * this same dock-scan re-sorts it into a territory bag for the next shift.</p>
+     */
     ReceiveResult receive(UUID hubId, String shipmentRef);
 
     /**

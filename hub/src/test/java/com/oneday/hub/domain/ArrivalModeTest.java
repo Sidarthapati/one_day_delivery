@@ -24,6 +24,14 @@ class ArrivalModeTest {
     }
 
     @Test
+    void shiftCloseReturnStatesReenterAsAirport() {
+        // SC1: a DA's undelivered in-hand parcel brought back at shift end re-enters the dest inbound
+        // sort (→ territory bag) exactly like a fresh arrival.
+        assertThat(ArrivalMode.fromState(ShipmentState.COLLECTED_FROM_HUB)).isEqualTo(ArrivalMode.AIRPORT); // HUB_RETURN
+        assertThat(ArrivalMode.fromState(ShipmentState.DROP_COLLECTED)).isEqualTo(ArrivalMode.AIRPORT);     // VAN_MEETING
+    }
+
+    @Test
     void notYetArrivedThrows() {
         // Still in the DA's hands — not a dock-arrival state.
         assertThatThrownBy(() -> ArrivalMode.fromState(ShipmentState.PICKED_UP))

@@ -28,6 +28,11 @@ public interface DispatchQueueRepository extends JpaRepository<DispatchQueue, UU
     /** All tasks for a city on a date (demo state + reset). */
     List<DispatchQueue> findByCityIdAndOperatingDate(UUID cityId, LocalDate operatingDate);
 
+    /** All tasks on a date, optionally city-scoped ({@code city} null → every city). Shift-close reconcile. */
+    @Query("select q from DispatchQueue q where q.operatingDate = :date and (:city is null or q.cityId = :city)")
+    List<DispatchQueue> findByOperatingDateAndOptionalCity(
+            @Param("date") LocalDate date, @Param("city") UUID city);
+
     /** The tasks in one location-stub visit, in execution order (dwell read model). */
     List<DispatchQueue> findByStubIdOrderByQueuePosition(UUID stubId);
 

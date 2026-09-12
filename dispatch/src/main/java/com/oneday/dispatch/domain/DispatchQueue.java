@@ -97,6 +97,13 @@ public class DispatchQueue extends MutableBaseEntity {
     @Column(name = "onward_task_lon", updatable = false)
     private Double onwardTaskLon;
 
+    // Set only on RETURN_TO_HUB carry-back tasks (SC1): why the parcel is coming back. SHIFT_CLOSE
+    // returns re-enter the dest-hub sort for the next shift; null / DELIVERY_FAILURE is the ordinary
+    // delivery-failure carry-back handled by the deferred-retry engine.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "return_reason", updatable = false, length = 20)
+    private CarryBackReason returnReason;
+
     @Column(name = "cron_safe", nullable = false, updatable = false)
     private boolean cronSafe;
 

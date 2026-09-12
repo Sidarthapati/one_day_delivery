@@ -55,7 +55,8 @@
              spring-security 6.2.7 → 6.2.8 (CVE-2024-38827 case-sensitive auth bypass; latest 6.2.x),
              postgresql 42.6.x → 42.7.12 (CVE-2026-42198, CVE-2026-54291 SCRAM-SHA-256-PLUS downgrade),
              spring-framework 6.1.6 → 6.1.14 (path-traversal CVE-2024-38816/38819, DoS CVE-2024-38809),
-             netty 4.1.109 → 4.1.136.Final (clears the whole netty codec/handler/resolver CVE set),
+             netty 4.1.109 → 4.1.137.Final (clears the netty codec/handler/resolver CVE set; .137
+                 adds the netty-handler CVE-2026-75595 CRITICAL fix),
              jackson 2.15.4 → 2.18.9 (databind RCE CVE-2026-54512/54513 + @JsonView CVE-2026-59889),
              protobuf → 3.25.5 (CVE-2024-7254 StackOverflow) — pinned in dependencyManagement below,
                  because it is a transitive OR-Tools dep that Spring Boot does NOT manage (no property).
@@ -67,7 +68,7 @@
         <spring-security.version>6.2.8</spring-security.version>
         <postgresql.version>42.7.12</postgresql.version>
         <spring-framework.version>6.1.14</spring-framework.version>
-        <netty.version>4.1.136.Final</netty.version>
+        <netty.version>4.1.137.Final</netty.version>
         <jackson-bom.version>2.18.9</jackson-bom.version>
     </properties>
 

@@ -4,6 +4,7 @@ import com.oneday.dispatch.dto.response.DaDetailResponse;
 import com.oneday.dispatch.dto.response.DaLocationStubView;
 import com.oneday.dispatch.dto.response.DaScorecard;
 import com.oneday.dispatch.dto.response.DispatchExecutionStats;
+import com.oneday.dispatch.dto.response.ShiftCloseReconciliation;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -46,4 +47,11 @@ public interface DispatchMetricsService {
      * day (else 404); {@code scopeCityId} null → any city (ADMIN).
      */
     List<DaLocationStubView> daDwell(UUID daId, LocalDate date, UUID scopeCityId);
+
+    /**
+     * SC1 shift-close reconciliation for a date: the DAs who still have a parcel in hand or a shift-close
+     * carry-back in flight, most-outstanding first. A DA with nothing outstanding isn't listed. {@code
+     * scopeCityId} null → all cities (ADMIN); otherwise restrict to that city.
+     */
+    List<ShiftCloseReconciliation> shiftCloseReconciliation(LocalDate date, UUID scopeCityId);
 }
