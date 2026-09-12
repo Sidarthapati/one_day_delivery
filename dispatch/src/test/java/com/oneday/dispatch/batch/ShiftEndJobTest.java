@@ -73,6 +73,27 @@ class ShiftEndJobTest {
     }
 
     @Test
+    void doesNotDeferShiftCloseCarryBacks() {
+        UUID da = UUID.randomUUID();
+        UUID city = UUID.randomUUID();
+        when(svc.loadedDaIds()).thenReturn(Set.of(da));
+        when(svc.getLiveStatus(da)).thenReturn(liveOnShift(da, city, Shift.SHIFT_1));
+
+        DispatchQueue delivery = task(da, city, TaskStatus.QUEUED);          // ordinary QUEUED → deferred
+        DispatchQueue carryBack = task(da, city, TaskStatus.QUEUED);
+        carryBack.setTaskType(TaskType.RETURN_TO_HUB);                       // a T-15 carry-back → left alone
+        when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(eq(da), eq(today), eq(List.of(TaskStatus.QUEUED))))
+                .thenReturn(List.of(delivery, carryBack));
+
+        job.endShift(today, Shift.SHIFT_1);
+
+        assertThat(delivery.getStatus()).isEqualTo(TaskStatus.DEFERRED);
+        assertThat(carryBack.getStatus()).isEqualTo(TaskStatus.QUEUED);      // not swept away — DA can still scan it in
+        verify(deferredRepo, times(1)).save(any(DeferredDispatch.class));    // only the ordinary delivery
+        verify(queueRepo).saveAll(List.of(delivery));                       // carry-back excluded from the sweep
+    }
+
+    @Test
     void endingShift1DoesNotTearDownShift2Roster() {
         UUID da1 = UUID.randomUUID();   // SHIFT_1 — should be ended
         UUID da2 = UUID.randomUUID();   // SHIFT_2 — must survive

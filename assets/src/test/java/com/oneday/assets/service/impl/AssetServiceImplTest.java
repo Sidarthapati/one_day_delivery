@@ -181,6 +181,7 @@ class AssetServiceImplTest {
         Asset van = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
         when(assets.findByCurrentHolderTypeAndCurrentHolderIdAndStatusOrderByHeldSinceDesc(
                 HolderType.USER, daId, AssetStatus.ASSIGNED)).thenReturn(List.of(van));
+        when(assets.findByIdForUpdate(any())).thenReturn(Optional.of(van));   // the write lock (FOR UPDATE)
 
         AssetView v = service.requestVanReturn(daId);
 
@@ -189,6 +190,20 @@ class AssetServiceImplTest {
         ArgumentCaptor<AssetCustodyEvent> cap = ArgumentCaptor.forClass(AssetCustodyEvent.class);
         verify(custody).save(cap.capture());
         assertThat(cap.getValue().getEventType()).isEqualTo(AssetEventType.RETURN_REQUESTED);
+    }
+
+    @Test
+    void requestVanReturn_vanTransferredAwayUnderLock_notFound() {
+        Asset van = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
+        when(assets.findByCurrentHolderTypeAndCurrentHolderIdAndStatusOrderByHeldSinceDesc(
+                HolderType.USER, daId, AssetStatus.ASSIGNED)).thenReturn(List.of(van));
+        // A concurrent transfer moved the van to another DA before this transaction took the lock.
+        Asset moved = asset(AssetStatus.ASSIGNED, HolderType.USER, UUID.randomUUID());
+        when(assets.findByIdForUpdate(any())).thenReturn(Optional.of(moved));
+
+        assertThatThrownBy(() -> service.requestVanReturn(daId))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(custody, never()).save(any());
     }
 
     @Test
@@ -252,6 +267,24 @@ class AssetServiceImplTest {
         verify(custody).save(cap.capture());
         assertThat(cap.getValue().getEventType()).isEqualTo(AssetEventType.TRANSFERRED);
         assertThat(cap.getValue().getFromHolderId()).isEqualTo(daId);
+    }
+
+    @Test
+    void transfer_clearsPendingReturnRequest_soApproveCantPullTheNewHoldersVan() {
+        UUID id = UUID.randomUUID();
+        UUID otherDa = UUID.randomUUID();
+        Asset van = asset(AssetStatus.ASSIGNED, HolderType.USER, daId);
+        van.setReturnRequested(true);   // DA-A had requested a return before the transfer
+        when(assets.findByIdForUpdate(id)).thenReturn(Optional.of(van));
+        when(daDirectory.contactsFor(any())).thenReturn(Map.of(otherDa, new DaDirectoryPort.DaContact("Sita", "8")));
+
+        AssetView v = service.transfer(id, otherDa, "shift swap", cityId, actor);
+
+        // The flag belonged to DA-A; after transfer to DA-B it must be cleared so a stale approve
+        // can't yank DA-B's van (conflict), not silently move it to the station.
+        assertThat(v.returnRequested()).isFalse();
+        assertThatThrownBy(() -> service.approveVanReturn(id, cityId, actor))
+                .isInstanceOf(ResponseStatusException.class);
     }
 
     @Test

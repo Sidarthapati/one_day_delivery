@@ -376,7 +376,14 @@ class AssetServiceImpl implements AssetService {
         if (vans.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no van assigned to you");
         }
-        Asset v = vans.get(0);   // managed entity in this transaction; the manager's approve step locks
+        // Re-load under a write lock (SELECT ... FOR UPDATE), like every other mutator, so a concurrent
+        // transfer/return can't be lost against this transaction's snapshot.
+        Asset v = lock(vans.get(0).getId(), null);
+        // The lock may have waited on a concurrent transfer — re-check the van is still this DA's + assigned.
+        if (v.getCurrentHolderType() != HolderType.USER || !daId.equals(v.getCurrentHolderId())
+                || v.getStatus() != AssetStatus.ASSIGNED) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no van assigned to you");
+        }
         if (v.isReturnRequested()) {
             return view(v, false);   // idempotent — already requested
         }
@@ -506,6 +513,9 @@ class AssetServiceImpl implements AssetService {
         a.setCurrentHolderName(daName);
         a.setHeldSince(Instant.now());
         a.setAckPending(true);
+        // A (re)assignment starts fresh — a pending return request belonged to the previous holder, so a
+        // transfer between a DA's request and the manager's approval can't pull the new holder's van.
+        a.setReturnRequested(false);
     }
 
     private void moveToStation(Asset a, AssetStatus status) {
