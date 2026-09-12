@@ -6,9 +6,11 @@ import com.oneday.assets.domain.AssetCategory;
 import com.oneday.assets.domain.AssetCondition;
 import com.oneday.assets.domain.AssetCustodyEvent;
 import com.oneday.assets.domain.AssetEventType;
+import com.oneday.assets.domain.AssetShiftClose;
 import com.oneday.assets.domain.AssetStatus;
 import com.oneday.assets.domain.HolderType;
 import com.oneday.assets.dto.AssetCustodyEventView;
+import com.oneday.assets.dto.AssetShiftCloseView;
 import com.oneday.assets.dto.AssetView;
 import com.oneday.assets.dto.EvidenceUpload;
 import com.oneday.assets.dto.RegisterAssetRequest;
@@ -16,6 +18,7 @@ import com.oneday.assets.dto.SelectVanRequest;
 import com.oneday.assets.events.AssetCustodyChanged;
 import com.oneday.assets.repository.AssetCustodyEventRepository;
 import com.oneday.assets.repository.AssetRepository;
+import com.oneday.assets.repository.AssetShiftCloseRepository;
 import com.oneday.assets.service.AssetService;
 import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.common.port.ObjectStoragePort;
@@ -45,15 +48,18 @@ class AssetServiceImpl implements AssetService {
 
     private final AssetRepository assets;
     private final AssetCustodyEventRepository custody;
+    private final AssetShiftCloseRepository shiftCloses;
     private final ObjectStoragePort storage;
     private final AssetProperties props;
     private final DaDirectoryPort daDirectory;
     private final ApplicationEventPublisher appEvents;
 
-    AssetServiceImpl(AssetRepository assets, AssetCustodyEventRepository custody, ObjectStoragePort storage,
+    AssetServiceImpl(AssetRepository assets, AssetCustodyEventRepository custody,
+                     AssetShiftCloseRepository shiftCloses, ObjectStoragePort storage,
                      AssetProperties props, DaDirectoryPort daDirectory, ApplicationEventPublisher appEvents) {
         this.assets = assets;
         this.custody = custody;
+        this.shiftCloses = shiftCloses;
         this.storage = storage;
         this.props = props;
         this.daDirectory = daDirectory;
@@ -362,6 +368,113 @@ class AssetServiceImpl implements AssetService {
         return returnToStation(v.getId(), null, "returned by DA", v.getCityId(), daId);
     }
 
+    // ── A1 shift close ───────────────────────────────────────────────
+
+    @Override
+    public AssetView requestVanReturn(UUID daId) {
+        List<Asset> vans = heldVehicles(daId);
+        if (vans.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no van assigned to you");
+        }
+        Asset v = vans.get(0);   // managed entity in this transaction; the manager's approve step locks
+        if (v.isReturnRequested()) {
+            return view(v, false);   // idempotent — already requested
+        }
+        v.setReturnRequested(true);
+        recordEvent(v, AssetEventType.RETURN_REQUESTED, HolderType.USER, daId, v.getCurrentHolderName(),
+                HolderType.USER, daId, v.getCurrentHolderName(), null, "return to hub requested at shift close", daId);
+        return view(v, false);
+    }
+
+    @Override
+    public AssetView approveVanReturn(UUID assetId, UUID scopeCityId, UUID actor) {
+        Asset a = lock(assetId, scopeCityId);
+        if (!a.isReturnRequested() || a.getStatus() != AssetStatus.ASSIGNED) {
+            throw conflict("no pending return to approve for this asset");
+        }
+        HolderType fromType = a.getCurrentHolderType();
+        UUID fromId = a.getCurrentHolderId();
+        String fromName = a.getCurrentHolderName();
+        moveToStation(a, AssetStatus.IN_STOCK);   // clears return_requested
+        recordEvent(a, AssetEventType.RETURNED, fromType, fromId, fromName,
+                HolderType.STATION, null, null, null, "van return approved at shift close", actor);
+        return view(a, false);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AssetView> pendingVanReturns(UUID cityId) {
+        return assets.findByCityIdAndReturnRequestedTrueOrderByHeldSinceAsc(cityId).stream()
+                .filter(a -> a.getCategory() == AssetCategory.VEHICLE)
+                .map(a -> view(a, false)).toList();
+    }
+
+    @Override
+    public AssetShiftCloseView closeShift(UUID cityId, String shift, LocalDate date, UUID actor) {
+        List<Asset> all = assets.findByCityIdOrderByCreatedAtDesc(cityId);
+        int total = 0, atStation = 0, outWithDa = 0, inMaint = 0, vansTotal = 0, vansOut = 0;
+        List<AssetShiftClose.OutstandingItem> outstanding = new ArrayList<>();
+        for (Asset a : all) {
+            if (!a.isActive()) {
+                continue;   // retired/decommissioned assets aren't part of the day's custody
+            }
+            total++;
+            boolean isVan = a.getCategory() == AssetCategory.VEHICLE;
+            if (isVan) {
+                vansTotal++;
+            }
+            switch (a.getStatus()) {
+                case IN_STOCK -> atStation++;
+                case ASSIGNED -> {
+                    outWithDa++;
+                    if (isVan) {
+                        vansOut++;
+                    }
+                    outstanding.add(outstandingItem(a, isVan));
+                }
+                case IN_MAINTENANCE -> {
+                    inMaint++;
+                    outstanding.add(outstandingItem(a, isVan));
+                }
+                default -> outstanding.add(outstandingItem(a, isVan));   // LOST / DAMAGED — flag for the record
+            }
+        }
+        AssetShiftClose rec = new AssetShiftClose();
+        rec.setCityId(cityId);
+        rec.setShift(shift);
+        rec.setCloseDate(date);
+        rec.setClosedByUserId(actor);
+        rec.setClosedAt(Instant.now());
+        rec.setTotalAssets(total);
+        rec.setAtStationCount(atStation);
+        rec.setOutWithDaCount(outWithDa);
+        rec.setInMaintenanceCount(inMaint);
+        rec.setVansTotal(vansTotal);
+        rec.setVansOutstanding(vansOut);
+        rec.setDiscrepancyCount(vansOut);   // the enforced rule: every van must be back at close
+        rec.setOutstanding(outstanding);
+        return AssetShiftCloseView.from(shiftCloses.save(rec));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AssetShiftCloseView> shiftCloses(UUID cityId, LocalDate date) {
+        return shiftCloses.findByCityIdAndCloseDateOrderByClosedAtDesc(cityId, date)
+                .stream().map(AssetShiftCloseView::from).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AssetShiftCloseView latestClose(UUID cityId) {
+        return shiftCloses.findFirstByCityIdOrderByClosedAtDesc(cityId)
+                .map(AssetShiftCloseView::from).orElse(null);
+    }
+
+    private AssetShiftClose.OutstandingItem outstandingItem(Asset a, boolean isVan) {
+        return new AssetShiftClose.OutstandingItem(a.getId(), a.getAssetTag(), a.getName(),
+                a.getCategory().name(), a.getStatus().name(), a.getCurrentHolderName(), isVan, a.isReturnRequested());
+    }
+
     // ── internals ────────────────────────────────────────────────────
 
     private Asset resolveVan(SelectVanRequest req, UUID daCityId) {
@@ -402,6 +515,7 @@ class AssetServiceImpl implements AssetService {
         a.setCurrentHolderName(null);
         a.setHeldSince(Instant.now());
         a.setAckPending(false);
+        a.setReturnRequested(false);   // back at the station — any pending return request is resolved
     }
 
     private void recordEvent(Asset a, AssetEventType type, HolderType fromType, UUID fromId, String fromName,
@@ -480,6 +594,7 @@ class AssetServiceImpl implements AssetService {
                 a.getCondition().name(),
                 a.getCurrentHolderType() != null ? a.getCurrentHolderType().name() : null,
                 a.getCurrentHolderId(), a.getCurrentHolderName(), a.getHeldSince(), a.isAckPending(),
+                a.isReturnRequested(),
                 withPhotos ? presignGets(a.getPhotoKeys()) : null, a.getCreatedAt(), a.getUpdatedAt());
     }
 

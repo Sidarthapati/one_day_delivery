@@ -4,11 +4,13 @@ import com.oneday.assets.domain.AssetCategory;
 import com.oneday.assets.domain.AssetCondition;
 import com.oneday.assets.domain.AssetStatus;
 import com.oneday.assets.dto.AssetCustodyEventView;
+import com.oneday.assets.dto.AssetShiftCloseView;
 import com.oneday.assets.dto.AssetView;
 import com.oneday.assets.dto.EvidenceUpload;
 import com.oneday.assets.dto.RegisterAssetRequest;
 import com.oneday.assets.dto.SelectVanRequest;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -62,4 +64,23 @@ public interface AssetService {
     AssetView returnVan(UUID daId);
 
     AssetView acknowledge(UUID assetId, UUID byDaId);
+
+    // ── A1 shift close ───────────────────────────────────────────────
+    /** DA taps "return van to hub custody" at shift close: flags the van, awaiting manager approval. */
+    AssetView requestVanReturn(UUID daId);
+
+    /** Station manager approves a pending van return → van back in the station store. */
+    AssetView approveVanReturn(UUID assetId, UUID scopeCityId, UUID actor);
+
+    /** Vans a DA has flagged for return that the manager hasn't approved yet. */
+    List<AssetView> pendingVanReturns(UUID cityId);
+
+    /** Close the asset registry for a station shift: snapshot custody + flag any van not back. */
+    AssetShiftCloseView closeShift(UUID cityId, String shift, LocalDate date, UUID actor);
+
+    /** The closes recorded for a city on a date (both shifts). */
+    List<AssetShiftCloseView> shiftCloses(UUID cityId, LocalDate date);
+
+    /** The most recent close for a city — the incoming shift's opening state (null if none yet). */
+    AssetShiftCloseView latestClose(UUID cityId);
 }

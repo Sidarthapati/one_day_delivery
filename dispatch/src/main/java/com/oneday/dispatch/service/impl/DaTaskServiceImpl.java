@@ -1,6 +1,7 @@
 package com.oneday.dispatch.service.impl;
 
 import com.oneday.dispatch.config.DispatchProperties;
+import com.oneday.dispatch.domain.CarryBackReason;
 import com.oneday.dispatch.domain.CronAssignmentStatus;
 import com.oneday.dispatch.domain.DaCronAssignment;
 import com.oneday.dispatch.domain.DaStatusEnum;
@@ -245,7 +246,7 @@ class DaTaskServiceImpl implements DaTaskService {
                 // way back: a carry-back task to the hub. A QUEUED delivery that fails was never
                 // collected (nothing in hand), so no carry-back.
                 if (parcelInHand) {
-                    spawnReturnToHub(daId, task);
+                    spawnReturnToHub(daId, task, CarryBackReason.DELIVERY_FAILURE);
                 }
             } else {
                 daEventProducer.emitPickupFailed(daId, task.getCityId(), task.getShipmentId(), reason);
@@ -260,7 +261,7 @@ class DaTaskServiceImpl implements DaTaskService {
      * back to the delivery location if no hub is configured. Completed via {@link #recordReturnedToHub},
      * whose hub-return scan is the dock-receive that re-enters the parcel into the pipeline.
      */
-    private void spawnReturnToHub(UUID daId, DispatchQueue failedDelivery) {
+    private void spawnReturnToHub(UUID daId, DispatchQueue failedDelivery, CarryBackReason reason) {
         // Idempotent: don't stack a second carry-back for the same parcel on the same DA.
         if (queueRepository.findActiveByShipmentIdAndTaskType(
                 failedDelivery.getShipmentId(), TaskType.RETURN_TO_HUB).isPresent()) {
@@ -284,6 +285,7 @@ class DaTaskServiceImpl implements DaTaskService {
         carry.setCronSafe(false);
         carry.setBeyondCron(false);
         carry.setPickedUp(true);            // parcel already in hand
+        carry.setReturnReason(reason);
         carry.setAssignedAt(Instant.now());
         carry.setOperatingDate(failedDelivery.getOperatingDate());
         carry.setQueuePosition(nextPosition(daId, failedDelivery.getOperatingDate()));
@@ -315,16 +317,57 @@ class DaTaskServiceImpl implements DaTaskService {
             task.setCompletedAt(Instant.now());
             DaTaskView view = save(task);
             locationStubService.onTerminal(task);
-            // M8-SEAM: the hub dock-receive scan (ledger). PR3's return framework consumes this to re-enter
-            // the parcel into the pipeline; on its own it records the parcel is back in hub custody.
-            hubScanSeamProducer.emitHubReturnIn(task.getShipmentId());
+            if (task.getReturnReason() == CarryBackReason.SHIFT_CLOSE) {
+                // SC1: shift-close carry-back. Ledger record only — the physical re-sort into a territory
+                // bag happens when the hub dock-scans the returned parcel (HubReceivingService.receive),
+                // which recognizes the in-hand delivery state as a dest re-entry.
+                hubScanSeamProducer.emitHubShiftReturnIn(task.getShipmentId());
+            } else {
+                // M8-SEAM: the hub dock-receive scan (ledger). PR3's return framework consumes this to
+                // re-enter the parcel; on its own it records the parcel is back in hub custody.
+                hubScanSeamProducer.emitHubReturnIn(task.getShipmentId());
+            }
             AuditLog.event("da.returned_to_hub")
                     .kv("daId", daId)
                     .kv("taskId", taskId)
                     .kv("shipmentId", task.getShipmentId())
+                    .kv("returnReason", task.getReturnReason())
                     .log();
             queueReorderService.reorder(daId, task.getOperatingDate());
             return view;
+        });
+    }
+
+    @Override
+    @Transactional
+    public List<UUID> spawnShiftCloseReturns(UUID daId, LocalDate date) {
+        return daStatusService.withDaLock(daId, () -> {
+            List<DispatchQueue> inHand = queueRepository
+                    .findByDaIdAndOperatingDateAndStatusIn(daId, date, List.of(TaskStatus.IN_PROGRESS));
+            List<UUID> returned = new ArrayList<>();
+            for (DispatchQueue task : inHand) {
+                // Only DELIVERY parcels need redirecting — a pickup in hand is already hub-bound; a
+                // RETURN_TO_HUB/CUSTODY_COLLECT is its own flow. Skip anything already re-parked.
+                if (task.getTaskType() != TaskType.DELIVERY) {
+                    continue;
+                }
+                // Cancel the door attempt (shift end is NOT a delivery failure — no DROP_FAILED, no
+                // attempt++) and give the parcel a modelled way back that re-sorts it at the hub.
+                task.setStatus(TaskStatus.CANCELLED);
+                task.setCompletedAt(Instant.now());
+                queueRepository.save(task);
+                locationStubService.onTerminal(task);
+                spawnReturnToHub(daId, task, CarryBackReason.SHIFT_CLOSE);
+                returned.add(task.getShipmentId());
+            }
+            if (!returned.isEmpty()) {
+                queueReorderService.reorder(daId, date);
+                AuditLog.event("da.shift_close_returns")
+                        .kv("daId", daId)
+                        .kv("count", returned.size())
+                        .log();
+            }
+            return returned;
         });
     }
 
@@ -351,7 +394,7 @@ class DaTaskServiceImpl implements DaTaskService {
             locationStubService.onTerminal(task);
             // Parcel already collected → give the DA a modelled way back instead of a doomed door attempt.
             if (parcelInHand) {
-                spawnReturnToHub(daId, task);
+                spawnReturnToHub(daId, task, CarryBackReason.RESCHEDULE);
             }
             QueueMirror.rebuild(daStatusService, queueRepository, daId, task.getOperatingDate());
             queueReorderService.reorder(daId, task.getOperatingDate());

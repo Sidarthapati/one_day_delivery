@@ -84,6 +84,12 @@ public class Asset extends MutableBaseEntity {
     @Column(name = "ack_pending", nullable = false)
     private boolean ackPending;
 
+    // A1 shift close: the DA has tapped "return van to hub custody" but the station manager hasn't yet
+    // approved the physical handover. The van is still ASSIGNED to the DA until approval flips it to
+    // the station store. Only vans use this today.
+    @Column(name = "return_requested", nullable = false)
+    private boolean returnRequested;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "photo_keys")
     private List<String> photoKeys;

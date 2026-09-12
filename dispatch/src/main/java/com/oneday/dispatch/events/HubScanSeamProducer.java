@@ -1,5 +1,6 @@
 package com.oneday.dispatch.events;
 
+import com.oneday.common.kafka.DomainEvent;
 import com.oneday.common.kafka.EventPublisher;
 import com.oneday.common.kafka.EventStreams;
 import com.oneday.common.kafka.enums.ScanEventType;
@@ -48,29 +49,43 @@ public class HubScanSeamProducer {
         emit(shipmentId, ScanEventType.HUB_RETURN_IN);
     }
 
+    /**
+     * Shift-close carry-back (SC1): the ledger record that the DA returned an in-hand parcel at shift end.
+     * Ledger only — the physical re-sort into a territory bag is driven by the hub's own dock-receive of
+     * the returned parcel ({@code HubReceivingService.receive}), exactly as any dest arrival.
+     */
+    public void emitHubShiftReturnIn(UUID shipmentId) {
+        emit(shipmentId, ScanEventType.HUB_SHIFT_RETURN_IN);
+    }
+
     private void emit(UUID shipmentId, ScanEventType type) {
         // Build the event NOW so occurredAt is the scan time, not the (possibly much later) commit time.
-        ScanEvent event = new ScanEvent(shipmentId, type);
-        // Inside a transaction → publish only once it commits (a rollback must not leave a phantom scan);
-        // outside one → publish now.
+        publishAfterCommit(EventStreams.SCAN_EVENTS, new ScanEvent(shipmentId, type));
+    }
+
+    /**
+     * Inside a transaction → publish only once it commits (a rollback must not leave a phantom scan/event);
+     * outside one → publish now. Best-effort: a publish failure is logged and swallowed.
+     */
+    private void publishAfterCommit(String stream, DomainEvent event) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    publish(event);
+                    publish(stream, event);
                 }
             });
         } else {
-            publish(event);
+            publish(stream, event);
         }
     }
 
-    private void publish(ScanEvent event) {
+    private void publish(String stream, DomainEvent event) {
         try {
-            eventPublisher.publish(EventStreams.SCAN_EVENTS, event);
-        } catch (Exception e) {   // M8-SEAM: never block custody on a scan publish failure
-            log.warn("M8-SEAM hub scan {} for shipment {} failed (non-blocking): {}",
-                    event.eventType(), event.shipmentId(), e.getMessage());
+            eventPublisher.publish(stream, event);
+        } catch (Exception e) {   // M8-SEAM: never block custody on a scan/event publish failure
+            log.warn("M8-SEAM publish {} for {} failed (non-blocking): {}",
+                    event.eventTypeName(), event.partitionKey(), e.getMessage());
         }
     }
 }

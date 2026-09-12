@@ -98,4 +98,14 @@ public interface DaTaskService {
      * was recalled, {@code false} if there was no live delivery task (caller then just defers).
      */
     boolean recallDeliveryForReschedule(UUID shipmentId);
+
+    /**
+     * SC1 shift-close: for every parcel this DA is still holding undelivered at shift end (an IN_PROGRESS
+     * DELIVERY), cancel the door attempt and spawn a {@code RETURN_TO_HUB} carry-back tagged
+     * {@code SHIFT_CLOSE}. When the DA scans the parcel back in at the hub it re-enters the dest-hub sort
+     * (re-bagged into a territory bag) for the next shift — it is NOT counted as a failed attempt.
+     * Pickups are already hub-bound and left untouched. Returns the shipmentIds sent back; idempotent per
+     * parcel (skips one that already has an open carry-back).
+     */
+    List<UUID> spawnShiftCloseReturns(UUID daId, LocalDate date);
 }
