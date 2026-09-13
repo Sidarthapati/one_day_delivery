@@ -18,8 +18,15 @@ import com.oneday.orders.domain.CodCollectionState;
 import com.oneday.orders.service.CodCashService;
 import com.oneday.orders.service.CodRemittanceService;
 import jakarta.validation.Valid;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -32,6 +39,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -136,16 +147,39 @@ class AdminCodController {
         return codCash.daCashBalances(cityFilter(principal));
     }
 
-    /** One DA's cash-in-hand passbook (append-only, running balance), newest first. City-gated. */
+    /**
+     * One DA's cash-in-hand passbook (append-only, running balance), newest first. City-gated. Optional
+     * {@code from}/{@code to} (ISO-8601 instants) bound the window; omit both for the full trail.
+     */
     @GetMapping("/cash/da/{daUserId}/ledger")
     public List<DaCodLedgerEntryResponse> daLedger(
             @AuthenticationPrincipal AuthUserDetails principal,
             @PathVariable("daUserId") UUID daUserId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         Authz.requireRole(principal, STATION_MANAGER);
         int capped = Math.min(Math.max(1, size), 200);
-        return codCash.managerDaLedger(daUserId, PageRequest.of(Math.max(0, page), capped), cityFilter(principal));
+        return codCash.managerDaLedger(daUserId, from, to,
+                PageRequest.of(Math.max(0, page), capped), cityFilter(principal));
+    }
+
+    /**
+     * One DA's cash-in-hand passbook as a downloadable CSV (G3). Defaults to the last 60 days when no
+     * range is given; {@code from}/{@code to} override it. City-gated; capped at 5,000 rows.
+     */
+    @GetMapping(value = "/cash/da/{daUserId}/ledger/export", produces = "text/csv")
+    public ResponseEntity<Resource> exportDaLedger(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @PathVariable("daUserId") UUID daUserId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        Instant fromBound = from != null ? from : Instant.now().minus(60, ChronoUnit.DAYS);
+        List<DaCodLedgerEntryResponse> rows = codCash.managerDaLedger(daUserId, fromBound, to,
+                PageRequest.of(0, 5000), cityFilter(principal));
+        return csvResponse(ledgerCsv(rows), "cod-cash-ledger-" + daUserId + "-" + LocalDate.now() + ".csv");
     }
 
     /** Per-DA collected-vs-deposited cash + ledger balance, riders with the largest outstanding first. */
@@ -160,6 +194,14 @@ class AdminCodController {
     public List<CodCashDepositResponse> deposits(@AuthenticationPrincipal AuthUserDetails principal) {
         Authz.requireRole(principal, STATION_MANAGER);
         return codCash.allDeposits(cityFilter(principal));
+    }
+
+    /** Every declared cash deposit as a downloadable CSV (G3), city-scoped. Newest first. */
+    @GetMapping(value = "/cash/deposits/export", produces = "text/csv")
+    public ResponseEntity<Resource> exportDeposits(@AuthenticationPrincipal AuthUserDetails principal) {
+        Authz.requireRole(principal, STATION_MANAGER);
+        List<CodCashDepositResponse> rows = codCash.allDeposits(cityFilter(principal));
+        return csvResponse(depositsCsv(rows), "cod-cash-deposits-" + LocalDate.now() + ".csv");
     }
 
     /** Verify a deposit: matched → RECONCILED, else DISCREPANCY. PATCH (not idempotency-gated). City-gated. */
@@ -208,5 +250,57 @@ class AdminCodController {
             @Valid @RequestBody ConfirmBankCreditRequest request) {
         Authz.requireRole(principal, "ADMIN");
         return codCash.confirmBankCredit(id, request.bankCreditRef(), null);
+    }
+
+    // ── CSV export (G3) — reuses AdminOrdersController's RFC-4180 + injection-safe cell helper ──────
+
+    private static ResponseEntity<Resource> csvResponse(String csv, String filename) {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename).build().toString())
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(new ByteArrayResource(csv.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static final String[] LEDGER_CSV_HEADERS = {
+            "id", "type", "amount_paise", "balance_after_paise", "reference", "description", "created_at"
+    };
+
+    static String ledgerCsv(List<DaCodLedgerEntryResponse> rows) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.join(",", LEDGER_CSV_HEADERS)).append("\r\n");
+        for (DaCodLedgerEntryResponse r : rows) {
+            sb.append(AdminOrdersController.csv(r.id())).append(',')
+              .append(AdminOrdersController.csv(r.type())).append(',')
+              .append(AdminOrdersController.csv(r.amountPaise())).append(',')
+              .append(AdminOrdersController.csv(r.balanceAfterPaise())).append(',')
+              .append(AdminOrdersController.csv(r.reference())).append(',')
+              .append(AdminOrdersController.csv(r.description())).append(',')
+              .append(AdminOrdersController.csv(r.createdAt())).append("\r\n");
+        }
+        return sb.toString();
+    }
+
+    private static final String[] DEPOSITS_CSV_HEADERS = {
+            "id", "da_user_id", "amount_paise", "counted_amount_paise", "deposit_ref", "note",
+            "status", "reconciled_by", "reconciled_at", "created_at"
+    };
+
+    static String depositsCsv(List<CodCashDepositResponse> rows) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.join(",", DEPOSITS_CSV_HEADERS)).append("\r\n");
+        for (CodCashDepositResponse r : rows) {
+            sb.append(AdminOrdersController.csv(r.id())).append(',')
+              .append(AdminOrdersController.csv(r.daUserId())).append(',')
+              .append(AdminOrdersController.csv(r.amountPaise())).append(',')
+              .append(AdminOrdersController.csv(r.countedAmountPaise())).append(',')
+              .append(AdminOrdersController.csv(r.depositRef())).append(',')
+              .append(AdminOrdersController.csv(r.note())).append(',')
+              .append(AdminOrdersController.csv(r.status())).append(',')
+              .append(AdminOrdersController.csv(r.reconciledBy())).append(',')
+              .append(AdminOrdersController.csv(r.reconciledAt())).append(',')
+              .append(AdminOrdersController.csv(r.createdAt())).append("\r\n");
+        }
+        return sb.toString();
     }
 }

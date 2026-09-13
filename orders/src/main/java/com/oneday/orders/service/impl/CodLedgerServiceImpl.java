@@ -11,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -58,7 +59,13 @@ class CodLedgerServiceImpl implements CodLedgerService {
     @Override
     @Transactional(readOnly = true)
     public List<DaCodLedgerEntryResponse> history(UUID daUserId, Pageable pageable) {
-        return ledger.findByDaUserIdOrderByCreatedAtDesc(daUserId, pageable).stream()
+        return history(daUserId, null, null, pageable);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DaCodLedgerEntryResponse> history(UUID daUserId, Instant from, Instant to, Pageable pageable) {
+        return ledger.findByDaInRange(daUserId, from, to, pageable).stream()
                 .map(DaCodLedgerEntryResponse::from)
                 .toList();
     }

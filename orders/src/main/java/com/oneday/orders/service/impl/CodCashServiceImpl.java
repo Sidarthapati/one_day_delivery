@@ -21,6 +21,7 @@ import com.oneday.orders.repository.CodCollectionRepository;
 import com.oneday.orders.repository.DaCodBalanceRepository;
 import com.oneday.orders.service.CodCashService;
 import com.oneday.orders.service.CodLedgerService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -47,16 +48,21 @@ class CodCashServiceImpl implements CodCashService {
     private final UserService userService;
     private final com.oneday.orders.service.CashHandoffOtpService handoffOtp;
 
+    /** Cash-in-hand soft ceiling (G2): a DA over this is nudged to deposit, but not blocked. ₹5,000 default. */
+    private final long ceilingPaise;
+
     CodCashServiceImpl(CodCashDepositRepository deposits, CodCollectionRepository collections,
                        CodLedgerService codLedger, DaCodBalanceRepository balances,
                        UserService userService,
-                       com.oneday.orders.service.CashHandoffOtpService handoffOtp) {
+                       com.oneday.orders.service.CashHandoffOtpService handoffOtp,
+                       @Value("${cod.cash.ceiling-paise:500000}") long ceilingPaise) {
         this.deposits = deposits;
         this.collections = collections;
         this.codLedger = codLedger;
         this.balances = balances;
         this.userService = userService;
         this.handoffOtp = handoffOtp;
+        this.ceilingPaise = ceilingPaise;
     }
 
     @Override
@@ -199,13 +205,14 @@ class CodCashServiceImpl implements CodCashService {
         List<CodCashDepositResponse> rows = deposits.findByDaUserIdOrderByCreatedAtDesc(daUserId)
                 .stream().map(CodCashDepositResponse::from).toList();
         return new DaCodCashSummaryResponse(
-                daUserId, count, collected, deposited, collected - deposited, cashInHand, rows);
+                daUserId, count, collected, deposited, collected - deposited, cashInHand,
+                ceilingPaise, cashInHand > ceilingPaise, rows);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<DaCodLedgerEntryResponse> daLedger(UUID daUserId, Pageable pageable) {
-        return codLedger.history(daUserId, pageable);
+    public List<DaCodLedgerEntryResponse> daLedger(UUID daUserId, Instant from, Instant to, Pageable pageable) {
+        return codLedger.history(daUserId, from, to, pageable);
     }
 
     @Override
@@ -230,9 +237,10 @@ class CodCashServiceImpl implements CodCashService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DaCodLedgerEntryResponse> managerDaLedger(UUID daUserId, Pageable pageable, String cityFilter) {
+    public List<DaCodLedgerEntryResponse> managerDaLedger(UUID daUserId, Instant from, Instant to,
+                                                          Pageable pageable, String cityFilter) {
         assertCityAccess(daUserId, cityFilter);
-        return codLedger.history(daUserId, pageable);
+        return codLedger.history(daUserId, from, to, pageable);
     }
 
     @Override

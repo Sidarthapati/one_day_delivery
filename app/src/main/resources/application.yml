@@ -124,6 +124,12 @@ grid:
     hyderabad: 6ba7b811-9dad-11d1-80b4-00c04fd430c8
     chennai: 6ba7b812-9dad-11d1-80b4-00c04fd430c8
 
+# M4 (orders) COD cash. ceiling-paise is the DA cash-in-hand soft ceiling (G2): a rider over it is
+# nudged to deposit (over_ceiling flag on their summary), not blocked. Default ₹5,000.
+cod:
+  cash:
+    ceiling-paise: ${COD_CASH_CEILING_PAISE:500000}
+
 # M5 (dispatch). All thresholds default in DispatchProperties; only the shift-load roster
 # (which city codes to bootstrap) is environment-specific. City codes must match grid.cities keys.
 dispatch:
