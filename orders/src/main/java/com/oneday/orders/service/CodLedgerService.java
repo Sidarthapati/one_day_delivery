@@ -4,6 +4,7 @@ import com.oneday.orders.domain.DaCodLedgerType;
 import com.oneday.orders.dto.DaCodLedgerEntryResponse;
 import org.springframework.data.domain.Pageable;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -27,4 +28,10 @@ public interface CodLedgerService {
 
     /** A page of the DA's ledger history, newest first. */
     List<DaCodLedgerEntryResponse> history(UUID daUserId, Pageable pageable);
+
+    /**
+     * A page of the DA's ledger history, newest first, bounded by an optional created-at range (G3).
+     * A null {@code from}/{@code to} is open on that side.
+     */
+    List<DaCodLedgerEntryResponse> history(UUID daUserId, Instant from, Instant to, Pageable pageable);
 }

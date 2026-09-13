@@ -7,8 +7,15 @@ import com.oneday.orders.dto.DepositRecordedResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
 import com.oneday.orders.service.CodCashService;
 import jakarta.validation.Valid;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +25,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -54,14 +65,40 @@ class DaCodController {
         return codCash.daSummary(callerDaId(principal));
     }
 
-    /** A page of the DA's own cash-in-hand ledger (collections + deposits, running balance), newest first. */
+    /**
+     * A page of the DA's own cash-in-hand ledger (collections + deposits, running balance), newest first.
+     * Optional {@code from}/{@code to} (ISO-8601 instants) bound the window; omit both for the full trail.
+     */
     @GetMapping("/ledger")
     public List<DaCodLedgerEntryResponse> ledger(
             @AuthenticationPrincipal AuthUserDetails principal,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         int capped = Math.min(Math.max(1, size), 200);
-        return codCash.daLedger(callerDaId(principal), PageRequest.of(Math.max(0, page), capped));
+        return codCash.daLedger(callerDaId(principal), from, to, PageRequest.of(Math.max(0, page), capped));
+    }
+
+    /**
+     * The DA's own cash-in-hand ledger as a downloadable CSV (G3). Defaults to the last 60 days when no
+     * range is given; {@code from}/{@code to} override it. Capped at 5,000 rows (a shift's worth is tiny).
+     */
+    @GetMapping(value = "/ledger/export", produces = "text/csv")
+    public ResponseEntity<Resource> exportLedger(
+            @AuthenticationPrincipal AuthUserDetails principal,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        Instant fromBound = from != null ? from : Instant.now().minus(60, ChronoUnit.DAYS);
+        List<DaCodLedgerEntryResponse> rows =
+                codCash.daLedger(callerDaId(principal), fromBound, to, PageRequest.of(0, 5000));
+        byte[] csv = AdminCodController.ledgerCsv(rows).getBytes(StandardCharsets.UTF_8);
+        String filename = "cod-cash-ledger-" + LocalDate.now() + ".csv";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename).build().toString())
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(new ByteArrayResource(csv));
     }
 
     /** The calling delivery associate's own user id (also gates the endpoint to that role). */

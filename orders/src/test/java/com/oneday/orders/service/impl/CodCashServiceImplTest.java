@@ -53,7 +53,7 @@ class CodCashServiceImplTest {
     @Mock private com.oneday.orders.service.CashHandoffOtpService handoffOtp;
 
     private CodCashServiceImpl service() {
-        return new CodCashServiceImpl(deposits, collections, codLedger, balances, userService, handoffOtp);
+        return new CodCashServiceImpl(deposits, collections, codLedger, balances, userService, handoffOtp, 500_000L);
     }
 
     private static DaCodBalance balance(UUID da, long paise) {
@@ -243,18 +243,18 @@ class CodCashServiceImplTest {
     void managerDaLedger_crossCity_forbidden_butAdminAndSameCityPass() {
         UUID da = UUID.randomUUID();
         when(userService.getUser(da)).thenReturn(user(da, "BLR"));
-        lenient().when(codLedger.history(eq(da), any())).thenReturn(List.of());
+        lenient().when(codLedger.history(eq(da), any(), any(), any())).thenReturn(List.of());
         var page = PageRequest.of(0, 50);
 
         // A DEL manager reading a BLR rider → 403.
-        assertThatThrownBy(() -> service().managerDaLedger(da, page, "DEL"))
+        assertThatThrownBy(() -> service().managerDaLedger(da, null, null, page, "DEL"))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("your city");
 
         // Same-city manager and admin (null filter) both pass through to the ledger.
-        service().managerDaLedger(da, page, "BLR");
-        service().managerDaLedger(da, page, null);
-        verify(codLedger, org.mockito.Mockito.times(2)).history(eq(da), any());
+        service().managerDaLedger(da, null, null, page, "BLR");
+        service().managerDaLedger(da, null, null, page, null);
+        verify(codLedger, org.mockito.Mockito.times(2)).history(eq(da), any(), any(), any());
     }
 
     @Test
@@ -291,6 +291,24 @@ class CodCashServiceImplTest {
             assertThat(r.cashInHandPaise()).isEqualTo(300L);     // authoritative ledger balance
             assertThat(r.daName()).isEqualTo("DA BLR");
         });
+    }
+
+    @Test
+    void daSummary_flagsOverCeiling_whenCashInHandExceedsLimit() {
+        UUID da = UUID.randomUUID();
+        when(collections.sumCollectedByDa(da)).thenReturn(600_000L);
+        when(collections.countCollectedByDa(da)).thenReturn(3L);
+        when(deposits.sumDepositedByDa(da)).thenReturn(0L);
+        when(deposits.findByDaUserIdOrderByCreatedAtDesc(da)).thenReturn(List.of());
+        when(codLedger.cashInHand(da)).thenReturn(600_000L); // ₹6,000 > ₹5,000 ceiling
+
+        var s = service().daSummary(da);
+        assertThat(s.ceilingPaise()).isEqualTo(500_000L);
+        assertThat(s.overCeiling()).isTrue();
+
+        // At/under the ceiling → no warning (soft, boundary is not "over").
+        when(codLedger.cashInHand(da)).thenReturn(500_000L);
+        assertThat(service().daSummary(da).overCeiling()).isFalse();
     }
 
     @Test

@@ -9,6 +9,7 @@ import com.oneday.orders.dto.DepositRecordedResponse;
 import com.oneday.orders.dto.RecordCodDepositRequest;
 import org.springframework.data.domain.Pageable;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -32,8 +33,11 @@ public interface CodCashService {
     /** The DA's own position: collected vs deposited + authoritative cash-in-hand, with deposit history. */
     DaCodCashSummaryResponse daSummary(UUID daUserId);
 
-    /** A page of the DA's cash-in-hand ledger (append-only movement history), newest first. */
-    List<DaCodLedgerEntryResponse> daLedger(UUID daUserId, Pageable pageable);
+    /**
+     * A page of the DA's cash-in-hand ledger (append-only movement history), newest first, optionally
+     * bounded by a created-at range (G3 60-day trail). Null {@code from}/{@code to} is open on that side.
+     */
+    List<DaCodLedgerEntryResponse> daLedger(UUID daUserId, Instant from, Instant to, Pageable pageable);
 
     // ── Station / Admin ─────────────────────────────────────────────────────────
 
@@ -48,7 +52,8 @@ public interface CodCashService {
      * A page of one DA's cash-in-hand ledger for a manager/admin (#191). {@code cityFilter} enforces
      * access — a manager scoped to a city can't read a DA in another city (403); null = admin, no gate.
      */
-    List<DaCodLedgerEntryResponse> managerDaLedger(UUID daUserId, Pageable pageable, String cityFilter);
+    List<DaCodLedgerEntryResponse> managerDaLedger(UUID daUserId, Instant from, Instant to,
+                                                   Pageable pageable, String cityFilter);
 
     /**
      * Per-DA collected-vs-deposited + authoritative ledger balance, riders with the largest outstanding
