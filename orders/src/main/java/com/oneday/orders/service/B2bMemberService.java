@@ -19,20 +19,23 @@ public interface B2bMemberService {
     MemberResponse me(UUID accountId, UUID callerUserId);
 
     /**
-     * Add an existing business user (looked up by email) to the account as a MEMBER. OWNER-only.
-     * 404 if no such user, 422 if they're not a business user, 409 if they already belong to an account.
+     * Add an existing business user (looked up by email) to the account as a MEMBER, with an optional
+     * initial budget (D4 M1). OWNER-only. 404 if no such user, 422 if they're not a business user or the
+     * budget is malformed, 409 if they already belong to an account. Both budget args null ⇒ unlimited.
      */
-    MemberResponse add(UUID accountId, UUID callerUserId, String email);
+    MemberResponse add(UUID accountId, UUID callerUserId, String email,
+                       Long spendLimitPaise, Integer spendLimitPct);
 
     /** Remove a member. OWNER-only; the OWNER cannot be removed. */
     void remove(UUID accountId, UUID callerUserId, UUID targetUserId);
 
     /**
-     * Set (or clear, when {@code spendLimitPaise} is null) a member's monthly spend budget. OWNER-only;
-     * the owner is exempt from budgets and cannot be capped. Returns the target's updated row with the
-     * new limit and this-month spend.
+     * Set a member's monthly budget (D4 M1). Exactly one of: both null (unlimited), {@code spendLimitPaise}
+     * (fixed), {@code spendLimitPct} (a percent of available credit). Setting both is 422. OWNER-only; the
+     * owner is exempt and cannot be capped. Returns the target's updated row with the resolved cap + spend.
      */
-    MemberResponse setSpendLimit(UUID accountId, UUID callerUserId, UUID targetUserId, Long spendLimitPaise);
+    MemberResponse setBudget(UUID accountId, UUID callerUserId, UUID targetUserId,
+                             Long spendLimitPaise, Integer spendLimitPct);
 
     /**
      * The caller verifies their own KYC by PAN (Discussion-2 xii). On a verified PAN whose name matches,

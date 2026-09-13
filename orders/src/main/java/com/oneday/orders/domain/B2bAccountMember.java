@@ -54,4 +54,12 @@ public class B2bAccountMember extends MutableBaseEntity {
      */
     @Column(name = "spend_limit_paise")
     private Long spendLimitPaise;
+
+    /**
+     * Alternative to {@link #spendLimitPaise}: a percent (1..100) of the account's <em>available</em>
+     * credit ({@code credit_limit - outstanding}), resolved to an effective paise cap at booking time.
+     * Mutually exclusive with {@code spendLimitPaise} (both null ⇒ unlimited). Discussion-4 (M1).
+     */
+    @Column(name = "spend_limit_pct")
+    private Integer spendLimitPct;
 }

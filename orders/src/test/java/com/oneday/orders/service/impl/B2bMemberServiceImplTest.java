@@ -64,12 +64,13 @@ class B2bMemberServiceImplTest {
     @Test
     void ownerAddsAnExistingBusinessUser_asMember() {
         callerIsOwner();
+        when(accounts.findById(account)).thenReturn(Optional.of(new B2bAccount()));  // for budget resolution
         UUID newUser = UUID.randomUUID();
         when(userService.getUserByEmail("teammate@acme.example")).thenReturn(user(newUser, "teammate@acme.example", "B2B_USER"));
         when(members.existsByUserId(newUser)).thenReturn(false);
         when(members.save(any(B2bAccountMember.class))).thenAnswer(i -> i.getArgument(0));
 
-        MemberResponse r = service().add(account, owner, "teammate@acme.example");
+        MemberResponse r = service().add(account, owner, "teammate@acme.example", null, null);
 
         assertThat(r.role()).isEqualTo("MEMBER");
         ArgumentCaptor<B2bAccountMember> saved = ArgumentCaptor.forClass(B2bAccountMember.class);
@@ -86,7 +87,7 @@ class B2bMemberServiceImplTest {
         UUID caller = UUID.randomUUID();
         when(members.findByB2bAccountIdAndUserId(account, caller)).thenReturn(Optional.of(plain));
 
-        assertThatThrownBy(() -> service().add(account, caller, "x@y.com"))
+        assertThatThrownBy(() -> service().add(account, caller, "x@y.com", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("owner");
         verify(members, never()).save(any());
@@ -96,7 +97,7 @@ class B2bMemberServiceImplTest {
     void unknownEmailIs404() {
         callerIsOwner();
         when(userService.getUserByEmail("nobody@x.com")).thenThrow(new UserNotFoundException("nope"));
-        assertThatThrownBy(() -> service().add(account, owner, "nobody@x.com"))
+        assertThatThrownBy(() -> service().add(account, owner, "nobody@x.com", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("sign up");
         verify(members, never()).save(any());
@@ -106,7 +107,7 @@ class B2bMemberServiceImplTest {
     void nonBusinessUserRejected() {
         callerIsOwner();
         when(userService.getUserByEmail("cust@x.com")).thenReturn(user(UUID.randomUUID(), "cust@x.com", "B2C_CUSTOMER"));
-        assertThatThrownBy(() -> service().add(account, owner, "cust@x.com"))
+        assertThatThrownBy(() -> service().add(account, owner, "cust@x.com", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("business user");
         verify(members, never()).save(any());
@@ -118,10 +119,41 @@ class B2bMemberServiceImplTest {
         UUID u = UUID.randomUUID();
         when(userService.getUserByEmail("dup@x.com")).thenReturn(user(u, "dup@x.com", "B2B_USER"));
         when(members.existsByUserId(u)).thenReturn(true);
-        assertThatThrownBy(() -> service().add(account, owner, "dup@x.com"))
+        assertThatThrownBy(() -> service().add(account, owner, "dup@x.com", null, null))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("already belongs");
         verify(members, never()).save(any());
+    }
+
+    @Test
+    void setBudget_bothFixedAndPct_isRejected() {
+        callerIsOwner();
+        UUID target = UUID.randomUUID();
+        // Mutual exclusivity is checked before the target is even loaded → 422, no save.
+        assertThatThrownBy(() -> service().setBudget(account, owner, target, 50_000L, 20))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("either a fixed amount or a percentage");
+        verify(members, never()).save(any());
+    }
+
+    @Test
+    void setBudget_percentage_onMember_persistsPct() {
+        callerIsOwner();
+        UUID targetId = UUID.randomUUID();
+        B2bAccountMember target = new B2bAccountMember();
+        target.setRole(MemberRole.MEMBER);
+        target.setUserId(targetId);
+        when(members.findByB2bAccountIdAndUserId(account, targetId)).thenReturn(Optional.of(target));
+        when(members.save(any())).thenAnswer(i -> i.getArgument(0));
+        B2bAccount a = new B2bAccount();
+        a.setCreditLimitPaise(1_000_000L);
+        a.setOutstandingBalancePaise(0L);
+        when(accounts.findById(account)).thenReturn(Optional.of(a));
+
+        MemberResponse r = service().setBudget(account, owner, targetId, null, 25);
+
+        assertThat(r.spendLimitPct()).isEqualTo(25);
+        assertThat(r.effectiveLimitPaise()).isEqualTo(250_000L); // 25% of ₹10,00,000 available
     }
 
     @Test

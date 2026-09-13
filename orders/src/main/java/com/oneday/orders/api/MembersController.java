@@ -53,7 +53,8 @@ class MembersController {
     public MemberResponse add(@AuthenticationPrincipal AuthUserDetails principal,
                               @Valid @RequestBody AddMemberRequest request) {
         UUID caller = UUID.fromString(Authz.requireUserId(principal));
-        return members.add(ownedAccountId(principal), caller, request.email());
+        return members.add(ownedAccountId(principal), caller, request.email(),
+                request.spendLimitPaise(), request.spendLimitPct());
     }
 
     /** The caller's own member row (incl. KYC status). */
@@ -77,7 +78,8 @@ class MembersController {
                                     @PathVariable UUID userId,
                                     @Valid @RequestBody MemberBudgetRequest request) {
         UUID caller = UUID.fromString(Authz.requireUserId(principal));
-        return members.setSpendLimit(ownedAccountId(principal), caller, userId, request.spendLimitPaise());
+        return members.setBudget(ownedAccountId(principal), caller, userId,
+                request.spendLimitPaise(), request.spendLimitPct());
     }
 
     /** Remove a member from the caller's account. OWNER-only; the owner can't be removed. */

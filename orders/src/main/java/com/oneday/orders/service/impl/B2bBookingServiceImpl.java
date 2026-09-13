@@ -247,14 +247,18 @@ class B2bBookingServiceImpl implements B2bBookingService {
             B2bAccountMember member = b2bAccountMemberRepository
                     .findByAccountAndUserForUpdate(req.getB2bAccountId(), bookerId)
                     .orElse(null);
-            if (member != null && member.getSpendLimitPaise() != null) {
+            // Effective monthly cap: a % member is capped at pct% of the account's available credit
+            // (credit_limit − outstanding, read before this booking); a fixed member at spend_limit_paise;
+            // an uncapped member (both null) is exempt. M1 (D4) adds the % option to vi's fixed cap.
+            Long cap = MemberBudgets.effectiveCapPaise(member, account);
+            if (cap != null) {
                 Instant monthStart = MonthWindow.startOfCurrentMonth();
                 long spent = shipmentRepository.sumMemberSpendSince(bookerId, monthStart);
-                if (spent + quote.totalPricePaise() > member.getSpendLimitPaise()) {
+                if (spent + quote.totalPricePaise() > cap) {
                     throw new B2bBookingService.MemberBudgetExceededException(
                             "Monthly spend budget exceeded for member " + bookerId + " on account "
                             + req.getB2bAccountId() + ": spent " + spent + " + booking "
-                            + quote.totalPricePaise() + " > limit " + member.getSpendLimitPaise());
+                            + quote.totalPricePaise() + " > limit " + cap);
                 }
             }
         }

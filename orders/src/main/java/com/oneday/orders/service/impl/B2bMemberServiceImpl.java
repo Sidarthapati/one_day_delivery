@@ -43,12 +43,31 @@ class B2bMemberServiceImpl implements B2bMemberService {
         this.kycPort = kycPort;
     }
 
-    /** This calendar month's spend for a member (0 when uncapped — no need to query if there's no limit). */
+    /** This calendar month's spend for a member (0 when uncapped — no need to query if there's no cap). */
     private long spentThisMonth(B2bAccountMember m) {
-        if (m.getSpendLimitPaise() == null) {
+        if (m.getSpendLimitPaise() == null && m.getSpendLimitPct() == null) {
             return 0L;
         }
         return shipments.sumMemberSpendSince(m.getUserId(), MonthWindow.startOfCurrentMonth());
+    }
+
+    /** A member row enriched with its resolved effective cap (needs the account for a % cap) + spend. */
+    private MemberResponse detailed(B2bAccountMember m, B2bAccount account) {
+        return MemberResponse.withBudget(m, MemberBudgets.effectiveCapPaise(m, account), spentThisMonth(m));
+    }
+
+    /** The account, or 404 — needed to resolve a percentage cap against current available credit. */
+    private B2bAccount accountOrThrow(UUID accountId) {
+        return accounts.findById(accountId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
+    }
+
+    /** Fixed and percentage caps are mutually exclusive — the owner picks one shape (or neither). */
+    private static void validateBudget(Long spendLimitPaise, Integer spendLimitPct) {
+        if (spendLimitPaise != null && spendLimitPct != null) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Set either a fixed amount or a percentage, not both.");
+        }
     }
 
     @Override
@@ -57,15 +76,18 @@ class B2bMemberServiceImpl implements B2bMemberService {
         // Spend is queried only for capped members (spentThisMonth short-circuits uncapped to 0), so a
         // team of mostly-uncapped members costs no extra queries. ponytail: per-capped-member sum, fine
         // at pilot team sizes; fold into one grouped query if teams ever get large.
+        B2bAccount account = accountOrThrow(accountId);
         return members.findByB2bAccountIdOrderByCreatedAtAsc(accountId).stream()
-                .map(m -> MemberResponse.withSpend(m, spentThisMonth(m)))
+                .map(m -> detailed(m, account))
                 .toList();
     }
 
     @Override
     @Transactional
-    public MemberResponse add(UUID accountId, UUID callerUserId, String email) {
+    public MemberResponse add(UUID accountId, UUID callerUserId, String email,
+                              Long spendLimitPaise, Integer spendLimitPct) {
         requireOwner(accountId, callerUserId);
+        validateBudget(spendLimitPaise, spendLimitPct);
 
         UserResponse user;
         try {
@@ -90,8 +112,10 @@ class B2bMemberServiceImpl implements B2bMemberService {
         m.setRole(MemberRole.MEMBER);
         m.setEmail(user.email());
         m.setName(user.name());
+        m.setSpendLimitPaise(spendLimitPaise);   // optional initial budget (M1); both null = unlimited
+        m.setSpendLimitPct(spendLimitPct);
         try {
-            return MemberResponse.from(members.save(m));
+            return detailed(members.save(m), accountOrThrow(accountId));
         } catch (DataIntegrityViolationException e) {
             // Lost a race on the unique(user_id) constraint.
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -114,16 +138,18 @@ class B2bMemberServiceImpl implements B2bMemberService {
     @Override
     @Transactional(readOnly = true)
     public MemberResponse me(UUID accountId, UUID callerUserId) {
+        B2bAccount account = accountOrThrow(accountId);
         return members.findByB2bAccountIdAndUserId(accountId, callerUserId)
-                .map(m -> MemberResponse.withSpend(m, spentThisMonth(m)))
+                .map(m -> detailed(m, account))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not a member of this account"));
     }
 
     @Override
     @Transactional
-    public MemberResponse setSpendLimit(UUID accountId, UUID callerUserId, UUID targetUserId,
-                                        Long spendLimitPaise) {
+    public MemberResponse setBudget(UUID accountId, UUID callerUserId, UUID targetUserId,
+                                    Long spendLimitPaise, Integer spendLimitPct) {
         requireOwner(accountId, callerUserId);
+        validateBudget(spendLimitPaise, spendLimitPct);
         B2bAccountMember target = members.findByB2bAccountIdAndUserId(accountId, targetUserId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Not a member of this account"));
         // The owner is exempt from budgets — capping the account owner is meaningless (they manage the
@@ -132,9 +158,10 @@ class B2bMemberServiceImpl implements B2bMemberService {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "The account owner isn't subject to a member budget.");
         }
-        target.setSpendLimitPaise(spendLimitPaise);   // null clears the cap
+        target.setSpendLimitPaise(spendLimitPaise);   // one of the two is set, or both null (unlimited)
+        target.setSpendLimitPct(spendLimitPct);
         B2bAccountMember saved = members.save(target);
-        return MemberResponse.withSpend(saved, spentThisMonth(saved));
+        return detailed(saved, accountOrThrow(accountId));
     }
 
     @Override
