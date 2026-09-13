@@ -54,7 +54,7 @@ if (cap != null && spent + booking > cap) throw MemberBudgetExceededException(..
 - The row's budget column shows the effective cap: fixed → "₹X of ₹Y", percentage → "₹X of ₹Y (Z% of credit)".
 
 ## Verify
-A **percentage-capped** member is blocked once their month spend passes `credit_limit × pct%` while the account still has credit; a **fixed** member behaves as in vi; an **unlimited** member (and the owner) book freely. `mvn test -pl orders` + `pnpm --filter @oneday/business typecheck` green.
+A **percentage-capped** member is blocked once their month spend passes `(credit_limit − outstanding) × pct%` (available credit at booking time) while the account still has credit; a **fixed** member behaves as in vi; an **unlimited** member (and the owner) book freely. `mvn test -pl orders` + `pnpm --filter @oneday/business typecheck` green.
 
 ## Reuse / not rebuild
 Don't re-model membership or the month-sum gate — M1 only adds the `pct` dimension and the effective-cap resolution. Migration is **V4_57** (V4_56 is the current head).
