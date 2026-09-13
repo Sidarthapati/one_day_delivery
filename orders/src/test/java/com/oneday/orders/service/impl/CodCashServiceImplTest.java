@@ -131,12 +131,31 @@ class CodCashServiceImplTest {
         when(deposits.findByIdForUpdate(id)).thenReturn(Optional.of(d));
         when(deposits.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        var resp = service().verifyHandoff(id, "4271", station, null);
+        var resp = service().verifyHandoff(id, "4271", station, 700L, null);  // counted matches declared
 
         verify(handoffOtp).verify(id, "4271");
         assertThat(resp.status()).isEqualTo(CodCashDepositState.HANDED_OVER);
+        assertThat(resp.countedAmountPaise()).isEqualTo(700L);
         // Cash physically left the rider — NOW the cash-in-hand deduction posts.
         verify(codLedger).post(eq(da), eq(DaCodLedgerType.DEPOSIT), eq(-700L), any(), any(), eq(station));
+    }
+
+    @Test
+    void verifyHandoff_countMismatch_flagsDiscrepancy_andDoesNotPost() {
+        // G1: DA declared ₹7.00 but the station counts ₹5.80 → discrepancy, no cash-in-hand deduction.
+        UUID id = UUID.randomUUID();
+        UUID da = UUID.randomUUID();
+        CodCashDeposit d = deposit(id, da, 700L, CodCashDepositState.DEPOSITED);
+        when(deposits.findByIdForUpdate(id)).thenReturn(Optional.of(d));
+        when(deposits.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var resp = service().verifyHandoff(id, "4271", UUID.randomUUID(), 580L, null);
+
+        verify(handoffOtp).verify(id, "4271");
+        assertThat(resp.status()).isEqualTo(CodCashDepositState.DISCREPANCY);
+        assertThat(resp.countedAmountPaise()).isEqualTo(580L);
+        assertThat(resp.amountPaise()).isEqualTo(700L);   // declared preserved
+        verify(codLedger, never()).post(any(), any(), org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
     }
 
     @Test
@@ -145,7 +164,7 @@ class CodCashServiceImplTest {
         CodCashDeposit d = deposit(id, UUID.randomUUID(), 700L, CodCashDepositState.HANDED_OVER);
         when(deposits.findByIdForUpdate(id)).thenReturn(Optional.of(d));
 
-        assertThatThrownBy(() -> service().verifyHandoff(id, "4271", UUID.randomUUID(), null))
+        assertThatThrownBy(() -> service().verifyHandoff(id, "4271", UUID.randomUUID(), 700L, null))
                 .isInstanceOf(ResponseStatusException.class);
         verify(handoffOtp, never()).verify(any(), any());
         verify(codLedger, never()).post(any(), any(), org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());

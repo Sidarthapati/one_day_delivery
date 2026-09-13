@@ -70,4 +70,11 @@ public class CodCashDeposit extends BaseEntity {
 
     @Column(name = "bank_confirmed_at")
     private Instant bankConfirmedAt;
+
+    /**
+     * The station cashier's independent count of the cash at handoff (Discussion-4 G1). Compared against
+     * {@link #amountPaise} (the DA's declared figure); a mismatch routes the deposit to DISCREPANCY.
+     */
+    @Column(name = "counted_amount_paise")
+    private Long countedAmountPaise;
 }

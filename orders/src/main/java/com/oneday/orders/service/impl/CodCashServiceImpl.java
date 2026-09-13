@@ -97,7 +97,8 @@ class CodCashServiceImpl implements CodCashService {
 
     @Override
     @Transactional
-    public CodCashDepositResponse verifyHandoff(UUID depositId, String otp, UUID receivedBy, String cityFilter) {
+    public CodCashDepositResponse verifyHandoff(UUID depositId, String otp, UUID receivedBy,
+                                                Long countedAmountPaise, String cityFilter) {
         CodCashDeposit d = deposits.findByIdForUpdate(depositId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Deposit not found"));
         assertCityAccess(d.getDaUserId(), cityFilter);
@@ -106,10 +107,21 @@ class CodCashServiceImpl implements CodCashService {
                     "This deposit isn't awaiting handoff (it is " + d.getStatus() + ").");
         }
         handoffOtp.verify(depositId, otp);   // throws 422 on wrong/expired/used code
-        d.setStatus(CodCashDepositState.HANDED_OVER);
         d.setReceivedBy(receivedBy);
         d.setHandedOverAt(Instant.now());
-        // The cash has physically left the rider — post the cash-in-hand deduction now (not at declaration).
+        d.setCountedAmountPaise(countedAmountPaise);   // the station's independent count (G1)
+
+        // G1: the station counts the cash itself. If their count doesn't match the DA's declared amount,
+        // the deposit is flagged DISCREPANCY and nothing moves — no cash-in-hand deduction — until it's
+        // resolved. This is what catches a short (or over) declaration instead of trusting the rider.
+        if (!countedAmountPaise.equals(d.getAmountPaise())) {
+            d.setStatus(CodCashDepositState.DISCREPANCY);
+            return CodCashDepositResponse.from(deposits.save(d));
+        }
+
+        d.setStatus(CodCashDepositState.HANDED_OVER);
+        // Counted amount matches — the cash has physically, verifiably left the rider; post the
+        // cash-in-hand deduction now (not at declaration).
         codLedger.post(d.getDaUserId(), DaCodLedgerType.DEPOSIT, -d.getAmountPaise(),
                 d.getDepositRef(), "Cash handed to station", receivedBy);
         return CodCashDepositResponse.from(deposits.save(d));

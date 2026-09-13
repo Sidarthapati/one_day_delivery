@@ -183,7 +183,7 @@ class AdminCodController {
             @Valid @RequestBody VerifyHandoffRequest request) {
         Authz.requireRole(principal, STATION_MANAGER);
         UUID actorId = UUID.fromString(Authz.requireUserId(principal));
-        return codCash.verifyHandoff(id, request.otp(), actorId, cityFilter(principal));
+        return codCash.verifyHandoff(id, request.otp(), actorId, request.countedAmountPaise(), cityFilter(principal));
     }
 
     /** Station records the bank deposit slip: HANDED_OVER → BANK_DEPOSITED. City-gated. */
