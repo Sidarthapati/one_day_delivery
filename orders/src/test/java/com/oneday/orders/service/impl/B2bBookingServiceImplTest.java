@@ -284,6 +284,27 @@ class B2bBookingServiceImplTest {
         assertThat(resp.getShipmentRef()).isEqualTo(SHIPMENT_REF);
     }
 
+    @Test
+    void book_percentageCap_ofAvailableCredit_blocksPastIt() {
+        // M1: member capped at 1% of available credit. Available = 1,000,000 − 900,000 = 100,000;
+        // 1% = 1,000. Already spent ₹8; this ₹47.20 booking → 800 + 4720 = 5,520 > 1,000 → blocked.
+        String memberId = MEMBER_ID.toString();
+        B2bAccount account = activeAccount(900_000L, 1_000_000L); // ₹1,00,000 available credit
+        when(b2bAccountRepository.findById(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        when(b2bAccountRepository.findByIdForUpdate(ACCOUNT_ID)).thenReturn(Optional.of(account));
+        com.oneday.orders.domain.B2bAccountMember m =
+                member(MEMBER_ID, com.oneday.orders.domain.MemberRole.MEMBER, null);
+        m.setSpendLimitPct(1);   // 1% of available credit
+        stubMember(m);
+        when(shipmentRepository.sumMemberSpendSince(eq(MEMBER_ID), any())).thenReturn(800L);
+        stubServiceability(true, DeliveryType.INTERCITY);
+        stubPricing(4000L, 720L, 4720L);
+
+        assertThatThrownBy(() -> service.book(bookingRequest(), IDEMPOTENCY_KEY, memberId))
+                .isInstanceOf(B2bBookingService.MemberBudgetExceededException.class);
+        verify(shipmentRepository, never()).save(any());
+    }
+
     // ── credit limit exceeded ──────────────────────────────────────────────
 
     @Test
