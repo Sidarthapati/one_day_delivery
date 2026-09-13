@@ -79,7 +79,8 @@ public interface CodCashService {
      * deduction (the cash has physically left the rider). {@code cityFilter} gates the station manager to
      * their own city. 422 if the code is wrong/expired.
      */
-    CodCashDepositResponse verifyHandoff(UUID depositId, String otp, UUID receivedBy, String cityFilter);
+    CodCashDepositResponse verifyHandoff(UUID depositId, String otp, UUID receivedBy,
+                                         Long countedAmountPaise, String cityFilter);
 
     /** Station records the bank deposit slip: HANDED_OVER → BANK_DEPOSITED. City-gated. */
     CodCashDepositResponse markBankDeposited(UUID depositId, String bankDepositRef, String cityFilter);
