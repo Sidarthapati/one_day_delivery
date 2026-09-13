@@ -126,7 +126,20 @@ class DaTaskServiceImpl implements DaTaskService {
         Map<UUID, String> refs = shipmentRefPort.refsFor(shipmentIds);
         Map<UUID, ShipmentContact> contacts = shipmentContactPort.contactsFor(shipmentIds);
 
-        return stubs.stream().map(s -> {
+        // Order the day's tickets by the route the DA will actually take: each stop inherits the
+        // route-optimised sequence QueueReorderService writes onto its tasks (queue_position), so the
+        // first non-closed ticket is the genuine next stop and the list reads in travel order — not stub
+        // creation order. tasksByStub values are already sorted by queue_position, so element 0 is the
+        // stop's earliest position; fall back to opened_at when a stub somehow has no tasks.
+        Comparator<DaLocationStub> byRoute = Comparator
+                .comparingInt((DaLocationStub s) -> {
+                    List<DispatchQueue> ts = tasksByStub.getOrDefault(s.getId(), List.of());
+                    return ts.isEmpty() ? Integer.MAX_VALUE : ts.get(0).getQueuePosition();
+                })
+                .thenComparing(s -> s.getOpenedAt() != null ? s.getOpenedAt() : Instant.MAX);
+        List<DaLocationStub> ordered = stubs.stream().sorted(byRoute).toList();
+
+        return ordered.stream().map(s -> {
             List<DispatchQueue> ts = tasksByStub.getOrDefault(s.getId(), List.of());
             List<DaTaskView> items = ts.stream()
                     .map(t -> DaTaskView.of(t, refs.get(t.getShipmentId()), contacts.get(t.getShipmentId())))
