@@ -63,6 +63,9 @@ class DaOnboardingE2eTest extends AuthE2eSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.trainingAckAt").isNotEmpty());
 
+        // 3b. All mandatory documents uploaded (seeded directly — see AuthE2eSupport).
+        uploadAllRequiredDocs(candidateId);
+
         // 4. Applicant submits → BGV kicks off.
         mvc.perform(post("/public/onboarding/{t}/submit", token))
                 .andExpect(status().isOk())

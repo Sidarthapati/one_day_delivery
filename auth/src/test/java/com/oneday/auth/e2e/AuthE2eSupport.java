@@ -2,8 +2,11 @@ package com.oneday.auth.e2e;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.oneday.auth.domain.DaOnboardingDocument;
+import com.oneday.auth.domain.OnboardingDocType;
 import com.oneday.auth.dto.request.LoginRequest;
 import com.oneday.auth.dto.request.RegisterUserRequest;
+import com.oneday.auth.repository.DaOnboardingDocumentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -13,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -45,8 +49,27 @@ abstract class AuthE2eSupport {
 
     @Autowired protected MockMvc mvc;
     @Autowired protected ObjectMapper json;
+    @Autowired protected DaOnboardingDocumentRepository onboardingDocuments;
 
     // ── HTTP helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Persist one UPLOADED document per mandatory doc type so a candidate can clear the submit gate.
+     * The presign→PUT→submit plumbing is covered by {@code DaOnboardingDocumentsE2eTest}; funnel tests
+     * that only need the documents to exist seed them straight through the repository.
+     */
+    protected void uploadAllRequiredDocs(String candidateId) {
+        UUID id = UUID.fromString(candidateId);
+        for (OnboardingDocType type : List.of(
+                OnboardingDocType.AADHAAR_FRONT, OnboardingDocType.AADHAAR_BACK,
+                OnboardingDocType.PAN, OnboardingDocType.DRIVING_LICENSE, OnboardingDocType.PHOTO)) {
+            var d = new DaOnboardingDocument();
+            d.setCandidateId(id);
+            d.setDocType(type);
+            d.setObjectKey("test/onboarding/" + id + "/" + type + ".jpg");
+            onboardingDocuments.save(d);
+        }
+    }
 
     protected MockHttpServletRequestBuilder asJson(MockHttpServletRequestBuilder b, Object body) throws Exception {
         return b.contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body));

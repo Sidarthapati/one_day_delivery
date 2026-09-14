@@ -42,6 +42,7 @@ class DaOnboardingBgvE2eTest extends AuthE2eSupport {
                 .andExpect(status().isOk());
         mvc.perform(post("/public/onboarding/{t}/agreement/accept", token)).andExpect(status().isOk());
         mvc.perform(post("/public/onboarding/{t}/training/ack", token)).andExpect(status().isOk());
+        uploadAllRequiredDocs(candidateId);   // mandatory documents present
         mvc.perform(post("/public/onboarding/{t}/submit", token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("BGV_IN_PROGRESS"));

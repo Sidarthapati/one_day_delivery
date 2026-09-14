@@ -1,7 +1,10 @@
 package com.oneday.auth.service.impl;
 
 import com.oneday.auth.domain.DaOnboardingCandidate;
+import com.oneday.auth.domain.DaOnboardingDocument;
 import com.oneday.auth.domain.DaProfile;
+import com.oneday.auth.domain.DocumentStatus;
+import com.oneday.auth.domain.OnboardingDocType;
 import com.oneday.auth.domain.OnboardingStatus;
 import com.oneday.auth.dto.request.CandidateBankRequest;
 import com.oneday.auth.dto.request.CandidateLocationRequest;
@@ -17,6 +20,7 @@ import com.oneday.auth.exception.OnboardingCandidateNotFoundException;
 import com.oneday.auth.exception.OnboardingValidationException;
 import com.oneday.auth.config.BgvProperties;
 import com.oneday.auth.repository.DaOnboardingCandidateRepository;
+import com.oneday.auth.repository.DaOnboardingDocumentRepository;
 import com.oneday.auth.repository.DaProfileRepository;
 import com.oneday.auth.repository.UserRepository;
 import com.oneday.auth.service.BgvService;
@@ -33,8 +37,11 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 class DaOnboardingServiceImpl implements DaOnboardingService {
@@ -42,7 +49,13 @@ class DaOnboardingServiceImpl implements DaOnboardingService {
     private static final Logger LOG = LoggerFactory.getLogger(DaOnboardingServiceImpl.class);
     private static final SecureRandom RANDOM = new SecureRandom();
 
+    /** Documents every candidate must upload before submitting (VOTER stays optional / unshown). */
+    private static final Set<OnboardingDocType> REQUIRED_DOCS = EnumSet.of(
+            OnboardingDocType.AADHAAR_FRONT, OnboardingDocType.AADHAAR_BACK,
+            OnboardingDocType.PAN, OnboardingDocType.DRIVING_LICENSE, OnboardingDocType.PHOTO);
+
     private final DaOnboardingCandidateRepository candidateRepository;
+    private final DaOnboardingDocumentRepository documentRepository;
     private final DaProfileRepository daProfileRepository;
     private final UserRepository userRepository;
     private final DaRegistrationService daRegistrationService;
@@ -54,6 +67,7 @@ class DaOnboardingServiceImpl implements DaOnboardingService {
     private final String inviteBaseUrl;
 
     DaOnboardingServiceImpl(DaOnboardingCandidateRepository candidateRepository,
+                            DaOnboardingDocumentRepository documentRepository,
                             DaProfileRepository daProfileRepository,
                             UserRepository userRepository,
                             DaRegistrationService daRegistrationService,
@@ -63,6 +77,7 @@ class DaOnboardingServiceImpl implements DaOnboardingService {
                             @Value("${godspeed.onboarding.invite-base-url:http://localhost:3000/onboard}")
                             String inviteBaseUrl) {
         this.candidateRepository = candidateRepository;
+        this.documentRepository = documentRepository;
         this.daProfileRepository = daProfileRepository;
         this.userRepository = userRepository;
         this.daRegistrationService = daRegistrationService;
@@ -325,6 +340,14 @@ class DaOnboardingServiceImpl implements DaOnboardingService {
         if (c.getShift() == null) appendMissing(missing, "shift");
         if (c.getAgreementAcceptedAt() == null) appendMissing(missing, "agreement");
         if (c.getTrainingAckAt() == null) appendMissing(missing, "training");
+        // All mandatory identity/photo documents must be uploaded (a REJECTED upload doesn't count).
+        Set<OnboardingDocType> present = documentRepository.findByCandidateIdOrderByDocType(c.getId()).stream()
+                .filter(d -> d.getStatus() != DocumentStatus.REJECTED)
+                .map(DaOnboardingDocument::getDocType)
+                .collect(Collectors.toSet());
+        for (OnboardingDocType required : REQUIRED_DOCS) {
+            if (!present.contains(required)) appendMissing(missing, "document:" + required);
+        }
         if (missing.length() > 0) {
             throw new OnboardingValidationException("Cannot submit — missing: " + missing);
         }

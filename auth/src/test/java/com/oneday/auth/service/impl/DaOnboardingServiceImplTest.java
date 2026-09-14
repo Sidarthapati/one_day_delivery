@@ -1,7 +1,9 @@
 package com.oneday.auth.service.impl;
 
 import com.oneday.auth.domain.DaOnboardingCandidate;
+import com.oneday.auth.domain.DaOnboardingDocument;
 import com.oneday.auth.domain.DaProfile;
+import com.oneday.auth.domain.OnboardingDocType;
 import com.oneday.auth.domain.OnboardingStatus;
 import com.oneday.auth.dto.request.CandidateLocationRequest;
 import com.oneday.auth.dto.request.CandidatePersonalRequest;
@@ -12,6 +14,7 @@ import com.oneday.auth.exception.EmailAlreadyExistsException;
 import com.oneday.auth.exception.OnboardingValidationException;
 import com.oneday.auth.config.BgvProperties;
 import com.oneday.auth.repository.DaOnboardingCandidateRepository;
+import com.oneday.auth.repository.DaOnboardingDocumentRepository;
 import com.oneday.auth.repository.DaProfileRepository;
 import com.oneday.auth.repository.UserRepository;
 import com.oneday.auth.service.BgvService;
@@ -22,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -42,6 +46,7 @@ import static org.mockito.Mockito.when;
 class DaOnboardingServiceImplTest {
 
     private DaOnboardingCandidateRepository candidateRepo;
+    private DaOnboardingDocumentRepository documentRepo;
     private DaProfileRepository daProfileRepo;
     private UserRepository userRepo;
     private DaRegistrationService daRegistration;
@@ -52,6 +57,7 @@ class DaOnboardingServiceImplTest {
     @BeforeEach
     void setUp() {
         candidateRepo = mock(DaOnboardingCandidateRepository.class);
+        documentRepo = mock(DaOnboardingDocumentRepository.class);
         daProfileRepo = mock(DaProfileRepository.class);
         userRepo = mock(UserRepository.class);
         daRegistration = mock(DaRegistrationService.class);
@@ -64,7 +70,9 @@ class DaOnboardingServiceImplTest {
         }).when(bgvService).initiateForCandidate(any(DaOnboardingCandidate.class));
         when(candidateRepo.save(any(DaOnboardingCandidate.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
-        service = new DaOnboardingServiceImpl(candidateRepo, daProfileRepo, userRepo,
+        // By default a candidate has all mandatory documents; individual tests override to prove the gate.
+        when(documentRepo.findByCandidateIdOrderByDocType(any())).thenReturn(allRequiredDocs());
+        service = new DaOnboardingServiceImpl(candidateRepo, documentRepo, daProfileRepo, userRepo,
                 daRegistration, new OnboardingStateMachine(), bgvService, bgvProps,
                 "http://localhost:3000/onboarding");
     }
@@ -137,6 +145,19 @@ class DaOnboardingServiceImplTest {
                 .isInstanceOf(OnboardingValidationException.class)
                 .hasMessageContaining("agreement")
                 .hasMessageContaining("training");
+    }
+
+    @Test
+    void submit_missingDocuments_throws422() {
+        var c = completeDraft();   // all fields + agreement + training, but no documents
+        when(candidateRepo.findByInviteToken("tok")).thenReturn(Optional.of(c));
+        when(documentRepo.findByCandidateIdOrderByDocType(any())).thenReturn(List.of());
+        assertThatThrownBy(() -> service.submit("tok"))
+                .isInstanceOf(OnboardingValidationException.class)
+                .hasMessageContaining("document:PAN")
+                .hasMessageContaining("document:DRIVING_LICENSE");
+        assertThat(c.getStatus()).isEqualTo(OnboardingStatus.DRAFT);
+        verify(bgvService, never()).initiateForCandidate(any());
     }
 
     @Test
@@ -230,6 +251,20 @@ class DaOnboardingServiceImplTest {
         c.setEmail("riya@test.in");
         c.setStatus(OnboardingStatus.DRAFT);
         return c;
+    }
+
+    /** One uploaded document per mandatory doc type (the default the service sees in these tests). */
+    private static List<DaOnboardingDocument> allRequiredDocs() {
+        return List.of(
+                doc(OnboardingDocType.AADHAAR_FRONT), doc(OnboardingDocType.AADHAAR_BACK),
+                doc(OnboardingDocType.PAN), doc(OnboardingDocType.DRIVING_LICENSE),
+                doc(OnboardingDocType.PHOTO));
+    }
+
+    private static DaOnboardingDocument doc(OnboardingDocType type) {
+        var d = new DaOnboardingDocument();
+        d.setDocType(type);
+        return d;   // status defaults to UPLOADED
     }
 
     /** A DRAFT candidate with every field required to submit (incl. agreement + training accepted). */
