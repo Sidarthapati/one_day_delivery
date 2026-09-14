@@ -34,6 +34,11 @@ public class DaProfile {
     @Column(name = "last_name", nullable = false, length = 80)
     private String lastName;
 
+    // Human-friendly employee id (e.g. GD-DEL-1001), assigned when a candidate is onboarded via the
+    // self-service funnel. Null for DAs created through the direct admin `POST /das` path.
+    @Column(name = "employee_id", length = 40, unique = true)
+    private String employeeId;
+
     @Column(length = 20)
     private String aadhaar;
 
