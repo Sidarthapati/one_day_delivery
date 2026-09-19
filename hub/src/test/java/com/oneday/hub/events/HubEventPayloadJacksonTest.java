@@ -80,7 +80,7 @@ class HubEventPayloadJacksonTest {
     void bagCreated_roundTrips() throws Exception {
         BagCreatedEvent e = new BagCreatedEvent(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                "ODMUMBAI18", LocalDate.of(2026, 6, 27), "MUMBAI", "A-2");
+                "ODMUMBAI18", LocalDate.of(2026, 6, 27), "MUMBAI", "A-2", UUID.randomUUID());
 
         String json = mapper.writeValueAsString(e);
         assertThat(mapper.readValue(json, BagCreatedEvent.class)).isEqualTo(e);

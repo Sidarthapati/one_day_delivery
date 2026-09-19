@@ -18,11 +18,11 @@ export default defineConfig({
 });
 
 // Console URLs — env override wins; defaults are the stable Vercel aliases.
-export const CONSOLES: Record<string, string> = {
+export const CONSOLES = {
   customer: process.env.CUSTOMER_URL || 'https://godspeed-customer.vercel.app',
   business: process.env.BUSINESS_URL || 'https://godspeed-business.vercel.app',
   hub: process.env.HUB_URL || 'https://godspeed-hub.vercel.app',
   station: process.env.STATION_URL || 'https://godspeed-station.vercel.app',
   airline: process.env.AIRLINE_URL || 'https://godspeed-airline.vercel.app',
   admin: process.env.ADMIN_URL || 'https://godspeed-admin.vercel.app',
-};
+} satisfies Record<string, string>;

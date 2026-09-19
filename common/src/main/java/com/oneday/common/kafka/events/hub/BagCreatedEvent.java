@@ -8,6 +8,12 @@ import java.util.UUID;
 
 /**
  * A flight bag was opened lazily for a (flight, date, dest_hub) on a resolved stand (§7.2).
+ *
+ * <p>{@code parcelId} is set on the PER-PARCEL emit (when a parcel is placed into the bag by the
+ * sort) so M4's {@code HubEventsConsumer} can transition that shipment ORIGIN_HUB_PROCESSING →
+ * IN_TAKEOFF_BAG; it is null on the bag-level lazy-open emit (no single parcel to advance, so the
+ * consumer's {@code shipmentId==null} guard skips it). It maps to {@code HubEvent.shipmentId} via
+ * that record's {@code @JsonAlias("parcel_id")}.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record BagCreatedEvent(
@@ -17,7 +23,8 @@ public record BagCreatedEvent(
         String flightNo,
         LocalDate flightDate,
         String destHub,
-        String standNo) implements HubEventPayload {
+        String standNo,
+        UUID parcelId) implements HubEventPayload {
 
     @Override
     public HubEventType eventType() {
