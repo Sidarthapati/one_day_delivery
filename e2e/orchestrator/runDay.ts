@@ -1,11 +1,17 @@
 /**
- * Full-day A1 spine: drive one B2B DEL→HYD parcel through the entire intercity HUB_RETURN chain
- * to DROPPED, gating on the customer track between surfaces. Every transition is a real backend
- * call. Per the verified endpoint map ADMIN can drive all hub/airline/shuttle/DA/OTP endpoints, so
- * the driver authenticates as ADMIN and gates on the owner's own track token (the one endpoint
- * ADMIN cannot hit). This is the proof the rig works end-to-end; Tiers A–D layer on top.
+ * Full-day scenario runner: drives a set of B2B parcels through the entire intercity HUB_RETURN
+ * chain to a terminal state, gating on the customer track between surfaces. Every transition is a
+ * real backend call. Per the verified endpoint map ADMIN drives all hub/airline/DA/OTP endpoints;
+ * shuttle endpoints resolve the agent city from the JWT so they run as the real shuttle agents; the
+ * customer track (the one endpoint ADMIN cannot hit) is polled with the booking owner's own token.
  *
- * Prereq: `npm run seed` (writes artifacts/personas.json + a live SHIFT_1 roster). Backend up.
+ * Scenarios (coverage-first, per the plan's Tier A/B):
+ *   A1  DEL→HYD, prepaid, DA pickup + DA delivery  (the spine)
+ *   A2  HYD→DEL, prepaid  (reverse lane, 2nd business, CSHYDDEL flights)
+ *   B1  DEL→HYD, COD      (cash collected at drop)
+ *
+ * Prereq: `npm run seed` (writes artifacts/personas.json + a live SHIFT_1 roster in THIS backend
+ * instance). Backend up (single instance, under caffeinate, with the 24h pickup window). See README.
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -20,112 +26,146 @@ interface Manifest {
   shuttles: Persona[];
 }
 
+interface Scenario {
+  label: string;
+  origin: CityCode;
+  dest: CityCode;
+  cod?: number; // paise; set → COD path
+}
+
+interface Rig {
+  cp: ControlPlane;
+  adminToken: string;
+  business: Record<CityCode, { accountId: string; owner: Persona; ownerToken: string }>;
+  shuttle: Record<CityCode, { agent: Persona; token: string }>;
+}
+
 async function loadManifest(): Promise<Manifest> {
   const raw = await readFile(path.join(path.resolve(env.outDir), 'personas.json'), 'utf8');
   return JSON.parse(raw) as Manifest;
 }
 
-async function main() {
+async function buildRig(): Promise<Rig> {
   const cp = new ControlPlane();
-  const manifest = await loadManifest();
-  const del = manifest.businesses.find((b) => b.city === 'DEL');
-  if (!del) throw new Error('no DEL business in personas.json — run `npm run seed` first');
-
-  // Fresh owner token (seed-time tokens may have expired) — used only for track gating.
-  const ownerToken = (await cp.login(del.owner.email, del.owner.password)).token;
+  const m = await loadManifest();
   const adminToken = await cp.admin();
 
-  // Shuttle endpoints resolve the agent's city from its JWT (ADMIN has none → dispatches nothing),
-  // so drive them as the real DEL/HYD shuttle agents with fresh tokens. shuttles = [DEL, HYD].
-  const delShuttle = manifest.shuttles[0]!;
-  const hydShuttle = manifest.shuttles[1]!;
-  const delShuttleToken = (await cp.login(delShuttle.email, delShuttle.password)).token;
-  const hydShuttleToken = (await cp.login(hydShuttle.email, hydShuttle.password)).token;
+  const business = {} as Rig['business'];
+  for (const b of m.businesses) {
+    const ownerToken = (await cp.login(b.owner.email, b.owner.password)).token;
+    business[b.city] = { accountId: b.accountId, owner: b.owner, ownerToken };
+  }
+  // shuttles are seeded [DEL, HYD]; resolve by the persona's city.
+  const shuttle = {} as Rig['shuttle'];
+  for (const s of m.shuttles) {
+    const city = (s.city ?? (s.email.includes('del') ? 'DEL' : 'HYD')) as CityCode;
+    const token = (await cp.login(s.email, s.password)).token;
+    shuttle[city] = { agent: s, token };
+  }
+  return { cp, adminToken, business, shuttle };
+}
 
-  const origin = spreadCoords('DEL', 1, 101)[0]!;
-  const dest = spreadCoords('HYD', 1, 202)[0]!;
+/** Drive one parcel origin→dest to DROPPED. Returns its final ref. */
+async function runParcel(rig: Rig, s: Scenario, index: number): Promise<string> {
+  const { cp, adminToken } = rig;
+  const biz = rig.business[s.origin];
+  const originShuttle = rig.shuttle[s.origin];
+  const destShuttle = rig.shuttle[s.dest];
+  const ownerToken = biz.ownerToken;
+  const tag = `[${s.label}]`;
+  const log = (msg: string) => console.log(`${tag} ${msg}`);
 
-  // 1 ── BOOK (as the B2B owner) → BOOKED, then auto PICKUP_ASSIGNED.
-  const body = buildBooking({ b2bAccountId: del.accountId, originCity: 'DEL', destCity: 'HYD', origin, dest, index: 1 });
-  const booking = await cp.book({ ...del.owner, token: ownerToken }, body);
-  const ref = booking.shipment_ref;
-  log(`BOOKED  ${ref}`);
+  const origin = spreadCoords(s.origin, 1, 100 + index)[0]!;
+  const dest = spreadCoords(s.dest, 1, 200 + index)[0]!;
+
+  // 1 ── BOOK → BOOKED → PICKUP_ASSIGNED.
+  const body = buildBooking({
+    b2bAccountId: biz.accountId, originCity: s.origin, destCity: s.dest, origin, dest, index, cod: s.cod,
+  });
+  const ref = (await cp.book({ ...biz.owner, token: ownerToken }, body)).shipment_ref;
+  log(`BOOKED ${ref}${s.cod ? ` (COD ₹${(s.cod / 100).toFixed(0)})` : ''}`);
   await cp.waitForState(ref, ownerToken, 'PICKUP_ASSIGNED');
-  log('→ PICKUP_ASSIGNED (auto M5 assignment)');
 
-  // 2 ── PICKUP DA: resolve the auto-assigned task, en-route/arrived, verify pickup OTP → PICKED_UP.
+  // 2 ── Pickup DA: en-route/arrived + pickup OTP → PICKED_UP.
   const pickup = await pollTask(ref, 'PICKUP');
   await cp.api.post(`/dispatch/da/${pickup.daId}/tasks/${pickup.taskId}/en-route`, undefined, { token: adminToken });
   await cp.api.post(`/dispatch/da/${pickup.daId}/tasks/${pickup.taskId}/arrived`, undefined, { token: adminToken });
-  const pickupOtp = await cp.peekPickupOtp(ref);
-  await cp.api.post(`/internal/v1/shipments/${ref}/pickup-otp/verify`, { otp: pickupOtp }, { token: adminToken });
+  await cp.api.post(`/internal/v1/shipments/${ref}/pickup-otp/verify`, { otp: await cp.peekPickupOtp(ref) }, { token: adminToken });
   await cp.waitForState(ref, ownerToken, 'PICKED_UP');
-  log('→ PICKED_UP (pickup OTP verified)');
 
-  // 3 ── DA hands off at origin hub (HUB_RETURN, no van) → RETURNED_TO_HUB.
+  // 3 ── DA hub handoff (HUB_RETURN) → RETURNED_TO_HUB.
   await cp.api.post(`/dispatch/da/${pickup.daId}/tasks/${pickup.taskId}/hub-handoff`, { parcel_scans: [ref] }, { token: adminToken });
   await cp.waitForState(ref, ownerToken, 'RETURNED_TO_HUB');
-  log('→ RETURNED_TO_HUB (hub handoff)');
 
-  // 4 ── Origin hub receive → AT_ORIGIN_HUB → ORIGIN_HUB_PROCESSING → IN_TAKEOFF_BAG (sort ladder).
-  await cp.api.post(`/hub/${CITY_UUID.DEL}/receive`, { shipment_ref: ref }, { token: adminToken });
+  // 4 ── Origin hub receive → IN_TAKEOFF_BAG (sort ladder + per-parcel bag).
+  await cp.api.post(`/hub/${CITY_UUID[s.origin]}/receive`, { shipment_ref: ref }, { token: adminToken });
   await cp.waitForState(ref, ownerToken, 'IN_TAKEOFF_BAG');
-  log('→ IN_TAKEOFF_BAG (origin hub receive + sort)');
 
-  // 5 ── Seal the flight bag (→ BAG_SEALED → AWB booked via RabbitMQ). Then shuttle to airport.
+  // 5 ── Seal bag → shuttle to airport → DISPATCHED_TO_AIRPORT.
   const bag = await pollFlightBag(ref);
-  await cp.api.post(`/hub/${CITY_UUID.DEL}/bags/${bag.bagId}/seal`, undefined, { token: adminToken });
-  log(`sealed flight bag ${bag.bagId.slice(0, 8)} (flight ${bag.flightNo} ${bag.flightDate})`);
-  await cp.api.post(`/shuttle/${delShuttle.userId}/out-to-airport`, { bag_ids: [bag.bagId] }, { token: delShuttleToken });
+  await cp.api.post(`/hub/${CITY_UUID[s.origin]}/bags/${bag.bagId}/seal`, undefined, { token: adminToken });
+  await cp.api.post(`/shuttle/${originShuttle.agent.userId}/out-to-airport`, { bag_ids: [bag.bagId] }, { token: originShuttle.token });
   await cp.waitForState(ref, ownerToken, 'DISPATCHED_TO_AIRPORT');
-  log('→ DISPATCHED_TO_AIRPORT (shuttle out)');
+  log(`bag ${bag.bagId.slice(0, 8)} on ${bag.flightNo} ${bag.flightDate} → airport`);
 
-  // 6 ── Airline: AWB (booked async on seal) → GHA accepted → AT_AIRPORT.
+  // 6 ── AWB (async on seal) → GHA accepted → AT_AIRPORT.
   const awb = await pollAwbByBag(bag.bagId, adminToken);
-  // Stamp a human AWB number (cosmetic) — best-effort: the flight may already be stamped by an
-  // earlier parcel on the same flight (409). GHA-accept keys off awbId, not the stamped number.
   try {
     await cp.api.post(`/airline/flights/${bag.flightNo}/${bag.flightDate}/awb`, { awb_no: `AWB${Date.now()}` }, { token: adminToken });
-  } catch { /* already stamped for this flight — fine */ }
+  } catch { /* flight already stamped by an earlier parcel — cosmetic */ }
   await cp.api.post(`/airline/awb/${awb.id}/gha-accepted`, undefined, { token: adminToken });
   await cp.waitForState(ref, ownerToken, 'AT_AIRPORT');
-  log(`→ AT_AIRPORT (AWB ${awb.id.slice(0, 8)} GHA-accepted)`);
 
-  // 7 ── Flight time-travel → DEPARTED → LANDED.
+  // 7 ── Flight time-travel → LANDED.
   await cp.departAndLand(bag.flightNo, bag.flightDate);
   await cp.waitForState(ref, ownerToken, 'LANDED');
-  log('→ LANDED (flight time-travel + force-poll)');
 
-  // 8 ── Dest shuttle collects from airport → DISPATCHED_TO_HUB.
-  await cp.api.post(`/shuttle/${hydShuttle.userId}/awbs/${awb.id}/collect-from-airport`, undefined, { token: hydShuttleToken });
+  // 8 ── Dest shuttle collect → DISPATCHED_TO_HUB.
+  await cp.api.post(`/shuttle/${destShuttle.agent.userId}/awbs/${awb.id}/collect-from-airport`, undefined, { token: destShuttle.token });
   await cp.waitForState(ref, ownerToken, 'DISPATCHED_TO_HUB');
-  log('→ DISPATCHED_TO_HUB (dest shuttle collect)');
 
-  // 9 ── Dest hub receive/break → AT_DEST_HUB → DEST_HUB_PROCESSING → HUB_DELIVERY_ASSIGNED (auto).
-  await cp.api.post(`/hub/${CITY_UUID.HYD}/receive`, { shipment_ref: ref }, { token: adminToken });
+  // 9 ── Dest hub receive → HUB_DELIVERY_ASSIGNED (auto HUB_RETURN delivery assign).
+  await cp.api.post(`/hub/${CITY_UUID[s.dest]}/receive`, { shipment_ref: ref }, { token: adminToken });
   await cp.waitForState(ref, ownerToken, 'HUB_DELIVERY_ASSIGNED');
-  log('→ HUB_DELIVERY_ASSIGNED (dest hub sort → HUB_RETURN delivery assign)');
 
-  // 10 ── Dest DA collects from hub → COLLECTED_FROM_HUB, then delivery OTP → DROPPED.
+  // 10 ── Dest DA hub-collect → COLLECTED_FROM_HUB, then delivery OTP → DROPPED.
   const delivery = await pollTask(ref, 'DELIVERY');
   await cp.api.post(`/dispatch/da/${delivery.daId}/tasks/${delivery.taskId}/hub-collect`, undefined, { token: adminToken });
   await cp.waitForState(ref, ownerToken, 'COLLECTED_FROM_HUB');
-  log('→ COLLECTED_FROM_HUB (dest DA hub-collect)');
-
-  // (en-route/arrived are PICKUP-only; a DELIVERY task goes straight from hub-collect to OTP + drop.)
-  const deliveryOtp = await cp.peekDeliveryOtp(ref);
-  await cp.api.post(`/internal/v1/shipments/${ref}/delivery-otp/verify`, { otp: deliveryOtp }, { token: adminToken });
-  await cp.api.post(`/dispatch/da/${delivery.daId}/tasks/${delivery.taskId}/drop-completed`, { cod_collected: false }, { token: adminToken });
+  await cp.api.post(`/internal/v1/shipments/${ref}/delivery-otp/verify`, { otp: await cp.peekDeliveryOtp(ref) }, { token: adminToken });
+  await cp.api.post(`/dispatch/da/${delivery.daId}/tasks/${delivery.taskId}/drop-completed`, { cod_collected: !!s.cod }, { token: adminToken });
   await cp.waitForState(ref, ownerToken, 'DROPPED');
-  log('→ DROPPED ✅  A1 spine complete');
+  log(`→ DROPPED ✅${s.cod ? ' (COD collected)' : ''}`);
+  return ref;
+}
+
+const SCENARIOS: Scenario[] = [
+  { label: 'A1 DEL→HYD prepaid', origin: 'DEL', dest: 'HYD' },
+  { label: 'A2 HYD→DEL prepaid', origin: 'HYD', dest: 'DEL' },
+  { label: 'B1 DEL→HYD COD', origin: 'DEL', dest: 'HYD', cod: 150000 },
+];
+
+async function main() {
+  const rig = await buildRig();
+  const results: { label: string; ok: boolean; ref?: string; error?: string }[] = [];
+  for (let i = 0; i < SCENARIOS.length; i++) {
+    const s = SCENARIOS[i]!;
+    try {
+      const ref = await runParcel(rig, s, i + 1);
+      results.push({ label: s.label, ok: true, ref });
+    } catch (e) {
+      results.push({ label: s.label, ok: false, error: e instanceof Error ? e.message : String(e) });
+      console.error(`[${s.label}] FAILED:`, e instanceof Error ? e.message : e);
+    }
+  }
+  console.log('\n════ full-day scenario summary ════');
+  for (const r of results) console.log(`  ${r.ok ? '✅' : '❌'} ${r.label}${r.ref ? `  ${r.ref}` : ''}${r.error ? `  — ${r.error.slice(0, 80)}` : ''}`);
+  const passed = results.filter((r) => r.ok).length;
+  console.log(`  ${passed}/${results.length} scenarios reached DROPPED`);
+  if (passed !== results.length) process.exitCode = 1;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
-function log(msg: string) {
-  console.log(`[runDay] ${msg}`);
-}
-
-/** Task rows land a beat after the state event — poll the dispatch queue until the task appears. */
 async function pollTask(ref: string, type: string, tries = 30): Promise<{ taskId: string; daId: string }> {
   for (let i = 0; i < tries; i++) {
     const t = await resolveTask(ref, type);
@@ -150,14 +190,13 @@ async function pollAwbByBag(bagId: string, token: string, tries = 40): Promise<{
     try {
       return await cp.api.get<{ id: string }>(`/airline/awb/by-bag/${bagId}`, { token });
     } catch {
-      await sleep(1500); // AWB is booked async off the BAG_SEALED RabbitMQ event.
+      await sleep(1500); // AWB booked async off the BAG_SEALED RabbitMQ event.
     }
   }
   throw new Error(`no AWB for bag ${bagId} after ${tries} tries (RabbitMQ BAG_SEALED consumer?)`);
 }
 
 main()
-  .then(() => log('done'))
   .catch((e) => {
     console.error(e);
     process.exitCode = 1;
