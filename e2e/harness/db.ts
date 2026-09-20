@@ -64,6 +64,25 @@ export async function timeTravelFlight(flightNo: string, flightDate: string): Pr
   );
 }
 
+/**
+ * Reset today's flights on a lane to a feasible future SCHEDULED state before a booking. Each run's
+ * `departAndLand` pushes its flight's departure into the PAST to land it; a later booking on the same
+ * lane then finds no future-departing flight and the M5 cron-meeting constraint refuses to assign it
+ * (parcel sits at BOOKED). Re-futuring the lane's flights before each booking makes the harness
+ * repeatable across scenarios and re-runs on the same day. departAndLand still lands the specific
+ * flight afterwards. Future window is wide (dep +5h) so the cutoff (dep − hub lead) stays ahead.
+ */
+export async function resetLaneFlightsToFuture(originIata: string, destIata: string): Promise<void> {
+  await getPool().query(
+    `UPDATE flight_instance
+        SET status    = 'SCHEDULED',
+            departure = now() + interval '5 hours',
+            arrival   = now() + interval '6 hours'
+      WHERE flight_no LIKE $1 AND flight_date = CURRENT_DATE`,
+    [`CS${originIata}${destIata}%`],
+  );
+}
+
 /** Look up a user id by email — used to make persona registration idempotent (re-runnable seed). */
 export async function findUserIdByEmail(email: string): Promise<string | null> {
   const rows = await getPool().query<{ id: string }>('SELECT id FROM users WHERE email = $1', [email]);

@@ -68,21 +68,27 @@ async function main() {
   }
   console.log(`personas: ${das.length} DAs, ${hubOps.length} hub ops, station, gha, ${shuttles.length} shuttle agents`);
 
-  // 3. Grid hex plan for TODAY + SHIFT_1 (required for pickup auto-assignment + shift-load).
-  //    Must pass the shift's DA ids explicitly — see ControlPlane.replanAndApproveGrid.
-  for (const city of CITIES) {
-    const shift1DaIds = das.filter((d) => d.city === city && d.shift === 'SHIFT_1').map((d) => d.userId);
-    await cp.replanAndApproveGrid(city, reviewerId, { date: today, shift: 'SHIFT_1', daIds: shift1DaIds });
+  // 3 + 4. Grid hex plan + roster + presence for BOTH shifts, so a booking auto-assigns no matter
+  //    the hour of day: dispatch resolves the shift from the current IST time (SHIFT_1 06–14,
+  //    SHIFT_2 14–22) and only assigns to a DA who is on THAT shift and present. Provisioning just
+  //    one shift means bookings in the other shift's window sit stuck at BOOKED. Must pass each
+  //    shift's DA ids explicitly to replan — see ControlPlane.replanAndApproveGrid.
+  for (const shift of ['SHIFT_1', 'SHIFT_2'] as Shift[]) {
+    for (const city of CITIES) {
+      const shiftDaIds = das.filter((d) => d.city === city && d.shift === shift).map((d) => d.userId);
+      await cp.replanAndApproveGrid(city, reviewerId, { date: today, shift, daIds: shiftDaIds });
+    }
+    await cp.shiftLoad(shift, today);
+    for (const da of das.filter((d) => d.shift === shift)) {
+      // Off-window check-in may be rejected (e.g. SHIFT_1 during SHIFT_2 hours); the current shift's
+      // DAs — the ones a booking right now needs — always succeed, so tolerate the rest.
+      try {
+        await cp.daCheckIn(da);
+        await cp.daGps(da);
+      } catch { /* off-shift check-in rejected — fine, that shift isn't current */ }
+    }
   }
-  console.log('grid: replanned + approved DEL + HYD (today, SHIFT_1)');
-
-  // 4. Load SHIFT_1 roster and bring its DAs present.
-  await cp.shiftLoad('SHIFT_1', today);
-  for (const da of das.filter((d) => d.shift === 'SHIFT_1')) {
-    await cp.daCheckIn(da);
-    await cp.daGps(da);
-  }
-  console.log('shift: SHIFT_1 loaded, DAs checked in');
+  console.log('grid + shift: SHIFT_1 & SHIFT_2 replanned, loaded, DAs checked in (current shift live)');
 
   // 5. Provision 2 B2B accounts (DEL + HYD owners) — onboarding auto-approves (pan = gstin[2..12]),
   //    then credit + rate card are set so CREDIT bookings price + pass. Captured for booking.

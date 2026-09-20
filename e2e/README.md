@@ -1,55 +1,105 @@
 # Godspeed Full-Day E2E
 
 Automates a realistic delivery day (DEL↔HYD, HUB_RETURN) across all three repos. Design +
-scenario matrix: [`docs/e2e/FULL-DAY-E2E.md`](../docs/e2e/FULL-DAY-E2E.md). How it's built:
-[`~/.claude/plans/…full-day-e2e…`](../docs/e2e/FULL-DAY-E2E.md) (plan) — summarised here.
+scenario matrix: [`docs/e2e/FULL-DAY-E2E.md`](../docs/e2e/FULL-DAY-E2E.md).
 
-**Model:** Playwright drives the 6 web consoles; Maestro drives the DA + shuttle mobile personas
-on an Android emulator; a thin **control plane** (this package) does only the screenless steps
-(seeding, state-gating, flight time-travel, OTP peek). Business actions are all real UI clicks/taps.
+**Model:** Playwright drives the web consoles (business/hub/airline today); Maestro drives the DA +
+shuttle mobile personas (pending); a thin **control plane** (this package) does the screenless steps
+— seeding, state-gating on the customer track, flight time-travel, OTP peek. Every step that has a
+screen is a real UI click; the personas that don't (DA/shuttle mobile, the clock) run on the control
+plane until Maestro lands.
 
 ## Layout
 ```
 harness/        reusable TS lib — ApiClient, ControlPlane, db (pg), factories, wait, constants, types
-orchestrator/   seed.ts (bring-up), runDay.ts (the day; WIP)
-playwright/     web-console POMs + specs (extends the existing consoles smoke)
-maestro/        DA + shuttle flows
+orchestrator/   seed.ts (bring-up), runDay.ts (control-plane-only day runner)
+playwright/     pom/ (LoginPage, BusinessShipPage, HubConsole, AirlineConsole) + tests/
+                  a1-spine.web.spec.ts  — full pipeline through the web consoles (hybrid)
+                  consoles.smoke.spec.ts — 6-console load smoke
+maestro/        DA + shuttle flows (pending)
 ```
 
 ## Prerequisites
-- **Backend** running locally (JDK 21, no active profile so `!prod` dev beans are on) against the
-  dedicated **`oneday-db-e2e`** Postgres + a **`consolidator`** DB inside it + the **CloudAMQP
-  `puffin`** broker. RabbitMQ + consolidator are mandatory for the airline leg.
-- **Web** consoles via `pnpm dev` (Node 20, pnpm 9.15.9), `NEXT_PUBLIC_API_BASE_URL` → the backend,
-  `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` set (business ship form needs it). Airline on a non-3003 port.
-- **Mobile**: Android emulator + a **development** dev-client APK (`expo run:android`) with
-  `EXPO_PUBLIC_API_URL=http://10.0.2.2:8080 EXPO_PUBLIC_ALLOW_EMULATOR=true EXPO_PUBLIC_MOCK_SCANNER=true`.
-- Node 20 + `npm install` here; Maestro CLI on PATH.
+
+### 1. Backend (local, JDK 21) against oneday-db-e2e + puffin
+Boot it under `caffeinate` (a local backend + the remote Render DB + an idle Mac means macOS sleeps
+mid-work and severs the connection). Three JVM flags relax clock-driven gates so the harness runs at
+any hour — see `.env.backend` for the full rationale:
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21
+set -a; source e2e/.env.backend; set +a
+caffeinate -is "$JAVA_HOME/bin/java" \
+  -Dgodspeed.pickup.operating-start-hour=0 -Dgodspeed.pickup.operating-end-hour=24 \
+  -Dhub.hub-departure-lead-minutes=60 -Ddispatch.da.absent-threshold-minutes=1440 \
+  -jar app/target/app-1.0.0-SNAPSHOT.jar
+```
+> Pass the `-D` flags as **literal separate tokens** (not `$E2E_JAVA_OPTS` — sourcing word-splits and
+> merges them). Only **one** backend instance may run (competing RabbitMQ consumers break the flow):
+> `for p in $(pgrep -f "bin/java.*app-1.0.0-SNAPSHOT.jar"); do kill -9 $p; done; pkill -9 -f "caffeinate -is"`.
+
+### 2. Consoles (local `pnpm dev`, in the `oneday-web` repo)
+Each app's `.env.local` sets `NEXT_PUBLIC_API_BASE_URL=http://localhost:8080`; business/customer also
+carry `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (the ship form's map + Places autocomplete need it — verified
+working on localhost). Ports mirror `harness/env.ts`; **airline collides with business on 3003 → run
+it on 3005**:
+```bash
+cd ../oneday-web
+pnpm --filter business dev      # :3003   (book — the hero UI)
+pnpm --filter hub      dev      # :3001   (receive, flight-bag seal, delivery-bag seal)
+pnpm --filter airline  dev -- -p 3005   # (AWB + GHA)  ← the `-p 3005` passthrough is blocked by its
+#   hardcoded `-p 3003`; if it fails, run directly: (cd apps/airline && pnpm exec next dev -p 3005)
+pnpm --filter customer dev      # :3000   (smoke only)
+pnpm --filter station  dev      # :3002   (smoke only)
+pnpm --filter admin    dev      # :3004   (smoke only)
+```
+
+### 3. Mobile (pending — Maestro)
+Android emulator + a **development** dev-client APK (`expo run:android`) with
+`EXPO_PUBLIC_API_URL=http://10.0.2.2:8080 EXPO_PUBLIC_ALLOW_EMULATOR=true EXPO_PUBLIC_MOCK_SCANNER=true`.
 
 ## Run
 ```bash
-cp .env.example .env      # fill BACKEND_URL, E2E_DATABASE_URL, console URLs
 npm install
-npm run typecheck         # harness + orchestrator compile
-npm run seed              # control-plane bring-up → artifacts/personas.json
-npm run smoke             # existing 6-console load smoke (deployed or local via *_URL env)
-npm run day               # full day (WIP)
-```
+npx playwright install chromium
+npm run typecheck                 # harness + orchestrator + POMs/specs compile
+npm run seed                      # control-plane bring-up → artifacts/personas.json
+                                  #   (re-run any time; idempotent. Seeds BOTH shifts so a booking
+                                  #    auto-assigns whatever the current IST hour.)
 
-## Status
-- **Done + VALIDATED LIVE (Phase 0, 2026-09-19):** full stack up against oneday-db-e2e + puffin +
-  the `consolidator_mock` schema. Control-plane path proven end-to-end: admin auth → HUB_RETURN both
-  cities → 16 DAs + 2 hub ops + station + gha + 2 shuttles registered → grid replan+approve (today +
-  shift + explicit daIds → 3466 hex rows/city, 100% coverage) → shift-load → DA check-in `PRESENT`.
-  Backend `!prod` force-poll endpoint added. Typechecks clean.
-- **🔴 Run the backend under `caffeinate -is`** — a local backend + the remote Render DB + an idle
-  Mac means macOS sleeps mid-migration and severs the connection (the ~130-migration from-scratch
-  boot takes minutes). Boot: `export JAVA_HOME=/opt/homebrew/opt/openjdk@21; set -a; source
-  e2e/.env.backend; set +a; caffeinate -is "$JAVA_HOME/bin/java" -jar app/target/app-*.jar`.
-- **Two seed invariants (baked into the harness):** DAs register with the grid.cities KEY form
-  (`delhi`/`hyderabad`, not IATA `DEL`) or the roster/shift-load never find them; grid replan needs
-  explicit `{date:today, shift, daIds}` (empty body → tomorrow + empty plan). Shuttle agents keep IATA.
-- **Pending live backend:** clean seed re-run (needs a fresh DB or an idempotent seed — registration
-  isn't idempotent yet); `ControlPlane.provisionB2bAccount` (onboarding→approve→credit) still a stub.
-- **Next:** web `data-testid`s + Playwright POMs; driver-app mock-scanner + `testID`s + fixed Maestro
-  flows (Maestro CLI installed); `runDay.ts` (A1 spine); then Tiers A/B → C → D → CI.
+# Web pipeline (hybrid: real consoles + control plane), needs backend + business/hub/airline up:
+npx playwright test -c playwright/playwright.config.ts -g "prepaid|COD"
+
+npm run smoke                     # 6-console load smoke (needs all 6 consoles up, or override *_URL)
+npm run day                       # control-plane-only day runner (no browser)
+npm run report                    # open the Playwright HTML report
+```
+Evidence lands in `artifacts/playwright/` — `milestones/` (a screenshot per surface per scenario),
+`report/` (HTML), `test-results/` (trace + video on failure).
+
+## Scenarios (all green through the web consoles)
+| ID | Lane | Pay | Web surfaces driven |
+|----|------|-----|---------------------|
+| A1 | DEL→HYD | prepaid | business book · hub receive+seal ×2 · airline AWB+GHA · hub delivery seal |
+| A2 | HYD→DEL | prepaid | same, reverse lane (2nd business, CSHYDDEL flights) |
+| B1 | DEL→HYD | COD | same + COD toggle at booking, cash collected at drop |
+
+Each parcel traverses all 14 HUB_RETURN states to DROPPED; the DA-pickup, DA-delivery, shuttle, and
+flight steps run on the control plane (Maestro will take the two DA/shuttle mobile ones).
+
+## Gotchas (hard-won — keep)
+- **DA `city_id`** registers as the grid.cities KEY form (`delhi`/`hyderabad`), not IATA — else the
+  roster/shift-load never find the DA. **Shuttle agents keep IATA** (`DEL`/`HYD`).
+- **Grid replan** needs explicit `{date:today, shift, daIds}` (empty body → tomorrow + empty plan).
+- **Seed provisions BOTH shifts** (SHIFT_1 06–14, SHIFT_2 14–22 IST); dispatch resolves the shift
+  from the current time and only assigns to an on-shift, present DA.
+- **Clock gates** (all relaxed by the `-D` flags above): off-hours pickup hold; the 5h hub-departure
+  lead that makes the last DEL↔HYD flight (22:00) unbookable after ~17:00; and the 15-min GPS
+  absent-sweep that silently drops DA presence mid-session.
+- **Flight re-use:** `departAndLand` pushes a flight's departure into the past to land it, so the
+  spec calls `resetLaneFlightsToFuture` before each booking — else a later booking on that lane finds
+  no future flight and won't assign.
+- **Hub picker** (`od_hub_selected`) is per-origin localStorage; switch hubs only while on the hub
+  origin (the POM lands there first). **Shuttle out-to-airport** waits for the AWB to be booked first
+  (racing the async BAG_SEALED processing transiently poisons its transaction).
+- **Mantine**: no `data-testid`s in the app — POMs use roles/labels/text; toggle a Switch by clicking
+  `.mantine-Switch-track`; login fills retry against Next.js hydration resetting an early fill.
