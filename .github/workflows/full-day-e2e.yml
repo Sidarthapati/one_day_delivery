@@ -110,6 +110,13 @@ jobs:
         # Skip tests here (CI's ci.yml already runs the unit suite); we just need the runnable jar.
         run: mvn -pl app -am install -DskipTests -DexcludedGroups=e2e --batch-mode --no-transfer-progress
 
+      - name: Pre-declare RabbitMQ topology
+        # A virgin broker has no queues, and the app's RabbitAdmin only partially declares them on an
+        # empty vhost (fresh-vhost race → m5.shipments etc. stuck NOT_FOUND, so bookings never reach
+        # PICKUP_ASSIGNED). Declare the exact topology first so every consumer finds its queue and the
+        # app's re-declaration is idempotent. Invisible locally (puffin has the queues persisted).
+        run: python3 e2e/ci/declare-rabbit-topology.py
+
       - name: Boot backend (hermetic)
         # dev profile keeps every @Profile("!prod") bean on (GridSeeder, DevOtp/force-poll, mock
         # payment) and binds the broker to CLOUDAMQP_URL. GridSeeder seeds the 5 city H3 grids and the
