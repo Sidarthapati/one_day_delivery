@@ -86,6 +86,27 @@ npm run report                    # open the Playwright HTML report
 Evidence lands in `artifacts/playwright/` — `milestones/` (a screenshot per surface per scenario),
 `report/` (HTML), `test-results/` (trace + video on failure).
 
+## CI (GitHub Actions)
+
+`.github/workflows/full-day-e2e.yml` runs the web pipeline (A1 spine + COD) on **every PR to `main`**
+against a **hermetic stack spun fresh per run** — `postgres:16` + `rabbitmq:3-management` service
+containers, the Spring jar booted in the runner (dev profile, the four relax-clock `-D` flags), and
+the business/hub/airline consoles built from a cross-repo checkout of `oneday-web` and served with
+`next start`. No Render/puffin dependency. Flyway builds the schema (and the `consolidator_mock`
+schema, via `ConsolidatorDataSourceConfig.schemas(...)`) on first boot; the consolidator seeds flight
+legs and GridSeeder seeds the 5 city grids at startup.
+
+**Two repo secrets are required** (Settings → Secrets and variables → Actions):
+- **`ONEDAY_CI`** — a read-only token that can `checkout` the private `oneday-web` repo (the default
+  `GITHUB_TOKEN` can't read another repo).
+- **`GOOGLE_MAPS_API_KEY`** — the business ship form only mounts with Maps and books via Places
+  autocomplete. The key **must permit the CI origin** (`http://localhost:3003`); a referrer-restricted
+  key blocks Places in the runner and A1 fails at booking.
+
+The Maestro/mobile leg is **not** in this workflow — it needs an Android emulator and runs as a
+separate job (to be added). The older `e2e.yml` (backend `@Tag("e2e")` suites) and `playwright.yml`
+(smoke over the deployed Vercel consoles) are unrelated `workflow_dispatch` jobs, left as-is.
+
 ## Scenarios (all green through the web consoles)
 | ID | Lane | Pay | Web surfaces driven |
 |----|------|-----|---------------------|

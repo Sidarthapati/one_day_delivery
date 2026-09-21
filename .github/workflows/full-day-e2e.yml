@@ -1,0 +1,215 @@
+name: Full-Day E2E (hermetic)
+
+# The full-day intercity HUB_RETURN pipeline (DEL→HYD) driven through the REAL web consoles by
+# Playwright, against a backend + Postgres + RabbitMQ spun FRESH per run — no shared Render/puffin
+# dependency, deterministic. This is the web half of the hybrid harness (e2e/); the Maestro/mobile
+# leg needs an Android emulator and runs as a separate job (not here yet).
+#
+# Two repo secrets are required (add them under Settings → Secrets and variables → Actions):
+#   ONEDAY_CI           — a read-only PAT/deploy token that can `checkout` the private oneday-web repo
+#                         (the consoles live there). The default GITHUB_TOKEN cannot read another repo.
+#   GOOGLE_MAPS_API_KEY — the business ship form only mounts with Maps, and booking goes through
+#                         Places autocomplete. The key MUST allow the CI origin (http://localhost:3003)
+#                         — a referrer-restricted key blocks Places in the runner and A1 fails at book.
+#
+# Runs on every PR to main (docs-only PRs skipped) + manual dispatch.
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One in-flight run per PR; a new push cancels the previous run.
+concurrency:
+  group: full-day-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-e2e:
+    name: Web pipeline (hermetic backend + consoles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # Explicit IST — shift resolution and the clock gates are IST-based; match the local run.
+    env:
+      TZ: Asia/Kolkata
+      # Backend under test + control-plane pg client → the SAME hermetic Postgres service below.
+      BACKEND_URL: http://localhost:8080
+      E2E_DATABASE_URL: postgres://oneday@localhost:5432/oneday
+      # Console URLs (business & airline both default to 3003 → airline moved to 3005).
+      BUSINESS_URL: http://localhost:3003
+      HUB_URL: http://localhost:3001
+      AIRLINE_URL: http://localhost:3005
+      CUSTOMER_URL: http://localhost:3000
+      STATION_URL: http://localhost:3002
+      ADMIN_URL: http://localhost:3004
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # trust auth → the empty password the backend + pg client pass is accepted.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: oneday
+          POSTGRES_DB: oneday
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U oneday"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      rabbitmq:
+        # Mandatory: the airline AWB leg is a BAG_SEALED consumer — no broker → the flight leg stalls.
+        image: rabbitmq:3-management
+        ports: ['5672:5672', '15672:15672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+
+      - name: Checkout oneday-web (the six consoles)
+        uses: actions/checkout@v4
+        with:
+          repository: Sidarthapati/oneday-web
+          ref: main
+          token: ${{ secrets.ONEDAY_CI }}
+          path: oneday-web
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: oneday-web/pnpm-lock.yaml
+
+      - name: Install OpenCV native runtime deps
+        # The full app boots the vision module; without highgui's GTK2/GL deps the ArUco engine
+        # self-reports unavailable (graceful) — install them so the context comes up clean.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libgomp1 libglib2.0-0 libsm6 libxext6 libxrender1
+          sudo apt-get install -y libgtk2.0-0t64 || sudo apt-get install -y libgtk2.0-0
+
+      - name: Build backend jar
+        # Skip tests here (CI's ci.yml already runs the unit suite); we just need the runnable jar.
+        run: mvn -pl app -am install -DskipTests -DexcludedGroups=e2e --batch-mode --no-transfer-progress
+
+      - name: Boot backend (hermetic)
+        # dev profile keeps every @Profile("!prod") bean on (GridSeeder, DevOtp/force-poll, mock
+        # payment) and binds the broker to CLOUDAMQP_URL. GridSeeder seeds the 5 city H3 grids and the
+        # consolidator seeds today..+89d flight legs on boot. The four -D flags relax the clock gates
+        # (off-hours pickup hold, 5h hub-departure lead, 15-min GPS absent-sweep) — see e2e/.env.backend.
+        env:
+          SPRING_PROFILES_ACTIVE: dev
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/oneday
+          SPRING_DATASOURCE_USERNAME: oneday
+          SPRING_DATASOURCE_PASSWORD: ''
+          CONSOLIDATOR_DATASOURCE_URL: jdbc:postgresql://localhost:5432/oneday?currentSchema=consolidator_mock
+          CONSOLIDATOR_DATASOURCE_USERNAME: oneday
+          CONSOLIDATOR_DATASOURCE_PASSWORD: ''
+          CLOUDAMQP_URL: amqp://guest:guest@localhost:5672
+          RAZORPAY_LIVE: 'false'
+          GODSPEED_CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3004,http://localhost:3005
+          CUSTOMER_LANDING_BASE_URL: http://localhost:3000
+        run: |
+          # Pass the -D flags as LITERAL separate tokens (a single joined string is one bad property).
+          nohup java \
+            -Dgodspeed.pickup.operating-start-hour=0 -Dgodspeed.pickup.operating-end-hour=24 \
+            -Dhub.hub-departure-lead-minutes=60 -Ddispatch.da.absent-threshold-minutes=1440 \
+            -jar app/target/app-*.jar > backend.log 2>&1 &
+          echo $! > backend.pid
+          echo "Waiting for backend on :8080 (Flyway builds the schema from scratch on first boot)…"
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1 \
+               || curl -sf http://localhost:8080/ >/dev/null 2>&1; then
+              echo "Backend up after ${i}0s"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Backend did not come up in time"; tail -n 200 backend.log; exit 1
+
+      - name: Install web deps
+        working-directory: oneday-web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build consoles (business, hub, airline)
+        working-directory: oneday-web
+        # NEXT_PUBLIC_* inline at BUILD time — the API base + Maps key must be set here, not just at start.
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8080
+          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          NEXT_PUBLIC_CUSTOMER_SITE_URL: http://localhost:3000
+        run: pnpm --filter business --filter hub --filter airline build
+
+      - name: Start consoles
+        working-directory: oneday-web
+        # `next start` serves the prebuilt output (no compile-on-request flakiness). Airline's own
+        # start script hardcodes -p 3003, so invoke next directly per app to place them on fixed ports.
+        run: |
+          (cd apps/business && nohup pnpm exec next start -p 3003 > ../../business.log 2>&1 &)
+          (cd apps/hub      && nohup pnpm exec next start -p 3001 > ../../hub.log 2>&1 &)
+          (cd apps/airline  && nohup pnpm exec next start -p 3005 > ../../airline.log 2>&1 &)
+          for port in 3003 3001 3005; do
+            echo "Waiting for console on :${port}…"
+            up=0
+            for i in $(seq 1 40); do
+              if curl -sf "http://localhost:${port}" >/dev/null 2>&1; then up=1; echo "  :${port} up"; break; fi
+              sleep 3
+            done
+            if [ "$up" -ne 1 ]; then echo "::error::Console :${port} did not start"; exit 1; fi
+          done
+
+      - name: Install e2e harness deps
+        working-directory: e2e
+        run: npm install
+
+      - name: Install Playwright (chromium)
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Seed control plane
+        working-directory: e2e
+        run: npm run seed
+
+      - name: Run full-day web pipeline (A1 spine + COD)
+        working-directory: e2e
+        run: npx playwright test -c playwright/playwright.config.ts -g "prepaid|COD"
+
+      - name: Upload Playwright report + traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-day-playwright-report
+          path: e2e/artifacts/playwright
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload backend + console logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-day-service-logs
+          path: |
+            backend.log
+            business.log
+            hub.log
+            airline.log
+            e2e/artifacts/personas.json
+          if-no-files-found: ignore
+          retention-days: 14
