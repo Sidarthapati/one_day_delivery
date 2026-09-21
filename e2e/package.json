@@ -10,7 +10,10 @@
     "smoke:headed": "playwright test -c playwright/playwright.config.ts --headed",
     "report": "playwright show-report",
     "seed": "tsx orchestrator/seed.ts",
-    "day": "tsx orchestrator/runDay.ts"
+    "day": "tsx orchestrator/runDay.ts",
+    "mobile:day": "tsx orchestrator/mobileDay.ts",
+    "presence": "tsx orchestrator/refresh-presence.ts",
+    "cleanup": "tsx orchestrator/cleanup-stuck.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.47.0",

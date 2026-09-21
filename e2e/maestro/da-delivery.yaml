@@ -1,0 +1,77 @@
+# DA last-mile DELIVERY through the real driver app (HUB_RETURN: collect from hub).
+# Drives: login -> open the next stop -> open THIS parcel -> collect from hub -> en route
+# -> arrived -> scan (mock) -> verify recipient OTP -> confirm delivery. If the parcel is
+# COD, a payment phase appears and the flow collects cash; prepaid finishes at confirm.
+# The parcel must already be HUB_DELIVERY_ASSIGNED to this DA; OTP is peeked by the harness.
+#
+# Run: maestro test e2e/maestro/da-delivery.yaml \
+#        --env EMAIL=da.hyd.shift_1.0@e2e.local --env PASSWORD=DaTest@2026 \
+#        --env PARCEL_REF=1DD-XXXXXX --env OTP=123456 [--env COD_AMOUNT=1500]
+# NB: pass every value via --env — a flow-level `env:` default would SHADOW the --env override.
+appId: com.oneday.driver
+---
+- runFlow:
+    file: subflows/login.yaml
+    env:
+      EMAIL: "${EMAIL}"
+      PASSWORD: "${PASSWORD}"
+- tapOn:
+    text: "LATER"
+    optional: true
+
+- extendedWaitUntil:
+    visible:
+      id: "open-next-stop"
+    timeout: 30000
+- tapOn:
+    id: "open-next-stop"
+- tapOn:
+    id: "task-open-${PARCEL_REF}"
+    optional: true
+
+# Delivery detail — phase machine (RECEIVE -> DETAIL -> ENROUTE -> ARRIVED -> OTP -> [COD] -> DONE).
+# The delivery OTP is only minted once the parcel is collected from the hub, so the orchestrator does
+# the hub-collect first (to peek the OTP up-front); the app then resumes at the en-route (DETAIL) phase
+# and this receive tap is skipped. If the parcel is NOT pre-collected, the tap runs and collects here.
+- tapOn:
+    id: "delivery-receive"
+    optional: true
+- tapOn:
+    id: "delivery-enroute"
+- tapOn:
+    id: "delivery-arrived"
+- tapOn:
+    id: "delivery-scan"
+- tapOn:
+    id: "mock-scan-input"
+- inputText: "${PARCEL_REF}"
+- hideKeyboard
+- tapOn:
+    id: "mock-scan-confirm"
+- tapOn:
+    id: "delivery-enter-otp"
+- tapOn:
+    id: "delivery-otp-input"
+- inputText: "${OTP}"
+- hideKeyboard
+- tapOn:
+    id: "delivery-confirm-otp"
+
+# COD only: a payment phase appears. Prepaid skips this block (control not visible) and
+# lands straight on the Delivered card.
+- runFlow:
+    when:
+      visible:
+        id: "delivery-cod-amount"
+    commands:
+      - tapOn:
+          id: "delivery-cod-amount"
+      - inputText: "${COD_AMOUNT}"
+      - hideKeyboard
+      - tapOn:
+          id: "delivery-cod-confirm"
+
+- extendedWaitUntil:
+    visible:
+      text: "Delivered"
+    timeout: 30000

@@ -7,3 +7,4 @@ export * from './db';
 export * from './factories';
 export * from './jwt';
 export * from './wait';
+export * from './maestro';

@@ -53,9 +53,13 @@ pnpm --filter station  dev      # :3002   (smoke only)
 pnpm --filter admin    dev      # :3004   (smoke only)
 ```
 
-### 3. Mobile (pending — Maestro)
-Android emulator + a **development** dev-client APK (`expo run:android`) with
-`EXPO_PUBLIC_API_URL=http://10.0.2.2:8080 EXPO_PUBLIC_ALLOW_EMULATOR=true EXPO_PUBLIC_MOCK_SCANNER=true`.
+### 3. Mobile (Maestro) — 🟢 GREEN
+Android emulator (AVD `oneday_pixel`) + the driver app as a **dev client** on Metro started with
+`EXPO_PUBLIC_API_URL=http://10.0.2.2:8080 EXPO_PUBLIC_ALLOW_EMULATOR=true EXPO_PUBLIC_MOCK_SCANNER=true`
+(dev build → `__DEV__` true → emulator bypass + mock scanner live). Grant location perms once:
+`adb shell pm grant com.oneday.driver android.permission.ACCESS_{FINE,BACKGROUND}_LOCATION`. Maestro
+drives the DA (pickup + delivery) and shuttle (out + collect) legs; full recipe + gotchas in
+[`maestro/README.md`](maestro/README.md).
 
 ## Run
 ```bash
@@ -71,6 +75,12 @@ npx playwright test -c playwright/playwright.config.ts -g "prepaid|COD"
 
 npm run smoke                     # 6-console load smoke (needs all 6 consoles up, or override *_URL)
 npm run day                       # control-plane-only day runner (no browser)
+
+# Mobile hybrid day (DA + shuttle legs on the REAL Android app), needs backend + emulator + dev client:
+npm run cleanup                   # shared-DB hygiene: cancel pre-pickup + drain delivery-stage parcels
+npm run presence                  # re-establish DA presence for the current shift (lost on restart)
+npm run mobile:day                # book → app pickup → cp hub/airline → app shuttle → app delivery → DROPPED
+
 npm run report                    # open the Playwright HTML report
 ```
 Evidence lands in `artifacts/playwright/` — `milestones/` (a screenshot per surface per scenario),
