@@ -84,5 +84,10 @@
             <artifactId>fastexcel-reader</artifactId>
             <version>0.18.4</version>
         </dependency>
+        <!-- Amazon SES transactional email (gated by notify.email.provider=ses); version from root AWS SDK BOM -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>ses</artifactId>
+        </dependency>
     </dependencies>
 </project>
