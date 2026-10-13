@@ -11,9 +11,9 @@ import org.springframework.stereotype.Component;
  * Consumes M7 hub events from the {@code oneday.hub.events} exchange (queue {@code orders.hub})
  * and drives the M4 state machine. Until M7 produces, the queue stays empty.</p>
  *
- * <p>OD-9 (open): the event triggering {@code DEST_HUB_PROCESSING → AWAITING_HUB_COLLECT}
- * (HUB_COLLECT path) is not yet decided — recommended a new {@code HUB_COLLECT_STAGED} value in
- * {@code HubEventType}. No handler exists for it until the team confirms the event type.</p>
+ * <p>OD-9 (resolved): the {@code HUB_COLLECT_STAGED} hub event (emitted by M7 when a hub-collect
+ * parcel is shelved) drives {@code DEST_HUB_PROCESSING → AWAITING_HUB_COLLECT}. M7 emits
+ * {@code DEST_SORT_COMPLETE} first (→ {@code DEST_HUB_PROCESSING}), then {@code HUB_COLLECT_STAGED}.</p>
  */
 @Component
 public class HubEventsConsumer {
@@ -33,6 +33,7 @@ public class HubEventsConsumer {
             case BAG_CREATED        -> ShipmentState.IN_TAKEOFF_BAG;
             case SAMECITY_OUTBOUND  -> ShipmentState.HANDED_TO_DROP_VAN;   // SAME_CITY branch from IN_TAKEOFF_BAG
             case DEST_SORT_COMPLETE -> ShipmentState.DEST_HUB_PROCESSING;
+            case HUB_COLLECT_STAGED -> ShipmentState.AWAITING_HUB_COLLECT; // HUB_COLLECT branch from DEST_HUB_PROCESSING (OD-9 resolved)
             case DROP_VAN_HANDOFF   -> ShipmentState.HANDED_TO_DROP_VAN;   // DA_DELIVERY branch from DEST_HUB_PROCESSING (deprecated, M7-D-004)
             // Hub-internal / fan-out events that carry no M4 parcel-state transition:
             // PARCEL_SORTED_FOR_DELIVERY → M6 (loop binding); BAG_SEALED/MANIFEST_GENERATED → M9/M10;
