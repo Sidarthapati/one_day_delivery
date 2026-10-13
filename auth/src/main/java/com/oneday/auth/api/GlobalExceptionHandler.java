@@ -12,6 +12,7 @@ import com.oneday.auth.exception.OnboardingRequestAlreadyProcessedException;
 import com.oneday.auth.exception.OnboardingRequestNotFoundException;
 import com.oneday.auth.exception.RoleInUseException;
 import com.oneday.auth.exception.RoleNotFoundException;
+import com.oneday.auth.exception.UnknownCityException;
 import com.oneday.auth.exception.UserNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -30,6 +31,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UserNotFoundException.class)
     public ProblemDetail handleNotFound(UserNotFoundException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(UnknownCityException.class)
+    public ProblemDetail handleUnknownCity(UnknownCityException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
     }
 
     @ExceptionHandler({InvalidGoogleTokenException.class, InvalidOtpException.class,

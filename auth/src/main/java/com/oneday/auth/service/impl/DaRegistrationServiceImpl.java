@@ -7,12 +7,14 @@ import com.oneday.auth.dto.request.RegisterUserRequest;
 import com.oneday.auth.dto.request.UpdateDaRequest;
 import com.oneday.auth.dto.response.DaResponse;
 import com.oneday.auth.dto.response.UserResponse;
+import com.oneday.auth.exception.UnknownCityException;
 import com.oneday.auth.exception.UserNotFoundException;
 import com.oneday.auth.repository.DaProfileRepository;
 import com.oneday.auth.repository.UserRepository;
 import com.oneday.auth.service.DaRegistrationService;
 import com.oneday.auth.service.UserService;
 import com.oneday.common.domain.Shift;
+import com.oneday.common.port.CityDirectoryPort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,13 +33,16 @@ class DaRegistrationServiceImpl implements DaRegistrationService {
     private final UserService userService;
     private final UserRepository userRepository;
     private final DaProfileRepository daProfileRepository;
+    private final CityDirectoryPort cityDirectory;
 
     DaRegistrationServiceImpl(UserService userService,
                               UserRepository userRepository,
-                              DaProfileRepository daProfileRepository) {
+                              DaProfileRepository daProfileRepository,
+                              CityDirectoryPort cityDirectory) {
         this.userService = userService;
         this.userRepository = userRepository;
         this.daProfileRepository = daProfileRepository;
+        this.cityDirectory = cityDirectory;
     }
 
     @Override
@@ -47,9 +52,17 @@ class DaRegistrationServiceImpl implements DaRegistrationService {
         String password = generated ? generateTempPassword() : request.password();
         String name = (request.firstName() + " " + request.lastName()).trim();
 
+        // The DA roster query (DaDirectoryPort) matches users.city_id against the city CODE ("mumbai"),
+        // not the UUID every other user type carries. Normalise whatever was passed (code, IATA alias,
+        // or UUID) to that canonical code — otherwise a DA registered with a UUID is stored with a
+        // city_id the roster never matches and is silently never loadable onto a shift (#217). Reject
+        // an unresolvable city rather than create an un-schedulable DA.
+        String cityCode = cityDirectory.toCityCode(request.cityId())
+                .orElseThrow(() -> new UnknownCityException(request.cityId()));
+
         // Reuse the audited user-creation seam (role validation, city-scope, mustChangePassword=true).
         UserResponse created = userService.register(
-                new RegisterUserRequest(name, request.email(), password, DELIVERY_ASSOCIATE, request.cityId()),
+                new RegisterUserRequest(name, request.email(), password, DELIVERY_ASSOCIATE, cityCode),
                 actorId);
 
         // Phone lives on the user; register() doesn't take it, so set it here in the same transaction.
@@ -70,7 +83,7 @@ class DaRegistrationServiceImpl implements DaRegistrationService {
         profile.setShift(request.shift());
         daProfileRepository.save(profile);
 
-        return new DaResponse(created.id(), name, request.email(), request.phone(), request.cityId(),
+        return new DaResponse(created.id(), name, request.email(), request.phone(), cityCode,
                 request.shift(), request.contractStartDate(), request.contractEndDate(), true,
                 generated ? password : null);
     }
