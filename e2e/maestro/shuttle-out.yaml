@@ -1,0 +1,41 @@
+# Shuttle agent carries a sealed flight bag to the airport (origin city).
+# login -> "To airport" list -> add THIS flight's bag to the trip -> Out to airport.
+# The bag must be SEALED and its AWB booked before this runs (the harness sequences that
+# to avoid racing the async BAG_SEALED -> AWB processing).
+#
+# Run: maestro test e2e/maestro/shuttle-out.yaml \
+#        --env EMAIL=shuttle.del@e2e.local --env PASSWORD=Shuttle@2026 --env BAG_ID=<uuid>
+# BAG_ID keys the exact sealed bag (flight_no can collide when two bags ride the same flight).
+# NB: pass every value via --env — a flow-level `env:` default would SHADOW the --env override.
+appId: com.oneday.driver
+---
+- runFlow:
+    file: subflows/login.yaml
+    env:
+      EMAIL: "${EMAIL}"
+      PASSWORD: "${PASSWORD}"
+- tapOn:
+    text: "LATER"
+    optional: true
+
+- extendedWaitUntil:
+    visible:
+      text: "To airport"
+    timeout: 30000
+# Several sealed bags may be listed — scroll THIS bag into view before adding it.
+- scrollUntilVisible:
+    element:
+      id: "shuttle-add-${BAG_ID}"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "shuttle-add-${BAG_ID}"
+- tapOn:
+    id: "shuttle-out-to-airport"
+- extendedWaitUntil:
+    visible:
+      text: "Sent to airport"
+    timeout: 30000
+- tapOn:
+    text: "OK"
+    optional: true

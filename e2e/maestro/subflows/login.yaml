@@ -1,0 +1,48 @@
+# Reusable login subflow — deep-links the dev client onto Metro (so we're on our JS, not the Expo
+# dev launcher — clearState drops a dev build into the launcher), dismisses the dev menu, signs out
+# of any prior persona, then signs in. Inherits EMAIL / PASSWORD from the calling flow's env.
+# Leaves the app on the role's work screen; the caller asserts its own entry point.
+#
+# NOTE: for a production/release build this would just be `launchApp: clearState`. The openLink dance
+# is only because E2E runs on a DEV client (the emulator integrity bypass needs __DEV__).
+appId: com.oneday.driver
+---
+# Load our bundle from Metro (10.0.2.2 = host localhost from the emulator).
+- openLink:
+    link: "exp+onedaydelivery://expo-development-client/?url=http://10.0.2.2:8081"
+- waitForAnimationToEnd:
+    timeout: 8000
+# Dismiss the expo dev menu / onboarding sheet, whichever form it takes: tap "Continue" if present,
+# then tap the scrim above the bottom sheet to close the full menu (harmless if no sheet is open).
+- tapOn:
+    text: "Continue"
+    optional: true
+- tapOn:
+    point: "50%,12%"
+- waitForAnimationToEnd:
+    timeout: 4000
+# Sign out if a previous persona's session is active — no-ops on the login screen (no Profile tab).
+- tapOn:
+    text: "Profile"
+    optional: true
+- tapOn:
+    id: "logout"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      text: "Drive with One Day"
+    timeout: 30000
+- tapOn:
+    id: "login-email"
+- inputText: "${EMAIL}"
+- tapOn:
+    id: "login-password"
+- inputText: "${PASSWORD}"
+- hideKeyboard
+- tapOn:
+    id: "login-signin"
+# Off the login screen once the sub-headline is gone (work screen is now mounting).
+- extendedWaitUntil:
+    notVisible:
+      text: "Sign in to start your shift."
+    timeout: 30000

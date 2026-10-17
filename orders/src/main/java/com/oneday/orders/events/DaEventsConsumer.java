@@ -84,13 +84,40 @@ public class DaEventsConsumer {
         // arrive after the shipment already advanced → IllegalStateTransition) and can delete a shipment
         // out from under an in-flight event (demo "Clear bookings" → EntityNotFound). Both are terminal
         // for this message — ack and move on, never retry/DLQ.
-        try {
-            stateMachine.transition(event.shipmentId(), target,
-                    TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
-        } catch (IllegalStateTransitionException | EntityNotFoundException e) {
-            log.debug("DA event {} → {} skipped for {} ({})",
-                    event.eventType(), target, event.shipmentId(), e.getMessage());
-            return;
+        //
+        // Exception: the delivery-assignment / collection transitions race the dest-hub sort across
+        // queues — PARCEL_SORTED_FOR_DELIVERY drives the M5 delivery-assign (→ DROP_ASSIGNED here) while
+        // DEST_SORT_COMPLETE drives DEST_HUB_PROCESSING on a different queue. If DROP_ASSIGNED lands
+        // first the shipment is still AT_DEST_HUB and the transition is *premature* (not late), so we
+        // briefly retry so it self-heals once DEST_HUB_PROCESSING lands (~1-2s); a genuinely late/invalid
+        // event just exhausts the short budget and is skipped as before.
+        boolean raceProne = target == ShipmentState.HUB_DELIVERY_ASSIGNED
+                || target == ShipmentState.DROP_ASSIGNED
+                || target == ShipmentState.COLLECTED_FROM_HUB
+                || target == ShipmentState.DROP_COLLECTED;
+        int attempts = raceProne ? 8 : 1;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                stateMachine.transition(event.shipmentId(), target,
+                        TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+                break;
+            } catch (EntityNotFoundException e) {
+                log.debug("DA event {} → {} skipped for {} ({})",
+                        event.eventType(), target, event.shipmentId(), e.getMessage());
+                return;
+            } catch (IllegalStateTransitionException e) {
+                if (attempt >= attempts) {
+                    log.debug("DA event {} → {} skipped for {} after {} attempt(s) ({})",
+                            event.eventType(), target, event.shipmentId(), attempt, e.getMessage());
+                    return;
+                }
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
         }
 
         if (target == ShipmentState.PICKUP_ASSIGNED) {

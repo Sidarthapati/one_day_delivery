@@ -1,38 +1,25 @@
-# Maestro smoke flow for the Godspeed driver app (React Native / Android).
-# Covers the critical DA path: launch → login → see today's queue → open a task → "I've arrived"
-# (the manual arrival that replaced the 200m geofence). Selectors are placeholders — align them with
-# the app's testID/accessibility labels, then remove the optional/skip markers as the app stabilises.
+# Maestro smoke for the Godspeed driver app (React Native / Android).
+# Launch -> login -> land on today's work screen -> open the recommended stop (if any).
+# A fast "does the app boot, auth, and route render" check — no parcel state required.
 #
-# Run:  maestro test e2e/maestro/driver-smoke.yaml
-# Env:  DRIVER_EMAIL / DRIVER_PASSWORD (a seeded DA on staging)
-appId: in.godspeed.driver
+# Run:  maestro test e2e/maestro/driver-smoke.yaml --env EMAIL=... --env PASSWORD=...
+# The DA work screen shows tab "Route" and in-body header "Today" (shuttle/van show "Today"
+# tab + "Shuttle"/"Van" header) — the old Home/Pickups/Deliveries/Van tabs are gone.
+appId: com.oneday.driver
 ---
-- launchApp:
-    clearState: true
-
-# --- Login ---
-- assertVisible: "Sign in"
+- runFlow:
+    file: subflows/login.yaml
+    env:
+      EMAIL: "${EMAIL}"
+      PASSWORD: "${PASSWORD}"
+# Dismiss the "Keep location running" background-tracking prompt that pops on the work screen.
 - tapOn:
-    id: "email"
-- inputText: "${DRIVER_EMAIL}"
-- tapOn:
-    id: "password"
-- inputText: "${DRIVER_PASSWORD}"
-- tapOn:
-    text: "Sign in"
-
-# --- Today's queue ---
-- assertVisible:
-    text: "Today"
-    timeout: 15000
-
-# --- Open the first task and confirm arrival (manual "I've arrived") ---
-- tapOn:
-    id: "task-card-0"
+    text: "LATER"
     optional: true
+- extendedWaitUntil:
+    visible:
+      text: "Today"
+    timeout: 30000
 - tapOn:
-    text: "I've arrived"
-    optional: true
-- assertVisible:
-    text: "Arrived"
+    id: "open-next-stop"
     optional: true

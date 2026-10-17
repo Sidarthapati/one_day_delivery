@@ -14,8 +14,11 @@ import java.util.List;
 public final class PickupSlots {
 
     public static final ZoneId ZONE = ZoneId.of("Asia/Kolkata");
-    public static final int OPERATING_START_HOUR = 7;   // first slot starts here
-    public static final int OPERATING_END_HOUR = 21;    // last slot ends here
+    // Operating window. Overridable via system property so a test/e2e env can widen it to 24h
+    // (e.g. -Dgodspeed.pickup.operating-start-hour=0 -Dgodspeed.pickup.operating-end-hour=24) and
+    // run at any wall-clock time; production leaves the defaults (07:00–21:00 IST) untouched.
+    public static final int OPERATING_START_HOUR = Integer.getInteger("godspeed.pickup.operating-start-hour", 7);
+    public static final int OPERATING_END_HOUR = Integer.getInteger("godspeed.pickup.operating-end-hour", 21);
     public static final int SLOT_HOURS = 2;
 
     private PickupSlots() {}
