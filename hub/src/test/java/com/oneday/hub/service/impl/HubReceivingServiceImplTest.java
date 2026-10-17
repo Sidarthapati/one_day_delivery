@@ -183,6 +183,10 @@ class HubReceivingServiceImplTest {
         assertThat(item.getValue().getStatus()).isEqualTo(DeliveryBagItemStatus.ON_SHELF);
         assertThat(item.getValue().getDropType()).isEqualTo(DropType.HUB_COLLECT);
         verifyNoInteractions(sortService);
+        // The shelf path must advance M4 off AT_DEST_HUB (OD-9): DEST_SORT_COMPLETE → DEST_HUB_PROCESSING,
+        // then HUB_COLLECT_STAGED → AWAITING_HUB_COLLECT. Without both the shipment is stuck forever.
+        verify(eventProducer).emitDestSortComplete(eq(parcel.shipmentId()), eq(hubId), eq(hubId), any(), any());
+        verify(eventProducer).emitHubCollectStaged(parcel.shipmentId(), hubId, hubId);
     }
 
     @Test

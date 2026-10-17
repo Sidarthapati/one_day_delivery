@@ -95,6 +95,11 @@ public class HubEventProducer {
         publish(new SameCityOutboundEvent(shipmentId, cityId, hubId));
     }
 
+    /** HUB_COLLECT_STAGED → M4: a hub-collect parcel is on the shelf (→ AWAITING_HUB_COLLECT) (§8.2). */
+    public void emitHubCollectStaged(UUID shipmentId, UUID cityId, UUID hubId) {
+        publish(new HubCollectStagedEvent(shipmentId, cityId, hubId));
+    }
+
     /** BAG_RESCHEDULED → M10: M7 executed an M9-decided flight move (§9, M7-D-006). */
     public void emitBagRescheduled(FlightBag targetBag, String fromFlightNo, String reason,
                                    int movedCount, String standNo, UUID manifestId) {
