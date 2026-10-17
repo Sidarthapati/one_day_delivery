@@ -33,3 +33,11 @@ CVE-2026-40984
 #   The /cloudfoundryapplication endpoints only activate under a CloudFoundry deployment (VCAP env);
 #   we deploy on Render, so the vulnerable path is never wired. Needs a Boot 3.5 upgrade to clear.
 CVE-2026-22733
+# CVE-2026-47884 — spring-web: XsltView SSRF/RCE when an MVC app has a catch-all "/**" mapping and
+#   returns no explicit view name. Fixed 7.0.9 (6.x/5.x fixes are enterprise-support-only). We render
+#   no server-side XSLT views (REST + static SPA only), so the vulnerable view path is never reached.
+CVE-2026-47884
+# CVE-2026-47892 — spring-web(flux): header-predicate bypass via pre-flight request on WebFlux
+#   functional endpoints deployed with DispatcherServlet. Fixed 7.0.9 (6.x/5.x enterprise-only). We
+#   run Spring MVC (servlet), not WebFlux functional endpoints, so the predicate path doesn't exist.
+CVE-2026-47892
