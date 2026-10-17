@@ -7,11 +7,15 @@ import com.oneday.auth.exception.ForbiddenException;
 import com.oneday.auth.exception.GoogleAuthNotConfiguredException;
 import com.oneday.auth.exception.InvalidGoogleTokenException;
 import com.oneday.auth.exception.InvalidOtpException;
+import com.oneday.auth.exception.InvalidOnboardingTransitionException;
 import com.oneday.auth.exception.InvalidRefreshTokenException;
+import com.oneday.auth.exception.OnboardingCandidateNotFoundException;
 import com.oneday.auth.exception.OnboardingRequestAlreadyProcessedException;
 import com.oneday.auth.exception.OnboardingRequestNotFoundException;
+import com.oneday.auth.exception.OnboardingValidationException;
 import com.oneday.auth.exception.RoleInUseException;
 import com.oneday.auth.exception.RoleNotFoundException;
+import com.oneday.auth.exception.StorageUnavailableException;
 import com.oneday.auth.exception.UserNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -71,6 +75,26 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(OnboardingRequestAlreadyProcessedException.class)
     public ProblemDetail handleAlreadyProcessed(OnboardingRequestAlreadyProcessedException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    @ExceptionHandler(OnboardingCandidateNotFoundException.class)
+    public ProblemDetail handleCandidateNotFound(OnboardingCandidateNotFoundException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidOnboardingTransitionException.class)
+    public ProblemDetail handleInvalidTransition(InvalidOnboardingTransitionException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    @ExceptionHandler(OnboardingValidationException.class)
+    public ProblemDetail handleOnboardingValidation(OnboardingValidationException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+    }
+
+    @ExceptionHandler(StorageUnavailableException.class)
+    public ProblemDetail handleStorageUnavailable(StorageUnavailableException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
