@@ -268,11 +268,11 @@ public class Shipment extends MutableBaseEntity {
     // A return is a NEW child shipment (<ref>_R) under the same order with reversed geography.
     // Set on the CHILD, points to the original it returns (born-with, immutable).
     @Column(name = "return_of_shipment_id", updatable = false)
-    private UUID returnOfShipmentId;
+    private UUID parentShipmentId;
 
     // Set on the ORIGINAL when a return child is spawned (mutable — populated later).
     @Column(name = "return_shipment_id")
-    private UUID returnShipmentId;
+    private UUID childShipmentId;
 
     // ── Mid-transit RTO intent (feature iii) ──────────────────────────────
     // A return requested while the parcel is in custody but not yet at a hub is recorded here and

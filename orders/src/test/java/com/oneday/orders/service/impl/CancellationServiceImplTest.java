@@ -152,7 +152,7 @@ class CancellationServiceImplTest {
     @Test
     void aReturnChildCannotBeReturnedAgain() {
         Shipment s = shipmentIn(ShipmentState.AT_DEST_HUB);
-        s.setReturnOfShipmentId(UUID.randomUUID());
+        s.setParentShipmentId(UUID.randomUUID());
 
         assertThatThrownBy(() -> service.initiateRtoAsAdmin("REF", "cancel", "admin-1"))
                 .isInstanceOf(CancellationNotAllowedException.class);
@@ -162,7 +162,7 @@ class CancellationServiceImplTest {
     void alreadyReturningIsIdempotent() {
         Shipment s = shipmentIn(ShipmentState.AT_DEST_HUB);
         UUID childId = UUID.randomUUID();
-        s.setReturnShipmentId(childId);
+        s.setChildShipmentId(childId);
         Shipment child = new Shipment();
         child.setShipmentRef("REF_R");
         when(shipmentRepo.findById(childId)).thenReturn(Optional.of(child));

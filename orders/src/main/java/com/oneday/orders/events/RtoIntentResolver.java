@@ -60,7 +60,7 @@ public class RtoIntentResolver {
 
         Shipment s = shipmentRepository.findById(e.shipmentId()).orElse(null);
         if (s == null
-                || s.getReturnOfShipmentId() != null          // a return child never RTOs itself
+                || s.getParentShipmentId() != null          // a return child never RTOs itself
                 || s.getRtoRequestedAt() == null              // no pending intent
                 || s.getRtoResolvedAt() != null) {            // already resolved
             return;

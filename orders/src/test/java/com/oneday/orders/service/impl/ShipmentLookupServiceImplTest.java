@@ -31,7 +31,7 @@ class ShipmentLookupServiceImplTest {
         s.setShipmentRef(ref);
         s.setParcelId(BARCODE);
         s.setState(state);
-        s.setReturnOfShipmentId(returnOf);
+        s.setParentShipmentId(returnOf);
         return s;
     }
 
@@ -61,7 +61,7 @@ class ShipmentLookupServiceImplTest {
         // return child, the scan must route to that child (<ref>_R), not the original.
         Shipment original = shipment("1DD-DEL-20260906-000007", ShipmentState.RTO_INITIATED, null);
         Shipment child = shipment("1DD-DEL-20260906-000007_R", ShipmentState.AT_ORIGIN_HUB, original.getId());
-        original.setReturnShipmentId(child.getId());
+        original.setChildShipmentId(child.getId());
         when(shipmentRepo.findByShipmentRef("1DD-DEL-20260906-000007")).thenReturn(Optional.of(original));
         when(shipmentRepo.findById(child.getId())).thenReturn(Optional.of(child));
 

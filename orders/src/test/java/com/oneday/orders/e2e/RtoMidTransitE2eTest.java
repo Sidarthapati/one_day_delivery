@@ -58,7 +58,7 @@ class RtoMidTransitE2eTest extends OrdersE2eSupport {
         assertThat(child.getOriginCity()).isEqualTo("BLR");
         assertThat(child.getDestCity()).isEqualTo("DEL");
         assertThat(child.getState()).isEqualTo(ShipmentState.AT_ORIGIN_HUB);
-        assertThat(child.getReturnOfShipmentId()).isEqualTo(idOf(ref));
+        assertThat(child.getParentShipmentId()).isEqualTo(idOf(ref));
     }
 
     // R4: once the parcel has been hub-scanned (origin hub onward) it is committed to fly — the RTO is
@@ -160,7 +160,7 @@ class RtoMidTransitE2eTest extends OrdersE2eSupport {
         Shipment child = shipmentRepository.findByShipmentRef(ref + "_R").orElseThrow();
         assertThat(child.getOriginCity()).isEqualTo("DEL"); // same-city: returns within the origin city
         assertThat(child.getDestCity()).isEqualTo("DEL");
-        assertThat(child.getReturnOfShipmentId()).isEqualTo(original.getId());
+        assertThat(child.getParentShipmentId()).isEqualTo(original.getId());
     }
 
     // DEST hub, one scan: a committed-transit cancel leaves a deferred reverse intent; the single dock scan
@@ -190,6 +190,6 @@ class RtoMidTransitE2eTest extends OrdersE2eSupport {
         Shipment child = shipmentRepository.findByShipmentRef(ref + "_R").orElseThrow();
         assertThat(child.getOriginCity()).isEqualTo("BLR"); // reverse: fly back from the original dest
         assertThat(child.getDestCity()).isEqualTo("DEL");
-        assertThat(child.getReturnOfShipmentId()).isEqualTo(original.getId());
+        assertThat(child.getParentShipmentId()).isEqualTo(original.getId());
     }
 }

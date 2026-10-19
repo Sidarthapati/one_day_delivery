@@ -262,13 +262,13 @@ class CancellationServiceImpl implements CancellationService {
         String ref = shipment.getShipmentRef();
 
         // A return child can't be returned again (the doorstep flow holds an exhausted child at the hub).
-        if (shipment.getReturnOfShipmentId() != null) {
+        if (shipment.getParentShipmentId() != null) {
             throw new CancellationNotAllowedException(
                     "Shipment " + ref + " is a return — it cannot be returned again");
         }
         // Already returning (e.g. a repeat click) — report the existing child, don't mint another.
-        if (shipment.getReturnShipmentId() != null) {
-            Shipment child = shipmentRepository.findById(shipment.getReturnShipmentId()).orElse(null);
+        if (shipment.getChildShipmentId() != null) {
+            Shipment child = shipmentRepository.findById(shipment.getChildShipmentId()).orElse(null);
             return new CancellationResponse(ref, state, null, Disposition.RETURN_INITIATED,
                     child != null ? child.getShipmentRef() : null);
         }

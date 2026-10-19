@@ -92,9 +92,9 @@ class ReturnServiceImpl implements ReturnService {
                         "Shipment not found: " + originalShipmentId));
 
         // Idempotent: one live return child per original. A repeat call returns the existing child.
-        Shipment existing = original.getReturnShipmentId() != null
-                ? shipmentRepository.findById(original.getReturnShipmentId()).orElse(null)
-                : shipmentRepository.findByReturnOfShipmentId(originalShipmentId).orElse(null);
+        Shipment existing = original.getChildShipmentId() != null
+                ? shipmentRepository.findById(original.getChildShipmentId()).orElse(null)
+                : shipmentRepository.findByParentShipmentId(originalShipmentId).orElse(null);
         if (existing != null) {
             return new ReturnResult(existing.getId(), existing.getShipmentRef(), originalShipmentId);
         }
@@ -159,7 +159,7 @@ class ReturnServiceImpl implements ReturnService {
 
         // Link both directions and mark the original as returning. The child is delivered → the
         // completion listener drives the original RTO_INITIATED → RTO_COMPLETED.
-        original.setReturnShipmentId(child.getId());
+        original.setChildShipmentId(child.getId());
 
         // Mid-transit cancel → RTO: stamp the intent on the *locked* original here, in this persistence
         // context, so it commits together with the RTO_INITIATED transition. open-in-view is off, so the
@@ -214,14 +214,14 @@ class ReturnServiceImpl implements ReturnService {
         // A resolver / concurrent scan / cancel may have won the race between the hub's pendingRto read
         // and this locked load. If the intent is already resolved and the child exists, hand that child
         // back so the caller sorts it — never fail (and roll back) the whole /receive on a benign race.
-        if (s.getRtoResolvedAt() != null && s.getReturnShipmentId() != null) {
-            return shipmentRepository.findById(s.getReturnShipmentId())
+        if (s.getRtoResolvedAt() != null && s.getChildShipmentId() != null) {
+            return shipmentRepository.findById(s.getChildShipmentId())
                     .map(c -> new ReturnResult(c.getId(), c.getShipmentRef(), shipmentId));
         }
         // Pending RTO = intent recorded, not yet resolved, no child minted, not itself a return
         // (mirrors ShipmentInfo.pendingRto + RtoIntentResolver's guard).
         boolean pendingRto = s.getRtoRequestedAt() != null && s.getRtoResolvedAt() == null
-                && s.getReturnShipmentId() == null && s.getReturnOfShipmentId() == null;
+                && s.getChildShipmentId() == null && s.getParentShipmentId() == null;
         if (!pendingRto) {
             return Optional.empty();
         }
@@ -280,7 +280,7 @@ class ReturnServiceImpl implements ReturnService {
         boolean sameCity = lane == ReturnLane.SAME_CITY_FROM_ORIGIN;
         Shipment c = new Shipment();
         c.setShipmentRef(original.getShipmentRef() + "_R");
-        c.setReturnOfShipmentId(original.getId());
+        c.setParentShipmentId(original.getId());
         c.setOrderId(original.getOrderId());
         c.setCustomerType(original.getCustomerType());
         c.setDeliveryType(sr.deliveryType());
