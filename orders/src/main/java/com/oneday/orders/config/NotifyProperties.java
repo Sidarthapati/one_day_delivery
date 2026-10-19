@@ -71,16 +71,26 @@ public class NotifyProperties {
     }
 
     public static class Email {
-        /** log | sendgrid */
+        /** log | sendgrid | ses */
         private String provider = "log";
         private String sendgridApiKey = "";
-        private String fromEmail = "no-reply@godspeed.example";
+        // Amazon SES (used when provider=ses). Creds blank → default AWS credential chain (env/role).
+        private String sesRegion = "ap-south-1";
+        private String sesAccessKeyId = "";
+        private String sesSecretAccessKey = "";
+        private String fromEmail = "no-reply@godspeed.co.in";
         private String fromName = "Godspeed";
 
         public String getProvider() { return provider; }
         public void setProvider(String v) { this.provider = v; }
         public String getSendgridApiKey() { return sendgridApiKey; }
         public void setSendgridApiKey(String v) { this.sendgridApiKey = v; }
+        public String getSesRegion() { return sesRegion; }
+        public void setSesRegion(String v) { this.sesRegion = v; }
+        public String getSesAccessKeyId() { return sesAccessKeyId; }
+        public void setSesAccessKeyId(String v) { this.sesAccessKeyId = v; }
+        public String getSesSecretAccessKey() { return sesSecretAccessKey; }
+        public void setSesSecretAccessKey(String v) { this.sesSecretAccessKey = v; }
         public String getFromEmail() { return fromEmail; }
         public void setFromEmail(String v) { this.fromEmail = v; }
         public String getFromName() { return fromName; }
