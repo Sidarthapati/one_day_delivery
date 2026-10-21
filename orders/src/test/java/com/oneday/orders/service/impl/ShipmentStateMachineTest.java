@@ -177,15 +177,26 @@ class ShipmentStateMachineTest {
     }
 
     // Mid-transit RTO (feature iii): with the MidTransitRtoTransitions configurer applied, RTO_INITIATED
-    // is reachable from the origin-hub branching state IN_TAKEOFF_BAG (INTERCITY) — proving the
-    // delivery-type branch filter (which strips HANDED_TO_DROP_VAN) does NOT strip the new RTO edge.
+    // is reachable from AT_ORIGIN_HUB — the same-city pre-hub recall, resolved when the parcel is
+    // dock-received at the origin hub.
     @Test
-    void midTransitRto_fromInTakeoffBag_survivesBranchFilter() {
+    void midTransitRto_fromAtOriginHub_sameCityRecall() {
         ShipmentStateMachine sm = withMidTransitRto();
-        shipmentIn(ShipmentState.IN_TAKEOFF_BAG, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY);
+        shipmentIn(ShipmentState.AT_ORIGIN_HUB, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.SAME_CITY);
 
         assertThatNoException().isThrownBy(() ->
                 sm.transition(shipmentId, ShipmentState.RTO_INITIATED, apiCtx));
+    }
+
+    // A cancel at IN_TAKEOFF_BAG is committed to fly (R4): it defers and RTOs reverse-lane from the dest
+    // hub, so there is intentionally NO IN_TAKEOFF_BAG → RTO_INITIATED edge — nothing ever drives it.
+    @Test
+    void midTransitRto_notReachableFromInTakeoffBag() {
+        ShipmentStateMachine sm = withMidTransitRto();
+        shipmentIn(ShipmentState.IN_TAKEOFF_BAG, PickupType.DA_PICKUP, DropType.DA_DELIVERY, DeliveryType.INTERCITY);
+
+        assertThatThrownBy(() -> sm.transition(shipmentId, ShipmentState.RTO_INITIATED, apiCtx))
+                .isInstanceOf(IllegalStateTransitionException.class);
     }
 
     // …and from the dest-hub branching state DEST_HUB_PROCESSING (DA_DELIVERY), where the drop-type

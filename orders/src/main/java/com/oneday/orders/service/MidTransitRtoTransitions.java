@@ -19,12 +19,13 @@ public class MidTransitRtoTransitions implements TransitionRegistryConfigurer {
 
     @Override
     public void configure(TransitionRegistry registry) {
-        // Origin hub — parcel never left the origin city (or was pulled from an OPEN bag): same-city return.
+        // Origin hub — a pre-hub (same-city) return resolves the moment the parcel is dock-received into
+        // AT_ORIGIN_HUB. Only this origin state gets an edge: a cancel at ORIGIN_HUB_PROCESSING/IN_TAKEOFF_BAG
+        // is committed to fly (R4), so it defers and RTOs reverse-lane from the dest hub — nothing ever
+        // transitions to RTO_INITIATED from those states.
         registry.register(ShipmentState.AT_ORIGIN_HUB,         ShipmentState.RTO_INITIATED);
-        registry.register(ShipmentState.ORIGIN_HUB_PROCESSING, ShipmentState.RTO_INITIATED);
-        registry.register(ShipmentState.IN_TAKEOFF_BAG,        ShipmentState.RTO_INITIATED);
 
-        // Destination hub — parcel has flown (or was committed to a sealed bag): reverse-lane return.
+        // Destination hub — parcel has flown: reverse-lane return, fired on arrival or at the dock.
         registry.register(ShipmentState.AT_DEST_HUB,           ShipmentState.RTO_INITIATED);
         registry.register(ShipmentState.DEST_HUB_PROCESSING,   ShipmentState.RTO_INITIATED);
     }

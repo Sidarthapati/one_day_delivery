@@ -1,6 +1,7 @@
 package com.oneday.hub.service.impl;
 
 import com.oneday.common.domain.enums.DropType;
+import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.hub.domain.ArrivalMode;
 import com.oneday.hub.domain.DeliveryBagItem;
 import com.oneday.hub.domain.DeliveryBagItemStatus;
@@ -14,6 +15,8 @@ import com.oneday.hub.service.HubReceivingService;
 import com.oneday.hub.service.SortService;
 import com.oneday.hub.service.exception.ParcelNotFoundException;
 import com.oneday.hub.service.port.ShipmentInfoPort;
+import com.oneday.orders.service.ReturnService;
+import com.oneday.orders.service.TransitionContext;
 import com.oneday.common.kafka.enums.ScanEventType;
 import com.oneday.common.log.AuditLog;
 import com.oneday.common.log.LogContext;
@@ -37,12 +40,15 @@ import java.util.UUID;
 @Service
 class HubReceivingServiceImpl implements HubReceivingService {
 
+    private static final String RTO_SOURCE = "m7-hub-receive";
+
     private final ShipmentInfoPort shipmentInfoPort;
     private final InboundReceiptRepository inboundReceiptRepository;
     private final DeliveryBagItemRepository deliveryBagItemRepository;
     private final SortService sortService;
     private final HubEventProducer eventProducer;
     private final HubArrivalScanProducer arrivalScanProducer;
+    private final ReturnService returnService;
     private final Clock clock;
 
     HubReceivingServiceImpl(ShipmentInfoPort shipmentInfoPort,
@@ -51,6 +57,7 @@ class HubReceivingServiceImpl implements HubReceivingService {
                             SortService sortService,
                             HubEventProducer eventProducer,
                             HubArrivalScanProducer arrivalScanProducer,
+                            ReturnService returnService,
                             Clock clock) {
         this.shipmentInfoPort = shipmentInfoPort;
         this.inboundReceiptRepository = inboundReceiptRepository;
@@ -58,6 +65,7 @@ class HubReceivingServiceImpl implements HubReceivingService {
         this.sortService = sortService;
         this.eventProducer = eventProducer;
         this.arrivalScanProducer = arrivalScanProducer;
+        this.returnService = returnService;
         this.clock = clock;
     }
 
@@ -73,9 +81,21 @@ class HubReceivingServiceImpl implements HubReceivingService {
             // tapped handoff, so it's not RETURNED_TO_HUB yet) throws UndeterminedArrivalException → 409.
             ArrivalMode mode = ArrivalMode.fromState(parcel.state());
             Instant now = clock.instant();
+            boolean airport = mode == ArrivalMode.AIRPORT;
+            SortDirection direction = airport ? SortDirection.INBOUND : SortDirection.OUTBOUND;
+            UUID receiptId = recordReceipt(parcel, hubId, mode, direction).getId();
 
-            if (mode == ArrivalMode.AIRPORT) {
-                UUID receiptId = recordReceipt(parcel, hubId, mode, SortDirection.INBOUND).getId();
+            // One scan does everything. If the parcel carries an unresolved RTO intent (the cancel arrived
+            // BEFORE this dock scan), resolve the return and sort the CHILD into its bag in THIS scan — a
+            // same-city delivery bag at the origin hub, a reverse-lane flight bag at the dest hub. Must run
+            // before any forward dispatch so a same-city original isn't delivered onward. M4 drives arrival
+            // + mint synchronously here, so we do NOT also emit the async arrival scan (it would later try to
+            // re-transition out of RTO_INITIATED → DLQ).
+            if (parcel.pendingRto()) {
+                return resolveRtoAndSort(receiptId, hubId, parcel, airport, now);
+            }
+
+            if (airport) {
                 // The dock scan IS the record of dest-hub arrival (→ AT_DEST_HUB) — not a console button.
                 arrivalScanProducer.emitArrival(parcel.shipmentId(), parcel.shipmentRef(), hubId,
                         ScanEventType.HUB_DEST_IN, "INBOUND");
@@ -83,25 +103,10 @@ class HubReceivingServiceImpl implements HubReceivingService {
             }
 
             // First-mile origin arrival (VAN_MEETING / HUB_RETURN / SELF_DROP).
-            UUID receiptId = recordReceipt(parcel, hubId, mode, SortDirection.OUTBOUND).getId();
             // The dock scan IS the record of origin-hub arrival (→ AT_ORIGIN_HUB) — not the DA app button.
             ScanEventType originScan = mode == ArrivalMode.SELF_DROP
                     ? ScanEventType.SELF_DROP_ACCEPTED : ScanEventType.HUB_ORIGIN_IN;
             arrivalScanProducer.emitArrival(parcel.shipmentId(), parcel.shipmentRef(), hubId, originScan, "OUTBOUND");
-            // R4 forward-guard — BEFORE any dispatch (same-city included): a parcel carrying an unresolved
-            // RTO intent (the cancel arrived BEFORE this hub scan) must NOT be dispatched forward. The dock
-            // scan above records the AT_ORIGIN_HUB arrival, which triggers orders' RtoIntentResolver to mint
-            // the same-city return child; we just park the parcel here so it can be turned around. This must
-            // precede the same-city branch — a same-city original returns within its own city, and
-            // inboundDispatch would otherwise deliver it forward before the resolver runs.
-            if (parcel.pendingRto()) {
-                AuditLog.event("hub.outbound_sort_skipped_for_rto")
-                        .kv("shipmentRef", parcel.shipmentRef())
-                        .kv("parcelId", parcel.shipmentId())
-                        .kv("hubId", hubId)
-                        .log();
-                return new ReceiveResult(receiptId, parcel.shipmentId(), parcel.shipmentRef(), true, null, null, null);
-            }
             if (isSameCity(parcel)) {
                 // §12 — origin hub IS the dest hub; collapse the air legs and sort straight for delivery.
                 eventProducer.emitSameCityOutbound(parcel.shipmentId(), hubId, hubId);
@@ -110,6 +115,38 @@ class HubReceivingServiceImpl implements HubReceivingService {
             SortService.SortResult sort = sortService.resolveOutbound(hubId, parcel, now);
             return new ReceiveResult(receiptId, parcel.shipmentId(), parcel.shipmentRef(), true, null, sort, null);
         }
+    }
+
+    /**
+     * R4 one-scan RTO: the cancel arrived before this dock scan, so the parcel is turned around HERE in a
+     * single operator scan. M4 drives the hub arrival and mints the return child ({@code <ref>_R})
+     * synchronously; we then sort that child the same way a normal dock arrival would — a same-city child
+     * into a delivery bag (resolveInbound), a reverse child into a reverse-lane flight bag (resolveOutbound).
+     * No async arrival scan is emitted on this path (arrival was driven synchronously inside M4).
+     */
+    private ReceiveResult resolveRtoAndSort(UUID receiptId, UUID hubId, ShipmentInfoPort.ParcelInfo parcel,
+                                            boolean airport, Instant now) {
+        ShipmentState arrivalHubState = airport ? ShipmentState.AT_DEST_HUB : ShipmentState.AT_ORIGIN_HUB;
+        ReturnService.ReturnResult rto = returnService.resolveOnHubArrival(
+                        parcel.shipmentId(), arrivalHubState, TransitionContext.fromSystem(RTO_SOURCE))
+                .orElseThrow(() -> new IllegalStateException(
+                        "pendingRto parcel " + parcel.shipmentRef() + " resolved to no return child"));
+
+        AuditLog.event("hub.rto_resolved_on_scan")
+                .kv("shipmentRef", parcel.shipmentRef())
+                .kv("parcelId", parcel.shipmentId())
+                .kv("hubId", hubId)
+                .kv("childRef", rto.childShipmentRef())
+                .log();
+
+        // Sort the freshly-minted child by its own geography: same-city → delivery bag, reverse → flight bag.
+        ShipmentInfoPort.ParcelInfo child = shipmentInfoPort.lookup(rto.childShipmentRef())
+                .orElseThrow(() -> new ParcelNotFoundException(rto.childShipmentRef()));
+        if (isSameCity(child)) {
+            return inboundDispatch(receiptId, hubId, child, now);
+        }
+        SortService.SortResult sort = sortService.resolveOutbound(hubId, child, now);
+        return new ReceiveResult(receiptId, child.shipmentId(), child.shipmentRef(), true, null, sort, null);
     }
 
     /** Destination branch (§8.2): DA_DELIVERY → ladder + delivery bag + M6 feed; HUB_COLLECT → shelf. */

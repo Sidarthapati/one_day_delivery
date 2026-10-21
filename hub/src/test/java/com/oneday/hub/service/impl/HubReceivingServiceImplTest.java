@@ -18,6 +18,7 @@ import com.oneday.hub.service.SortService;
 import com.oneday.hub.service.exception.ParcelNotFoundException;
 import com.oneday.hub.service.exception.UndeterminedArrivalException;
 import com.oneday.hub.service.port.ShipmentInfoPort;
+import com.oneday.orders.service.ReturnService;
 import com.oneday.common.kafka.enums.ScanEventType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,12 +47,13 @@ class HubReceivingServiceImplTest {
     @Mock SortService sortService;
     @Mock HubEventProducer eventProducer;
     @Mock HubArrivalScanProducer arrivalScanProducer;
+    @Mock ReturnService returnService;
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-27T08:00:00Z"), ZoneOffset.UTC);
 
     private HubReceivingServiceImpl service() {
         return new HubReceivingServiceImpl(shipmentInfoPort, inboundReceiptRepository,
-                deliveryBagItemRepository, sortService, eventProducer, arrivalScanProducer, clock);
+                deliveryBagItemRepository, sortService, eventProducer, arrivalScanProducer, returnService, clock);
     }
 
     private final UUID hubId = UUID.randomUUID();
@@ -207,42 +209,62 @@ class HubReceivingServiceImplTest {
     }
 
     @Test
-    void receive_originHub_pendingRto_skipsOutboundSort() {
-        // R4 forward-guard: a parcel carrying an unresolved RTO intent (cancel arrived before this hub
-        // scan) is dock-received (AT_ORIGIN_HUB recorded) but NOT sorted onto the outbound flight — the
-        // orders-side resolver turns it around same-city instead of it flying.
+    void receive_originHub_pendingRto_resolvesAndSortsChildToDeliveryBag() {
+        // One scan: a pending RTO at the origin hub (cancel arrived before this scan) is resolved and its
+        // same-city _R child sorted straight into a delivery bag — no second scan, no outbound flight sort,
+        // and no async arrival scan (arrival was driven synchronously inside M4).
         ShipmentInfoPort.ParcelInfo parcel = new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1",
                 ShipmentState.AT_ORIGIN_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
                 "DELHI", "MUMBAI", "400001", null, null, /* pendingRto */ true);
         when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel));
         stubReceiptSave();
+        UUID childId = UUID.randomUUID();
+        when(returnService.resolveOnHubArrival(eq(parcel.shipmentId()), eq(ShipmentState.AT_ORIGIN_HUB), any()))
+                .thenReturn(Optional.of(new ReturnService.ReturnResult(childId, "BLR-1_R", parcel.shipmentId())));
+        ShipmentInfoPort.ParcelInfo child = new ShipmentInfoPort.ParcelInfo(childId, "BLR-1_R",
+                ShipmentState.AT_ORIGIN_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.SAME_CITY,
+                "MUMBAI", "MUMBAI", "400001", UUID.randomUUID(), null, false);
+        when(shipmentInfoPort.lookup("BLR-1_R")).thenReturn(Optional.of(child));
+        when(sortService.resolveInbound(eq(hubId), eq(child), any())).thenReturn(inboundResult(child));
 
         HubReceivingService.ReceiveResult result = service().receive(hubId, "BLR-1");
 
-        // Dock arrival still recorded + scanned, but no outbound flight sort.
-        assertThat(result.sort()).isNull();
-        assertThat(result.inboundSort()).isNull();
-        verify(arrivalScanProducer).emitArrival(parcel.shipmentId(), "BLR-1", hubId,
-                ScanEventType.HUB_ORIGIN_IN, "OUTBOUND");
+        assertThat(result.inboundSort()).isNotNull();
+        assertThat(result.shipmentRef()).isEqualTo("BLR-1_R");
+        verify(returnService).resolveOnHubArrival(eq(parcel.shipmentId()), eq(ShipmentState.AT_ORIGIN_HUB), any());
         verify(sortService, never()).resolveOutbound(any(), any(), any());
+        verifyNoInteractions(arrivalScanProducer);
     }
 
     @Test
-    void receive_sameCity_pendingRto_skipsDispatch() {
-        // R4: the pendingRto guard must run BEFORE the same-city branch — a same-city original with an
-        // unresolved RTO intent must be held for return resolution, not dispatched forward for delivery.
+    void receive_destHub_pendingRto_resolvesAndSortsReverseChildToFlightBag() {
+        // One scan: a pending reverse RTO landing at the dest hub is resolved and its _R child sorted into
+        // a reverse-lane flight bag (NOT a dest delivery bag) — the dest-branch gap this fix closes.
         ShipmentInfoPort.ParcelInfo parcel = new ShipmentInfoPort.ParcelInfo(UUID.randomUUID(), "BLR-1",
-                ShipmentState.AT_ORIGIN_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.SAME_CITY,
-                "MUMBAI", "MUMBAI", "400001", UUID.randomUUID(), null, /* pendingRto */ true);
+                ShipmentState.AT_DEST_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                "DELHI", "MUMBAI", "400001", UUID.randomUUID(), null, /* pendingRto */ true);
         when(shipmentInfoPort.lookup("BLR-1")).thenReturn(Optional.of(parcel));
         stubReceiptSave();
+        UUID childId = UUID.randomUUID();
+        when(returnService.resolveOnHubArrival(eq(parcel.shipmentId()), eq(ShipmentState.AT_DEST_HUB), any()))
+                .thenReturn(Optional.of(new ReturnService.ReturnResult(childId, "BLR-1_R", parcel.shipmentId())));
+        // Reverse child: origin = original dest (MUMBAI), dest = original origin (DELHI) → must fly back.
+        ShipmentInfoPort.ParcelInfo child = new ShipmentInfoPort.ParcelInfo(childId, "BLR-1_R",
+                ShipmentState.AT_ORIGIN_HUB, 1500, DropType.DA_DELIVERY, DeliveryType.INTERCITY,
+                "MUMBAI", "DELHI", "110001", UUID.randomUUID(), null, false);
+        when(shipmentInfoPort.lookup("BLR-1_R")).thenReturn(Optional.of(child));
+        SortService.SortResult sort = new SortService.SortResult(childId, "BLR-1_R", "DELHI",
+                UUID.randomUUID(), UUID.randomUUID(), "A-9", "ODDELHI99", null,
+                "MUMBAI", "DELHI", null, null);
+        when(sortService.resolveOutbound(eq(hubId), eq(child), any())).thenReturn(sort);
 
         HubReceivingService.ReceiveResult result = service().receive(hubId, "BLR-1");
 
-        assertThat(result.sort()).isNull();
-        assertThat(result.inboundSort()).isNull();
-        verify(eventProducer, never()).emitSameCityOutbound(any(), any(), any());
+        assertThat(result.sort()).isNotNull();
+        assertThat(result.sort().standNo()).isEqualTo("A-9");
+        assertThat(result.shipmentRef()).isEqualTo("BLR-1_R");
+        verify(returnService).resolveOnHubArrival(eq(parcel.shipmentId()), eq(ShipmentState.AT_DEST_HUB), any());
         verify(sortService, never()).resolveInbound(any(), any(), any());
-        verify(sortService, never()).resolveOutbound(any(), any(), any());
+        verifyNoInteractions(arrivalScanProducer);
     }
 }

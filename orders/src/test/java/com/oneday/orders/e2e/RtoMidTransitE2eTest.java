@@ -3,8 +3,13 @@ package com.oneday.orders.e2e;
 import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.Shipment;
+import com.oneday.orders.service.ReturnService;
+import com.oneday.orders.service.TransitionContext;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -25,6 +30,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class RtoMidTransitE2eTest extends OrdersE2eSupport {
 
     private static final String ADMIN = "ADMIN";
+
+    @Autowired ReturnService returnService;
 
     // At the destination hub, a cancel spawns a reverse-lane return child now and moves the original
     // to RTO_INITIATED — no refund.
@@ -124,5 +131,65 @@ class RtoMidTransitE2eTest extends OrdersE2eSupport {
                         .header("Idempotency-Key", idemKey())
                         .param("reason", "too early"))
                 .andExpect(status().isConflict());
+    }
+
+    // ── One-scan RTO at the dock (the M7 ↔ M4 seam this fix wires) ─────────────────────────────────
+
+    // ORIGIN hub, one scan: a pre-hub cancel leaves a deferred same-city intent (no child yet); the single
+    // dock scan then resolves it — resolveOnHubArrival drives the AT_ORIGIN_HUB arrival AND mints the
+    // same-city child (DEL→DEL) in one call, so M7 sorts it into a delivery bag without a second scan.
+    @Test
+    void resolveOnHubArrival_originHub_mintsSameCityChildInOneCall() throws Exception {
+        String token = tokenFor("B2C_CUSTOMER", randomUserId());
+        String ref = bookB2c(token, PaymentMode.PREPAID);
+        drive(ref, ShipmentState.PICKUP_ASSIGNED, ShipmentState.PICKED_UP, ShipmentState.HANDED_TO_PICKUP_VAN);
+        mvc.perform(delete("/api/v1/b2c/shipments/{ref}", ref)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", idemKey()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.disposition").value("RETURN_SCHEDULED"));
+        assertThat(shipmentRepository.findByShipmentRef(ref + "_R")).isEmpty(); // not minted yet
+
+        Optional<ReturnService.ReturnResult> result = returnService.resolveOnHubArrival(
+                idOf(ref), ShipmentState.AT_ORIGIN_HUB, TransitionContext.fromSystem("e2e-onescan"));
+
+        assertThat(result).isPresent();
+        Shipment original = shipmentRepository.findByShipmentRef(ref).orElseThrow();
+        assertThat(original.getState()).isEqualTo(ShipmentState.RTO_INITIATED);
+        assertThat(original.getRtoResolvedAt()).isNotNull();
+        Shipment child = shipmentRepository.findByShipmentRef(ref + "_R").orElseThrow();
+        assertThat(child.getOriginCity()).isEqualTo("DEL"); // same-city: returns within the origin city
+        assertThat(child.getDestCity()).isEqualTo("DEL");
+        assertThat(child.getReturnOfShipmentId()).isEqualTo(original.getId());
+    }
+
+    // DEST hub, one scan: a committed-transit cancel leaves a deferred reverse intent; the single dock scan
+    // at the dest hub resolves it — resolveOnHubArrival mints the REVERSE child (BLR→DEL) so M7 sorts it
+    // onto a flight back, NOT into a dest-city delivery bag (the dest-branch gap this fix closes).
+    @Test
+    void resolveOnHubArrival_destHub_mintsReverseChildInOneCall() throws Exception {
+        String token = tokenFor("B2C_CUSTOMER", randomUserId());
+        String ref = bookB2c(token, PaymentMode.PREPAID);
+        drive(ref, ShipmentState.PICKUP_ASSIGNED, ShipmentState.PICKED_UP, ShipmentState.HANDED_TO_PICKUP_VAN,
+                ShipmentState.AT_ORIGIN_HUB, ShipmentState.ORIGIN_HUB_PROCESSING, ShipmentState.IN_TAKEOFF_BAG,
+                ShipmentState.DISPATCHED_TO_AIRPORT, ShipmentState.AT_AIRPORT, ShipmentState.DEPARTED,
+                ShipmentState.LANDED, ShipmentState.DISPATCHED_TO_HUB);
+        mvc.perform(delete("/api/v1/b2c/shipments/{ref}", ref)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", idemKey()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.disposition").value("RETURN_SCHEDULED"));
+        assertThat(shipmentRepository.findByShipmentRef(ref + "_R")).isEmpty();
+
+        Optional<ReturnService.ReturnResult> result = returnService.resolveOnHubArrival(
+                idOf(ref), ShipmentState.AT_DEST_HUB, TransitionContext.fromSystem("e2e-onescan"));
+
+        assertThat(result).isPresent();
+        Shipment original = shipmentRepository.findByShipmentRef(ref).orElseThrow();
+        assertThat(original.getState()).isEqualTo(ShipmentState.RTO_INITIATED);
+        Shipment child = shipmentRepository.findByShipmentRef(ref + "_R").orElseThrow();
+        assertThat(child.getOriginCity()).isEqualTo("BLR"); // reverse: fly back from the original dest
+        assertThat(child.getDestCity()).isEqualTo("DEL");
+        assertThat(child.getReturnOfShipmentId()).isEqualTo(original.getId());
     }
 }
