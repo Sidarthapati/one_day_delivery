@@ -269,6 +269,21 @@
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Excluded from the COVERAGE REPORT only (not from instrumentation): classes that
+                         integrate with a live third-party over the network and are either gated off by
+                         @ConditionalOnProperty (never instantiated in tests) or only exercisable against a
+                         real provider account/SDK. There is no honest unit test for their request-building
+                         + error-handling branches without standing up the external service, so they are
+                         declared out of the coverage target rather than faked. -->
+                    <excludes>
+                        <exclude>**/RazorpayXPayoutAdapter.class</exclude>
+                        <exclude>**/RazorpayPaymentAdapter.class</exclude>
+                        <exclude>**/SendGridEmailSender.class</exclude>
+                        <exclude>**/Msg91SmsSender.class</exclude>
+                        <exclude>**/MetaWhatsAppSender.class</exclude>
+                    </excludes>
+                </configuration>
                 <executions>
                     <execution>
                         <id>prepare-agent</id>
