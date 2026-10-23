@@ -38,6 +38,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -81,6 +82,7 @@ abstract class OrdersE2eSupport {
     @Autowired protected ShipmentStateMachine stateMachine;
     @Autowired protected PickupOtpService pickupOtpService;
     @Autowired protected ShipmentRepository shipmentRepository;
+    @Autowired protected JdbcTemplate jdbc;
 
     @MockBean protected ServiceabilityPort serviceabilityPort;
     @MockBean protected PricingPort pricingPort;
@@ -121,6 +123,25 @@ abstract class OrdersE2eSupport {
         lenient().when(pickupAssignmentPort.isActivePickupDa(any(), any())).thenReturn(true);
         // M8 scan trail: empty by default (no scans in the orders test context).
         lenient().when(shipmentScanTrailPort.trailFor(any())).thenReturn(java.util.List.of());
+
+        // Normalize the demo B2B account to the migration-seeded fixture this suite assumes (V4_13 +
+        // V4_16): ₹50k limit, ₹12k outstanding, owner = B2B_OWNER_USER_ID, active. A demo-seeded local
+        // DB may have drifted (e.g. a higher limit or a different owner), which breaks the credit-limit
+        // and owner-equality (cancel) assertions. @Transactional rolls this back after each test.
+        jdbc.update("""
+                UPDATE b2b_accounts
+                   SET owner_user_id = ?::uuid, credit_limit_paise = 5000000,
+                       outstanding_balance_paise = 1200000, is_active = true
+                 WHERE id = ?::uuid
+                """, B2B_OWNER_USER_ID, B2B_ACCOUNT_ID);
+        // B2B *booking* authz is membership-based (b2b_account_member, #202). Seed the principal's
+        // membership regardless of local DB state, including the pre-patch V4_44 schema where the unique
+        // constraint is on user_id alone (delete-then-insert avoids a stale cross-account membership).
+        jdbc.update("DELETE FROM b2b_account_member WHERE user_id = ?::uuid", B2B_OWNER_USER_ID);
+        jdbc.update("""
+                INSERT INTO b2b_account_member (id, b2b_account_id, user_id, role, created_at, updated_at)
+                VALUES (gen_random_uuid(), ?::uuid, ?::uuid, 'OWNER', now(), now())
+                """, B2B_ACCOUNT_ID, B2B_OWNER_USER_ID);
     }
 
     // ── Auth helpers ────────────────────────────────────────────────────────
