@@ -16,7 +16,7 @@ import com.oneday.airline.service.AirlineCustodyService;
 import com.oneday.airline.service.AwbGroundService;
 import com.oneday.airline.service.AwbIntakeService;
 import com.oneday.airline.service.provider.FlightProviderPort;
-import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;

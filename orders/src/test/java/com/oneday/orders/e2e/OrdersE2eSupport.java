@@ -10,7 +10,7 @@ import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.DropType;
 import com.oneday.common.domain.enums.PaymentMode;
 import com.oneday.common.domain.enums.PickupType;
-import com.oneday.common.kafka.EventPublisher;
+import com.oneday.common.messaging.EventPublisher;
 import com.oneday.common.port.EtaPort;
 import com.oneday.common.port.ObjectStoragePort;
 import com.oneday.common.port.PickupAssignmentPort;

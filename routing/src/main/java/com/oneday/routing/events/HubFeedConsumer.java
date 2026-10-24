@@ -4,7 +4,7 @@ import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.routing.domain.InboundKind;
 import com.oneday.routing.domain.InboundParcel;
-import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
+import com.oneday.common.messaging.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.InboundParcelRepository;
 import com.oneday.routing.service.VanManifestService;
 import org.slf4j.Logger;

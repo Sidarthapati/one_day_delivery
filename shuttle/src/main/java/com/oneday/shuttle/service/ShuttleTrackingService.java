@@ -9,7 +9,7 @@ import java.time.Clock;
 import java.util.UUID;
 
 /**
- * Overwrites the single {@code shuttle_live_status} row for an agent on every GPS ping — no Kafka, no
+ * Overwrites the single {@code shuttle_live_status} row for an agent on every GPS ping — no RabbitMQ, no
  * history. Mirror of the van's in-process telemetry handling, minus stops/lateness.
  */
 @Service

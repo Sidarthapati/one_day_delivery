@@ -1,11 +1,11 @@
 package com.oneday.orders.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.ShipmentEventType;
-import com.oneday.common.kafka.events.ShipmentCancelledEvent;
-import com.oneday.common.kafka.events.ShipmentCreatedEvent;
-import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.ShipmentEventType;
+import com.oneday.common.messaging.events.ShipmentCancelledEvent;
+import com.oneday.common.messaging.events.ShipmentCreatedEvent;
+import com.oneday.common.messaging.events.ShipmentStateChangedEvent;
 import com.oneday.common.domain.enums.ShipmentState;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.repository.ParcelOrderRepository;

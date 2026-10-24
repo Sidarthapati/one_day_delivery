@@ -1,7 +1,7 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.events.FlightEvent;
+import com.oneday.common.messaging.events.FlightEvent;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -36,6 +36,6 @@ public class FlightEventsConsumer {
             return;
         }
         stateMachine.transition(event.shipmentId(), target,
-                TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+                TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId())));
     }
 }

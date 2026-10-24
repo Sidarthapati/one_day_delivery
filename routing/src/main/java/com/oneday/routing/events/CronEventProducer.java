@@ -2,16 +2,16 @@ package com.oneday.routing.events;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.events.cron.DaCronScheduledEvent;
-import com.oneday.common.kafka.events.cron.HandoffCompletedEvent;
-import com.oneday.common.kafka.events.cron.HandoffDiscrepancyEvent;
-import com.oneday.common.kafka.events.cron.LoopOverflowEvent;
-import com.oneday.common.kafka.events.cron.RouteChangedEvent;
-import com.oneday.common.kafka.events.cron.RoutePlanPublishedEvent;
-import com.oneday.common.kafka.events.cron.ShuttleScheduledEvent;
-import com.oneday.common.kafka.events.cron.VanBreakdownEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.events.cron.DaCronScheduledEvent;
+import com.oneday.common.messaging.events.cron.HandoffCompletedEvent;
+import com.oneday.common.messaging.events.cron.HandoffDiscrepancyEvent;
+import com.oneday.common.messaging.events.cron.LoopOverflowEvent;
+import com.oneday.common.messaging.events.cron.RouteChangedEvent;
+import com.oneday.common.messaging.events.cron.RoutePlanPublishedEvent;
+import com.oneday.common.messaging.events.cron.ShuttleScheduledEvent;
+import com.oneday.common.messaging.events.cron.VanBreakdownEvent;
 import com.oneday.routing.domain.DaCronSchedule;
 import com.oneday.routing.domain.DiscrepancyType;
 import com.oneday.routing.domain.RoutePlan;
@@ -27,7 +27,7 @@ import java.util.UUID;
 
 /**
  * Publishes M6's plan-time cron events on {@code oneday.cron.events} (§17.1) via the shared
- * {@link EventPublisher}. The typed {@code common.kafka.events.cron.*} payloads are the contract;
+ * {@link EventPublisher}. The typed {@code common.messaging.events.cron.*} payloads are the contract;
  * this class is the only place that maps M6 domain rows onto them. Run-time events
  * (VAN_ARRIVED, HANDOFF_*, …) arrive in later PRs.
  */

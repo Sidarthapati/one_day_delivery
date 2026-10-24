@@ -1,6 +1,6 @@
 package com.oneday.common.log;
 
-import com.oneday.common.kafka.DomainEvent;
+import com.oneday.common.messaging.DomainEvent;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;

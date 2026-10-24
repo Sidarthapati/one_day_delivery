@@ -5,8 +5,8 @@ import com.oneday.airline.domain.AwbStatus;
 import com.oneday.airline.events.FlightEventProducer;
 import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.service.AwbBookingService;
-import com.oneday.common.kafka.enums.FlightReassignReason;
-import com.oneday.common.kafka.events.flight.FlightReassignedEvent;
+import com.oneday.common.messaging.enums.FlightReassignReason;
+import com.oneday.common.messaging.events.flight.FlightReassignedEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

@@ -1,7 +1,7 @@
 package com.oneday.grid.events.payload;
 
-import com.oneday.common.kafka.DomainEvent;
-import com.oneday.common.kafka.enums.GridEventType;
+import com.oneday.common.messaging.DomainEvent;
+import com.oneday.common.messaging.enums.GridEventType;
 
 import java.time.Instant;
 import java.time.LocalDate;

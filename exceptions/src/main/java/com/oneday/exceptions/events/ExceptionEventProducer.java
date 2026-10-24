@@ -1,9 +1,9 @@
 package com.oneday.exceptions.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.ExceptionsEventType;
-import com.oneday.common.kafka.events.ExceptionsEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.ExceptionsEventType;
+import com.oneday.common.messaging.events.ExceptionsEvent;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;

@@ -12,7 +12,7 @@ import com.oneday.airline.repository.AwbRepository;
 import com.oneday.airline.repository.FlightInstanceRepository;
 import com.oneday.airline.service.impl.FlightReassignmentService;
 import com.oneday.airline.service.provider.FlightProviderPort;
-import com.oneday.common.kafka.enums.FlightReassignReason;
+import com.oneday.common.messaging.enums.FlightReassignReason;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -151,8 +151,8 @@ class FlightStatusPollJobTest {
         assertThat(fi.getDeparture()).isEqualTo(delayedDeparture);
         assertThat(fi.getArrival()).isEqualTo(delayedArrival);
 
-        ArgumentCaptor<com.oneday.common.kafka.events.flight.FlightTimeChangedEvent> captor =
-                ArgumentCaptor.forClass(com.oneday.common.kafka.events.flight.FlightTimeChangedEvent.class);
+        ArgumentCaptor<com.oneday.common.messaging.events.flight.FlightTimeChangedEvent> captor =
+                ArgumentCaptor.forClass(com.oneday.common.messaging.events.flight.FlightTimeChangedEvent.class);
         verify(flightEventProducer).emitTimeChanged(captor.capture());
         assertThat(captor.getValue().newDeparture()).isEqualTo(delayedDeparture);
     }

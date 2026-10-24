@@ -17,7 +17,7 @@ import com.oneday.hub.service.exception.ParcelNotFoundException;
 import com.oneday.hub.service.port.ShipmentInfoPort;
 import com.oneday.orders.service.ReturnService;
 import com.oneday.orders.service.TransitionContext;
-import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
 import com.oneday.common.log.AuditLog;
 import com.oneday.common.log.LogContext;
 import org.springframework.stereotype.Service;

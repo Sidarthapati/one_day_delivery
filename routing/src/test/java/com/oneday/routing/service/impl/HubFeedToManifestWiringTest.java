@@ -14,7 +14,7 @@ import com.oneday.routing.domain.VanManifest;
 import com.oneday.routing.domain.VanManifestItem;
 import com.oneday.routing.events.CronEventProducer;
 import com.oneday.routing.events.HubFeedConsumer;
-import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
+import com.oneday.common.messaging.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.routing.repository.CityFleetConfigRepository;
 import com.oneday.routing.repository.DaCronScheduleRepository;
 import com.oneday.routing.repository.InboundParcelRepository;

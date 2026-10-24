@@ -1,11 +1,11 @@
 package com.oneday.airline.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.events.FlightEvent;
-import com.oneday.common.kafka.enums.FlightEventType;
-import com.oneday.common.kafka.events.flight.FlightReassignedEvent;
-import com.oneday.common.kafka.events.flight.FlightTimeChangedEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.events.FlightEvent;
+import com.oneday.common.messaging.enums.FlightEventType;
+import com.oneday.common.messaging.events.flight.FlightReassignedEvent;
+import com.oneday.common.messaging.events.flight.FlightTimeChangedEvent;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;

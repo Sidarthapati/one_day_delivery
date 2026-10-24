@@ -1,6 +1,6 @@
 package com.oneday.dispatch.events;
 
-import com.oneday.common.kafka.events.ReceiverRejectedEvent;
+import com.oneday.common.messaging.events.ReceiverRejectedEvent;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.DeferReason;
 import com.oneday.dispatch.service.DaTaskService;

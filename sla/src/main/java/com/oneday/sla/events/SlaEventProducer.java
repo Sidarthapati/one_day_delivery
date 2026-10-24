@@ -1,9 +1,9 @@
 package com.oneday.sla.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.events.sla.SlaBreachedEvent;
-import com.oneday.common.kafka.events.sla.SlaEscalationRaisedEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.events.sla.SlaBreachedEvent;
+import com.oneday.common.messaging.events.sla.SlaEscalationRaisedEvent;
 import org.springframework.stereotype.Component;
 
 /** Publishes M10's outbound events on {@code oneday.sla.events} (→ M11, ops/notification service). */

@@ -1,7 +1,7 @@
 package com.oneday.hub.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.oneday.common.kafka.enums.FlightReassignReason;
+import com.oneday.common.messaging.enums.FlightReassignReason;
 import com.oneday.hub.domain.*;
 import com.oneday.hub.events.HubEventProducer;
 import com.oneday.hub.repository.*;

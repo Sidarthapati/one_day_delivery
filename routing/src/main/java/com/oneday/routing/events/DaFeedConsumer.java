@@ -1,8 +1,8 @@
 package com.oneday.routing.events;
 
 import com.oneday.common.domain.MeetingMode;
-import com.oneday.common.kafka.enums.DaEventType;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.enums.DaEventType;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.routing.domain.InboundKind;
 import com.oneday.routing.domain.InboundParcel;

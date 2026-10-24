@@ -1,6 +1,6 @@
 package com.oneday.sla.events;
 
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.sla.service.SlaLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

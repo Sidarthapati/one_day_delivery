@@ -5,7 +5,7 @@ import com.oneday.airline.domain.AwbParcel;
 import com.oneday.airline.events.CustodyScanProducer;
 import com.oneday.airline.repository.AwbParcelRepository;
 import com.oneday.airline.repository.AwbRepository;
-import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

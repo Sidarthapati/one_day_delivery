@@ -3,7 +3,7 @@ package com.oneday.barcode.api;
 import com.oneday.barcode.service.ScanCommand;
 import com.oneday.barcode.service.LabelService;
 import com.oneday.barcode.service.ScanLedgerService;
-import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;

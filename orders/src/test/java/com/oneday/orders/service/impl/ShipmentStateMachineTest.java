@@ -147,16 +147,16 @@ class ShipmentStateMachineTest {
     @Test
     void transition_writesFullTriggerContextToHistory() {
         shipmentIn(ShipmentState.PICKUP_ASSIGNED);
-        TransitionContext kafkaCtx = TransitionContext.fromKafka("m5-consumer", "kafka-msg-001")
+        TransitionContext brokerCtx = TransitionContext.fromBroker("m5-consumer", "broker-msg-001")
                 .withNotes("DA arrived and customer confirmed OTP");
 
-        stateMachine.transition(shipmentId, ShipmentState.PICKED_UP, kafkaCtx);
+        stateMachine.transition(shipmentId, ShipmentState.PICKED_UP, brokerCtx);
 
         ArgumentCaptor<ShipmentStateHistory> cap = ArgumentCaptor.forClass(ShipmentStateHistory.class);
         verify(historyRepo).save(cap.capture());
         ShipmentStateHistory history = cap.getValue();
         assertThat(history.getTriggeredBy()).isEqualTo("m5-consumer");
-        assertThat(history.getEventRef()).isEqualTo("kafka-msg-001");
+        assertThat(history.getEventRef()).isEqualTo("broker-msg-001");
         assertThat(history.getNotes()).isEqualTo("DA arrived and customer confirmed OTP");
     }
 

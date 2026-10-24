@@ -2,8 +2,8 @@ package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ReturnReason;
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.enums.ExceptionsEventType;
-import com.oneday.common.kafka.events.ExceptionsEvent;
+import com.oneday.common.messaging.enums.ExceptionsEventType;
+import com.oneday.common.messaging.events.ExceptionsEvent;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.ReturnService;

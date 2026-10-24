@@ -1,8 +1,8 @@
 package com.oneday.hub.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.events.hub.*;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.events.hub.*;
 import com.oneday.hub.domain.ArrivalMode;
 import com.oneday.hub.domain.BagManifest;
 import com.oneday.hub.domain.DeliveryBag;
@@ -18,7 +18,7 @@ import java.util.UUID;
 
 /**
  * Publishes M7's hub events on {@code oneday.hub.events} (§14.1) via the shared {@link EventPublisher}.
- * The typed {@code common.kafka.events.hub.*} payloads are the contract; this is the only place that
+ * The typed {@code common.messaging.events.hub.*} payloads are the contract; this is the only place that
  * maps M7 domain rows onto them (mirrors M6's {@code CronEventProducer}).
  */
 @Component

@@ -1,7 +1,7 @@
 package com.oneday.exceptions.service.impl;
 
-import com.oneday.common.kafka.enums.DaEventType;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.enums.DaEventType;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.common.port.DaDirectoryPort;
 import com.oneday.exceptions.domain.AttendanceAlert;
 import com.oneday.exceptions.domain.AttendanceAlertStatus;

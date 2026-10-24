@@ -1,6 +1,6 @@
 package com.oneday.exceptions.service;
 
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.exceptions.dto.AttendanceAlertResponse;
 
 import java.time.LocalDate;

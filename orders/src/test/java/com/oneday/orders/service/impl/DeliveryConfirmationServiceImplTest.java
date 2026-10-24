@@ -1,8 +1,8 @@
 package com.oneday.orders.service.impl;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.events.ReceiverRejectedEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.events.ReceiverRejectedEvent;
 import com.oneday.common.port.NotificationPort;
 import com.oneday.common.port.dto.NotificationEventType;
 import com.oneday.common.port.dto.NotificationRequest;

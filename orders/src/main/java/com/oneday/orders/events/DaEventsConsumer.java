@@ -2,7 +2,7 @@ package com.oneday.orders.events;
 
 import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.orders.service.DeliveryOtpService;
 import com.oneday.orders.service.PickupOtpService;
@@ -86,7 +86,7 @@ public class DaEventsConsumer {
         // for this message — ack and move on, never retry/DLQ.
         try {
             stateMachine.transition(event.shipmentId(), target,
-                    TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+                    TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId())));
         } catch (IllegalStateTransitionException | EntityNotFoundException e) {
             log.debug("DA event {} → {} skipped for {} ({})",
                     event.eventType(), target, event.shipmentId(), e.getMessage());

@@ -1,8 +1,8 @@
 package com.oneday.dispatch.events;
 
 import com.oneday.common.domain.MeetingMode;
-import com.oneday.common.kafka.events.hub.HubEventPayload;
-import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
+import com.oneday.common.messaging.events.hub.HubEventPayload;
+import com.oneday.common.messaging.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.common.port.ShipmentLocationPort;
 import com.oneday.dispatch.service.AssignmentResult;

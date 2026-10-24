@@ -1,13 +1,13 @@
 package com.oneday.common.log;
 
-import com.oneday.common.kafka.DomainEvent;
-import com.oneday.common.kafka.enums.DaEventType;
-import com.oneday.common.kafka.enums.HubEventType;
-import com.oneday.common.kafka.enums.ScanEventType;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
-import com.oneday.common.kafka.events.HubEvent;
-import com.oneday.common.kafka.events.ScanEvent;
-import com.oneday.common.kafka.events.ShipmentCreatedEvent;
+import com.oneday.common.messaging.DomainEvent;
+import com.oneday.common.messaging.enums.DaEventType;
+import com.oneday.common.messaging.enums.HubEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
+import com.oneday.common.messaging.events.HubEvent;
+import com.oneday.common.messaging.events.ScanEvent;
+import com.oneday.common.messaging.events.ShipmentCreatedEvent;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

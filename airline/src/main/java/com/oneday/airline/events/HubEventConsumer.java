@@ -1,7 +1,7 @@
 package com.oneday.airline.events;
 
 import com.oneday.airline.service.AwbBookingService;
-import com.oneday.common.kafka.events.hub.BagSealedEvent;
+import com.oneday.common.messaging.events.hub.BagSealedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitHandler;

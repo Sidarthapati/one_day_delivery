@@ -88,7 +88,7 @@ class DispatchServiceImplTest {
         grid = mock(GridService.class);
         adjacent = mock(AdjacentDaProvider.class);
         when(adjacent.candidates(any(), any(), any())).thenReturn(List.of());
-        DaEventProducer daEventProducer = new DaEventProducer(mock(com.oneday.common.kafka.EventPublisher.class), props);
+        DaEventProducer daEventProducer = new DaEventProducer(mock(com.oneday.common.messaging.EventPublisher.class), props);
         com.oneday.dispatch.metrics.DispatchMetrics metrics =
                 new com.oneday.dispatch.metrics.DispatchMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         QueueReorderService queueReorder = mock(QueueReorderService.class);

@@ -1,6 +1,6 @@
 package com.oneday.exceptions.events;
 
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.exceptions.domain.ExceptionReason;
 import com.oneday.exceptions.domain.ExceptionType;
 import com.oneday.exceptions.service.AttendanceAlertService;
