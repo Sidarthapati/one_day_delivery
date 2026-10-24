@@ -6,7 +6,7 @@ package com.oneday.common.messaging;
  * modules declare their own queue bound to the exchange (see {@code *MessagingTopology} configs
  * and {@code docs/EVENT-BUS-ARCHITECTURE.md}).
  *
- * <p>Formerly {@code KafkaTopics}; values are unchanged so the broker/exchange names are stable.</p>
+ * <p>The constant values are the stable RabbitMQ exchange names and must not change.</p>
  */
 public final class EventStreams {
 

@@ -46,6 +46,6 @@ public class HubEventsConsumer {
             return;
         }
         stateMachine.transition(event.shipmentId(), target,
-                TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+                TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId())));
     }
 }

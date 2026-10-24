@@ -18,7 +18,7 @@ import java.util.UUID;
  *   <li>Updates the shipment state and appends a {@code ShipmentStateHistory} row</li>
  * </ol>
  *
- * <p>Side effects (OTP generation, ETA calls, Kafka emission, notifications) are
+ * <p>Side effects (OTP generation, ETA calls, RabbitMQ emission, notifications) are
  * NOT performed here — they live in the calling service layer ({@code ShipmentServiceImpl})
  * which wraps this machine.</p>
  *

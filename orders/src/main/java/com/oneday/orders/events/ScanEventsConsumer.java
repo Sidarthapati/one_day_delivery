@@ -78,7 +78,7 @@ public class ScanEventsConsumer {
         }
         try {
             stateMachine.transition(event.shipmentId(), target,
-                    TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+                    TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId())));
             AuditLog.event("scan.consumed")
                     .kv("shipmentId", event.shipmentId())
                     .kv("scanType", event.eventType().name())

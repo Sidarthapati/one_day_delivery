@@ -71,9 +71,9 @@ class ShipmentStateMachineImpl implements ShipmentStateMachine {
                 .kv("source", ctx.getTriggerSource())
                 .log();
 
-        // In-process announcement — ShipmentEventProducer turns this into the outbound Kafka
+        // In-process announcement — ShipmentEventProducer turns this into the outbound RabbitMQ
         // STATE_CHANGED event after this transaction commits (AFTER_COMMIT). The state machine
-        // stays decoupled from Kafka; it just reports that a transition happened.
+        // stays decoupled from RabbitMQ; it just reports that a transition happened.
         applicationEventPublisher.publishEvent(new ShipmentTransitioned(
                 shipmentId, shipment.getShipmentRef(), current, target,
                 ctx.getTriggeredBy(), ctx.getTriggerSource(), ctx.getOccurredAt()));

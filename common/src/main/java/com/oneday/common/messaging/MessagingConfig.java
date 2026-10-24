@@ -13,8 +13,8 @@ import java.util.List;
 /**
  * Shared RabbitMQ messaging config. Defining a single {@link MessageConverter} bean makes Spring
  * Boot's auto-configured {@code RabbitTemplate} (producer) and listener container factory
- * (consumer) both serialize/deserialize event payloads as JSON — the drop-in replacement for the
- * Kafka {@code JsonSerializer}/{@code JsonDeserializer} pair.
+ * (consumer) both serialize/deserialize event payloads as JSON via the AMQP
+ * {@code Jackson2JsonMessageConverter}.
  *
  * <p>Retry + dead-lettering are configured declaratively: listener retry via
  * {@code spring.rabbitmq.listener.simple.retry.*} (app config), and a {@code <stream>.dlx} /

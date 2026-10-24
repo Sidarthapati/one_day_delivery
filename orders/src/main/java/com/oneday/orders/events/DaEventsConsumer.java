@@ -86,7 +86,7 @@ public class DaEventsConsumer {
         // for this message — ack and move on, never retry/DLQ.
         try {
             stateMachine.transition(event.shipmentId(), target,
-                    TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+                    TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId())));
         } catch (IllegalStateTransitionException | EntityNotFoundException e) {
             log.debug("DA event {} → {} skipped for {} ({})",
                     event.eventType(), target, event.shipmentId(), e.getMessage());

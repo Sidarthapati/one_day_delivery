@@ -44,7 +44,7 @@ public class ExceptionsEventsConsumer {
 
     @RabbitListener(queues = OrdersMessagingTopology.EXCEPTIONS_QUEUE)
     public void onExceptionsEvent(ExceptionsEvent event) {
-        TransitionContext ctx = TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId()));
+        TransitionContext ctx = TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId()));
 
         // RTO_INITIATED = "attempts exhausted, return to sender". Spawn a return child (or, if the
         // shipment is already a return child, hold it at the hub — no return-of-a-return).
