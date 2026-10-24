@@ -1,7 +1,7 @@
 package com.oneday.barcode.service;
 
 import com.oneday.barcode.repository.ScanLedgerRepository;
-import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

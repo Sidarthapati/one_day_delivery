@@ -1,6 +1,6 @@
 package com.oneday.sla.events;
 
-import com.oneday.common.kafka.events.ExceptionsEvent;
+import com.oneday.common.messaging.events.ExceptionsEvent;
 import com.oneday.sla.service.SlaLifecycleService;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;

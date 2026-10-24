@@ -1,0 +1,64 @@
+package com.oneday.common.messaging.enums;
+
+public enum DaEventType {
+    // M4 consumer: BOOKED → PICKUP_ASSIGNED (side-effect: OTP generated and sent to customer)
+    PICKUP_ASSIGNED,
+
+    // NOT consumed by M4 for state transitions — PICKED_UP is triggered by OTP verify HTTP endpoint.
+    // Produced by M5 for other consumers (M10 SLA).
+    PICKUP_COMPLETED,
+
+    // M4 consumer: PICKUP_ASSIGNED → PICKUP_FAILED
+    PICKUP_FAILED,
+
+    // M4 consumer: PICKED_UP → HANDED_TO_PICKUP_VAN  [QR scan — DA scans parcel in DA app]
+    VAN_HANDOFF_COMPLETED,
+
+    // HUB_RETURN cities only (M6 gate off — no van). The DA carries the pickup back to the hub and
+    // hands it off there; same custody progression as a van handoff → M4 (HANDED_TO_PICKUP_VAN).
+    // A distinct type so consumers aren't told a "van" received the parcel when none exists.
+    HUB_RETURN_HANDOFF_COMPLETED,
+
+    // M4 consumer: HANDED_TO_DROP_VAN → DROP_ASSIGNED
+    DROP_ASSIGNED,
+
+    // M4 consumer: DROP_ASSIGNED → DROP_COLLECTED  [QR scan — DA scans parcel in DA app when collecting from van]
+    DROP_COLLECTED,
+
+    // M4 consumer: DROP_COLLECTED → DROPPED  [verification: see OD-8]
+    DROP_COMPLETED,
+
+    // M4 consumer: DROP_COLLECTED → DELIVERY_FAILED
+    DROP_FAILED,
+
+    // ── M5-internal events (NOT consumed by M4 for state transitions) ──────────
+    // Queue order changed (insertion / cancel / reschedule); keyed by daId. → ops/UI
+    QUEUE_REORDERED,
+
+    // DA missed the GPS-heartbeat threshold and was marked ABSENT; keyed by daId. → M10, M11
+    DA_ABSENT,
+
+    // A parcel could not make its DA's cron meeting in time. → M10, M11
+    CRON_MISSED,
+
+    // COD cash collected at delivery; emitted alongside DROP_COMPLETED. → finance / M10
+    COD_COLLECTED,
+
+    // Midday absence: the covering DA physically collected an in-custody parcel from an absent DA
+    // (a CUSTODY_COLLECT task completed). Custody moved between DAs, so state consumers can re-anchor
+    // the parcel to the new owner. → M10, M11
+    CUSTODY_COLLECTED,
+
+    // QUEUED tasks deferred at shift end (carried to next day / RTO path). → M11
+    TASK_DEFERRED_SHIFT_ENDED,
+
+    // Geocoded attendance: a rostered DA's hub proximity could not be confirmed by the shift cutoff
+    // (never pinged, or never within the hub geofence). reasonCode = "{SHIFT}|{cityCode}". → M11 (opens
+    // an attendance alert for the station manager).
+    ATTENDANCE_UNCONFIRMED,
+
+    // Geocoded attendance: an open attendance alert was settled — the station manager marked the DA
+    // present, or marked them absent (which also triggered the reassignment). reasonCode = PRESENT|ABSENT.
+    // → M11 (closes the alert).
+    ATTENDANCE_RESOLVED
+}

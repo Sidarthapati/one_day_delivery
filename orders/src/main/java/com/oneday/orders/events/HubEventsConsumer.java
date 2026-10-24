@@ -1,7 +1,7 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.events.HubEvent;
+import com.oneday.common.messaging.events.HubEvent;
 import com.oneday.orders.service.ShipmentStateMachine;
 import com.oneday.orders.service.TransitionContext;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;

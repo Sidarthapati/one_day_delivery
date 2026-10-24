@@ -1,6 +1,6 @@
 package com.oneday.hub.dto;
 
-import com.oneday.common.kafka.enums.FlightReassignReason;
+import com.oneday.common.messaging.enums.FlightReassignReason;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 

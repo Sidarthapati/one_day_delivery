@@ -1,6 +1,6 @@
 package com.oneday.hub.service;
 
-import com.oneday.common.kafka.enums.FlightReassignReason;
+import com.oneday.common.messaging.enums.FlightReassignReason;
 import com.oneday.hub.domain.FlightBag;
 
 import java.time.Instant;

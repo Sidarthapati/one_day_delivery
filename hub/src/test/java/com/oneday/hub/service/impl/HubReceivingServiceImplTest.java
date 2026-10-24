@@ -19,7 +19,7 @@ import com.oneday.hub.service.exception.ParcelNotFoundException;
 import com.oneday.hub.service.exception.UndeterminedArrivalException;
 import com.oneday.hub.service.port.ShipmentInfoPort;
 import com.oneday.orders.service.ReturnService;
-import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;

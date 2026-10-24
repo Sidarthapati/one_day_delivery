@@ -2,7 +2,7 @@ package com.oneday.orders.events;
 
 import com.oneday.common.domain.MeetingMode;
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.common.port.CityMeetingModePort;
 import com.oneday.orders.service.DeliveryOtpService;
 import com.oneday.orders.service.PickupOtpService;

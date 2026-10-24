@@ -1,7 +1,7 @@
 package com.oneday.sla.events;
 
-import com.oneday.common.kafka.events.cron.CronEventPayload;
-import com.oneday.common.kafka.events.cron.LoopOverflowEvent;
+import com.oneday.common.messaging.events.cron.CronEventPayload;
+import com.oneday.common.messaging.events.cron.LoopOverflowEvent;
 import com.oneday.sla.service.SlaLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

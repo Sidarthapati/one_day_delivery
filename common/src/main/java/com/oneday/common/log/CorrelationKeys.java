@@ -1,12 +1,12 @@
 package com.oneday.common.log;
 
-import com.oneday.common.kafka.DomainEvent;
-import com.oneday.common.kafka.events.BaseShipmentEvent;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
-import com.oneday.common.kafka.events.ExceptionsEvent;
-import com.oneday.common.kafka.events.FlightEvent;
-import com.oneday.common.kafka.events.HubEvent;
-import com.oneday.common.kafka.events.ScanEvent;
+import com.oneday.common.messaging.DomainEvent;
+import com.oneday.common.messaging.events.BaseShipmentEvent;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
+import com.oneday.common.messaging.events.ExceptionsEvent;
+import com.oneday.common.messaging.events.FlightEvent;
+import com.oneday.common.messaging.events.HubEvent;
+import com.oneday.common.messaging.events.ScanEvent;
 
 /**
  * Pulls the correlation identifiers off any bus payload so the same extraction is used on both the

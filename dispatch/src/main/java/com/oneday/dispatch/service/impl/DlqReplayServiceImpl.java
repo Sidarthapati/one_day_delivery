@@ -1,6 +1,6 @@
 package com.oneday.dispatch.service.impl;
 
-import com.oneday.common.kafka.EventStreams;
+import com.oneday.common.messaging.EventStreams;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.service.DlqReplayService;
 import org.slf4j.Logger;

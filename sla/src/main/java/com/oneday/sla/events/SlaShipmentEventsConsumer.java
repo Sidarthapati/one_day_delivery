@@ -1,9 +1,9 @@
 package com.oneday.sla.events;
 
-import com.oneday.common.kafka.events.BaseShipmentEvent;
-import com.oneday.common.kafka.events.ShipmentCancelledEvent;
-import com.oneday.common.kafka.events.ShipmentCreatedEvent;
-import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
+import com.oneday.common.messaging.events.BaseShipmentEvent;
+import com.oneday.common.messaging.events.ShipmentCancelledEvent;
+import com.oneday.common.messaging.events.ShipmentCreatedEvent;
+import com.oneday.common.messaging.events.ShipmentStateChangedEvent;
 import com.oneday.sla.service.SlaLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

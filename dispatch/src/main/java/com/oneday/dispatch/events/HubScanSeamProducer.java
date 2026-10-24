@@ -1,10 +1,10 @@
 package com.oneday.dispatch.events;
 
-import com.oneday.common.kafka.DomainEvent;
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.ScanEventType;
-import com.oneday.common.kafka.events.ScanEvent;
+import com.oneday.common.messaging.DomainEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.ScanEventType;
+import com.oneday.common.messaging.events.ScanEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

@@ -1,7 +1,7 @@
 package com.oneday.exceptions.service.impl;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.enums.ExceptionsEventType;
+import com.oneday.common.messaging.enums.ExceptionsEventType;
 import com.oneday.exceptions.config.ExceptionProperties;
 import com.oneday.exceptions.domain.Disposition;
 import com.oneday.exceptions.domain.ExceptionCase;

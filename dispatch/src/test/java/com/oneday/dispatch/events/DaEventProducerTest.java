@@ -1,9 +1,9 @@
 package com.oneday.dispatch.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.DaEventType;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.DaEventType;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.dispatch.config.DispatchProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

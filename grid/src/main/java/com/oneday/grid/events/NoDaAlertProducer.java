@@ -1,8 +1,8 @@
 package com.oneday.grid.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.GridEventType;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.GridEventType;
 import com.oneday.grid.events.payload.NoDaAlertEvent;
 import org.springframework.stereotype.Component;
 
