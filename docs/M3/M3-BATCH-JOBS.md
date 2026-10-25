@@ -39,7 +39,7 @@ There are two things that could change:
 1. Download fresh OSM data for the city region (openstreetmap.org or Geofabrik)
 2. Re-process: osrm-extract, osrm-partition, osrm-customize
 3. Restart the OSRM server with the new data
-4. On the 1st of the next month (or immediately via POST /grid/admin/osrm-refresh),
+4. On the 1st of the next month (or immediately via (no admin endpoint exists — the job is schedule-only)
    OsrmMatrixRefreshJob re-queries OSRM and replaces the tile_travel_time rows in the DB.
 ```
 
@@ -85,7 +85,7 @@ A pincode's lat/lon is its centroid. Customers in that pincode may actually live
 
 - `GridService` (creates all DB rows)
 - `OsrmMatrixRefreshJob` (computes initial travel times right after grid creation)
-- OSRM server must be reachable for the initial OSRM query. If OSRM is down at init time, the job will fail. Retry by calling `POST /grid/admin/osrm-refresh` once OSRM is back up.
+- OSRM server must be reachable for the initial OSRM query. If OSRM is down at init time, the job will fail. Retry by calling `(no admin endpoint exists — the job is schedule-only)
 
 ---
 
@@ -142,7 +142,7 @@ Isolated tiles still get assigned a DA (BFS gives each isolated tile its own DA 
 
 ### OSRM data staleness check (in NightlyReplanJob)
 
-`NightlyReplanJob` checks the `computedAt` timestamp on stored `tile_travel_time` rows. If the oldest row is > 45 days old (or if there are no rows at all), it triggers `OsrmMatrixRefreshJob.refresh()` before running the solver. This is a safety net — the scheduler should have already run it monthly, but this catches cases where the scheduler failed or the city was never initialised.
+**Not implemented.** `NightlyReplanJob` never looks at `h3_hex_travel_time` and never calls `OsrmMatrixRefreshJob`. `GridReplanServiceImpl.loadAdjacencyGraph` (which would read the rows and apply a 45-day staleness window) exists but has no caller; `replan` always builds the H3 1-ring graph (#239).
 
 ---
 
@@ -185,9 +185,9 @@ DemandScoringService.computeAndPersistDemand(cityId, date)
 Step 2: Load adjacency graph from DB (NOT OSRM)
 ───────────────────────────────────────────────────────────────────────
 Reads tile_travel_time rows for pairs ≤ 600s.
-If absent or oldest computedAt > 45 days: falls back to geometric 4-connectivity
-(|Δrow| + |Δcol| == 1). Sets adjacencySource = GEOMETRIC_FALLBACK on proposal.
-Note: does NOT trigger OsrmMatrixRefreshJob — that is the monthly scheduled job's job.
+Always builds the H3 1-ring graph (h3Core.gridDisk(h, 1), active hexes only) and sets
+adjacencySource = GEOMETRIC_FALLBACK on the proposal. The OSRM travel-time rows are not
+read here (#239); they are only used for manual-override contiguity in ProposalServiceImpl.
 
 Step 3: Component C — deferred
 ───────────────────────────────────────────────────────────────────────
@@ -244,9 +244,9 @@ This job monitors whether tiles are becoming overloaded during the shift. It rea
 ### Data flow
 
 ```
-M4 (Orders)
-    ↓ Kafka: orders.tile_queue_depth (per-tile event on order status change)
-TileQueueDepthConsumer   [autoStartup=false until M4 ships]
+M5 (Dispatch) TileQueueDepthPublisher
+    ↓ exchange orders.tile_queue_depth (every 300 s while a shift is loaded; tiles with active tasks only)
+TileQueueDepthConsumer   [live — queue grid.tile-queue-depth, binding #, DLX/DLQ]
     ↓ calls IntradayLoadScoreService.updateQueueDepth(cityId, date, Map.of(tileId, unservedOrders))
 IntradayLoadScoreServiceImpl
     ↓ stores in ConcurrentHashMap<tileId, unservedOrders>
@@ -256,7 +256,7 @@ IntradayMonitorJob.run()
     ↓ calls TileOverloadAlertProducer.emit(...)
 ```
 
-`TileQueueDepthConsumer` is deployed but `autoStartup = false` — flip `grid.kafka.consumer.auto-startup: true` when M4 starts publishing. Until then `unservedOrders` is always 0, so no alerts fire.
+`TileQueueDepthConsumer` is live. The producer is M5's `TileQueueDepthPublisher` (`dispatch.publishTileQueueDepth` defaults to true), not M4. Note that `adjusted` is the raw unserved count compared against the ratio thresholds 1.5 / 2.0, so two queued orders already count as CRITICAL (#238). Drained tiles are not re-published, so their last count sticks until the 06:55 reset.
 
 ### Threshold and hysteresis logic
 
@@ -299,28 +299,17 @@ When the clock crosses 07:00 IST, `IntradayLoadScoreService.resetForShift()` is 
 
 ---
 
-## 6. DaRosterPort and NoOpDaRosterPort
+## 6. DaRosterPort and DirectoryDaRosterPort
 
 **Files:**
 - `com.oneday.grid.batch.DaRosterPort` (interface)
-- `com.oneday.grid.batch.NoOpDaRosterPort` (placeholder implementation)
+- `com.oneday.grid.batch.DirectoryDaRosterPort` (implementation over M1's DA directory)
 
 ### Why does this exist?
 
-`NightlyReplanJob` needs to know which DAs are scheduled to work tomorrow in each city. This information lives in M1 (auth / HR roster). M1 is not yet implemented.
+`NightlyReplanJob` needs to know which DAs are scheduled to work tomorrow in each city. This information lives in M1 (auth). `DirectoryDaRosterPort` maps cityId → cityCode and calls `DaDirectoryPortAdapter` → `DaProfileRepository` (active DELIVERY_ASSOCIATE, `users.city_id = cityCode`, matching shift, contract covering the date). The query has no `ORDER BY`, so database row order decides which DA becomes index 0 in the solver (#242).
 
-Rather than hardcoding an empty list inside `NightlyReplanJob`, the port pattern keeps the boundary explicit:
-
-```
-NightlyReplanJob  ──calls──►  DaRosterPort (interface)
-                                     ▲
-                              NoOpDaRosterPort  (today: returns empty list + WARN log)
-                              RealDaRosterPort  (future: queries M1's DA schedule table)
-```
-
-When M1 ships a real implementation, annotate it `@Primary` and Spring will wire it instead of `NoOpDaRosterPort`. `NightlyReplanJob` does not change.
-
-**Practical impact of empty DA list today:** `BfsAssignmentServiceImpl` and `CpSatAssignmentServiceImpl` both handle zero available DAs — they produce a proposal with `totalDas = 0`, all tiles flagged as understaffed in `understaffedTileIds`. This is semantically correct: the proposal says "we have no DAs, no coverage is possible". Once M1 is integrated and real DAs are registered, the proposal will show real territory assignments.
+**Empty roster:** `BalancedBfsAssignmentServiceImpl` produces a proposal with `totalDas = 0`, coverage 0 % and every hex in `understaffedHexIds`; `NightlyReplanJob` logs and continues — no `NO_DA_ALERT` is emitted (#242).
 
 ---
 
@@ -337,9 +326,9 @@ the grid-local `KafkaTopics.java`. Event payloads are Java records in `com.oneda
 |-------|------|-------|-----------|-----|---------------------|
 | `NoDaAlertProducer` | Producer | `oneday.grid.events` | `NO_DA_ALERT` | tileId | M3 → M5, M11 |
 | `TileOverloadAlertProducer` | Producer | `oneday.grid.events` | `TILE_OVERLOAD_ALERT` | tileId | M3 → M5, M10 |
-| `TileQueueDepthConsumer` | Consumer | `orders.tile_queue_depth` | — | — | M4 → M3 |
+| `TileQueueDepthConsumer` | Consumer | `orders.tile_queue_depth` | — | — | M5 → M3 |
 
-Both producers inject `KafkaTemplate<String, Object>` and wrap the send in `try/catch` — if no broker is available (local dev), they log a WARN and continue. The consumer has `autoStartup = false` and is a no-op until M4 ships.
+Both producers inject `KafkaTemplate<String, Object>` and wrap the send in `try/catch` — if no broker is available (local dev), they log a WARN and continue. The consumer is live (see §5). The two producers publish to `oneday.grid.events`, which currently has **no consumer in any module**, and `NoDaAlertProducer` has no production caller (#238).
 
 ---
 
@@ -407,8 +396,8 @@ POST /api/grid/{cityCode}/replan   body: { daIds: [...], date: "2026-05-25" }
 | Gap | Where it's needed | Blocked on |
 |-----|------------------|------------|
 | Component C (multi-DA tile virtual splitting) | GridReplanServiceImpl | Schema change needed: `DaTileAssignment.tileId` is `updatable=false`, so virtual tile UUIDs can't be patched back after solve |
-| Real DA roster from M1 | DaRosterPort | M1 (auth) — when ready, annotate impl `@Primary`; `NightlyReplanJob` does not change |
-| TileQueueDepthConsumer active | IntradayMonitorJob data source | M4 (Orders) publishing `orders.tile_queue_depth` — flip `grid.kafka.consumer.auto-startup: true` when ready |
+| ~~Real DA roster from M1~~ | DaRosterPort | **Done** — `DirectoryDaRosterPort` (see §6) |
+| ~~TileQueueDepthConsumer active~~ | IntradayMonitorJob data source | **Done** — live; M5 publishes (see §5). Thresholds vs raw counts: #238 |
 | Station manager push notification at 01:00 | NightlyReplanJob | Station manager UI (React) — Phase 8 API exists, notification channel TBD |
-| `@EnableScheduling` on app entry point | All `@Scheduled` methods | `app/` module not yet started |
+| ~~`@EnableScheduling` on app entry point~~ | All `@Scheduled` methods | **Done** — `OneDayDeliveryApplication` carries `@EnableScheduling` |
 | Integration tests (Phase 9) | Full end-to-end validation | TestContainers + WireMock for OSRM |

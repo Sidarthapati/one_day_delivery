@@ -29,6 +29,8 @@ All three proposed components are adopted from day one. This document preserves 
 
 ### Decision 2 — Contiguity constraint: lazy cuts approach
 
+> **Superseded.** Lazy cuts never converged (see `M3-CPSAT-ISSUE.md`, 2026-05-24); the CP-SAT code uses a two-phase balance-then-repair, and since 54dd30d2 the runtime solver is `BalancedBfsAssignmentServiceImpl`, which enforces contiguity by construction (#241).
+
 The open question ("flow-based vs lazy cuts") is resolved in favour of **lazy cuts**:
 
 ```
@@ -47,9 +49,13 @@ Until all territories are connected.
 
 ### Decision 3 — OSRM adjacency threshold: 600 seconds (10 minutes) default
 
+> **Status 2026-10-25:** the solver uses the H3 1-ring graph; the 600 s OSRM graph only gates manual-override contiguity, and the app points OSRM at localhost (#239).
+
 Calibrate per city once real DA GPS tracks are available. Mumbai and Delhi likely need 480–540 s due to traffic density.
 
 ### Decision 4 — BFS retained as fallback only
+
+> **Superseded (2026-05-28).** `BalancedBfsAssignmentServiceImpl` is the primary and only wired solver; neither CP-SAT nor `BFS_FALLBACK` runs (#241).
 
 BFS `BfsAssignmentServiceImpl` is retained behind the same `AssignmentService` interface. It activates automatically on CP-SAT timeout (>60 s) or OR-Tools unavailability. The proposal always records `solver_type = BFS_FALLBACK` so station managers know a fallback was used.
 
