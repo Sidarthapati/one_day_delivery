@@ -35,7 +35,7 @@ import java.util.UUID;
  * (M6-D-012) — that powers the ops map and costs one upsert. Then, by type: GPS does nothing more;
  * ARRIVED computes lateness vs the locked plan, flips the manifest IN_PROGRESS, and escalates to
  * VAN_RUNNING_LATE past the threshold; DELIVER/COLLECT route to {@link CustodyService}. No raw ping
- * ever touches Kafka.
+ * ever touches RabbitMQ.
  */
 @Service
 class VanTrackingServiceImpl implements VanTrackingService {

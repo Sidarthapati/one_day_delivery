@@ -2,14 +2,14 @@ package com.oneday.hub.events;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.oneday.common.kafka.enums.FlightReassignReason;
-import com.oneday.common.kafka.enums.HubEventType;
-import com.oneday.common.kafka.events.HubEvent;
-import com.oneday.common.kafka.events.flight.FlightReassignedEvent;
-import com.oneday.common.kafka.events.hub.BagCreatedEvent;
-import com.oneday.common.kafka.events.hub.BagRescheduledEvent;
-import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
-import com.oneday.common.kafka.events.hub.StandAssignedEvent;
+import com.oneday.common.messaging.enums.FlightReassignReason;
+import com.oneday.common.messaging.enums.HubEventType;
+import com.oneday.common.messaging.events.HubEvent;
+import com.oneday.common.messaging.events.flight.FlightReassignedEvent;
+import com.oneday.common.messaging.events.hub.BagCreatedEvent;
+import com.oneday.common.messaging.events.hub.BagRescheduledEvent;
+import com.oneday.common.messaging.events.hub.ParcelSortedForDeliveryEvent;
+import com.oneday.common.messaging.events.hub.StandAssignedEvent;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

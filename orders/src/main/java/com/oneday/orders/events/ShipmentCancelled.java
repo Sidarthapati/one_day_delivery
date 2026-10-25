@@ -6,11 +6,11 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * In-process (NOT Kafka) Spring {@code ApplicationEvent}, published by
+ * In-process (NOT RabbitMQ) Spring {@code ApplicationEvent}, published by
  * {@code CancellationServiceImpl} after a shipment is cancelled and its refund/credit reversal
  * decided.
  *
- * <p>{@link ShipmentEventProducer} maps it to the outbound Kafka {@code ShipmentCancelledEvent}
+ * <p>{@link ShipmentEventProducer} maps it to the outbound RabbitMQ {@code ShipmentCancelledEvent}
  * AFTER_COMMIT. The plain {@code → CANCELLED} STATE_CHANGED event still rides
  * {@link ShipmentTransitioned} from the state machine; this carries the <em>rich</em> cancellation
  * detail (reason + refund) that the state machine has no knowledge of.</p>

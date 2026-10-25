@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.oneday.common.kafka.enums.ScanEventType;
-import com.oneday.common.kafka.events.ScanEvent;
+import com.oneday.common.messaging.enums.ScanEventType;
+import com.oneday.common.messaging.events.ScanEvent;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

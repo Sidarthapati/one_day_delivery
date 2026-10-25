@@ -13,7 +13,7 @@ import java.util.UUID;
 /**
  * The single HTTPS door the van-driver app POSTs to (§14.1, M6-D-012). One endpoint carries GPS pings
  * and in-loop DELIVER/COLLECT scans; {@code type} discriminates. The controller calls
- * {@link VanTrackingService} directly in-process — Kafka is spent only on the meaningful events that
+ * {@link VanTrackingService} directly in-process — RabbitMQ is spent only on the meaningful events that
  * service decides to emit, never on the raw ~10s ping stream.
  */
 @RestController

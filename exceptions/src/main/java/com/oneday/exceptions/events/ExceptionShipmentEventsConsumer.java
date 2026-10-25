@@ -1,7 +1,7 @@
 package com.oneday.exceptions.events;
 
-import com.oneday.common.kafka.events.BaseShipmentEvent;
-import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
+import com.oneday.common.messaging.events.BaseShipmentEvent;
+import com.oneday.common.messaging.events.ShipmentStateChangedEvent;
 import com.oneday.exceptions.service.ExceptionCaseService;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;

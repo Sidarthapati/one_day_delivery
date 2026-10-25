@@ -1,8 +1,8 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.enums.ScanEventType;
-import com.oneday.common.kafka.events.ScanEvent;
+import com.oneday.common.messaging.enums.ScanEventType;
+import com.oneday.common.messaging.events.ScanEvent;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.ShipmentStateMachine;

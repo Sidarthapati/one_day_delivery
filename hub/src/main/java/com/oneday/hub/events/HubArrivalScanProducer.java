@@ -1,9 +1,9 @@
 package com.oneday.hub.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.ScanEventType;
-import com.oneday.common.kafka.events.ScanEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.ScanEventType;
+import com.oneday.common.messaging.events.ScanEvent;
 import com.oneday.common.log.AuditLog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,7 +1,7 @@
 package com.oneday.hub.events;
 
-import com.oneday.common.kafka.events.flight.FlightReassignedEvent;
-import com.oneday.common.kafka.events.flight.FlightTimeChangedEvent;
+import com.oneday.common.messaging.events.flight.FlightReassignedEvent;
+import com.oneday.common.messaging.events.flight.FlightTimeChangedEvent;
 import com.oneday.hub.service.BagReassignmentService;
 import com.oneday.hub.service.FlightBagService;
 import org.slf4j.Logger;

@@ -64,7 +64,7 @@ spring:
         retry:
           enabled: true
           max-attempts: 3
-          initial-interval: 1000ms      # 3 tries, 1s apart — mirrors the old Kafka DLQ backoff
+          initial-interval: 1000ms      # 3 tries, 1s apart before dead-lettering to the DLQ
 
 # M3 grid config. The assembled app loads ITS OWN application.yml (the grid module's is
 # shadowed on the classpath), so the cityCode→cityId map + H3 resolution must live here for

@@ -2,7 +2,7 @@ package com.oneday.sla.service;
 
 import com.oneday.common.domain.enums.DeliveryType;
 import com.oneday.common.domain.enums.SlaLegType;
-import com.oneday.common.kafka.events.ShipmentCreatedEvent;
+import com.oneday.common.messaging.events.ShipmentCreatedEvent;
 import com.oneday.sla.config.SlaProperties;
 import com.oneday.sla.domain.SlaLeg;
 import com.oneday.sla.domain.SlaShipment;

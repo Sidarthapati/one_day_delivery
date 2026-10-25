@@ -1,6 +1,6 @@
 package com.oneday.exceptions.domain;
 
-import com.oneday.common.kafka.enums.ExceptionsEventType;
+import com.oneday.common.messaging.enums.ExceptionsEventType;
 
 /**
  * A problem-solve action a manager/agent takes on a case. Most actions drive M4 by publishing the

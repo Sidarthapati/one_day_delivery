@@ -11,7 +11,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 // Latest position + lateness per van, OVERWRITTEN in place (M6-D-012). van_id is the natural PK
-// (one live row per van); raw GPS pings never land in Kafka — only this row is kept.
+// (one live row per van); raw GPS pings never land in RabbitMQ — only this row is kept.
 @Entity
 @Table(name = "van_live_status")
 @Getter

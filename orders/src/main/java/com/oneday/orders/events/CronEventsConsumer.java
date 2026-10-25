@@ -1,6 +1,6 @@
 package com.oneday.orders.events;
 
-import com.oneday.common.kafka.events.cron.CronEventPayload;
+import com.oneday.common.messaging.events.cron.CronEventPayload;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
  * Consumes M6 routing events from the {@code oneday.cron.events} exchange (queue
  * {@code orders.cron}). Until M6 produces cron events M4 acts on, this logs and ignores.
  *
- * <p>The {@link com.oneday.common.kafka.enums.CronEventType} discriminator was redefined for
+ * <p>The {@link com.oneday.common.messaging.enums.CronEventType} discriminator was redefined for
  * M6's full van lifecycle (design §17.1). Of those, only {@code HANDOFF_COMPLETED} concerns M4 —
  * but per-shipment custody transitions ({@code HANDED_TO_DROP_VAN}, {@code DROP_COLLECTED}, …)
  * are driven by the <strong>M8 scan ledger</strong> ({@code oneday.scan.events}), not this topic.

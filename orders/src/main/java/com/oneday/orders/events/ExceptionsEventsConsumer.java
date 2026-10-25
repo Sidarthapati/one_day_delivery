@@ -2,8 +2,8 @@ package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ReturnReason;
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.enums.ExceptionsEventType;
-import com.oneday.common.kafka.events.ExceptionsEvent;
+import com.oneday.common.messaging.enums.ExceptionsEventType;
+import com.oneday.common.messaging.events.ExceptionsEvent;
 import com.oneday.orders.domain.Shipment;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.ReturnService;
@@ -44,7 +44,7 @@ public class ExceptionsEventsConsumer {
 
     @RabbitListener(queues = OrdersMessagingTopology.EXCEPTIONS_QUEUE)
     public void onExceptionsEvent(ExceptionsEvent event) {
-        TransitionContext ctx = TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId()));
+        TransitionContext ctx = TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId()));
 
         // RTO_INITIATED = "attempts exhausted, return to sender". Spawn a return child (or, if the
         // shipment is already a return child, hold it at the hub — no return-of-a-return).

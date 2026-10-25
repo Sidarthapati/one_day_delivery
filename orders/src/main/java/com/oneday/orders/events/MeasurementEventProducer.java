@@ -1,9 +1,9 @@
 package com.oneday.orders.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.MeasurementEventType;
-import com.oneday.common.kafka.events.ParcelMeasuredEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.MeasurementEventType;
+import com.oneday.common.messaging.events.ParcelMeasuredEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

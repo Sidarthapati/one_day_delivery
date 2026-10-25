@@ -230,7 +230,7 @@ class CancellationServiceImpl implements CancellationService {
             orderService.removeShipment(shipment.getOrderId(), shipment.getTotalPricePaise());
         }
 
-        // Rich CANCELLED event (reason + refund) — mapped to Kafka AFTER_COMMIT.
+        // Rich CANCELLED event (reason + refund) — mapped to RabbitMQ AFTER_COMMIT.
         events.publishEvent(new ShipmentCancelled(
                 shipment.getId(), shipmentRef, cancelledAtState, reason,
                 refundInitiated, refundAmountPaise, Instant.now()));

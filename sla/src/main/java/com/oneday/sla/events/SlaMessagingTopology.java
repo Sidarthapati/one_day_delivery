@@ -1,7 +1,7 @@
 package com.oneday.sla.events;
 
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.RabbitStreamSupport;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.RabbitStreamSupport;
 import org.springframework.amqp.core.Declarables;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

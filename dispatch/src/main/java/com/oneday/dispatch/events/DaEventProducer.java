@@ -1,10 +1,10 @@
 package com.oneday.dispatch.events;
 
 import com.oneday.common.domain.Shift;
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.enums.DaEventType;
-import com.oneday.common.kafka.events.DaLifecycleEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.enums.DaEventType;
+import com.oneday.common.messaging.events.DaLifecycleEvent;
 import com.oneday.dispatch.config.DispatchProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

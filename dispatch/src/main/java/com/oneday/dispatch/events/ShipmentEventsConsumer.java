@@ -2,10 +2,10 @@ package com.oneday.dispatch.events;
 
 import com.oneday.common.domain.enums.PickupType;
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.events.BaseShipmentEvent;
-import com.oneday.common.kafka.events.ShipmentCancelledEvent;
-import com.oneday.common.kafka.events.ShipmentCreatedEvent;
-import com.oneday.common.kafka.events.ShipmentStateChangedEvent;
+import com.oneday.common.messaging.events.BaseShipmentEvent;
+import com.oneday.common.messaging.events.ShipmentCancelledEvent;
+import com.oneday.common.messaging.events.ShipmentCreatedEvent;
+import com.oneday.common.messaging.events.ShipmentStateChangedEvent;
 import com.oneday.dispatch.domain.DeferReason;
 import com.oneday.dispatch.domain.TaskType;
 import com.oneday.dispatch.repository.DispatchQueueRepository;

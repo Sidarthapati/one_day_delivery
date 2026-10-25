@@ -12,7 +12,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * <p>Why this exists: the only assembled artifact ({@code app/}) wires every module
  * together, and as of the M5-Implementation branch the grid (M3) Flyway migrations are
  * incomplete and {@code GridServiceImpl} runs an eager start-up query, so the full app
- * cannot boot locally. M1 auth, by contrast, is self-contained — it touches no Kafka and
+ * cannot boot locally. M1 auth, by contrast, is self-contained — it touches no RabbitMQ and
  * no other module — so this runner brings it up on its own against the already-migrated
  * local {@code oneday} database.
  *
@@ -26,7 +26,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * ancestor) so it never becomes the auto-detected {@code @SpringBootConfiguration} for
  * the {@code @WebMvcTest}/{@code @DataJpaTest} slices, which rely on {@code TestAuthApplication}.
  * Its component / entity / repository scans are pinned to {@code com.oneday.auth}, so the
- * common module's unconditional Kafka {@code EventPublisher} and the grid / orders beans
+ * common module's unconditional RabbitMQ {@code EventPublisher} and the grid / orders beans
  * are never instantiated — no broker and no grid schema required.
  */
 @SpringBootApplication(scanBasePackages = "com.oneday.auth")

@@ -1,8 +1,8 @@
 package com.oneday.sla.events;
 
-import com.oneday.common.kafka.events.hub.DestSortCompleteEvent;
-import com.oneday.common.kafka.events.hub.HubEventPayload;
-import com.oneday.common.kafka.events.hub.ParcelSortedForDeliveryEvent;
+import com.oneday.common.messaging.events.hub.DestSortCompleteEvent;
+import com.oneday.common.messaging.events.hub.HubEventPayload;
+import com.oneday.common.messaging.events.hub.ParcelSortedForDeliveryEvent;
 import com.oneday.sla.service.SlaLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,6 +1,6 @@
 package com.oneday.dispatch.batch;
 
-import com.oneday.common.kafka.EventStreams;
+import com.oneday.common.messaging.EventStreams;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.TaskStatus;
 import com.oneday.dispatch.repository.DispatchQueueRepository;

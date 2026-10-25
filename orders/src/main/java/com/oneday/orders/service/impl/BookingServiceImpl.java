@@ -373,7 +373,7 @@ class BookingServiceImpl implements BookingService {
                 .kv("paymentMode", req.getPaymentMode())
                 .log();
 
-        // ── Emit CREATED — in-process; ShipmentEventProducer publishes to Kafka AFTER_COMMIT,
+        // ── Emit CREATED — in-process; ShipmentEventProducer publishes to RabbitMQ AFTER_COMMIT,
         //    so a rolled-back booking never produces a phantom CREATED event. ──────────────
         applicationEventPublisher.publishEvent(new ShipmentBooked(shipment));
 

@@ -1,8 +1,8 @@
 package com.oneday.orders.events;
 
 import com.oneday.common.domain.enums.ShipmentState;
-import com.oneday.common.kafka.enums.ScanEventType;
-import com.oneday.common.kafka.events.ScanEvent;
+import com.oneday.common.messaging.enums.ScanEventType;
+import com.oneday.common.messaging.events.ScanEvent;
 import com.oneday.common.log.AuditLog;
 import com.oneday.orders.repository.ShipmentRepository;
 import com.oneday.orders.service.ShipmentStateMachine;
@@ -78,7 +78,7 @@ public class ScanEventsConsumer {
         }
         try {
             stateMachine.transition(event.shipmentId(), target,
-                    TransitionContext.fromKafka(SOURCE, String.valueOf(event.shipmentId())));
+                    TransitionContext.fromBroker(SOURCE, String.valueOf(event.shipmentId())));
             AuditLog.event("scan.consumed")
                     .kv("shipmentId", event.shipmentId())
                     .kv("scanType", event.eventType().name())

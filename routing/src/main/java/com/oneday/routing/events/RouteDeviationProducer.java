@@ -1,9 +1,9 @@
 package com.oneday.routing.events;
 
-import com.oneday.common.kafka.EventPublisher;
-import com.oneday.common.kafka.EventStreams;
-import com.oneday.common.kafka.events.cron.VanArrivedEvent;
-import com.oneday.common.kafka.events.cron.VanRunningLateEvent;
+import com.oneday.common.messaging.EventPublisher;
+import com.oneday.common.messaging.EventStreams;
+import com.oneday.common.messaging.events.cron.VanArrivedEvent;
+import com.oneday.common.messaging.events.cron.VanRunningLateEvent;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;

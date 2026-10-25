@@ -11,7 +11,7 @@ import java.time.Instant;
  * <p>Use the factory methods rather than the constructor directly:</p>
  * <pre>
  *   TransitionContext.fromApi(userId, requestId)
- *   TransitionContext.fromKafka("m5-consumer", kafkaMessageKey)
+ *   TransitionContext.fromBroker("m5-consumer", messageKey)
  *   TransitionContext.fromSystem("idempotency-purge-job")
  * </pre>
  */
@@ -19,7 +19,7 @@ public final class TransitionContext {
 
     private final String triggeredBy;
     private final TriggerSource triggerSource;
-    private final String eventRef;   // nullable — Kafka message key or API request ID
+    private final String eventRef;   // nullable — RabbitMQ message key or API request ID
     private final String notes;      // nullable — human-readable context
     private final Instant occurredAt;
 
@@ -43,11 +43,11 @@ public final class TransitionContext {
     }
 
     /**
-     * Transition triggered by a Kafka event from another module.
-     * {@code eventRef} should be the Kafka message key for correlation back to the topic log.
+     * Transition triggered by a RabbitMQ event from another module.
+     * {@code eventRef} should be the RabbitMQ message key for correlation back to the exchange log.
      */
-    public static TransitionContext fromKafka(String consumerIdentifier, String kafkaMessageKey) {
-        return new TransitionContext(consumerIdentifier, TriggerSource.KAFKA_EVENT, kafkaMessageKey, null, Instant.now());
+    public static TransitionContext fromBroker(String consumerIdentifier, String messageKey) {
+        return new TransitionContext(consumerIdentifier, TriggerSource.BROKER_EVENT, messageKey, null, Instant.now());
     }
 
     /** Transition triggered by an internal scheduled job or system process. */

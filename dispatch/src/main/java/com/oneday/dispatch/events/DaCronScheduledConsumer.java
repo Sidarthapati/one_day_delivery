@@ -1,7 +1,7 @@
 package com.oneday.dispatch.events;
 
-import com.oneday.common.kafka.events.cron.CronEventPayload;
-import com.oneday.common.kafka.events.cron.DaCronScheduledEvent;
+import com.oneday.common.messaging.events.cron.CronEventPayload;
+import com.oneday.common.messaging.events.cron.DaCronScheduledEvent;
 import com.oneday.dispatch.config.DispatchProperties;
 import com.oneday.dispatch.domain.CronAssignmentStatus;
 import com.oneday.dispatch.domain.DaCronAssignment;

@@ -2,7 +2,7 @@ package com.oneday.shuttle.service;
 
 import com.oneday.airline.service.AirlineCustodyService;
 import com.oneday.airline.service.ShuttleInboundQueryService;
-import com.oneday.common.kafka.enums.ScanEventType;
+import com.oneday.common.messaging.enums.ScanEventType;
 import com.oneday.common.log.AuditLog;
 import com.oneday.hub.domain.FlightBag;
 import com.oneday.hub.service.FlightBagService;
