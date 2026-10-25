@@ -11,13 +11,18 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.data.domain.PageRequest;
+
+import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -69,5 +74,22 @@ class CodLedgerServiceImplTest {
         assertThat(entries.getAllValues().get(0).getBalanceAfterPaise()).isEqualTo(1_000L);
         assertThat(entries.getAllValues().get(1).getBalanceAfterPaise()).isEqualTo(600L);
         assertThat(entries.getAllValues().get(1).getAmountPaise()).isEqualTo(-400L);
+    }
+
+    @Test
+    void history_openBounds_neverPassesNullToTheRangeQuery() {
+        // Regression: Postgres can't infer the type of a null bind param used only in an IS NULL test, so
+        // an unbounded ledger read 500'd. The service must coalesce a null from/to to non-null sentinels
+        // before hitting the query (from before to, so the range is valid).
+        when(ledger.findByDaInRange(any(), any(), any(), any())).thenReturn(List.of());
+        CodLedgerServiceImpl svc = new CodLedgerServiceImpl(balances, ledger);
+
+        svc.history(da, null, null, PageRequest.of(0, 50));
+
+        ArgumentCaptor<Instant> from = ArgumentCaptor.forClass(Instant.class);
+        ArgumentCaptor<Instant> to = ArgumentCaptor.forClass(Instant.class);
+        verify(ledger).findByDaInRange(eq(da), from.capture(), to.capture(), any());
+        assertThat(from.getValue()).isNotNull();
+        assertThat(to.getValue()).isNotNull().isAfter(from.getValue());
     }
 }

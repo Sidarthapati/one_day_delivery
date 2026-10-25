@@ -13,12 +13,12 @@ import java.util.UUID;
 public interface DaCodLedgerRepository extends JpaRepository<DaCodLedgerEntry, UUID> {
 
     /**
-     * A page of a DA's ledger history, newest first, optionally bounded by a created-at range (G3).
-     * A null bound is open on that side, so the plain paged read passes null/null (unbounded).
+     * A page of a DA's ledger history, newest first, bounded by a created-at range (G3). Callers pass
+     * wide sentinels (EPOCH / far-future) for an open side rather than null — Postgres can't infer the
+     * type of a null bind param that only ever appears in an `IS NULL` test, so both bounds stay non-null.
      */
     @Query("select e from DaCodLedgerEntry e where e.daUserId = :daUserId "
-            + "and (:from is null or e.createdAt >= :from) "
-            + "and (:to is null or e.createdAt <= :to) "
+            + "and e.createdAt >= :from and e.createdAt <= :to "
             + "order by e.createdAt desc")
     List<DaCodLedgerEntry> findByDaInRange(@Param("daUserId") UUID daUserId,
                                            @Param("from") Instant from,

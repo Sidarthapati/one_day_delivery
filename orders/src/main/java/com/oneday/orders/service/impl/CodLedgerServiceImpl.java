@@ -62,10 +62,17 @@ class CodLedgerServiceImpl implements CodLedgerService {
         return history(daUserId, null, null, pageable);
     }
 
+    // Open-ended bound sentinels: an absent from/to becomes the widest range Postgres can hold, so the
+    // query binds a typed non-null Instant on both sides (a null-only-in-IS-NULL param has no inferable type).
+    private static final Instant OPEN_FROM = Instant.EPOCH;
+    private static final Instant OPEN_TO = Instant.parse("9999-12-31T23:59:59Z");
+
     @Override
     @Transactional(readOnly = true)
     public List<DaCodLedgerEntryResponse> history(UUID daUserId, Instant from, Instant to, Pageable pageable) {
-        return ledger.findByDaInRange(daUserId, from, to, pageable).stream()
+        Instant lo = from != null ? from : OPEN_FROM;
+        Instant hi = to != null ? to : OPEN_TO;
+        return ledger.findByDaInRange(daUserId, lo, hi, pageable).stream()
                 .map(DaCodLedgerEntryResponse::from)
                 .toList();
     }
