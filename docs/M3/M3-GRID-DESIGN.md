@@ -10,6 +10,18 @@
 
 ---
 
+> **Implementation status vs this design (2026-10-25).** This document is the *design*. The code differs in these places; check the linked issue before relying on a section:
+> - **Solver:** the runtime solver is `BalancedBfsAssignmentServiceImpl` (farthest-first seeds → competitive flooding → boundary swaps), wired by `@Qualifier("balancedBfsAssignmentService")` in `GridReplanServiceImpl`. CP-SAT (§5.4B) and plain BFS exist as beans but are not called. Proposals are stamped `BALANCED_BFS` and `optimality_gap_pct` is null. (#241)
+> - **Adjacency:** every replan uses the H3 1-ring (`gridDisk(h, 1)`, active hexes only) and stamps `GEOMETRIC_FALLBACK`; the OSRM graph (§5.5) is only used for manual-override contiguity checks. (#239)
+> - **Demand (§5.2):** `shipment_leg_events` does not exist in any migration, so `demand_score_minutes` is 0 for every hex; the 70/30 formula is in place but fed zeros. (#235)
+> - **Schema (§6.6):** `da_hex_assignment` shipped `UNIQUE(da_id, hex_id, valid_date)`, not the 4-column key below. (#236)
+> - **Lifecycle (§6.6, §11):** there is no `ACTIVE` status; approval flips `da_hex_assignment.status` to `APPROVED` in place (V3_9 folded ACTIVE into APPROVED). APPROVED rows for a `valid_date` are the live plan read by M5 and M6.
+> - **Timing (§8, §11):** the 01:00 job plans D+1; dispatch loads SHIFT_1 at 05:45 from APPROVED rows, before the 06:00 escalation (a WARN log) and the 07:00 fallback; solver capacity uses the 07–20 window (780 min × 0.70), not an 8 h shift. (#237)
+> - **Intraday (§16.2):** `adjusted_score` is the raw unserved count, not `unserved / expected_by_now`; alerts go to `oneday.grid.events`, which has no consumer. (#238)
+> - **Grid shape (§2–3):** H3 hexagons at resolution 8, not 2 km rectangles (see `M3-H3-REFACTOR-PLAN.md`).
+
+---
+
 ## 1. What M3 Does 
 
 M3 owns two distinct but related concerns:
@@ -289,6 +301,8 @@ The resulting road-adjacency graph replaces the geometric 4-connectivity graph e
 
 **Fallback:** If OSRM is unavailable at replan time, fall back to the geometric 4-connectivity graph and flag the proposal with `adjacency_source = GEOMETRIC_FALLBACK`. Station managers are alerted so they can manually inspect territory proposals across known barriers.
 
+> *Status 2026-10-25: `replan` always uses the H3 1-ring graph and raises no alert; OSRM only gates manual overrides (#239).*
+
 ---
 
 #### Component B — CP-SAT territory partition solver
@@ -399,6 +413,8 @@ The solver can no longer use {1,3,5} for DA 1. It finds:
 No cuts needed. Done in 2 rounds.
 
 The key insight: encoding "connected" directly as a constraint requires dozens of extra variables and makes the model much harder to solve. Lazy cuts instead lets the solver find a good balanced answer first, then patches only the connectivity violations that actually appear — which in practice is a small fraction of territories.
+
+> *Status 2026-10-25: CP-SAT and this fallback are not wired into `replan`; `BalancedBfsAssignmentServiceImpl` runs instead (#241).*
 
 **Fallback to BFS:** If the CP-SAT solver fails (timeout > 60 seconds, OR-Tools not available, or unresolvable model), fall back to BFS region growing (the algorithm from the original v0.1 design doc). Log the fallback and flag the proposal with `solver = BFS_FALLBACK`. The station manager sees the flag during review.
 
@@ -630,7 +646,7 @@ CREATE TABLE da_tile_assignment (
 
 Rows are never deleted or physically mutated (da_id, tile_id, proposal_id, valid_date are immutable). The `status` field IS updated as rows advance through their lifecycle — this is tracking lifecycle state, not rewriting history. Multiple proposals for the same (da, tile, date) are valid and expected; the `proposal_id` in the constraint is what makes them distinct.
 
-**V9 migration ships `UNIQUE(da_id, tile_id, valid_date)` — this must be replaced by a V10 migration** before Phase 5. The original constraint blocks intraday override proposals: writing a new PROPOSED row for (DA-A, T1, today) under proposal P2 would collide with the existing ACTIVE row for (DA-A, T1, today) under P1. With `proposal_id` included the two rows are distinct.
+**V9 migration ships `UNIQUE(da_id, tile_id, valid_date)` — this must be replaced by a V10 migration** before Phase 5. **Status 2026-10-25: still not replaced — `V3_8__create_da_hex_assignment.sql` ships the 3-column key (#236).** The original constraint blocks intraday override proposals: writing a new PROPOSED row for (DA-A, T1, today) under proposal P2 would collide with the existing ACTIVE row for (DA-A, T1, today) under P1. With `proposal_id` included the two rows are distinct.
 
 ### 6.7 Assignment proposal
 
@@ -1019,7 +1035,7 @@ Two intraday assignment patterns are supported:
 | G1 | Exact meaning of "cron touches a vertex" | Determines how van stops map to grid | Treat as: each van stop must be placed at a grid vertex (row, col). M6 picks the closest vertex to the physical stop. |
 | G2 | Tessellation: UTM vs WGS84 for India | Tile shape accuracy | Use WGS84 with per-city Δlon (§3.2). At 2 km scale the projection error is <0.5% — acceptable. |
 | G3 | Can 1 DA cover N tiles or M DAs cover 1 tile? | Core algorithm question | **Resolved**: yes to both. N-tile case: contiguity constraint enforced by solver. M-DA case: multi-DA pre-processing (§5.4 Component C). |
-| G4 | Approval SLA: auto-accept in "green band" vs always approve | Ops policy | Recommend: always approve for nightly plans. Auto-accept only if `optimality_gap_pct < 1%` AND `solver_type = CP_SAT` AND DA count unchanged from previous day. Confirm with station managers. |
+| G4 | Approval SLA: auto-accept in "green band" vs always approve | Ops policy | Recommend: always approve for nightly plans. Auto-accept only if `optimality_gap_pct < 1%` AND `solver_type = CP_SAT` AND DA count unchanged from previous day. Confirm with station managers. **2026-10-25: runtime proposals are `BALANCED_BFS` with a null gap, so this auto-accept rule cannot fire (#241).** |
 | G5 | OSRM `ADJACENCY_THRESHOLD_SECONDS` calibration | Tile neighbor definition | Default 600 s (10 min). Should be calibrated per city based on average tile traversal time. Cities with dense traffic (Mumbai) may need lower threshold. |
 | G6 | CP-SAT `LOAD_TOLERANCE` calibration | Solver balance quality | Default ±30%. Too tight → solver may be infeasible (not enough tiles to balance exactly). Too loose → some DAs are significantly overloaded. Calibrate from first 2 weeks of ops data. |
 | G7 | Bootstrap `order_engaged_min_default` per-city calibration | Day-one territory sizing | Default is 17 min/order (12 min service + 5 min inter-stop travel). Service time may be 15–18 min in traffic-dense high-rise zones. Inter-stop travel ranges 3–10 min depending on tile density and road connectivity — sparse suburban tiles will trend higher. Calibrate both components independently per city before go-live using ops estimates. |

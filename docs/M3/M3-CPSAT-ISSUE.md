@@ -216,6 +216,8 @@ load degradation is minimal. Empirically expect <5% degradation in optimality ga
 
 ## Implementation status — DONE (2026-05-24)
 
+> **2026-10-25:** CP-SAT is no longer wired into `GridReplanServiceImpl`; `BalancedBfsAssignmentServiceImpl` has been the runtime solver since 54dd30d2 (#241). This document records the CP-SAT history. The implemented objective is `maxLoad − minLoad` (max−min), not the L1 form written below.
+
 The two-phase architecture is fully implemented in `CpSatAssignmentServiceImpl.java`.
 
 **What was built:**

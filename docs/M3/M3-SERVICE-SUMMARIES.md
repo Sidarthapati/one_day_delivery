@@ -1,5 +1,7 @@
 # M3 Grid Module — Service Summaries
 
+> **Status 2026-10-25:** the solver wired into `GridReplanServiceImpl` is **`BalancedBfsAssignmentServiceImpl`** (`@Qualifier("balancedBfsAssignmentService")`), described in its own section below. `CpSatAssignmentServiceImpl` and `BfsAssignmentServiceImpl` are not called at runtime (#241). Assignment rows have no `APPROVED` status: approval sets `APPROVED` in place (V3_9). Tables are `da_hex_assignment` / `h3_*`; "tile" below means an H3 hex.
+
 All services live under `grid/src/main/java/com/oneday/grid/service/`. Each section covers the public interface contract followed by a deep-dive into the implementation.
 
 ---
@@ -57,7 +59,7 @@ A greedy, single-pass BFS expander that runs in O(T log T) time. Used as:
 
 1. **Seed selection** — For each DA in order, pick the highest-demand unassigned tile as the seed.
 2. **BFS expansion** — A max-priority-queue frontier expands outward from the seed, always pulling the highest-demand reachable neighbor next.
-3. **Hard ceiling** — A tile is skipped if adding it would exceed `shiftMinutes × maxUtilisation` for this DA (once the territory is non-empty — the first tile is always taken to prevent empty territories).
+3. **No hard ceiling** — the target load is `totalDemand / K`; a DA keeps taking tiles until its load reaches the target, so an over-demanded city is still fully split (utilisation only shows up in `estimatedUtilPct`).
 4. **Target stop** — Expansion stops as soon as accumulated load ≥ `shiftMinutes × targetUtilisation`.
 5. **Contiguity** — Enforced implicitly: a candidate tile is only admitted if at least one of its road-adjacency-graph neighbors is already in the territory (seed is exempt).
 6. **Remaining tiles** — Any tiles still unassigned after all DAs have been processed are recorded as understaffed.
@@ -68,7 +70,7 @@ A greedy, single-pass BFS expander that runs in O(T log T) time. Used as:
 |---|---|
 | `assignment_proposal` | 1 row, `solver_type = BFS_FALLBACK`, no optimality gap |
 | `assignment_proposal_region` | 1 per DA with assigned tiles |
-| `da_tile_assignment` | 1 per (DA, tile) pair, status `PROPOSED` |
+| `da_hex_assignment` | 1 per (DA, tile) pair, status `PROPOSED` |
 
 ---
 
@@ -99,29 +101,11 @@ Uses Google OR-Tools CP-SAT (constraint programming / SAT) to find a provably ne
 | Objective | Minimize `maxLoad − minLoad` (equalise workload across DAs) |
 | Symmetry breaking | Pin: seed tile `k` must be assigned to DA `k` |
 
-**3. Lazy contiguity cuts loop** (up to 10 rounds)
+**3. Two-phase solve (what the code does)**
 
-CP-SAT has no native geographic constraint, so contiguity is enforced iteratively:
-1. Solve the current model.
-2. Extract territories — map each DA to its list of tile indices.
-3. Run BFS (`ContiguityValidator.findConnectedComponents`) on each territory.
-4. If all territories are connected → accept and return.
-5. Otherwise, for each disconnected component (the orphaned island, not the one containing the seed), add a cut:
-   ```
-   Σ b[tile_in_island][k]  ≤  island_size − 1
-   ```
-   This forbids that exact set from all being assigned to DA k simultaneously.
-6. Re-solve with the additional cuts.
+There are no lazy cuts and no infeasibility retries. *Phase 1:* one CP-SAT solve with exactly one DA per hex, per-DA load variables, objective `maxLoad − minLoad` plus a distance penalty from each DA's seed, seed pinning and Voronoi warm-start hints, under `grid.solver.time-limit-seconds` (45 s in the app). *Phase 2:* `repairConnectivity()` — BFS from each seed through its assigned hexes; disconnected hexes move to the adjacent DA with the most remaining capacity; isolated hexes are stapled on. Falls back to `BfsAssignmentServiceImpl` on empty input, `K > connected hexes`, INFEASIBLE / MODEL_INVALID, or no feasible solution within the limit; a FEASIBLE-at-timeout solution is used as-is. History in `M3-CPSAT-ISSUE.md`.
 
-If after 10 rounds contiguity is still not achieved, the best available solution is used.
-
-**4. Infeasibility retry loop** (up to 3 retries)
-
-If the solver reports `INFEASIBLE`, the load tolerance is widened by 5 percentage points per attempt before retrying. After 3 failures, falls back to BFS.
-
-**5. Timeout / final fallback**
-
-If the solver times out, or all retries are exhausted, delegates to `BfsAssignmentServiceImpl`.
+**Not wired:** since 54dd30d2 `replan` uses `BalancedBfsAssignmentServiceImpl` (#241).
 
 #### Output persisted
 
@@ -129,15 +113,16 @@ If the solver times out, or all retries are exhausted, delegates to `BfsAssignme
 |---|---|
 | `assignment_proposal` | 1 row with `optimality_gap_pct` = `(obj − bestBound) / obj × 100` |
 | `assignment_proposal_region` | 1 per DA |
-| `da_tile_assignment` | 1 per (DA, tile) pair, status `PROPOSED` |
+| `da_hex_assignment` | 1 per (DA, tile) pair, status `PROPOSED` |
 
 #### Key constants
 
 | Constant | Value | Purpose |
 |---|---|---|
-| `MAX_INFEASIBLE_RETRIES` | 3 | Tolerance widening retries before BFS |
-| `MAX_LAZY_CUT_ROUNDS` | 10 | Max contiguity fix iterations |
 | `DEMAND_SCALE` | 100.0 | Integer scaling factor for demand scores |
+| `INTER_HEX_TRAVEL_MIN` | 25 | Minutes added per hex so sprawling territories cost more |
+| `DIST_PENALTY_SCALE` | 700 | Scaled demand-minutes per hex-step from the seed |
+| `H3_STEP_DEG` | 0.019 | Lat/lon → hex-step normaliser; this is the resolution-7 spacing on a resolution-8 grid (#241) |
 
 ---
 
@@ -238,7 +223,7 @@ Flips a tile's `is_active` flag. Called by the map UI tile toggle. Used to exclu
 
 #### `getActiveAssignments`
 
-Returns all `DaTileAssignment` rows with status `ACTIVE` for the city on a given date. Scoped to the city's tile set (avoids cross-city contamination). Used by the map UI to colour tiles by assigned DA.
+Returns all `DaTileAssignment` rows with status `APPROVED` for the city on a given date. Scoped to the city's tile set (avoids cross-city contamination). Used by the map UI to colour tiles by assigned DA.
 
 ---
 
@@ -373,22 +358,22 @@ Manages the full lifecycle of assignment proposals — from nightly approval to 
 #### Scenario B — Intraday tile reassignment
 
 **`requestIntradayReassignment(cityId, fromDaId, toDaId, tileIdsToMove, requestedBy)`**
-- Validates all tiles to move are currently `ACTIVE` under `fromDaId`.
+- Validates all tiles to move are currently `APPROVED` under `fromDaId`.
 - Validates `fromDaId`'s remaining territory stays connected after removal.
 - Validates `toDaId`'s extended territory stays connected after addition.
 - Creates a new `AssignmentProposal` of type `INTRADAY_OVERRIDE` / status `PROPOSED`.
-- Writes full new tile sets for both DAs as `PROPOSED` assignment rows (**append-only — active rows are never mutated**).
+- Writes full new tile sets for both DAs as `PROPOSED` assignment rows (**append-only — approved rows are superseded, never rewritten**).
 - Returns an `IntradayReassignmentResponse`.
 
 **`approveIntradayReassignment(proposalId, reviewerId)`**
-- Supersedes `ACTIVE`/`APPROVED` assignments for the two affected DAs on today's date.
-- Activates the override proposal's new assignments (`PROPOSED` → `ACTIVE`).
+- Supersedes `APPROVED` assignments for the two affected DAs on today's date.
+- Activates the override proposal's new assignments (`PROPOSED` → `APPROVED`).
 - Marks the override proposal `APPROVED`.
 
 #### Tile share
 
 **`requestTileShare(cityId, daId, tileId, requestedBy)`**
-- Validates the tile has at least one `ACTIVE` assignment.
+- Validates the tile has at least one `APPROVED` assignment.
 - Creates a new `INTRADAY_SHARE` proposal with a new `DaTileAssignment` row for the additional DA, `nDasOnTile = existing + 1`.
 
 **`approveTileShare(proposalId, reviewerId)`**
@@ -398,10 +383,31 @@ Manages the full lifecycle of assignment proposals — from nightly approval to 
 
 ## 8. Supporting Utilities
 
+### BalancedBfsAssignmentServiceImpl (runtime solver)
+
+**File:** `impl/BalancedBfsAssignmentServiceImpl.java` — `@Service @Qualifier("balancedBfsAssignmentService")`; the only `AssignmentService` injected into `GridReplanServiceImpl`.
+
+| Input | Meaning |
+|---|---|
+| `demand` | one `HexDemandSnapshot` per active hex; `demandScoreMinutes` is the weight |
+| `adjacencyGraph` | hex → neighbours (the H3 1-ring from `buildGeometricAdjacency`) |
+| `availableDaIds` | the roster; index 0 is whatever the roster query returned first |
+
+#### Algorithm step by step
+
+0. **Guards** — no DAs → every hex understaffed, coverage 0 %; no hexes → empty proposal.
+1. **Capacity and target** — `daCapacity = (endHour − startHour) × 60 × targetUtilisation` (780 × 0.70 = 546 min); `target = totalDemand / K`. When total demand is 0 (no `shipment_leg_events` yet, #235) every hex weighs 1 and `target = n / K`, so the split is by hex count.
+2. **Seeds** (`computeSeeds`) — seed 0 is the max-weight hex; each next seed is the unseeded hex with the largest minimum BFS hop distance to the seeds so far (farthest-first). `K > n` reuses seed 0; the duplicate is skipped so later DAs start empty.
+3. **Phase 1 — competitive flooding** — every DA starts with `remaining = target − seed weight`. Loop while hexes remain: the DA with a non-empty frontier and the largest `remaining` (ties → lowest index) takes the highest-weight hex on its frontier; the frontier grows by that hex's unassigned neighbours. If no DA has a frontier left (disconnected pockets), each leftover hex goes to the DA with the most remaining capacity regardless of adjacency. Logs `Phase 1 (competitive flooding): spread=…`.
+4. **Phase 2 — boundary swaps** (skipped when the graph is empty) — up to `MAX_SWAP_PASSES = 300` passes; a border hex moves to a neighbouring DA when Σ|load − target| over the pair strictly improves and the donor stays connected from its seed (`donorRemainsConnected`). Logs `Phase 2 (boundary swaps): … swaps`.
+5. **Persist** — `AssignmentProposal` (`solverType = BALANCED_BFS`, `optimalityGapPct = null`, `adjacencySource` by graph emptiness and then overwritten to `GEOMETRIC_FALLBACK` by `replan`, `coveragePct`, `understaffedHexIds` JSON), one `AssignmentProposalRegion` per DA with hexes (`estimatedDemandMin`, `estimatedUtilPct = load / daCapacity` as a **fraction**), one `DaHexAssignment` PROPOSED per (DA, hex) for `validDate`.
+
+Tests: `BalancedBfsAssignmentServiceImplTest`.
+
 ### ContiguityValidator
 
 **File:** `impl/ContiguityValidator.java`  
-Not a Spring bean. Shared by `CpSatAssignmentServiceImpl` and `ProposalServiceImpl`.
+Not a Spring bean. Used by `ProposalServiceImpl` for manual-override contiguity (on the OSRM graph); the solvers keep their own connectivity logic (`BalancedBfs.donorRemainsConnected`, `CpSat.repairConnectivity`).
 
 | Method | Description |
 |---|---|
