@@ -11,7 +11,7 @@ import org.hibernate.annotations.UuidGenerator;
 import java.util.UUID;
 
 // One row per DA per proposal. Tile IDs for the region are read from
-// da_tile_assignment filtered by (proposal_id, da_id). Append-only.
+// da_hex_assignment filtered by (proposal_id, da_id). Append-only.
 @Entity
 @Table(name = "assignment_proposal_region")
 @Getter

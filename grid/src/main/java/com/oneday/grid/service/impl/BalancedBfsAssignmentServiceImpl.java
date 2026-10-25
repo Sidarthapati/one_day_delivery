@@ -63,8 +63,13 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
                                               Map<UUID, List<UUID>> adjacencyGraph,
                                               List<UUID> availableDaIds) {
         if (demand.isEmpty() || availableDaIds.isEmpty()) {
+            // No DAs → every hex is understaffed and coverage is 0 % (same contract as
+            // BfsAssignmentServiceImpl). No hexes → nothing to cover.
+            List<UUID> allHexIds = demand.stream().map(HexDemandSnapshot::getHexId).toList();
+            List<Integer> allUnderstaffed = new ArrayList<>();
+            for (int i = 0; i < demand.size(); i++) allUnderstaffed.add(i);
             return persistProposal(cityId, validForDate, availableDaIds, demand,
-                    List.of(), Map.of(), List.of(), 1.0, 1.0, 0,
+                    allHexIds, Map.of(), allUnderstaffed, 1.0, 1.0, demand.size(),
                     availableDaIds.size(), adjacencyGraph);
         }
 
@@ -83,18 +88,32 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
         int shiftMin = (properties.getShift().getEndHour() - properties.getShift().getStartHour()) * 60;
         double daCapacity = shiftMin * properties.getDa().getTargetUtilisation();
         double totalDemand = Arrays.stream(demandArr).sum();
-        double target = totalDemand > 0 ? totalDemand / K : daCapacity;
 
-        int[] seeds = computeSeeds(n, adj, demandArr, K);
+        // No demand signal at all (M4 feed absent → every hex scores 0): balance by hex count
+        // instead, i.e. every hex weighs 1. Otherwise the strict ">" tie-break in
+        // competitiveFlooding hands the whole connected city to DA 0 and the swap phase never
+        // fires, because every move "improves" the balance by exactly 0.
+        double[] weights = demandArr;
+        double target;
+        if (totalDemand > 0) {
+            target = totalDemand / K;
+        } else {
+            weights = new double[n];
+            Arrays.fill(weights, 1.0);
+            target = (double) n / K;
+            log.info("BalancedBFS cityId={}: total demand is 0 — balancing by hex count", cityId);
+        }
+
+        int[] seeds = computeSeeds(n, adj, weights, K);
 
         // Phase 1: competitive flooding — all DAs grow simultaneously from seeds.
         // The DA with the most remaining capacity always expands first, which drives load balance.
-        int[] hexToDA = competitiveFlooding(n, K, adj, demandArr, seeds, target);
+        int[] hexToDA = competitiveFlooding(n, K, adj, weights, seeds, target);
 
         // Phase 2: boundary swap refinement — iteratively move border hexes between adjacent
         // DAs when the move improves load balance and the donor territory stays connected.
         if (!adjacencyGraph.isEmpty()) {
-            boundarySwapRefinement(n, K, adj, demandArr, seeds, hexToDA, target);
+            boundarySwapRefinement(n, K, adj, weights, seeds, hexToDA, target);
         }
 
         Map<Integer, List<Integer>> territories = new HashMap<>();
@@ -198,6 +217,7 @@ class BalancedBfsAssignmentServiceImpl implements AssignmentService {
 
         for (int k = 0; k < K; k++) {
             int s = seeds[k];
+            if (hexToDA[s] != -1) continue;   // K > n: duplicate seed — this DA starts empty
             hexToDA[s] = k;
             remaining[k] -= demand[s];
             for (int nb : adj.get(s)) {

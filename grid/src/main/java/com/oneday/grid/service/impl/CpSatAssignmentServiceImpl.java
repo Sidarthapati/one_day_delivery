@@ -53,11 +53,11 @@ class CpSatAssignmentServiceImpl implements AssignmentService {
     }
 
     private static final Logger log = LoggerFactory.getLogger(CpSatAssignmentServiceImpl.class);
-    private static final int    MAX_INFEASIBLE_RETRIES = 3;
     private static final double DEMAND_SCALE           = 100.0;
     private static final double INTER_HEX_TRAVEL_MIN   = 25.0;   // minutes overhead per hex in territory
     private static final long   DIST_PENALTY_SCALE     = 700L;   // 7 demand-minutes per hex-step from seed
-    // H3 resolution-7 center-to-center ≈ 2.1 km ≈ 0.019° — normalises lat/lon to hex-step units
+    // Normalises lat/lon to hex-step units. NOTE: 0.019° is the H3 resolution-7 spacing (≈2.1 km);
+    // the grid runs at resolution 8 (≈0.0075°), so this penalty is ~2.5× weaker than designed.
     private static final double H3_STEP_DEG            = 0.019;
 
     private final AssignmentProposalRepository proposalRepository;

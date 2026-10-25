@@ -224,4 +224,33 @@ class DemandScoringServiceImplTest {
         assertThat(snap.getDemandScoreOrders()).isEqualTo(0.0);
         assertThat(snap.getDemandScoreMinutes()).isEqualTo(0.0);
     }
+
+    // ---- partial snapshots: only hexes without a row for the date are computed ----------
+
+    @Test
+    void computeAndPersistDemand_partialSnapshots_computesOnlyMissingHexesAndReturnsAll() {
+        UUID existingHex = UUID.randomUUID();
+        UUID newHex = UUID.randomUUID();
+        when(hexRepository.findByH3GridIdAndActiveTrue(gridId))
+                .thenReturn(List.of(hex(existingHex), hex(newHex)));
+        HexDemandSnapshot existing = HexDemandSnapshot.builder()
+                .hexId(existingHex).snapshotDate(date).demandScoreMinutes(123.0).build();
+        when(snapshotRepository.findBySnapshotDate(date)).thenReturn(List.of(existing));
+        stubM4(Map.of(), Map.of(), Map.of(), Map.of());
+
+        List<HexDemandSnapshot> result = service.computeAndPersistDemand(cityId, date);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<HexDemandSnapshot>> captor = ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(snapshotRepository).saveAll(captor.capture());
+        // Re-inserting the existing row would violate UNIQUE(hex_id, snapshot_date).
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().get(0).getHexId()).isEqualTo(newHex);
+
+        assertThat(result).hasSize(2)
+                .extracting(HexDemandSnapshot::getHexId)
+                .containsExactlyInAnyOrder(existingHex, newHex);
+        assertThat(result).filteredOn(s -> s.getHexId().equals(existingHex))
+                .first().extracting(HexDemandSnapshot::getDemandScoreMinutes).isEqualTo(123.0);
+    }
 }

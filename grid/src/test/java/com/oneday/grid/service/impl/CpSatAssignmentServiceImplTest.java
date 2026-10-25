@@ -162,7 +162,7 @@ class CpSatAssignmentServiceImplTest {
     // ---- real CP-SAT run: contiguity with road graph ----------------------
 
     @Test
-    void twoTilesTwoDas_connectedGraph_convergesInOneLazyCutRound() {
+    void twoTilesTwoDas_connectedGraph_solvesWithoutFallback() {
         stubPersistenceLayer();
 
         UUID da0 = UUID.randomUUID(), da1 = UUID.randomUUID();

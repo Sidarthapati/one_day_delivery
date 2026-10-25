@@ -111,6 +111,8 @@ class GridReplanServiceImpl implements GridReplanService {
         return proposalService.getProposal(proposal.getId());
     }
 
+    // Currently unused: replan() always builds the H3 1-ring graph. Kept until the OSRM-adjacency
+    // decision is made; travel-time rows are only read for override contiguity today.
     private Map<UUID, List<UUID>> loadAdjacencyGraph(Grid grid) {
         int threshold = properties.getOsrm().getAdjacencyThresholdSeconds();
         List<HexTravelTime> rows = travelTimeRepository
