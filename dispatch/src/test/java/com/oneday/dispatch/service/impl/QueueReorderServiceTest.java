@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class QueueReorderServiceTest {
@@ -143,6 +144,48 @@ class QueueReorderServiceTest {
         service.reorder(daId, date);
 
         assertThat(parked.isBeyondCron()).isFalse();           // promoted back into the pre-cron queue
+        verify(events).emitQueueReordered(daId, city);
+    }
+
+    // ── GPS anchor (sequencing on real GPS) ──────────────────────────────────
+
+    @Test
+    void reorderAnchorsOnLiveGpsPosition() {
+        // Two equally-fresh queued tasks, no cron → proximity is the only tie-breaker. The winner is
+        // whichever is nearer the DA's *live GPS* fix, not its insertion order — so moving the fix moves
+        // the sequence. Park the DA's GPS on the second (far-from-origin) task → it must climb to front.
+        DispatchQueue nearOrigin = queued(0, 0.01, 0.01, Instant.now());
+        DispatchQueue atGps = queued(1, 0.3, 0.3, Instant.now());
+        when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(eq(daId), eq(date), any()))
+                .thenReturn(List.of(nearOrigin, atGps));
+        when(daStatus.getLiveStatus(daId))
+                .thenReturn(new DaLiveStatus(daId, city, 0.3, 0.3, null, DaStatusEnum.IDLE, "SHIFT_1"));
+
+        service.reorder(daId, date);
+
+        assertThat(atGps.getQueuePosition()).isEqualTo(0);     // nearest the live GPS fix → first
+        assertThat(nearOrigin.getQueuePosition()).isEqualTo(1);
+    }
+
+    @Test
+    void noGpsFixSkipsCronGateAndReordersByAgeOnly() {
+        // Loaded DA that hasn't pinged yet → live status present but no location. We can't assess cron
+        // feasibility without knowing where the DA is, so the gate is skipped: the tail still reorders
+        // (age-only), but nothing is parked beyond_cron even under an active cron.
+        DispatchQueue fresh = queued(0, 0.01, 0.01, Instant.now());
+        DispatchQueue old = queued(1, 0.3, 0.3, Instant.now().minus(150, ChronoUnit.MINUTES));
+        when(queueRepo.findByDaIdAndOperatingDateAndStatusIn(eq(daId), eq(date), any()))
+                .thenReturn(List.of(fresh, old));
+        withCron();
+        when(daStatus.getLiveStatus(daId))
+                .thenReturn(new DaLiveStatus(daId, city, null, null, null, DaStatusEnum.IDLE, "SHIFT_1"));
+
+        service.reorder(daId, date);
+
+        assertThat(old.getQueuePosition()).isEqualTo(0);       // aging still promotes the starved task
+        assertThat(old.isBeyondCron()).isFalse();              // but no cron gate applied without an anchor
+        assertThat(fresh.isBeyondCron()).isFalse();
+        verifyNoInteractions(feasibility);                     // gate never consulted without a GPS anchor
         verify(events).emitQueueReordered(daId, city);
     }
 
