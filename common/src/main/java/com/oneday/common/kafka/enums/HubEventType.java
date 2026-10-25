@@ -25,5 +25,6 @@ public enum HubEventType {
     MANIFEST_GENERATED,           // system manifest ready → M9 handover
     BAG_RESCHEDULED,              // low-weight/forced move to a later flight (§9, §10); PR #3
     HUB_OVERLOAD_ALERT,           // wave/stand overload → M10, station mgr (M7-D-007); PR #3
-    HUB_DISCREPANCY               // dock reconciliation mismatch → M11, M10
+    HUB_DISCREPANCY,              // dock reconciliation mismatch → M11, M10
+    HUB_COLLECT_STAGED            // per-parcel: placed on the hub-collect shelf → M4 (AWAITING_HUB_COLLECT) (§8.2, OD-9)
 }

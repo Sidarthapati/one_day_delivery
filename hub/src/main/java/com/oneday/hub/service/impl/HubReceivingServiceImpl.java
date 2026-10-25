@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /**
@@ -170,6 +171,14 @@ class HubReceivingServiceImpl implements HubReceivingService {
                 .dropType(DropType.HUB_COLLECT)
                 .status(DeliveryBagItemStatus.ON_SHELF)
                 .build());
+
+        // Advance M4 off the AT_DEST_HUB dock scan: DEST_SORT_COMPLETE → DEST_HUB_PROCESSING (same event
+        // the DA-delivery sort emits, also M10's dest-leg SLA signal), then HUB_COLLECT_STAGED →
+        // AWAITING_HUB_COLLECT so the customer-collect lifecycle can begin. Without these the shelf
+        // placement left the shipment stuck at AT_DEST_HUB forever (OD-9). hub_id == city_id in v1.
+        Instant now = clock.instant();
+        eventProducer.emitDestSortComplete(parcel.shipmentId(), hubId, hubId, LocalDate.now(clock), now);
+        eventProducer.emitHubCollectStaged(parcel.shipmentId(), hubId, hubId);
     }
 
     private InboundReceipt recordReceipt(ShipmentInfoPort.ParcelInfo parcel, UUID hubId, ArrivalMode mode, SortDirection direction) {
