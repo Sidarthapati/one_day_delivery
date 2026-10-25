@@ -1,0 +1,38 @@
+# Shuttle agent collects a landed flight's parcels back to the hub (destination city).
+# login -> "From airport" list -> Collected from airport for THIS flight.
+# The flight must have LANDED (the harness time-travels the flight first).
+#
+# Run: maestro test e2e/maestro/shuttle-collect.yaml \
+#        --env EMAIL=shuttle.hyd@e2e.local --env PASSWORD=Shuttle@2026 --env AWB_ID=<uuid>
+# AWB_ID keys the exact landed AWB (flight_no can collide when two bags ride the same flight).
+# NB: pass every value via --env — a flow-level `env:` default would SHADOW the --env override.
+appId: com.oneday.driver
+---
+- runFlow:
+    file: subflows/login.yaml
+    env:
+      EMAIL: "${EMAIL}"
+      PASSWORD: "${PASSWORD}"
+- tapOn:
+    text: "LATER"
+    optional: true
+
+- extendedWaitUntil:
+    visible:
+      text: "From airport"
+    timeout: 40000
+# Several landed flights may be listed — scroll THIS AWB's card into view before collecting.
+- scrollUntilVisible:
+    element:
+      id: "shuttle-collect-${AWB_ID}"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "shuttle-collect-${AWB_ID}"
+- extendedWaitUntil:
+    visible:
+      text: "Collected"
+    timeout: 30000
+- tapOn:
+    text: "OK"
+    optional: true

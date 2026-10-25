@@ -87,6 +87,9 @@ class SortServiceImpl implements SortService {
 
         eventProducer.emitStandAssigned(parcel.shipmentId(), stand.getCityId(), hubId,
                 stand.getStandNo(), destHub, SortDirection.OUTBOUND);
+        // Per-parcel BAG_CREATED → M4 advances ORIGIN_HUB_PROCESSING → IN_TAKEOFF_BAG. Published after
+        // STAND_ASSIGNED (same queue, in order) so the parcel is already in ORIGIN_HUB_PROCESSING.
+        eventProducer.emitParcelBagged(bag, stand.getStandNo(), parcel.shipmentId());
 
         return new SortResult(parcel.shipmentId(), parcel.shipmentRef(), destHub,
                 bag.getId(), stand.getId(), stand.getStandNo(),

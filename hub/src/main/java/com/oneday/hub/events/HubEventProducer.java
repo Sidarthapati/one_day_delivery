@@ -36,10 +36,19 @@ public class HubEventProducer {
         publish(new StandAssignedEvent(shipmentId, cityId, hubId, standNo, sortKey, direction.name()));
     }
 
-    /** BAG_CREATED: a flight bag was opened lazily for a (flight, date, dest_hub) on a stand (§7.2). */
+    /** BAG_CREATED (bag-level): a flight bag was opened lazily for a (flight, date, dest_hub) on a stand (§7.2). */
     public void emitBagCreated(FlightBag bag, String standNo) {
         publish(new BagCreatedEvent(bag.getId(), bag.getCityId(), bag.getHubId(),
-                bag.getFlightNo(), bag.getFlightDate(), bag.getDestHub(), standNo));
+                bag.getFlightNo(), bag.getFlightDate(), bag.getDestHub(), standNo, null));
+    }
+
+    /**
+     * BAG_CREATED (per-parcel): the parcel has been placed into the takeoff bag, so M4 advances it
+     * ORIGIN_HUB_PROCESSING → IN_TAKEOFF_BAG. Emitted by the outbound sort right after STAND_ASSIGNED.
+     */
+    public void emitParcelBagged(FlightBag bag, String standNo, UUID parcelId) {
+        publish(new BagCreatedEvent(bag.getId(), bag.getCityId(), bag.getHubId(),
+                bag.getFlightNo(), bag.getFlightDate(), bag.getDestHub(), standNo, parcelId));
     }
 
     /** BAG_SEALED → M9, M10: contents frozen, manifest generated (§7.3). */

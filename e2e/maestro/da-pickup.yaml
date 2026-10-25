@@ -1,0 +1,66 @@
+# DA first-mile PICKUP through the real driver app (HUB_RETURN: hand off at hub).
+# Drives: login -> open the next stop -> open THIS parcel -> en route -> arrived ->
+# scan (mock scanner injects the ref) -> verify sender OTP -> hand off at hub.
+# The parcel must already be PICKUP_ASSIGNED to this DA (the harness gates on that);
+# OTP is the real code peeked from the control plane.
+#
+# Run: maestro test e2e/maestro/da-pickup.yaml \
+#        --env EMAIL=da.del.shift_1.0@e2e.local --env PASSWORD=DaTest@2026 \
+#        --env PARCEL_REF=1DD-XXXXXX --env OTP=123456
+# Build the app dev-client with EXPO_PUBLIC_MOCK_SCANNER=true (+ EXPO_PUBLIC_ALLOW_EMULATOR=true).
+# NB: pass every value via --env — a flow-level `env:` default would SHADOW the --env override.
+appId: com.oneday.driver
+---
+- runFlow:
+    file: subflows/login.yaml
+    env:
+      EMAIL: "${EMAIL}"
+      PASSWORD: "${PASSWORD}"
+# Dismiss the background-tracking prompt if it appears (suppressed when location perms are granted).
+- tapOn:
+    text: "LATER"
+    optional: true
+
+# Work screen (DA "Today"): open the recommended stop, then this parcel.
+- extendedWaitUntil:
+    visible:
+      id: "open-next-stop"
+    timeout: 30000
+- tapOn:
+    id: "open-next-stop"
+# Ticket-first path lands on the location ticket listing the parcel row; task-first
+# single-stub opens the detail directly, so the row tap is optional.
+- tapOn:
+    id: "task-open-${PARCEL_REF}"
+    optional: true
+
+# Pickup detail — one screen, phase machine.
+- tapOn:
+    id: "pickup-enroute"
+- tapOn:
+    id: "pickup-arrived"
+- tapOn:
+    id: "pickup-scan"
+# Mock scanner panel (dev-only): type the ref, confirm -> fires onScanned.
+- tapOn:
+    id: "mock-scan-input"
+- inputText: "${PARCEL_REF}"
+- hideKeyboard
+- tapOn:
+    id: "mock-scan-confirm"
+# Back on ARRIVED with the parcel scanned.
+- tapOn:
+    id: "pickup-enter-otp"
+- tapOn:
+    id: "pickup-otp-input"
+- inputText: "${OTP}"
+- hideKeyboard
+- tapOn:
+    id: "pickup-confirm-otp"
+# Picked up -> return to the origin hub.
+- tapOn:
+    id: "pickup-handoff"
+- extendedWaitUntil:
+    visible:
+      text: "Handed off"
+    timeout: 30000

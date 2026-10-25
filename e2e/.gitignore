@@ -1,0 +1,7 @@
+.env
+.env.backend
+node_modules/
+artifacts/
+playwright-report/
+test-results/
+.maestro-out/

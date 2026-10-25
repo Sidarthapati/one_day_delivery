@@ -1,5 +1,6 @@
 package com.oneday.airline.consolidator;
 
+import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
@@ -55,7 +56,16 @@ class ConsolidatorDataSourceConfig {
     @Bean
     DataSource consolidatorDataSource(
             @Qualifier("consolidatorDataSourceProperties") DataSourceProperties consolidatorDataSourceProperties) {
-        DataSource dataSource = consolidatorDataSourceProperties.initializeDataSourceBuilder().build();
+        DataSource dataSource = consolidatorDataSourceProperties
+                .initializeDataSourceBuilder()
+                .type(HikariDataSource.class)
+                .build();
+        // This second pool is built manually, so Spring Boot's spring.datasource.hikari.* tuning never
+        // reaches it — left at defaults it has no keepalive, so against a remote DB (Render/Singapore)
+        // its idle connections get dropped and the next borrow blocks the full connectionTimeout before
+        // failing. That surfaces as a hub-receive 500 (flight selection reads a consolidator rate) after
+        // the pool has been idle a while. Give it the same keepalive/lifetime discipline as the primary.
+        tuneForRemoteDb((HikariDataSource) dataSource, "consolidator");
         Flyway.configure()
                 .dataSource(dataSource)
                 .locations("classpath:db/migration-consolidator")
@@ -63,6 +73,18 @@ class ConsolidatorDataSourceConfig {
                 .load()
                 .migrate();
         return dataSource;
+    }
+
+    /** Keepalive + bounded lifetime so a pooled connection to a remote DB is validated/recycled before
+     *  the network silently drops it. Applied to both manually-built pools in this config. */
+    private static void tuneForRemoteDb(HikariDataSource ds, String poolName) {
+        ds.setPoolName(poolName);
+        ds.setKeepaliveTime(120_000);      // probe idle connections every 2 min
+        ds.setMaxLifetime(1_800_000);      // recycle at 30 min (< server-side idle timeout)
+        ds.setValidationTimeout(5_000);
+        ds.setConnectionTimeout(20_000);
+        ds.setMinimumIdle(2);
+        ds.setMaximumPoolSize(8);
     }
 
     @Bean
