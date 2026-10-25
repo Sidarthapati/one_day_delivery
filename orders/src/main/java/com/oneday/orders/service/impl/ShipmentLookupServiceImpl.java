@@ -48,9 +48,9 @@ class ShipmentLookupServiceImpl implements ShipmentLookupService {
         // At most two rows share a barcode (R1): an original and its single return child <ref>_R.
         // Prefer the return child — once RTO is on, the physical label belongs to the active return leg.
         Shipment child = matches.stream()
-                .filter(s -> s.getReturnOfShipmentId() != null).findFirst().orElse(null);
+                .filter(s -> s.getParentShipmentId() != null).findFirst().orElse(null);
         Shipment original = matches.stream()
-                .filter(s -> s.getReturnOfShipmentId() == null).findFirst().orElse(null);
+                .filter(s -> s.getParentShipmentId() == null).findFirst().orElse(null);
         if (child != null) {
             String originalRef = original != null ? original.getShipmentRef() : null;
             return Optional.of(new BarcodeResolution(code, child.getId(), child.getShipmentRef(),
@@ -64,16 +64,16 @@ class ShipmentLookupServiceImpl implements ShipmentLookupService {
     /** Resolve from a shipment matched by its ref: an original with a live return child routes to the
      *  child (the reused-label return leg); otherwise the shipment itself (a child already is a return). */
     private BarcodeResolution resolveFrom(String code, Shipment s) {
-        if (s.getReturnOfShipmentId() == null && s.getReturnShipmentId() != null) {
-            Shipment child = shipmentRepository.findById(s.getReturnShipmentId()).orElse(null);
+        if (s.getParentShipmentId() == null && s.getChildShipmentId() != null) {
+            Shipment child = shipmentRepository.findById(s.getChildShipmentId()).orElse(null);
             if (child != null) {
                 return new BarcodeResolution(code, child.getId(), child.getShipmentRef(),
                         child.getState(), true, s.getShipmentRef());
             }
         }
-        boolean isReturn = s.getReturnOfShipmentId() != null;
+        boolean isReturn = s.getParentShipmentId() != null;
         String originalRef = isReturn
-                ? shipmentRepository.findById(s.getReturnOfShipmentId())
+                ? shipmentRepository.findById(s.getParentShipmentId())
                         .map(Shipment::getShipmentRef).orElse(null)
                 : null;
         return new BarcodeResolution(code, s.getId(), s.getShipmentRef(), s.getState(), isReturn, originalRef);
@@ -100,6 +100,6 @@ class ShipmentLookupServiceImpl implements ShipmentLookupService {
                 orderRef,
                 // R4 pending-RTO flag: intent recorded, not yet resolved, no return child minted.
                 s.getRtoRequestedAt() != null && s.getRtoResolvedAt() == null
-                        && s.getReturnShipmentId() == null);
+                        && s.getChildShipmentId() == null);
     }
 }

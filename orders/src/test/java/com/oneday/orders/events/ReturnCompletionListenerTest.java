@@ -36,7 +36,7 @@ class ReturnCompletionListenerTest {
         Shipment child = new Shipment();
         ReflectionTestUtils.setField(child, "id", childId);
         child.setShipmentRef("1DD-DEL-20260828-00001_R");
-        child.setReturnOfShipmentId(originalId);
+        child.setParentShipmentId(originalId);
         when(shipmentRepo.findById(childId)).thenReturn(Optional.of(child));
 
         listener.onShipmentTransitioned(droppedEvent(childId, child.getShipmentRef()));
@@ -47,7 +47,7 @@ class ReturnCompletionListenerTest {
     @Test
     void deliveredNonReturnShipmentDoesNothing() {
         UUID id = UUID.randomUUID();
-        Shipment plain = new Shipment(); // returnOfShipmentId == null
+        Shipment plain = new Shipment(); // parentShipmentId == null
         when(shipmentRepo.findById(id)).thenReturn(Optional.of(plain));
 
         listener.onShipmentTransitioned(droppedEvent(id, "1DD-DEL-20260828-00002"));

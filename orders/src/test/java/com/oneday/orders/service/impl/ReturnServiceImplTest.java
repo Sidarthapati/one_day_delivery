@@ -117,7 +117,7 @@ class ReturnServiceImplTest {
         Shipment original = pendingRtoOriginal();
         when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(original));
         when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(original));
-        when(shipmentRepo.findByReturnOfShipmentId(originalId)).thenReturn(Optional.empty());
+        when(shipmentRepo.findByParentShipmentId(originalId)).thenReturn(Optional.empty());
 
         Optional<ReturnService.ReturnResult> result =
                 service.resolveOnHubArrival(originalId, ShipmentState.AT_ORIGIN_HUB, ctx);
@@ -134,7 +134,7 @@ class ReturnServiceImplTest {
         Shipment original = pendingRtoOriginal();
         when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(original));
         when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(original));
-        when(shipmentRepo.findByReturnOfShipmentId(originalId)).thenReturn(Optional.empty());
+        when(shipmentRepo.findByParentShipmentId(originalId)).thenReturn(Optional.empty());
 
         Optional<ReturnService.ReturnResult> result =
                 service.resolveOnHubArrival(originalId, ShipmentState.AT_DEST_HUB, ctx);
@@ -164,7 +164,7 @@ class ReturnServiceImplTest {
         Shipment original = pendingRtoOriginal();
         UUID childId = UUID.randomUUID();
         original.setRtoResolvedAt(java.time.Instant.now());
-        original.setReturnShipmentId(childId);
+        original.setChildShipmentId(childId);
         Shipment child = new Shipment();
         ReflectionTestUtils.setField(child, "id", childId);
         child.setShipmentRef("1DD-DEL-20260828-00001_R");
@@ -187,7 +187,7 @@ class ReturnServiceImplTest {
         original.setState(ShipmentState.LANDED);
         when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(original));
         when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(original));
-        when(shipmentRepo.findByReturnOfShipmentId(originalId)).thenReturn(Optional.empty());
+        when(shipmentRepo.findByParentShipmentId(originalId)).thenReturn(Optional.empty());
 
         service.resolveOnHubArrival(originalId, ShipmentState.AT_DEST_HUB, ctx);
 
@@ -202,7 +202,7 @@ class ReturnServiceImplTest {
         original.setState(ShipmentState.AT_ORIGIN_HUB);
         when(shipmentRepo.findById(originalId)).thenReturn(Optional.of(original));
         when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(original));
-        when(shipmentRepo.findByReturnOfShipmentId(originalId)).thenReturn(Optional.empty());
+        when(shipmentRepo.findByParentShipmentId(originalId)).thenReturn(Optional.empty());
 
         Optional<ReturnService.ReturnResult> result =
                 service.resolveOnHubArrival(originalId, ShipmentState.AT_ORIGIN_HUB, ctx);
@@ -220,7 +220,7 @@ class ReturnServiceImplTest {
 
         assertThat(r.childShipmentRef()).isEqualTo("1DD-DEL-20260828-00001_R");
         Shipment child = capturedChild();
-        assertThat(child.getReturnOfShipmentId()).isEqualTo(originalId);
+        assertThat(child.getParentShipmentId()).isEqualTo(originalId);
         assertThat(child.getOrderId()).isEqualTo(orderId);
         // Reversed geography: return origin = original dest, return dest = original sender.
         assertThat(child.getOriginCity()).isEqualTo("BOM");
@@ -290,7 +290,7 @@ class ReturnServiceImplTest {
     void isIdempotentWhenAReturnChildAlreadyExists() {
         Shipment orig = original(CustomerType.B2C, null);
         UUID childId = UUID.randomUUID();
-        orig.setReturnShipmentId(childId);
+        orig.setChildShipmentId(childId);
         Shipment existing = new Shipment();
         existing.setShipmentRef("1DD-DEL-20260828-00001_R");
         when(shipmentRepo.findByIdWithLock(originalId)).thenReturn(Optional.of(orig));

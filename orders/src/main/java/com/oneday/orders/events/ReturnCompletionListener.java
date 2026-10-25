@@ -42,18 +42,18 @@ public class ReturnCompletionListener {
             return; // only a delivered terminal matters here
         }
         Shipment child = shipmentRepository.findById(e.shipmentId()).orElse(null);
-        if (child == null || child.getReturnOfShipmentId() == null) {
+        if (child == null || child.getParentShipmentId() == null) {
             return; // not a return child — nothing to close
         }
         try {
-            stateMachine.transition(child.getReturnOfShipmentId(), ShipmentState.RTO_COMPLETED,
+            stateMachine.transition(child.getParentShipmentId(), ShipmentState.RTO_COMPLETED,
                     TransitionContext.fromSystem(SOURCE)
                             .withNotes("Return child " + child.getShipmentRef() + " delivered"));
             log.info("Return child {} delivered → original {} RTO_COMPLETED",
-                    child.getShipmentRef(), child.getReturnOfShipmentId());
+                    child.getShipmentRef(), child.getParentShipmentId());
         } catch (IllegalStateTransitionException ex) {
             // Original already terminal (e.g. a duplicate delivery signal) — nothing to do.
-            log.debug("Original {} not in a state to complete RTO: {}", child.getReturnOfShipmentId(), ex.getMessage());
+            log.debug("Original {} not in a state to complete RTO: {}", child.getParentShipmentId(), ex.getMessage());
         }
     }
 }

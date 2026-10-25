@@ -101,7 +101,7 @@ class RtoIntentResolverTest {
     @Test
     void returnChildIsNeverReturnedAgain() {
         Shipment child = pendingIntent();
-        child.setReturnOfShipmentId(UUID.randomUUID()); // this shipment is itself a return child
+        child.setParentShipmentId(UUID.randomUUID()); // this shipment is itself a return child
         when(shipmentRepo.findById(shipmentId)).thenReturn(Optional.of(child));
 
         resolver.onShipmentTransitioned(arrivedAt(ShipmentState.AT_DEST_HUB));

@@ -47,7 +47,7 @@ class ExceptionsEventsConsumerTest {
     @Test
     void rtoInitiatedSpawnsAReturnChildForAnOriginal() {
         UUID id = UUID.randomUUID();
-        Shipment original = new Shipment();       // returnOfShipmentId == null → an original, not a child
+        Shipment original = new Shipment();       // parentShipmentId == null → an original, not a child
         when(shipmentRepository.findById(id)).thenReturn(Optional.of(original));
 
         consumer.onExceptionsEvent(new ExceptionsEvent(id, ExceptionsEventType.RTO_INITIATED));
@@ -60,7 +60,7 @@ class ExceptionsEventsConsumerTest {
     void rtoInitiatedOnAReturnChildHoldsItAtTheHub() {
         UUID id = UUID.randomUUID();
         Shipment child = new Shipment();
-        child.setReturnOfShipmentId(UUID.randomUUID()); // this shipment is itself a return child
+        child.setParentShipmentId(UUID.randomUUID()); // this shipment is itself a return child
         when(shipmentRepository.findById(id)).thenReturn(Optional.of(child));
 
         consumer.onExceptionsEvent(new ExceptionsEvent(id, ExceptionsEventType.RTO_INITIATED));

@@ -54,7 +54,7 @@ public class ExceptionsEventsConsumer {
                 log.warn("RTO_INITIATED for unknown shipment {} — ignored", event.shipmentId());
                 return;
             }
-            if (s.getReturnOfShipmentId() != null) {
+            if (s.getParentShipmentId() != null) {
                 stateMachine.transition(event.shipmentId(), ShipmentState.HELD_AT_HUB, ctx);
             } else {
                 returnService.initiateReturn(event.shipmentId(), ReturnReason.ATTEMPTS_EXHAUSTED, ctx);
