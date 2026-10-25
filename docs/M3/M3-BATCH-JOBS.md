@@ -11,7 +11,7 @@ This document explains every file in `com.oneday.grid.batch` and the two event s
 3. [OsrmMatrixRefreshJob](#3-osrmmatrixrefreshjob)
 4. [NightlyReplanJob](#4-nightlyreplan-job)
 5. [IntradayMonitorJob](#5-intradaymonitorjob)
-6. [DaRosterPort and NoOpDaRosterPort](#6-darosterport-and-noopdaRosterport)
+6. [DaRosterPort and DirectoryDaRosterPort](#6-darosterport-and-directorydarosterport)
 7. [Event Stubs: NoDaAlertProducer and TileOverloadAlertProducer](#7-event-stubs)
 8. [How the Jobs Chain Together](#8-how-the-jobs-chain-together)
 9. [What Is Not Yet Implemented](#9-what-is-not-yet-implemented)
@@ -376,7 +376,7 @@ Every night
 
 During shift (07:00–20:00 IST, every 5 minutes)
 ───────────────────────────────────
-M4 ──Kafka: orders.tile_queue_depth──► TileQueueDepthConsumer  (autoStartup=false until M4 ships)
+M5 ──exchange orders.tile_queue_depth──► TileQueueDepthConsumer  (live; every 300 s while a shift is loaded)
     └─► IntradayLoadScoreService.updateQueueDepth(cityId, date, {tileId → unservedOrders})
 
 IntradayMonitorJob.run()
