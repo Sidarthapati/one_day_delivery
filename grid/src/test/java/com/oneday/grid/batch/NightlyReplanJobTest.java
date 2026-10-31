@@ -9,6 +9,7 @@ import com.oneday.grid.domain.Grid;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.ProposalType;
 import com.oneday.grid.domain.SolverType;
+import com.oneday.grid.events.NoDaAlertProducer;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
 import com.oneday.grid.repository.DaHexAssignmentRepository;
@@ -28,11 +29,13 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -44,13 +47,14 @@ class NightlyReplanJobTest {
     @Mock AssignmentProposalRegionRepository proposalRegionRepository;
     @Mock DaHexAssignmentRepository assignmentRepository;
     @Mock DaRosterPort daRosterPort;
+    @Mock NoDaAlertProducer noDaAlertProducer;
 
     NightlyReplanJob job;
 
     @BeforeEach
     void setUp() {
         job = new NightlyReplanJob(gridRepository, gridReplanService, proposalRepository,
-                proposalRegionRepository, assignmentRepository, daRosterPort);
+                proposalRegionRepository, assignmentRepository, daRosterPort, noDaAlertProducer);
     }
 
     private Grid gridFor(UUID cityId) {
@@ -74,10 +78,12 @@ class NightlyReplanJobTest {
 
         // 3 cities × 2 shifts
         verify(gridReplanService, times(6)).replan(any(), any(), any(), anyList());
+        // A non-empty roster must not raise NO_DA_ALERT.
+        verifyNoInteractions(noDaAlertProducer);
     }
 
     @Test
-    void run_noDasFromRoster_stillCallsReplanWithEmptyList_perShift() {
+    void run_noDasFromRoster_stillCallsReplanWithEmptyList_andEmitsNoDaAlert_perShift() {
         UUID cityId = UUID.randomUUID();
         Grid g = gridFor(cityId);
         when(gridRepository.findAll()).thenReturn(List.of(g));
@@ -86,6 +92,8 @@ class NightlyReplanJobTest {
         job.run();
 
         verify(gridReplanService, times(2)).replan(eq(cityId), any(), any(), eq(List.of()));
+        // An empty roster fires NO_DA_ALERT (E4) once per shift. #242
+        verify(noDaAlertProducer, times(2)).emit(eq(cityId), isNull(), any(), any());
     }
 
     @Test

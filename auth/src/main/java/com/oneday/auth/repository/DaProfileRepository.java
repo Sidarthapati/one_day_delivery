@@ -16,6 +16,10 @@ public interface DaProfileRepository extends JpaRepository<DaProfile, UUID> {
      * The roster query: active DELIVERY_ASSOCIATE users in the city, on the requested shift, whose
      * contract covers {@code date}. Native so it can join {@code users}/{@code roles} across the
      * shared datasource without dragging the JPA graph in.
+     *
+     * {@code ORDER BY u.id} is required, not cosmetic: the grid solvers map DAs to territories by
+     * list position ({@code availableDaIds.get(k)}), so an unordered result makes the DA→territory
+     * assignment nondeterministic across replans with identical input (#242).
      */
     @Query(value = """
             SELECT u.id FROM users u
@@ -27,6 +31,7 @@ public interface DaProfileRepository extends JpaRepository<DaProfile, UUID> {
                AND p.shift = :shift
                AND p.contract_start_date <= :date
                AND (p.contract_end_date IS NULL OR p.contract_end_date >= :date)
+             ORDER BY u.id
             """, nativeQuery = true)
     List<UUID> findAvailableDaIds(@Param("cityId") String cityId,
                                   @Param("shift") String shift,
