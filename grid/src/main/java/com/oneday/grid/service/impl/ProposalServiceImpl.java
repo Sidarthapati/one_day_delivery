@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -41,6 +42,8 @@ import java.util.stream.Collectors;
 
 @Service
 class ProposalServiceImpl implements ProposalService {
+
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private static final Logger log = LoggerFactory.getLogger(ProposalServiceImpl.class);
 
@@ -196,7 +199,7 @@ class ProposalServiceImpl implements ProposalService {
                                                                     UUID toDaId,
                                                                     List<UUID> hexIdsToMove,
                                                                     UUID requestedBy) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(IST);
         Set<UUID> moveSet = new HashSet<>(hexIdsToMove);
 
         // Load current APPROVED assignments for both DAs
@@ -306,7 +309,7 @@ class ProposalServiceImpl implements ProposalService {
     @Override
     @Transactional
     public TileShareResponse requestTileShare(UUID cityId, UUID daId, UUID hexId, UUID requestedBy) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(IST);
 
         // Validate the hex is currently assigned (at least one DA covers it)
         List<DaHexAssignment> active = assignmentRepository

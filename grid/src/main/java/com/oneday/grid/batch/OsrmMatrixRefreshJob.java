@@ -22,8 +22,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-// Admin-triggered via POST /grid/admin/osrm-refresh?city_id=...
-// Also runs monthly (1st of month, 02:00 IST) to keep travel times current.
+// Runs monthly (1st of month, 02:00 IST) to keep travel times current. There is no admin endpoint.
 // This is the only job that calls OSRM — the nightly replan reads h3_hex_travel_time from DB.
 @Component
 public class OsrmMatrixRefreshJob {

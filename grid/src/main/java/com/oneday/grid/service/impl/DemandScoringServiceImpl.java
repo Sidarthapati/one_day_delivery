@@ -76,6 +76,9 @@ public class DemandScoringServiceImpl implements DemandScoringService {
         List<HexDemandSnapshot> snapshots = new ArrayList<>(activeHexes.size());
         for (Hex hex : activeHexes) {
             UUID hid = hex.getId();
+            // Keep rows that already exist for this date: re-inserting them would violate
+            // UNIQUE(hex_id, snapshot_date). Only hexes without a snapshot are computed.
+            if (existingByHex.containsKey(hid)) continue;
 
             boolean svcBootstrapped = !serviceTimeMins.containsKey(hid);
             boolean interBootstrapped = !interStopTravelMins.containsKey(hid);
@@ -103,7 +106,11 @@ public class DemandScoringServiceImpl implements DemandScoringService {
                     .build());
         }
 
-        return snapshotRepository.saveAll(snapshots);
+        List<HexDemandSnapshot> saved = snapshotRepository.saveAll(snapshots);
+        if (existingByHex.isEmpty()) return saved;
+        List<HexDemandSnapshot> all = new ArrayList<>(existingByHex.values());
+        all.addAll(saved);
+        return all;
     }
 
     private double cityWideAvg(Map<UUID, Double> values, double bootstrapDefault) {

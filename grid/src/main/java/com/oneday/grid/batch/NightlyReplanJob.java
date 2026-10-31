@@ -9,6 +9,7 @@ import com.oneday.grid.domain.Grid;
 import com.oneday.grid.domain.ProposalStatus;
 import com.oneday.grid.domain.ProposalType;
 import com.oneday.grid.domain.SolverType;
+import com.oneday.grid.events.NoDaAlertProducer;
 import com.oneday.grid.repository.AssignmentProposalRegionRepository;
 import com.oneday.grid.repository.AssignmentProposalRepository;
 import com.oneday.grid.repository.DaHexAssignmentRepository;
@@ -41,19 +42,22 @@ public class NightlyReplanJob {
     private final AssignmentProposalRegionRepository proposalRegionRepository;
     private final DaHexAssignmentRepository assignmentRepository;
     private final DaRosterPort daRosterPort;
+    private final NoDaAlertProducer noDaAlertProducer;
 
     NightlyReplanJob(GridRepository gridRepository,
                      GridReplanService gridReplanService,
                      AssignmentProposalRepository proposalRepository,
                      AssignmentProposalRegionRepository proposalRegionRepository,
                      DaHexAssignmentRepository assignmentRepository,
-                     DaRosterPort daRosterPort) {
+                     DaRosterPort daRosterPort,
+                     NoDaAlertProducer noDaAlertProducer) {
         this.gridRepository = gridRepository;
         this.gridReplanService = gridReplanService;
         this.proposalRepository = proposalRepository;
         this.proposalRegionRepository = proposalRegionRepository;
         this.assignmentRepository = assignmentRepository;
         this.daRosterPort = daRosterPort;
+        this.noDaAlertProducer = noDaAlertProducer;
     }
 
     @Scheduled(cron = "0 0 1 * * *", zone = "Asia/Kolkata")
@@ -116,6 +120,12 @@ public class NightlyReplanJob {
     private void replanForCity(UUID cityId, LocalDate validForDate, Shift shift) {
         List<UUID> daIds = daRosterPort.getAvailableDaIds(cityId, validForDate, shift);
         log.info("NightlyReplanJob replanForCity cityId={} date={} shift={} daCount={}", cityId, validForDate, shift, daIds.size());
+        if (daIds.isEmpty()) {
+            // No roster for this city/shift: the proposal below is honest (0% coverage, every hex
+            // understaffed) but silent — fire the design's NO_DA_ALERT (E4) so ops hears it. #242
+            log.warn("NO_DA_ALERT cityId={} date={} shift={}: no DAs rostered", cityId, validForDate, shift);
+            noDaAlertProducer.emit(cityId, null, validForDate, "No DAs rostered for " + shift);
+        }
         gridReplanService.replan(cityId, validForDate, shift, daIds);
     }
 

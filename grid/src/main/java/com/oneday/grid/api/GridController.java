@@ -27,12 +27,15 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/grid")
 public class GridController {
+
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final GridService gridService;
     private final GridReplanService gridReplanService;
@@ -56,7 +59,7 @@ public class GridController {
             @PathVariable String cityCode,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         UUID cityId = gridService.resolveCityId(cityCode);
-        return gridService.getTileDetails(cityId, date != null ? date : LocalDate.now());
+        return gridService.getTileDetails(cityId, date != null ? date : LocalDate.now(IST));
     }
 
     @PatchMapping("/{cityCode}/tiles/{tileId}/active")
@@ -75,7 +78,7 @@ public class GridController {
             @PathVariable UUID tileId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         gridService.resolveCityId(cityCode);
-        return loadScoreService.getLoadScore(tileId, date != null ? date : LocalDate.now());
+        return loadScoreService.getLoadScore(tileId, date != null ? date : LocalDate.now(IST));
     }
 
     // ── Vertices (map grid-lines) ──────────────────────────────────────────────
@@ -93,7 +96,7 @@ public class GridController {
             @PathVariable String cityCode,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         UUID cityId = gridService.resolveCityId(cityCode);
-        return gridService.getActiveAssignments(cityId, date != null ? date : LocalDate.now());
+        return gridService.getActiveAssignments(cityId, date != null ? date : LocalDate.now(IST));
     }
 
     // ── Lookup helpers ────────────────────────────────────────────────────────
@@ -132,7 +135,7 @@ public class GridController {
             @PathVariable String cityCode,
             @RequestBody ReplanRequest request) {
         UUID cityId = gridService.resolveCityId(cityCode);
-        LocalDate date = request.date() != null ? request.date() : LocalDate.now().plusDays(1);
+        LocalDate date = request.date() != null ? request.date() : LocalDate.now(IST).plusDays(1);
         Shift shift = request.shift() != null ? request.shift() : Shift.SHIFT_1;
         // No explicit daIds → pull the real shift roster (same source the nightly job uses), so the
         // admin "generate today's plan" action is roster-driven without enumerating DAs client-side.

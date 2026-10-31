@@ -9,7 +9,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-// Shared by BfsAssignmentServiceImpl and ProposalService for contiguity checks.
+// Used by ProposalServiceImpl for override contiguity checks. The solvers keep their own
+// connectivity logic (BalancedBfs.donorRemainsConnected, CpSat.repairConnectivity).
 class ContiguityValidator {
 
     private ContiguityValidator() {}
